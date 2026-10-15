@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -95,7 +96,7 @@ func newRig(t *testing.T) rig {
 	h := &fakeHerdr{agents: map[string]string{}}
 	beads := fakeBeads{
 		"beads-995":   {ID: "beads-995", Title: "peons: design spec", Labels: []string{"peons"}},
-		"beads-995.8": {ID: "beads-995.8", Title: "spawn and end peons", Description: "Build pns spawn.", Parent: "beads-995"},
+		"beads-995.8": {ID: "beads-995.8", Title: "spawn and end peons", Description: "Build pns spawn.", Parent: "beads-995", Labels: []string{"bug"}},
 		"beads-7qx":   {ID: "beads-7qx", Title: "dotfiles thing", Labels: []string{"dotfiles"}},
 		"beads-nol":   {ID: "beads-nol", Title: "unlabelled"},
 	}
@@ -232,14 +233,14 @@ func TestBeadMustBelongToTheProject(t *testing.T) {
 func TestEndRemovesOnlyTheRecordedWorkspace(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	if err := r.fleet.End(ctx, "peon-995-8"); !errors.Is(err, peon.ErrNotSpawned) {
+	if _, err := r.fleet.End(ctx, "peon-995-8"); !errors.Is(err, peon.ErrNotSpawned) {
 		t.Fatalf("never spawned: err = %v, want ErrNotSpawned", err)
 	}
 	r.fleet.Spawn(ctx, "beads-995.8")
 	recorded := r.h.workspaces[0].ID
 	r.h.workspaces = append(r.h.workspaces, peon.Workspace{ID: "w-other", Label: "beads-995.8"}) // a decoy
 	for range 2 {
-		if err := r.fleet.End(ctx, "peon-995-8"); err != nil {
+		if _, err := r.fleet.End(ctx, "peon-995-8"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -248,5 +249,45 @@ func TestEndRemovesOnlyTheRecordedWorkspace(t *testing.T) {
 	}
 	if sp, _, _ := r.lb.LatestSpawn(ctx, "peon-995-8"); !sp.Ended {
 		t.Fatalf("spawn not marked ended: %+v", sp)
+	}
+}
+
+func TestEndDeletesTheBranchOnlyIfMerged(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	gitRun(t, "", "init", "-q", "-b", "main", r.repo)
+	gitRun(t, r.repo, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "init")
+	r.fleet.Spawn(ctx, "beads-995.8")
+	gitRun(t, r.repo, "branch", "peon-995-8") // merged: no commits of its own
+	if kept, err := r.fleet.End(ctx, "peon-995-8"); err != nil || kept {
+		t.Fatalf("merged branch: kept=%v err=%v", kept, err)
+	}
+	r.h.exit("peon-995-8")
+	r.fleet.Spawn(ctx, "beads-995.8")
+	gitRun(t, r.repo, "checkout", "-q", "-b", "peon-995-8")
+	gitRun(t, r.repo, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "work")
+	gitRun(t, r.repo, "checkout", "-q", "main")
+	if kept, err := r.fleet.End(ctx, "peon-995-8"); err != nil || !kept {
+		t.Fatalf("unmerged branch: kept=%v err=%v", kept, err)
+	}
+}
+
+func TestSpawnRecordsTheBriefWithTheSpawn(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	r.h.failStart = errors.New("crash after recording")
+	r.fleet.Spawn(ctx, "beads-995.8")
+	unread, err := r.lb.Unread(ctx, "peon-995-8")
+	if err != nil || len(unread) != 1 {
+		t.Fatalf("brief after a failed start: %+v, %v", unread, err)
+	}
+}
+
+func gitRun(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 }

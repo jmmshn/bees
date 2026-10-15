@@ -80,9 +80,13 @@ func cmdEnd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 		return err
 	}
 	defer f.LB.Close()
-	if err := f.End(ctx, pos[0]); err != nil {
+	kept, err := f.End(ctx, pos[0])
+	if err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "ended %s\n", pos[0])
+	if kept {
+		fmt.Fprintf(stdout, "kept branch %s: it has work not merged yet\n", pos[0])
+	}
 	return nil
 }

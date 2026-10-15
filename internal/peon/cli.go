@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 )
@@ -20,7 +21,8 @@ func herdr(ctx context.Context, out any, args ...string) (code string, err error
 	b, err := exec.CommandContext(ctx, "herdr", args...).Output()
 	if err != nil {
 		var he herdrError
-		if ee, ok := err.(*exec.ExitError); ok && json.Unmarshal(ee.Stderr, &he) == nil && he.Error.Code != "" {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && json.Unmarshal(ee.Stderr, &he) == nil && he.Error.Code != "" {
 			return he.Error.Code, fmt.Errorf("herdr %s: %s", args[0], he.Error.Message)
 		}
 		if json.Unmarshal(b, &he) == nil && he.Error.Code != "" {
@@ -133,8 +135,11 @@ func (BeadsCLI) Show(ctx context.Context, id string) (Bead, error) {
 		Parent      string   `json:"parent"`
 		Labels      []string `json:"labels"`
 	}
-	if err := json.Unmarshal(out, &bs); err != nil || len(bs) == 0 {
-		return Bead{}, fmt.Errorf("bd show %s: unexpected output", id)
+	if err := json.Unmarshal(out, &bs); err != nil {
+		return Bead{}, fmt.Errorf("bd show %s: %w", id, err)
+	}
+	if len(bs) == 0 {
+		return Bead{}, fmt.Errorf("bd show %s: no such bead", id)
 	}
 	b := bs[0]
 	return Bead{ID: b.ID, Title: b.Title, Description: b.Description, Parent: b.Parent, Labels: b.Labels}, nil

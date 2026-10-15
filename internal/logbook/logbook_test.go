@@ -171,9 +171,12 @@ func TestSpawnRecordsTrackTheLatestSpawnAndItsEnd(t *testing.T) {
 		t.Fatalf("before any spawn: ok=%v err=%v", ok, err)
 	}
 	first := logbook.Spawn{Name: "peon-995-8", Bead: "beads-995.8", Workspace: "w7", Pane: "w7:p1", Worktree: "/r-WT/peon-995-8", Branch: "peon-995-8"}
-	id, err := lb.RecordSpawn(ctx, "chief-peons", first)
+	id, err := lb.RecordSpawn(ctx, "chief-peons", first, "your brief")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if unread, _ := lb.Unread(ctx, "peon-995-8"); len(unread) != 1 || unread[0].Body != "your brief" {
+		t.Fatalf("brief = %+v", unread)
 	}
 	got, ok, err := lb.LatestSpawn(ctx, "peon-995-8")
 	if err != nil || !ok || got.ID != id || got.Workspace != "w7" || got.Bead != "beads-995.8" || got.Ended {
@@ -189,7 +192,7 @@ func TestSpawnRecordsTrackTheLatestSpawnAndItsEnd(t *testing.T) {
 	}
 	second := first
 	second.Workspace = "w9"
-	if _, err := lb.RecordSpawn(ctx, "chief-peons", second); err != nil {
+	if _, err := lb.RecordSpawn(ctx, "chief-peons", second, ""); err != nil {
 		t.Fatal(err)
 	}
 	if got, _, _ = lb.LatestSpawn(ctx, "peon-995-8"); got.Workspace != "w9" || got.Ended {

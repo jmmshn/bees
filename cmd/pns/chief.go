@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
+	"strings"
 	"syscall"
 
 	"github.com/jmmshn/peons/internal/project"
@@ -42,6 +44,10 @@ func cmdChief(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if err != nil {
 		return err
 	}
-	env := append(os.Environ(), "PNS_PROJECT="+p.Name, "PNS_SESSION="+p.Chief())
+	// No PNS_* variables: the chief's pns finds its name from --name and its project from
+	// the repo (R25). Drop inherited ones so they can't override either.
+	env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
+		return strings.HasPrefix(kv, "PNS_SESSION=") || strings.HasPrefix(kv, "PNS_PROJECT=")
+	})
 	return execClaude(p.Repo, env, "--name", p.Chief())
 }

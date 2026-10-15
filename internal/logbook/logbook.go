@@ -164,11 +164,13 @@ type Spawn struct {
 	Pane      string `json:"pane"`
 	Worktree  string `json:"worktree"`
 	Branch    string `json:"branch"`
+	Repo      string `json:"repo"` // where the branch lives, for pns end
 	Ended     bool   `json:"-"`
 }
 
-// RecordSpawn records that by spawned s.Name.
-func (l *Logbook) RecordSpawn(ctx context.Context, by string, s Spawn) (ID, error) {
+// RecordSpawn records that by spawned s.Name and, in the same transaction, sends it
+// brief (if any), so a crash can't leave a recorded peon without its brief.
+func (l *Logbook) RecordSpawn(ctx context.Context, by string, s Spawn, brief string) (ID, error) {
 	now := time.Now().UTC()
 	id := newID(now)
 	data, err := json.Marshal(s)
@@ -184,6 +186,17 @@ func (l *Logbook) RecordSpawn(ctx context.Context, by string, s Spawn) (ID, erro
 		`INSERT INTO entries (id, ts, kind, actor, subject, data) VALUES (?, ?, 'spawned', ?, ?, ?)`,
 		string(id), now.Format(tsLayout), by, s.Name, string(data)); err != nil {
 		return "", err
+	}
+	if brief != "" {
+		body, err := json.Marshal(map[string]string{"body": brief})
+		if err != nil {
+			return "", err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO entries (id, ts, kind, actor, subject, data) VALUES (?, ?, 'message', ?, ?, ?)`,
+			string(newID(now)), now.Format(tsLayout), by, s.Name, string(body)); err != nil {
+			return "", err
+		}
 	}
 	return id, tx.Commit()
 }
@@ -219,5 +232,8 @@ FROM entries s WHERE s.kind = 'spawned' AND s.subject = ? ORDER BY s.rowid DESC 
 		return Spawn{}, false, err
 	}
 	s.Name = name
-	return s, true, json.Unmarshal([]byte(data), &s)
+	if err := json.Unmarshal([]byte(data), &s); err != nil {
+		return Spawn{}, false, fmt.Errorf("spawn record %s: %w", s.ID, err)
+	}
+	return s, true, nil
 }

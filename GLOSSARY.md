@@ -17,7 +17,7 @@ A worker Claude Code session that owns one worktree and one bead.
 _Avoid_: worker, agent, subagent, crew member
 
 **Session**:
-One running Claude Code process, known by its name (`chief`, `peon-<slug>`).
+One running Claude Code process, known by its name (`chief-<project>`, `peon-<bead>`).
 _Avoid_: pane, agent, instance
 
 ## The logbook

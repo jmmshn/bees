@@ -3,6 +3,7 @@
 package peon
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -113,11 +114,8 @@ func (f Fleet) Spawn(ctx context.Context, bead string) (string, error) {
 		return "", err
 	}
 	// Record straight away: any failure after this point is healed by spawning again.
-	sp = logbook.Spawn{Name: name, Bead: bead, Workspace: ws.ID, Pane: ws.Pane, Worktree: ws.Path, Branch: name}
-	if sp.ID, err = f.LB.RecordSpawn(ctx, f.Me, sp); err != nil {
-		return "", err
-	}
-	if _, err := f.LB.Send(ctx, f.Me, name, brief(b)); err != nil {
+	sp = logbook.Spawn{Name: name, Bead: bead, Workspace: ws.ID, Pane: ws.Pane, Worktree: ws.Path, Branch: name, Repo: f.P.Repo}
+	if sp.ID, err = f.LB.RecordSpawn(ctx, f.Me, sp, brief(b)); err != nil {
 		return "", err
 	}
 	return name, f.start(ctx, sp)
@@ -135,18 +133,15 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn) error {
 	return f.H.StartClaude(ctx, sp.Pane, sp.Name, "--name", sp.Name, "--settings", peonSettings, doorbell)
 }
 
-// checkProject requires the bead's repo label, or its nearest labelled ancestor's, to
-// name this project.
+// checkProject requires the project's label on the bead or one of its ancestors.
 func (f Fleet) checkProject(ctx context.Context, b Bead) error {
+	start := b.ID
 	for {
-		if len(b.Labels) > 0 {
-			if slices.Contains(b.Labels, f.P.Name) {
-				return nil
-			}
-			return fmt.Errorf("%s is labelled %v, not %q: %w (pass --repo to override)", b.ID, b.Labels, f.P.Name, ErrWrongRepo)
+		if slices.Contains(b.Labels, f.P.Name) {
+			return nil
 		}
 		if b.Parent == "" {
-			return fmt.Errorf("%s and its ancestors have no repo label: %w (label the epic %q, or pass --repo)", b.ID, ErrWrongRepo, f.P.Name)
+			return fmt.Errorf("neither %s nor its ancestors are labelled %q: %w (label its epic, or pass --repo)", start, f.P.Name, ErrWrongRepo)
 		}
 		var err error
 		if b, err = f.B.Show(ctx, b.Parent); err != nil {
@@ -156,25 +151,28 @@ func (f Fleet) checkProject(ctx context.Context, b Bead) error {
 }
 
 // End removes the peon's recorded workspace and records the end. It never asks herdr
-// which workspace to remove. Ending an ended peon is a no-op.
-func (f Fleet) End(ctx context.Context, name string) error {
+// which workspace to remove. Ending an ended peon is a no-op. The peon's branch is
+// deleted if fully merged, so the bead can be spawned again; branchKept reports an
+// unmerged branch left in place with its work.
+func (f Fleet) End(ctx context.Context, name string) (branchKept bool, err error) {
 	sp, ok, err := f.LB.LatestSpawn(ctx, name)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !ok {
-		return fmt.Errorf("%s: %w", name, ErrNotSpawned)
+		return false, fmt.Errorf("%s: %w", name, ErrNotSpawned)
 	}
 	if sp.Ended {
-		return nil
+		return false, nil
 	}
 	if err := f.H.RemoveWorktree(ctx, sp.Workspace); err != nil {
-		return err
+		return false, err
 	}
-	// Delete the branch only if it is fully merged (-d refuses otherwise), so a later
-	// spawn of the same bead can create it again. An unmerged branch keeps its work.
-	exec.CommandContext(ctx, "git", "-C", f.P.Repo, "branch", "-d", sp.Branch).Run()
-	return f.LB.RecordEnd(ctx, f.Me, sp.ID)
+	repo := cmp.Or(sp.Repo, f.P.Repo)
+	if exec.CommandContext(ctx, "git", "-C", repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+sp.Branch).Run() == nil {
+		branchKept = exec.CommandContext(ctx, "git", "-C", repo, "branch", "-d", sp.Branch).Run() != nil
+	}
+	return branchKept, f.LB.RecordEnd(ctx, f.Me, sp.ID)
 }
 
 func brief(b Bead) string {

@@ -16,7 +16,7 @@ func gitRepo(t *testing.T, name string) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), name)
 	git(t, "", "init", "-q", "-b", "main", dir)
-	git(t, dir, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "init")
+	git(t, dir, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "init")
 	return dir
 }
 
@@ -113,6 +113,10 @@ func TestMeResolutionOrder(t *testing.T) {
 	if _, err := project.Me(""); !errors.Is(err, project.ErrNoSession) {
 		t.Fatalf("nothing set: err = %v, want ErrNoSession", err)
 	}
+	t.Setenv("PNS_SESSION", "outside-claude")
+	if me, _ := project.Me(""); me != "outside-claude" {
+		t.Fatalf("env outside Claude: %q", me)
+	}
 	reg := filepath.Join(os.Getenv("HOME"), ".claude", "sessions")
 	if err := os.MkdirAll(reg, 0o755); err != nil {
 		t.Fatal(err)
@@ -125,9 +129,9 @@ func TestMeResolutionOrder(t *testing.T) {
 	if me, err := project.Me(""); err != nil || me != "peon-995-8" {
 		t.Fatalf("ppid walk: %q, %v", me, err)
 	}
-	t.Setenv("PNS_SESSION", "chief-peons")
-	if me, _ := project.Me(""); me != "chief-peons" {
-		t.Fatalf("env: %q", me)
+	t.Setenv("PNS_SESSION", "chief-peons") // a stale or inherited value must not beat the registry
+	if me, _ := project.Me(""); me != "peon-995-8" {
+		t.Fatalf("registry vs env: %q", me)
 	}
 	if me, _ := project.Me("captain"); me != "captain" {
 		t.Fatalf("flag: %q", me)

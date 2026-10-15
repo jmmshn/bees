@@ -43,22 +43,27 @@ func Resolve(flag string) (Project, error) {
 		}
 		name = filepath.Base(repo)
 	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return Project{}, err
+	}
 	if repo == "" {
 		repos := os.Getenv("PNS_REPOS")
 		if repos == "" {
-			repos = filepath.Join(os.Getenv("HOME"), "repos", "jmmshn")
+			repos = filepath.Join(home, "repos", "jmmshn") // ponytail: the author's layout; set PNS_REPOS elsewhere
 		}
 		repo = filepath.Join(repos, name)
 	}
 	lb := os.Getenv("PNS_LOGBOOK")
 	if lb == "" {
-		lb = filepath.Join(os.Getenv("HOME"), ".local", "share", "peons", name+".db")
+		lb = filepath.Join(home, ".local", "share", "peons", name+".db")
 	}
 	return Project{Name: name, Repo: repo, Logbook: lb}, nil
 }
 
 // mainRepo returns the main checkout of the git repo containing the working directory,
 // or "" outside git. Git's common dir is shared by every worktree of a repo.
+// ponytail: assumes a non-bare repo whose common dir is <checkout>/.git.
 func mainRepo() string {
 	out, err := exec.Command("git", "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
 	if err != nil {
@@ -67,25 +72,29 @@ func mainRepo() string {
 	return filepath.Dir(strings.TrimSpace(string(out)))
 }
 
-// Me returns the session running pns: flag, then PNS_SESSION, then the name of the
-// nearest ancestor process that is a registered Claude Code session.
+// Me returns the session running pns: flag, then the name of the nearest ancestor
+// process that is a registered Claude Code session, then PNS_SESSION (for use outside
+// Claude). The registry beats the environment, which a session can inherit stale.
 func Me(flag string) (string, error) {
 	if flag != "" {
 		return flag, nil
 	}
+	if home, err := os.UserHomeDir(); err == nil {
+		reg := filepath.Join(home, ".claude", "sessions")
+		for pid := os.Getppid(); pid > 1; pid = parentOf(pid) {
+			b, err := os.ReadFile(filepath.Join(reg, fmt.Sprintf("%d.json", pid)))
+			if err != nil {
+				continue
+			}
+			var s struct{ Name string }
+			if json.Unmarshal(b, &s) == nil && s.Name != "" {
+				return s.Name, nil
+			}
+			break // the nearest Claude session has no usable name
+		}
+	}
 	if s := os.Getenv("PNS_SESSION"); s != "" {
 		return s, nil
-	}
-	reg := filepath.Join(os.Getenv("HOME"), ".claude", "sessions")
-	for pid := os.Getppid(); pid > 1; pid = parentOf(pid) {
-		b, err := os.ReadFile(filepath.Join(reg, fmt.Sprintf("%d.json", pid)))
-		if err != nil {
-			continue
-		}
-		var s struct{ Name string }
-		if json.Unmarshal(b, &s) == nil && s.Name != "" {
-			return s.Name, nil
-		}
 	}
 	return "", ErrNoSession
 }
@@ -97,7 +106,11 @@ func parentOf(pid int) int {
 		return 0
 	}
 	// The command name is in parentheses and may contain spaces; fields resume after ')'.
-	fields := strings.Fields(string(b[strings.LastIndexByte(string(b), ')')+1:]))
+	i := strings.LastIndexByte(string(b), ')')
+	if i < 0 {
+		return 0
+	}
+	fields := strings.Fields(string(b[i+1:]))
 	if len(fields) < 2 {
 		return 0
 	}

@@ -23,8 +23,10 @@ func pnsIn(t *testing.T, stdin string, args ...string) (string, string, int) {
 
 func useTempLogbook(t *testing.T) {
 	t.Helper()
+	t.Setenv("HOME", t.TempDir()) // no real Claude registry: the session walk finds nothing
 	t.Setenv("PNS_LOGBOOK", filepath.Join(t.TempDir(), "logbook.db"))
 	t.Setenv("PNS_SESSION", "")
+	t.Setenv("PNS_PROJECT", "test")
 	if _, stderr, code := pns(t, "init"); code != 0 {
 		t.Fatalf("init: exit %d: %s", code, stderr)
 	}
@@ -92,6 +94,8 @@ func TestSendNeedsRecipientAndBody(t *testing.T) {
 }
 
 func TestSendWorksWithoutInit(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PNS_PROJECT", "test")
 	t.Setenv("PNS_LOGBOOK", filepath.Join(t.TempDir(), "logbook.db"))
 	if _, stderr, code := pns(t, "send", "--as", "chief", "peon-a", "hi"); code != 0 {
 		t.Fatalf("send: exit %d: %s", code, stderr)
@@ -133,5 +137,19 @@ func TestInitRejectsArguments(t *testing.T) {
 	useTempLogbook(t)
 	if _, _, code := pns(t, "init", "junk"); code != 2 {
 		t.Fatalf("init junk: exit %d, want 2", code)
+	}
+}
+
+func TestEachProjectHasItsOwnLogbook(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PNS_LOGBOOK", "")
+	pns(t, "send", "--project", "alpha", "--as", "chief-alpha", "peon-1", "for alpha")
+	out, _, _ := pns(t, "inbox", "--project", "beta", "--as", "peon-1")
+	if out != "no unread messages\n" {
+		t.Fatalf("beta inbox = %q, want empty", out)
+	}
+	out, _, _ = pns(t, "inbox", "--project", "alpha", "--as", "peon-1")
+	if !strings.Contains(out, "for alpha") {
+		t.Fatalf("alpha inbox = %q", out)
 	}
 }

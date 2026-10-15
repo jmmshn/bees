@@ -6,27 +6,24 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/jmmshn/peons/internal/logbook"
+	"github.com/jmmshn/peons/internal/project"
 )
 
 // errUsage means the arguments were wrong; the message has already been printed.
 var errUsage = errors.New("usage")
 
-func openLogbook(ctx context.Context) (*logbook.Logbook, error) {
-	path := os.Getenv("PNS_LOGBOOK")
-	if path == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, err
-		}
-		path = filepath.Join(home, ".local", "share", "peons", "logbook.db")
+// scope resolves the project and opens its logbook. Callers close the logbook.
+func scope(ctx context.Context, flagProject string) (project.Project, *logbook.Logbook, error) {
+	p, err := project.Resolve(flagProject)
+	if err != nil {
+		return p, nil, err
 	}
-	return logbook.Open(ctx, path)
+	lb, err := logbook.Open(ctx, p.Logbook)
+	return p, lb, err
 }
 
 // parseFlags parses fs's flags wherever they appear among the arguments and returns
@@ -58,24 +55,19 @@ func parseFlags(fs *flag.FlagSet, args []string) ([]string, error) {
 // errHelp means -h was asked for; the help has already been printed.
 var errHelp = errors.New("help")
 
-// resolveSession resolves which session is running pns: --as, then PNS_SESSION.
-func resolveSession(as string, stderr io.Writer) (string, error) {
-	if as == "" {
-		as = os.Getenv("PNS_SESSION")
-	}
-	if as == "" {
-		fmt.Fprintln(stderr, "pns: can't tell which session you are; pass --as <session> or set PNS_SESSION")
-		return "", errUsage
-	}
-	return as, nil
-}
-
 func cmdInit(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	if len(args) > 0 {
-		fmt.Fprintln(stderr, "usage: pns init")
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	proj := fs.String("project", "", "project (default: PNS_PROJECT, else the current git repo)")
+	pos, err := parseFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) > 0 {
+		fmt.Fprintln(stderr, "usage: pns init [--project <name>]")
 		return errUsage
 	}
-	lb, err := openLogbook(ctx)
+	_, lb, err := scope(ctx, *proj)
 	if err != nil {
 		return err
 	}
@@ -86,6 +78,7 @@ func cmdSend(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	fs := flag.NewFlagSet("send", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	as := fs.String("as", "", "session sending the message")
+	proj := fs.String("project", "", "project (default: PNS_PROJECT, else the current git repo)")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
@@ -94,7 +87,7 @@ func cmdSend(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		fmt.Fprintln(stderr, "usage: pns send [--as <session>] <to> <body | ->")
 		return errUsage
 	}
-	from, err := resolveSession(*as, stderr)
+	from, err := project.Me(*as)
 	if err != nil {
 		return err
 	}
@@ -106,7 +99,7 @@ func cmdSend(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		}
 		body = strings.TrimRight(string(b), "\n")
 	}
-	lb, err := openLogbook(ctx)
+	_, lb, err := scope(ctx, *proj)
 	if err != nil {
 		return err
 	}
@@ -123,6 +116,7 @@ func cmdInbox(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	fs := flag.NewFlagSet("inbox", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	as := fs.String("as", "", "session whose inbox to show")
+	proj := fs.String("project", "", "project (default: PNS_PROJECT, else the current git repo)")
 	peek := fs.Bool("peek", false, "show unread messages without recording receipts")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
@@ -132,11 +126,11 @@ func cmdInbox(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		fmt.Fprintln(stderr, "usage: pns inbox [--as <session>] [--peek]")
 		return errUsage
 	}
-	session, err := resolveSession(*as, stderr)
+	session, err := project.Me(*as)
 	if err != nil {
 		return err
 	}
-	lb, err := openLogbook(ctx)
+	_, lb, err := scope(ctx, *proj)
 	if err != nil {
 		return err
 	}

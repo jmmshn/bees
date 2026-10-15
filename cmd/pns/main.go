@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/jmmshn/peons/internal/project"
 )
 
 const usage = `usage: pns <command> [arguments]
 
 commands:
   init      create the logbook file and table if missing
+  chief     start this project's chief session
   send      store a message for a session, then ring it
   inbox     print your unread messages and record receipts
   status    list sessions and their unread counts
@@ -23,6 +26,7 @@ var commands = map[string]func(ctx context.Context, args []string, stdin io.Read
 	"init":  cmdInit,
 	"send":  cmdSend,
 	"inbox": cmdInbox,
+	"chief": cmdChief,
 }
 
 func main() {
@@ -39,6 +43,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		case errors.Is(err, errHelp):
 			return 0
 		case errors.Is(err, errUsage):
+			return 2
+		case errors.Is(err, project.ErrNoSession), errors.Is(err, project.ErrNoProject):
+			fmt.Fprintf(stderr, "pns %s: %v\n", args[0], err)
 			return 2
 		case err != nil:
 			fmt.Fprintf(stderr, "pns %s: %v\n", args[0], err)

@@ -13,7 +13,7 @@ v0 proves the core loop: the chief sends a message, an idle peon wakes, reads it
 | `pns init`, `send`, `inbox`, `status` | `pns spawn`, `pns end`, `pns hook` |
 | `entries` table; writes `message` and `received` | `rang` entries |
 | Claude adapter: find, ring | `Launch`, herdr panes, worktrees |
-| Ring every unread message on every send | `Plan` reconciler, coalescing, re-ring, flag the chief, watchdog, `GET_LOCK` |
+| Ring every unread message on every send | `Plan` reconciler, coalescing, re-ring, flag the chief, watchdog |
 | `--now` | Captain inbox, disk warning, omp adapter |
 
 Platform: Linux only.
@@ -23,7 +23,7 @@ Platform: Linux only.
 1. An idle peon wakes within 2 s of `pns send`.
 2. A chief → peon → chief round trip completes with nobody typing in either session.
 3. Messages sent while a peon is not running are delivered on the first send after it starts.
-4. After a Dolt server restart, no committed message is lost.
+4. A pns process killed mid-write loses no committed message and leaves the logbook readable.
 
 ## Layout
 
@@ -38,31 +38,32 @@ The existing `cmd/peons` is renamed to `cmd/pns`.
 
 ## Logbook
 
-The logbook is the Dolt database `peons` on the shared sql-server (the one beads uses).
+The logbook is a SQLite file in WAL mode ([ADR-0005](adr/0005-sqlite-not-dolt.md)), opened through `modernc.org/sqlite`.
 
 ```text
-PNS_DSN  default  root@tcp(127.0.0.1:3307)/peons?parseTime=true
+PNS_LOGBOOK  default  ~/.local/share/peons/logbook.db
+pragmas      journal_mode=WAL, busy_timeout=5000, foreign_keys=ON; writes use BEGIN IMMEDIATE
 ```
 
 ```sql
 CREATE TABLE IF NOT EXISTS entries (
-  id      VARCHAR(80)  PRIMARY KEY,   -- ULID; receipts: 'rcv:<msg id>:<session>'
-  ts      DATETIME(3)  NOT NULL,
-  kind    VARCHAR(16)  NOT NULL CHECK (kind IN ('message','received','rang')),
-  actor   VARCHAR(64)  NOT NULL,      -- session that wrote the entry
-  subject VARCHAR(64),                -- message: recipient
-  ref     VARCHAR(80)  REFERENCES entries(id),  -- received: the message
-  data    JSON         CHECK (JSON_VALID(data)), -- message: {"body": "..."}
-  INDEX k_subj (kind, subject, id),
-  INDEX k_ref  (kind, ref)
-);
+  id      TEXT PRIMARY KEY,           -- ULID; receipts: 'rcv:<msg id>:<session>'
+  ts      TEXT NOT NULL,              -- RFC 3339, UTC, milliseconds
+  kind    TEXT NOT NULL CHECK (kind IN ('message','received','rang')),
+  actor   TEXT NOT NULL,              -- session that wrote the entry
+  subject TEXT,                       -- message: recipient
+  ref     TEXT REFERENCES entries(id), -- received: the message
+  data    TEXT CHECK (data IS NULL OR json_valid(data)) -- message: {"body": "..."}
+) STRICT;
+CREATE INDEX IF NOT EXISTS k_subj ON entries (kind, subject, id);
+CREATE INDEX IF NOT EXISTS k_ref  ON entries (kind, ref);
 ```
 
 Rules:
 
 - Entries are only inserted, never updated or deleted.
-- Each write is one transaction ending in `CALL DOLT_COMMIT('-Am', <kind>, '--author', '<actor> <pns@local>')`.
-- A receipt id is deterministic and written with `INSERT IGNORE`. A transaction that fails with error 1213 is retried up to 3 times with jitter.
+- Each write is one `BEGIN IMMEDIATE` transaction; concurrent writers wait on the busy timeout instead of failing.
+- A receipt id is deterministic and written with `INSERT OR IGNORE`, so a duplicate is a no-op.
 - Unread is always this query. Never use a cursor or a time window.
 
 ```sql
@@ -84,8 +85,8 @@ type Message struct {
 	TS       time.Time
 }
 
-func Open(ctx context.Context, dsn string) (*Logbook, error)
-func (l *Logbook) Init(ctx context.Context) error // CREATE DATABASE / TABLE IF NOT EXISTS
+func Open(ctx context.Context, path string) (*Logbook, error) // creates the file and parent dir if missing
+func (l *Logbook) Init(ctx context.Context) error                 // CREATE TABLE / INDEX IF NOT EXISTS
 func (l *Logbook) Send(ctx context.Context, from, to, body string) (ID, error)
 func (l *Logbook) Unread(ctx context.Context, session string) ([]Message, error)
 func (l *Logbook) MarkRead(ctx context.Context, session string, ids []ID) error // one commit
@@ -147,7 +148,7 @@ Resolved in this order:
 ## Commands
 
 ```text
-pns init                       create the database and table if missing
+pns init                       create the logbook file and table if missing
 pns send <to> [--now] <body|-> store a message, then ring <to>
 pns inbox [--peek]             print unread; without --peek, mark them read in one commit
 pns status [--json]            each known session: running or not, unread count
@@ -191,9 +192,9 @@ claude --name chief
 
 | Test | Checks |
 |---|---|
-| `logbook` `TestMain` | starts `dolt sql-server` on a free port in a temp dir (never 3307); skips if `dolt` is not on PATH |
+| `logbook` tests | each test opens a fresh logbook file in `t.TempDir()` |
 | `TestSendUnreadMarkRead` | round trip |
-| `TestConcurrentSends` | 20 goroutines, no loss, no unretried 1213 |
+| `TestConcurrentSends` | 20 separate processes or connections sending at once; no loss, no busy errors |
 | `TestUnreadIsSet` | a message with an older id committed late still shows as unread |
 | `TestMarkReadIdempotent` | marking the same id twice is a no-op |
 | `claude` `TestRingNDJSON` | fake unix listener sees the auth line, the user line and a half-close |
@@ -204,10 +205,9 @@ claude --name chief
 
 - **Reconciler** ([ADR-0003](adr/0003-reconcile-on-triggers-not-a-daemon.md)):
   - `Plan(Facts, now) []Action`, run from send, hooks (5 s debounce), status, inbox and a 60 s watchdog;
-  - one reconcile at a time via `GET_LOCK('pns:reconcile', 0)` on a pinned connection;
+  - one reconcile at a time, serialized by SQLite's write lock;
   - one doorbell in flight per session, re-ring at 60 s, flag the chief at 120 s.
 - **Hook:** `pns hook` on UserPromptSubmit writes a `rang`/landed entry for `[pns]` prompts.
 - **Spawn:** `pns spawn <bead>` creates the worktree, settings, herdr pane and `claude --name peon-<slug>` with the peon contract, then rings once as a smoke test. `pns end` closes it.
 - **Captain:** a message to `captain` is something that needs the human; `pns status` lists them first.
-- **Disk:** `pns status` shows the Dolt data directory size and warns above 10 GB.
 - **Harness seam:** `Harness{Launch, Ring, Alive}`, with an omp adapter in v1.1.

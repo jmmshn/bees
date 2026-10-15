@@ -4,15 +4,11 @@ The logbook is a single table, `entries`, that is only ever inserted into. Unrea
 
 ## Considered Options
 
-Benchmarked on Dolt 2.4.2 (2026-10, scripts kept in the session scratchpad):
+Benchmarked on Dolt 2.4.2 in 2026-10, before ADR-0005 moved the logbook to SQLite. The data-model findings don't depend on the engine.
 
-- **A: one table per kind.** Duplicate receipts failed 9–15 of 30 with error 1213, and there is more schema to keep in step.
+- **A: one table per kind.** More schema to keep in step. On Dolt, duplicate receipts also conflicted.
 - **D: read cursor per session.** Silently loses a slow send whose id lands behind the cursor. Crew lost facts the same way with a time window (crew 3572f24).
-- **E: log plus a mutable inbox table.** Fastest unread (0.3 ms at 200k), but it is a second copy of the truth. A receive that commits before its send leaves a stray row that needs a repair job.
-- **F: log plus a Dolt branch per session as a read marker.** Works, but needs an ancestor guard, deliver-only-up-to-the-ring rules and stale-marker reaping. Branch moves are not transactional, and a backward diff silently returns nothing.
+- **E: log plus a mutable inbox table.** The fastest unread query, but a second copy of the truth. A receive that commits before its send leaves a stray row that needs a repair job.
+- **F: per-session read markers** (Dolt branches). Needs an ancestor guard, deliver-only-up-to-the-ring rules and stale-marker reaping, and fails silently when misused.
 
-Unread for one session takes 8.5 ms at 20k messages, which is fast enough. If it ever gets slow, E's inbox table can be added as a rebuildable projection without changing anything else.
-
-## Consequences
-
-Every write is its own `DOLT_COMMIT`, with the actor as author, so `dolt_log` is the audit trail. That is about 20 KB per commit before GC, roughly 40 MB a day at expected volume, so there is no GC timer; `pns status` warns above 10 GB. Dolt's auto-GC was seen to stop running, and a full disk crashes the shared server and beads with it.
+If unread ever gets slow, E's inbox table can be added as a rebuildable projection without changing anything else.

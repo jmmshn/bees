@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jmmshn/peons/internal/harness/claude"
 	"github.com/jmmshn/peons/internal/logbook"
 	"github.com/jmmshn/peons/internal/project"
 )
@@ -79,12 +80,13 @@ func cmdSend(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	fs.SetOutput(stderr)
 	as := fs.String("as", "", "session sending the message")
 	proj := fs.String("project", "", "project (default: PNS_PROJECT, else the current git repo)")
+	now := fs.Bool("now", false, "ring with priority now: interrupt the recipient's current turn")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) < 2 {
-		fmt.Fprintln(stderr, "usage: pns send [--as <session>] <to> <body | ->")
+		fmt.Fprintln(stderr, "usage: pns send [--as <session>] [--now] <to> <body | ->")
 		return errUsage
 	}
 	from, err := project.Me(*as)
@@ -109,7 +111,55 @@ func cmdSend(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		return err
 	}
 	fmt.Fprintf(stdout, "sent %s to %s\n", id, to)
+	return ring(ctx, lb, from, to, *now, stdout, stderr)
+}
+
+// ring rings to with its unread count. The message is already stored, so a failed ring
+// is only a warning: to reads it on its next pns inbox.
+func ring(ctx context.Context, lb *logbook.Logbook, from, to string, now bool, stdout, stderr io.Writer) error {
+	err := ringOnce(ctx, lb, from, to, now)
+	switch {
+	case errors.Is(err, claude.ErrNotRunning):
+		fmt.Fprintf(stdout, "queued; %s is not running\n", to)
+	case err != nil:
+		fmt.Fprintf(stderr, "pns send: couldn't ring %s (the message is stored): %v\n", to, err)
+	}
 	return nil
+}
+
+func ringOnce(ctx context.Context, lb *logbook.Logbook, from, to string, now bool) error {
+	s, err := claude.Find(to)
+	if err != nil {
+		return err
+	}
+	unread, err := lb.Unread(ctx, to)
+	if err != nil {
+		return err
+	}
+	priority := claude.Next
+	if now {
+		priority = claude.Now
+	}
+	return claude.Ring(s, doorbell(unread, from), priority)
+}
+
+// doorbell names who the unread messages are from, never what they say:
+// [pns] 3 unread (chief ×2, peons-1-2) — run: pns inbox   (reply with: pns send chief "...")
+func doorbell(unread []logbook.Message, from string) string {
+	var senders []string
+	count := map[string]int{}
+	for _, m := range unread {
+		if count[m.From] == 0 {
+			senders = append(senders, m.From)
+		}
+		count[m.From]++
+	}
+	for i, s := range senders {
+		if count[s] > 1 {
+			senders[i] = fmt.Sprintf("%s ×%d", s, count[s])
+		}
+	}
+	return fmt.Sprintf(`[pns] %d unread (%s) — run: pns inbox   (reply with: pns send %s "...")`, len(unread), strings.Join(senders, ", "), from)
 }
 
 func cmdInbox(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {

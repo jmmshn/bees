@@ -105,13 +105,13 @@ type Priority string // "now" | "next"
 type Session struct {
 	Name      string
 	PID       int
-	ProcStart int64
+	ProcStart string // /proc start time in clock ticks, as Claude records it
 	Socket    string
 	Token     string // empty when the session has no key file
 }
 
 func List() ([]Session, error)        // every live, compatible session
-func Find(name string) (Session, error) // ErrNotRunning when absent or stale
+func Find(name string) (Session, error) // newest of that name; ErrNotRunning when absent or stale
 func Ring(s Session, text string, p Priority) error
 ```
 
@@ -127,7 +127,7 @@ The token comes from `<pid>.<sha256(socket path)>.key` (`peerToken`).
 
 ```json
 {"type":"auth","token":"<peerToken>"}
-{"type":"user","message":{"role":"user","content":"<text>"},"priority":"next","msg_id":"<uuid>"}
+{"type":"user","message":{"role":"user","content":"<text>"},"priority":"next","msg_id":"<uuid v4>"}
 ```
 
 A receiving session must have `"crossSessionInbound": "accept"` in its settings. Otherwise a session in bypass mode holds peer messages instead of acting on them.
@@ -209,14 +209,15 @@ send, inbox, spawn, end        --project, --as     (init, chief: --project)
 
 ```go
 id := lb.Send(ctx, me, to, body)
-unread := lb.Unread(ctx, to)
+fmt.Printf("sent %s to %s\n", id, to)
 s, err := claude.Find(to)
 if errors.Is(err, claude.ErrNotRunning) {
-	fmt.Printf("queued %s; %s is not running\n", id, to)
+	fmt.Printf("queued; %s is not running\n", to)
 	return nil
 }
-if err := claude.Ring(s, doorbell(unread), prio); err != nil {
-	fmt.Fprintf(os.Stderr, "queued %s; ring failed: %v\n", id, err) // still exit 0: the message is stored
+unread := lb.Unread(ctx, to)
+if err := claude.Ring(s, doorbell(unread, me), prio); err != nil {
+	fmt.Fprintf(os.Stderr, "couldn't ring %s (the message is stored): %v\n", to, err) // still exit 0
 }
 ```
 
@@ -224,7 +225,10 @@ The doorbell text explains itself, so peons need no setup prompt in v0:
 
 ```text
 [pns] 2 unread (chief ×2) — run: pns inbox   (reply with: pns send chief "...")
+[pns] 2 unread (peons-1-3, peons-1-2) — run: pns inbox   (reply with: pns send peons-1-2 "...")
 ```
+
+Senders are listed in order of their oldest unread message; "reply with" names whoever just sent.
 
 `pns status` combines `claude.List()` with `lb.Counts()`. It shows sessions that are running plus any recipient that has unread messages but is not running.
 
@@ -249,8 +253,8 @@ Manual peon (no herdr): `claude --name peon-a --settings '{"crossSessionInbound"
 | `TestRecordReceiptsIdempotent` | recording the same receipt twice is a no-op |
 | `project` tests | resolution order; a linked worktree resolves to its main repo's project |
 | `peon` tests (fake Herdr and Beads) | spawn → settings + entry + brief + start args; second spawn `ErrRunning`; dead agent resumes in the same workspace; orphan `ErrOrphan` and nothing removed; end removes exactly the recorded id; wrong repo label refused |
-| `claude` `TestRingNDJSON` | fake unix listener sees the auth line, the user line and a half-close |
-| `TestFindRejectsStalePid` | a `procStart` mismatch gives `ErrNotRunning` |
+| `claude` tests (`claudetest.FakeRegistry`) | a fake unix listener sees the auth line only when a key exists, then the user line with its priority, then EOF; a `procStart` mismatch or another `peerProtocol` gives `ErrNotRunning` |
+| `cmd/pns` ring tests | doorbell text and `--now`; not running → stored, "queued", exit 0; failed ring → warning, exit 0 |
 | `scripts/e2e.sh` | two real Claude sessions; checks "Done when" 1–3 |
 
 ## v1 outline

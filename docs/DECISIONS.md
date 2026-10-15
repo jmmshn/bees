@@ -1,6 +1,6 @@
 # Decisions
 
-Every design decision for peons, from the design grill (beads-995, October 2026). Hard-to-reverse decisions also have an ADR in [adr/](adr/); behaviour is specified in [SPEC.md](SPEC.md); words are defined in [GLOSSARY.md](../GLOSSARY.md). Ids (S, R, M) match the decisions page used during the grill.
+Every design decision for peons, from the design grill (peons-1, October 2026). Hard-to-reverse decisions also have an ADR in [adr/](adr/); behaviour is specified in [SPEC.md](SPEC.md); words are defined in [GLOSSARY.md](../GLOSSARY.md). Ids (S, R, M) match the decisions page used during the grill.
 
 Status: **accepted**, **superseded** (replaced by a later decision), or **open** (decided when its version is built).
 
@@ -8,7 +8,7 @@ Status: **accepted**, **superseded** (replaced by a later decision), or **open**
 
 | Id | Decision | Status | Recorded in |
 |---|---|---|---|
-| — | Build peons now. Claude Code's own tools don't cover: messages that survive a session exiting, peons in herdr panes, binding a session to a bead and worktree, and omp. v0 alone is thin; the real value is v1. Re-check Claude Code's native features before starting v1. | accepted | beads-995 notes |
+| — | Build peons now. Claude Code's own tools don't cover: messages that survive a session exiting, peons in herdr panes, binding a session to a bead and worktree, and omp. v0 alone is thin; the real value is v1. Re-check Claude Code's native features before starting v1. | accepted | peons-1 notes |
 | S1 | The spec lives in the repo: `docs/SPEC.md`, `GLOSSARY.md`, `docs/adr/`. | accepted | this file |
 | S3 | Desk only; no phone path in v1 (that stays with beads-00m). Things that need the captain show up in `pns status`. | accepted | SPEC v1 outline |
 | S4 | Claude Code only for v0/v1, behind a harness interface (`Launch`, `Ring`, `Alive`). omp comes in v1.1 through an in-process extension. | accepted | SPEC v1 outline |
@@ -89,7 +89,7 @@ Status: **accepted**, **superseded** (replaced by a later decision), or **open**
 | R25 | Worktrees stay at `<repo>-WT/<name>`. Per-peon Claude settings ride `--settings` (Claude reads `settings.local.json` from the main checkout in a worktree); no `PNS_*` variables; `pns end` deletes the branch only if fully merged. | accepted | ADR-0006 |
 | R26 | Review fixes: the `spawned` entry and the brief are written in one transaction; the registry walk beats `PNS_SESSION`, and `pns chief` sets no `PNS_*`; the spawn records its repo so `pns end` deletes the branch there; the project label may be on the bead or any ancestor. | accepted | SPEC |
 | R27 | Named project epics, as in crew: the epic id is the repo name (`bd create --id peons --force`), beads are `peons.<n>`. A peon's name is the bead id with `.` → `-` (`peons-8`); the project check is the `<project>.` prefix, replacing the label walk. Supersedes R21′'s `peon-` prefix and R23's label check. | accepted | ADR-0006 |
-| R28 | Migrate peons now: epic `peons`; open beads-995 children renamed to `peons.<n>`; beads-995 stays as the design-spec epic. Other repos migrate when next worked on. | accepted | beads |
+| R28 | Migrate peons now: epic `peons`; open peons-1 children renamed to `peons.<n>`; peons-1 stays as the design-spec epic. Other repos migrate when next worked on. | accepted | beads |
 | R27⁵ | Jira-style ids: beads are `<project>-<n>[.<m>…]`, `pns epic` creates the next `<project>-<n>`. Project names are lowercased with `-` → `_` and must match `^[a-z][a-z0-9_]{0,24}$`, so names can't collide (tested: `web` vs `web-2`). A peon's name is the id with `.` → `-`; a bead belongs to the project if it matches `^<project>-\d+(\.\d+)*$`. Supersedes R27 (named epics; `bd` rejects a bare `peons` id) and R27′–R27⁗′. | accepted | ADR-0006 |
-| R28″ | Migration: beads-995 → `peons-1`, its children → `peons-1.<n>`. Supersedes R28. | accepted | beads |
+| R28″ | Migration: peons-1 → `peons-1`, its children → `peons-1.<n>`. Supersedes R28. | accepted | beads |
 | R19, R22, R18′ | Roster table, reserve-first spawn, label-only project. | superseded by R18″/R23 | ADR-0006 |

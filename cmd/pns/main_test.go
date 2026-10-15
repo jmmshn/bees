@@ -38,13 +38,3 @@ func TestUnknownCommandFails(t *testing.T) {
 		t.Errorf("stderr = %q", stderr.String())
 	}
 }
-
-func TestPlannedCommandSaysNotImplemented(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	if code := run([]string{"status"}, strings.NewReader(""), &stdout, &stderr); code != 2 {
-		t.Fatalf("exit code = %d, want 2", code)
-	}
-	if got := stderr.String(); got != "pns: status is not implemented yet\n" {
-		t.Errorf("stderr = %q", got)
-	}
-}

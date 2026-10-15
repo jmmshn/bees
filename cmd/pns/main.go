@@ -26,13 +26,14 @@ commands:
 
 // commands maps each implemented subcommand to its handler.
 var commands = map[string]func(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error{
-	"init":  cmdInit,
-	"send":  cmdSend,
-	"inbox": cmdInbox,
-	"chief": cmdChief,
-	"spawn": cmdSpawn,
-	"end":   cmdEnd,
-	"epic":  cmdEpic,
+	"init":   cmdInit,
+	"send":   cmdSend,
+	"inbox":  cmdInbox,
+	"chief":  cmdChief,
+	"spawn":  cmdSpawn,
+	"end":    cmdEnd,
+	"epic":   cmdEpic,
+	"status": cmdStatus,
 }
 
 func main() {
@@ -63,9 +64,6 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "-h", "--help", "help":
 		fmt.Fprint(stdout, usage)
 		return 0
-	case "status":
-		fmt.Fprintf(stderr, "pns: %s is not implemented yet\n", args[0])
-		return 2
 	default:
 		fmt.Fprintf(stderr, "pns: unknown command %q\n\n%s", args[0], usage)
 		return 2

@@ -124,6 +124,33 @@ ORDER BY m.rowid`, session)
 	return out, rows.Err()
 }
 
+// Counts returns every session the logbook names (a writer, recipient or peon) with its
+// unread count, which is 0 for sessions with nothing unread.
+func (l *Logbook) Counts(ctx context.Context) (map[string]int, error) {
+	rows, err := l.db.QueryContext(ctx, `
+SELECT name, SUM(unread) FROM (
+  SELECT actor AS name, 0 AS unread FROM entries
+  UNION ALL SELECT subject, 0 FROM entries WHERE kind = 'spawned'
+  UNION ALL SELECT m.subject, NOT EXISTS (SELECT 1 FROM entries r
+                                         WHERE r.kind = 'received' AND r.ref = m.id AND r.actor = m.subject)
+            FROM entries m WHERE m.kind = 'message'
+) GROUP BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var name string
+		var n int
+		if err := rows.Scan(&name, &n); err != nil {
+			return nil, err
+		}
+		out[name] = n
+	}
+	return out, rows.Err()
+}
+
 // RecordReceipts records that session was shown the given messages, in one transaction.
 // A receipt's id is derived from the message and session, so repeating it is a no-op.
 func (l *Logbook) RecordReceipts(ctx context.Context, session string, ids []ID) error {

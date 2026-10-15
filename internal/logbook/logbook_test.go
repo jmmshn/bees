@@ -199,3 +199,21 @@ func TestSpawnRecordsTrackTheLatestSpawnAndItsEnd(t *testing.T) {
 		t.Fatalf("respawn: %+v, want open spawn in w9", got)
 	}
 }
+
+func TestCountsNamesEverySessionWithItsUnread(t *testing.T) {
+	ctx := context.Background()
+	lb := open(t)
+	lb.Send(ctx, "chief", "peon-a", "one")
+	lb.Send(ctx, "chief", "peon-a", "two")
+	id, _ := lb.Send(ctx, "peon-a", "chief", "done")
+	lb.RecordReceipts(ctx, "chief", []logbook.ID{id})
+	lb.RecordSpawn(ctx, "chief", logbook.Spawn{Name: "peon-b", Bead: "p-2", Workspace: "w1"}, "brief")
+	got, err := lb.Counts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int{"chief": 0, "peon-a": 2, "peon-b": 1} // peon-b's brief is unread
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("Counts = %v, want %v", got, want)
+	}
+}

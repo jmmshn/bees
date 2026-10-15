@@ -18,6 +18,7 @@ commands:
   chief     start this project's chief session
   spawn     start a peon for a bead in its own herdr workspace
   end       remove a peon's workspace
+  epic      create the project's next epic (<project>-<n>)
   send      store a message for a session, then ring it
   inbox     print your unread messages and record receipts
   status    list sessions and their unread counts
@@ -31,6 +32,7 @@ var commands = map[string]func(ctx context.Context, args []string, stdin io.Read
 	"chief": cmdChief,
 	"spawn": cmdSpawn,
 	"end":   cmdEnd,
+	"epic":  cmdEpic,
 }
 
 func main() {

@@ -9,14 +9,20 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 )
 
 var (
-	ErrNoProject = errors.New("can't tell which project; run inside its git repo, set PNS_PROJECT or pass --project")
-	ErrNoSession = errors.New("can't tell which session you are; run pns from inside a named Claude session, or pass --as")
+	ErrNoProject  = errors.New("can't tell which project; run inside its git repo, set PNS_PROJECT or pass --project")
+	ErrBadProject = errors.New("project names must be a letter then up to 24 letters, digits or _ (after - → _); set PNS_PROJECT")
+	ErrNoSession  = errors.New("can't tell which session you are; run pns from inside a named Claude session, or pass --as")
 )
+
+// validName is what a project name must be once lowercased with - → _. With no "-" in
+// the project, the first "-" in a bead id or peon name always ends the project (R27).
+var validName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,24}$`)
 
 // Project is the scope of one chief, its peons and its logbook.
 type Project struct {
@@ -42,6 +48,10 @@ func Resolve(flag string) (Project, error) {
 			return Project{}, ErrNoProject
 		}
 		name = filepath.Base(repo)
+	}
+	name = strings.ToLower(strings.ReplaceAll(name, "-", "_"))
+	if !validName.MatchString(name) {
+		return Project{}, fmt.Errorf("%q: %w", name, ErrBadProject)
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {

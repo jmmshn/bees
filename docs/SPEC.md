@@ -143,7 +143,8 @@ func (p Project) Chief() string             // "chief-" + Name
 func Me(flagAs string) (string, error)      // --as → parent-process walk → PNS_SESSION
 ```
 
-- The project comes from git's *common* directory, so a shell inside `<repo>-WT/peons-8` resolves to the main repo's project.
+- The name is lowercased with `-` → `_` (`pymatgen-analysis-defects` → `pymatgen_analysis_defects`) and must match `^[a-z][a-z0-9_]{0,24}$`, else `ErrBadProject` (set `PNS_PROJECT`).
+- The project comes from git's *common* directory, so a shell inside `<repo>-WT/peons-2-1` resolves to the main repo's project.
 - `Repo` is the main checkout when the project comes from git, else `$PNS_REPOS/<project>` (default `~/repos/jmmshn`); `Logbook` is `$PNS_LOGBOOK`, else `~/.local/share/peons/<project>.db`.
 - `Me` walks `getppid()` upward to the first pid with `~/.claude/sessions/<pid>.json` and uses its `name`. The registry beats `PNS_SESSION`, which a session can inherit stale; `PNS_SESSION` is for use outside Claude. Otherwise it fails with `run pns from inside a named Claude session, or pass --as`.
 
@@ -152,7 +153,9 @@ func Me(flagAs string) (string, error)      // --as → parent-process walk → 
 ```go
 package peon
 
-func Name(bead string) (string, error) // peons.8 → peons-8; refuses names herdr can't take
+func Name(bead string) (string, error) // peons-12.3 → peons-12-3; refuses names herdr can't take
+func Belongs(project, bead string) bool // ^<project>-\d+(\.\d+)*$
+func NextEpic(project string, ids []string) string // <project>-<max+1>
 
 type Herdr interface {
 	CreateWorktree(ctx context.Context, repo, branch, path, label string) (Workspace, error)
@@ -180,7 +183,7 @@ func (f Fleet) End(ctx context.Context, name string) error              // ErrNo
 2. If `LatestSpawn(name)` is open:
    - herdr reports the agent live → `ErrRunning`;
    - otherwise → resume at step 7 in the recorded workspace.
-3. The bead id must start with `<project>.` (it lives under the project's named epic), unless `--repo` → else `ErrWrongRepo`.
+3. The bead id must be `<project>-<n>[.<m>…]` (`Belongs`), unless `--repo` → else `ErrWrongRepo`.
 4. A herdr workspace labelled with the bead but no `spawned` entry → `ErrOrphan`. It is never removed automatically.
 5. `herdr worktree create --cwd <repo> --branch <name> --path <repo>-WT/<name> --label <bead> --no-focus` (herdr prints JSON).
 6. `RecordSpawn` immediately, in one transaction with the brief (`bd show` title and description) as a message from the chief: subject = name; data = bead, workspace, pane, worktree, branch, repo.
@@ -195,6 +198,7 @@ pns init                       create the logbook file and table if missing (opt
 pns chief                      start the chief: claude --name chief-<project> in the repo (no PNS_* set)
 pns spawn <bead> [--repo P]    start a peon for the bead in its own herdr workspace
 pns end <peon>                 remove the peon's recorded workspace
+pns epic <title>               create the project's next epic, <project>-<n>
 pns send <to> [--now] <body|-> store a message, then ring <to>   (flags may follow <to>)
 pns inbox [--peek]             print unread; without --peek, record receipts in one commit
 pns status [--json]            each known session: running or not, unread count
@@ -228,7 +232,8 @@ The doorbell text explains itself, so peons need no setup prompt in v0:
 
 ```sh
 pns chief                 # chief-<project>, in $PNS_REPOS/<project>
-pns spawn peons.8         # inside the chief: peons-8 in peons-WT/peons-8
+pns epic "ringing"        # → peons-2; then bd create --parent peons-2 --force …
+pns spawn peons-2.1       # inside the chief: peons-2-1 in peons-WT/peons-2-1
 ```
 
 Manual peon (no herdr): `claude --name peon-a --settings '{"crossSessionInbound":"accept"}'` in its worktree.

@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/jmmshn/peons/internal/logbook"
@@ -60,14 +61,35 @@ type Fleet struct {
 var herdrName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 
 // Name is the peon's one name for a bead: session, herdr agent, branch, worktree dir
-// and address. Beads live under a project epic named for the repo (R27), so the name is
-// the bead id with "." → "-": peons.8 → peons-8.
+// and address. Bead ids are Jira-style, <project>-<n>[.<m>…] (R27), and project names
+// have no "-", so the name is the id with "." → "-": peons-12.3 → peons-12-3.
 func Name(bead string) (string, error) {
 	n := strings.ReplaceAll(bead, ".", "-")
 	if !herdrName.MatchString(n) {
 		return "", fmt.Errorf("%q can't be a peon name (lowercase, starting with a letter, at most 32 characters)", bead)
 	}
 	return n, nil
+}
+
+var beadNumber = regexp.MustCompile(`^-\d+(\.\d+)*$`)
+
+// Belongs reports whether bead is one of project's: <project>-<n>[.<m>…].
+func Belongs(project, bead string) bool {
+	rest, ok := strings.CutPrefix(bead, project)
+	return ok && beadNumber.MatchString(rest)
+}
+
+// NextEpic returns the next free top-level id for project among ids: <project>-<max+1>.
+func NextEpic(project string, ids []string) string {
+	top := 0
+	for _, id := range ids {
+		rest, ok := strings.CutPrefix(id, project+"-")
+		rest, _, _ = strings.Cut(rest, ".") // a child proves its epic's number is taken
+		if n, err := strconv.Atoi(rest); ok && err == nil && n > top {
+			top = n
+		}
+	}
+	return fmt.Sprintf("%s-%d", project, top+1)
 }
 
 // Spawn starts a peon for bead, or restarts it in its recorded workspace if its
@@ -89,8 +111,8 @@ func (f Fleet) Spawn(ctx context.Context, bead string) (string, error) {
 		}
 		return name, f.start(ctx, sp) // resume
 	}
-	if !f.ForeignRepo && !strings.HasPrefix(bead, f.P.Name+".") {
-		return "", fmt.Errorf("%s is not under the %q epic: %w (file it with bd create --parent %s, or pass --repo)", bead, f.P.Name, ErrWrongRepo, f.P.Name)
+	if !f.ForeignRepo && !Belongs(f.P.Name, bead) {
+		return "", fmt.Errorf("%s is not a %s bead (want %s-<n>[.<m>]): %w (or pass --repo)", bead, f.P.Name, f.P.Name, ErrWrongRepo)
 	}
 	b, err := f.B.Show(ctx, bead)
 	if err != nil {

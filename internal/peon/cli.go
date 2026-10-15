@@ -142,3 +142,32 @@ func (BeadsCLI) Show(ctx context.Context, id string) (Bead, error) {
 	b := bs[0]
 	return Bead{ID: b.ID, Title: b.Title, Description: b.Description}, nil
 }
+
+// IDs lists every bead id in the store, open or closed.
+func (BeadsCLI) IDs(ctx context.Context) ([]string, error) {
+	out, err := exec.CommandContext(ctx, "bd", "list", "--all", "--limit", "0", "--json").Output()
+	if err != nil {
+		return nil, fmt.Errorf("bd list: %w", err)
+	}
+	var bs []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(out, &bs); err != nil {
+		return nil, fmt.Errorf("bd list: %w", err)
+	}
+	ids := make([]string, len(bs))
+	for i, b := range bs {
+		ids[i] = b.ID
+	}
+	return ids, nil
+}
+
+// CreateEpic creates an epic with an explicit id. --force because Jira-style ids don't
+// use the store's own prefix.
+func (BeadsCLI) CreateEpic(ctx context.Context, id, title string) error {
+	out, err := exec.CommandContext(ctx, "bd", "create", "--silent", "--force", "--type", "epic", "--id", id, "--title", title).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("bd create %s: %w: %s", id, err, bytes.TrimSpace(out))
+	}
+	return nil
+}

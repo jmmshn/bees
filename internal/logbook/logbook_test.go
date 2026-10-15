@@ -3,6 +3,7 @@ package logbook_test
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -17,9 +18,6 @@ func open(t *testing.T) *logbook.Logbook {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { lb.Close() })
-	if err := lb.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
 	return lb
 }
 
@@ -45,15 +43,18 @@ func TestSentMessageIsUnreadForRecipientOnly(t *testing.T) {
 	}
 }
 
-func TestMarkReadRemovesFromUnreadAndIsIdempotent(t *testing.T) {
+func TestRecordReceiptsRemovesFromUnreadAndIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	lb := open(t)
-	first, _ := lb.Send(ctx, "chief", "peon-a", "one")
+	first, err := lb.Send(ctx, "chief", "peon-a", "one")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := lb.Send(ctx, "chief", "peon-a", "two"); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := lb.MarkRead(ctx, "peon-a", []logbook.ID{first}); err != nil {
+		if err := lb.RecordReceipts(ctx, "peon-a", []logbook.ID{first}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -66,14 +67,20 @@ func TestMarkReadRemovesFromUnreadAndIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestMarkReadByAnotherSessionDoesNotCount(t *testing.T) {
+func TestRecordReceiptsByAnotherSessionDoesNotCount(t *testing.T) {
 	ctx := context.Background()
 	lb := open(t)
-	id, _ := lb.Send(ctx, "chief", "peon-a", "one")
-	if err := lb.MarkRead(ctx, "peon-b", []logbook.ID{id}); err != nil {
+	id, err := lb.Send(ctx, "chief", "peon-a", "one")
+	if err != nil {
 		t.Fatal(err)
 	}
-	got, _ := lb.Unread(ctx, "peon-a")
+	if err := lb.RecordReceipts(ctx, "peon-b", []logbook.ID{id}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := lb.Unread(ctx, "peon-a")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(got) != 1 {
 		t.Fatalf("unread = %+v, want the message still unread", got)
 	}
@@ -85,11 +92,17 @@ func TestReadingANewerMessageLeavesOlderOnesUnread(t *testing.T) {
 	if _, err := lb.Send(ctx, "chief", "peon-a", "older"); err != nil {
 		t.Fatal(err)
 	}
-	newer, _ := lb.Send(ctx, "peon-b", "peon-a", "newer")
-	if err := lb.MarkRead(ctx, "peon-a", []logbook.ID{newer}); err != nil {
+	newer, err := lb.Send(ctx, "peon-b", "peon-a", "newer")
+	if err != nil {
 		t.Fatal(err)
 	}
-	got, _ := lb.Unread(ctx, "peon-a")
+	if err := lb.RecordReceipts(ctx, "peon-a", []logbook.ID{newer}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := lb.Unread(ctx, "peon-a")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(got) != 1 || got[0].Body != "older" {
 		t.Fatalf("unread = %+v, want only \"older\"", got)
 	}
@@ -100,9 +113,6 @@ func TestConcurrentSendersFromSeparateProcessesLoseNothing(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "logbook.db")
 	setup, err := logbook.Open(ctx, path)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := setup.Init(ctx); err != nil {
 		t.Fatal(err)
 	}
 	defer setup.Close()
@@ -119,7 +129,7 @@ func TestConcurrentSendersFromSeparateProcessesLoseNothing(t *testing.T) {
 			defer lb.Close()
 			_, err = lb.Send(ctx, fmt.Sprintf("peon-%d", i), "chief", "done")
 			if err == nil {
-				err = lb.MarkRead(ctx, fmt.Sprintf("peon-%d", i), nil)
+				err = lb.RecordReceipts(ctx, fmt.Sprintf("peon-%d", i), nil)
 			}
 			errs <- err
 		}()
@@ -129,8 +139,27 @@ func TestConcurrentSendersFromSeparateProcessesLoseNothing(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, _ := setup.Unread(ctx, "chief")
+	got, err := setup.Unread(ctx, "chief")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(got) != senders {
 		t.Fatalf("chief has %d unread, want %d", len(got), senders)
+	}
+}
+
+func TestOpenHandlesOddPathsAndCreatesSchema(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "we?ird#dir", "logbook.db")
+	lb, err := logbook.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lb.Close()
+	if _, err := lb.Send(ctx, "chief", "peon-a", "hi"); err != nil {
+		t.Fatalf("send without init: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("logbook not at the given path: %v", err)
 	}
 }

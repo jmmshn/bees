@@ -18,30 +18,37 @@ commands:
   status    list sessions and their unread counts
 `
 
-func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+// commands maps each implemented subcommand to its handler.
+var commands = map[string]func(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error{
+	"init":  cmdInit,
+	"send":  cmdSend,
+	"inbox": cmdInbox,
 }
 
-func run(args []string, stdout, stderr io.Writer) int {
+func main() {
+	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+}
+
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usage)
 		return 2
 	}
-	switch args[0] {
-	case "-h", "--help", "help":
-		fmt.Fprint(stdout, usage)
-		return 0
-	case "init", "send", "inbox":
-		cmds := map[string]func(context.Context, []string, io.Writer, io.Writer) error{
-			"init": cmdInit, "send": cmdSend, "inbox": cmdInbox,
-		}
-		switch err := cmds[args[0]](context.Background(), args[1:], stdout, stderr); {
+	if cmd, ok := commands[args[0]]; ok {
+		switch err := cmd(context.Background(), args[1:], stdin, stdout, stderr); {
+		case errors.Is(err, errHelp):
+			return 0
 		case errors.Is(err, errUsage):
 			return 2
 		case err != nil:
 			fmt.Fprintf(stderr, "pns %s: %v\n", args[0], err)
 			return 1
 		}
+		return 0
+	}
+	switch args[0] {
+	case "-h", "--help", "help":
+		fmt.Fprint(stdout, usage)
 		return 0
 	case "status":
 		fmt.Fprintf(stderr, "pns: %s is not implemented yet\n", args[0])

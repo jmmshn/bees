@@ -45,22 +45,27 @@ CREATE INDEX IF NOT EXISTS k_subj ON entries (kind, subject, id);
 CREATE INDEX IF NOT EXISTS k_ref  ON entries (kind, ref);
 `
 
-// Open opens the logbook at path, creating the file and its directory if missing.
+// Open opens the logbook at path, creating the file, its directory and the schema if missing.
 // Writes take SQLite's write lock up front (BEGIN IMMEDIATE) and wait on a busy timeout.
 func Open(ctx context.Context, path string) (*Logbook, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, err
-	}
-	q := url.Values{}
-	q.Add("_pragma", "journal_mode(WAL)")
-	q.Add("_pragma", "busy_timeout(5000)")
-	q.Add("_pragma", "foreign_keys(1)")
-	q.Set("_txlock", "immediate")
-	db, err := sql.Open("sqlite", "file:"+path+"?"+q.Encode())
+	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
 	}
-	if err := db.PingContext(ctx); err != nil {
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		return nil, err
+	}
+	q := url.Values{}
+	q.Add("_pragma", "busy_timeout(5000)") // first, so the WAL switch below waits instead of failing
+	q.Add("_pragma", "journal_mode(WAL)")
+	q.Add("_pragma", "foreign_keys(1)")
+	q.Set("_txlock", "immediate")
+	dsn := (&url.URL{Scheme: "file", Path: abs, RawQuery: q.Encode()}).String()
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := db.ExecContext(ctx, schema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("open logbook %s: %w", path, err)
 	}
@@ -70,12 +75,6 @@ func Open(ctx context.Context, path string) (*Logbook, error) {
 // Close closes the logbook.
 func (l *Logbook) Close() error { return l.db.Close() }
 
-// Init creates the entries table and its indexes if they don't exist.
-func (l *Logbook) Init(ctx context.Context) error {
-	_, err := l.db.ExecContext(ctx, schema)
-	return err
-}
-
 // Send stores a message from one session to another and returns its id.
 func (l *Logbook) Send(ctx context.Context, from, to, body string) (ID, error) {
 	now := time.Now().UTC()
@@ -84,23 +83,27 @@ func (l *Logbook) Send(ctx context.Context, from, to, body string) (ID, error) {
 	if err != nil {
 		return "", err
 	}
-	_, err = l.db.ExecContext(ctx,
-		`INSERT INTO entries (id, ts, kind, actor, subject, data) VALUES (?, ?, 'message', ?, ?, ?)`,
-		string(id), now.Format(time.RFC3339Nano), from, to, string(data))
+	tx, err := l.db.BeginTx(ctx, nil)
 	if err != nil {
 		return "", err
 	}
-	return id, nil
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO entries (id, ts, kind, actor, subject, data) VALUES (?, ?, 'message', ?, ?, ?)`,
+		string(id), now.Format(tsLayout), from, to, string(data)); err != nil {
+		return "", err
+	}
+	return id, tx.Commit()
 }
 
-// Unread returns the messages addressed to session that have no receipt from it, oldest first.
+// Unread returns the messages addressed to session that have no receipt from it, in the order they were stored.
 func (l *Logbook) Unread(ctx context.Context, session string) ([]Message, error) {
 	rows, err := l.db.QueryContext(ctx, `
 SELECT m.id, m.ts, m.actor, m.subject, json_extract(m.data, '$.body') FROM entries m
 WHERE m.kind = 'message' AND m.subject = ?1
   AND NOT EXISTS (SELECT 1 FROM entries r
                   WHERE r.kind = 'received' AND r.ref = m.id AND r.actor = ?1)
-ORDER BY m.id`, session)
+ORDER BY m.rowid`, session)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +115,7 @@ ORDER BY m.id`, session)
 		if err := rows.Scan(&m.ID, &ts, &m.From, &m.To, &m.Body); err != nil {
 			return nil, err
 		}
-		if m.TS, err = time.Parse(time.RFC3339Nano, ts); err != nil {
+		if m.TS, err = time.Parse(tsLayout, ts); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -120,15 +123,15 @@ ORDER BY m.id`, session)
 	return out, rows.Err()
 }
 
-// MarkRead records that session was shown the given messages, in one transaction.
+// RecordReceipts records that session was shown the given messages, in one transaction.
 // A receipt's id is derived from the message and session, so repeating it is a no-op.
-func (l *Logbook) MarkRead(ctx context.Context, session string, ids []ID) error {
+func (l *Logbook) RecordReceipts(ctx context.Context, session string, ids []ID) error {
 	tx, err := l.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	ts := time.Now().UTC().Format(time.RFC3339Nano)
+	ts := time.Now().UTC().Format(tsLayout)
 	for _, id := range ids {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT OR IGNORE INTO entries (id, ts, kind, actor, ref) VALUES (?, ?, 'received', ?, ?)`,
@@ -139,8 +142,11 @@ func (l *Logbook) MarkRead(ctx context.Context, session string, ids []ID) error 
 	return tx.Commit()
 }
 
-// newID returns a 26-character id that sorts by time: 13 hex digits of Unix milliseconds,
-// then 13 hex digits of randomness.
+// tsLayout is RFC 3339 in UTC with fixed milliseconds.
+const tsLayout = "2006-01-02T15:04:05.000Z07:00"
+
+// newID returns a unique 26-character id: 13 hex digits of Unix milliseconds,
+// then 13 hex digits of randomness. Order comes from rowid, not the id.
 func newID(t time.Time) ID {
 	var b [8]byte
 	rand.Read(b[:])

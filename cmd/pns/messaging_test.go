@@ -10,8 +10,14 @@ import (
 // pns runs the CLI against a logbook in a temp dir and returns stdout, stderr and the exit code.
 func pns(t *testing.T, args ...string) (string, string, int) {
 	t.Helper()
+	return pnsIn(t, "", args...)
+}
+
+// pnsIn is pns with stdin.
+func pnsIn(t *testing.T, stdin string, args ...string) (string, string, int) {
+	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := run(args, &stdout, &stderr)
+	code := run(args, strings.NewReader(stdin), &stdout, &stderr)
 	return stdout.String(), stderr.String(), code
 }
 
@@ -82,5 +88,50 @@ func TestSendNeedsRecipientAndBody(t *testing.T) {
 	_, stderr, code := pns(t, "send", "--as", "chief", "peon-a")
 	if code != 2 || !strings.Contains(stderr, "usage: pns send") {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+}
+
+func TestSendWorksWithoutInit(t *testing.T) {
+	t.Setenv("PNS_LOGBOOK", filepath.Join(t.TempDir(), "logbook.db"))
+	if _, stderr, code := pns(t, "send", "--as", "chief", "peon-a", "hi"); code != 0 {
+		t.Fatalf("send: exit %d: %s", code, stderr)
+	}
+}
+
+func TestFlagsMayFollowRecipient(t *testing.T) {
+	useTempLogbook(t)
+	if _, stderr, code := pns(t, "send", "peon-a", "--as", "chief", "hi"); code != 0 {
+		t.Fatalf("send: exit %d: %s", code, stderr)
+	}
+	out, _, _ := pns(t, "inbox", "--as", "peon-a")
+	if !strings.Contains(out, "from chief") {
+		t.Fatalf("inbox output = %q", out)
+	}
+}
+
+func TestSendDashReadsBodyFromStdin(t *testing.T) {
+	useTempLogbook(t)
+	if _, stderr, code := pnsIn(t, "line one\nline two\n", "send", "--as", "chief", "peon-a", "-"); code != 0 {
+		t.Fatalf("send: exit %d: %s", code, stderr)
+	}
+	out, _, _ := pns(t, "inbox", "--as", "peon-a")
+	if !strings.Contains(out, "line one\nline two") {
+		t.Fatalf("inbox output = %q", out)
+	}
+}
+
+func TestSubcommandHelpExitsZero(t *testing.T) {
+	useTempLogbook(t)
+	for _, cmd := range []string{"send", "inbox"} {
+		if _, stderr, code := pns(t, cmd, "-h"); code != 0 {
+			t.Errorf("%s -h: exit %d: %s", cmd, code, stderr)
+		}
+	}
+}
+
+func TestInitRejectsArguments(t *testing.T) {
+	useTempLogbook(t)
+	if _, _, code := pns(t, "init", "junk"); code != 2 {
+		t.Fatalf("init junk: exit %d, want 2", code)
 	}
 }

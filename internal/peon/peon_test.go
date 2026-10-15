@@ -95,10 +95,9 @@ func newRig(t *testing.T) rig {
 	t.Cleanup(func() { lb.Close() })
 	h := &fakeHerdr{agents: map[string]string{}}
 	beads := fakeBeads{
-		"beads-995":   {ID: "beads-995", Title: "peons: design spec", Labels: []string{"peons"}},
-		"beads-995.8": {ID: "beads-995.8", Title: "spawn and end peons", Description: "Build pns spawn.", Parent: "beads-995", Labels: []string{"bug"}},
-		"beads-7qx":   {ID: "beads-7qx", Title: "dotfiles thing", Labels: []string{"dotfiles"}},
-		"beads-nol":   {ID: "beads-nol", Title: "unlabelled"},
+		"peons.8":    {ID: "peons.8", Title: "spawn and end peons", Description: "Build pns spawn."},
+		"dotfiles.3": {ID: "dotfiles.3", Title: "dotfiles thing"},
+		"beads-x7q":  {ID: "beads-x7q", Title: "flat id"},
 	}
 	repo := filepath.Join(dir, "peons")
 	p := project.Project{Name: "peons", Repo: repo, Logbook: filepath.Join(dir, "peons.db")}
@@ -106,12 +105,12 @@ func newRig(t *testing.T) rig {
 }
 
 func TestName(t *testing.T) {
-	for bead, want := range map[string]string{"beads-995.8": "peon-995-8", "beads-2db.15.3": "peon-2db-15-3", "beads-mgn": "peon-mgn"} {
+	for bead, want := range map[string]string{"peons.8": "peons-8", "pymatgen-analysis-defects.3": "pymatgen-analysis-defects-3", "beads-995.8": "beads-995-8"} {
 		if got, err := peon.Name(bead); err != nil || got != want {
 			t.Errorf("Name(%q) = %q, %v; want %q", bead, got, err, want)
 		}
 	}
-	for _, bad := range []string{"beads-" + strings.Repeat("1.", 14) + "1", "beads-", "BEADS-X"} {
+	for _, bad := range []string{"peons." + strings.Repeat("1.", 13) + "1", "", "Peons.1", "9lives.1"} {
 		if _, err := peon.Name(bad); err == nil {
 			t.Errorf("Name(%q) succeeded, want error", bad)
 		}
@@ -121,35 +120,35 @@ func TestName(t *testing.T) {
 func TestSpawnStartsAPeonInItsOwnWorkspace(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	name, err := r.fleet.Spawn(ctx, "beads-995.8")
+	name, err := r.fleet.Spawn(ctx, "peons.8")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if name != "peon-995-8" {
+	if name != "peons-8" {
 		t.Fatalf("name = %q", name)
 	}
-	wt := r.repo + "-WT/peon-995-8"
+	wt := r.repo + "-WT/peons-8"
 	ws := r.h.workspaces[0]
-	if ws.Path != wt || ws.Label != "beads-995.8" {
+	if ws.Path != wt || ws.Label != "peons.8" {
 		t.Fatalf("workspace = %+v", ws)
 	}
 	if _, err := os.Stat(filepath.Join(wt, ".claude")); !os.IsNotExist(err) {
 		t.Fatalf("spawn wrote into the worktree's .claude (Claude reads settings from the main checkout): %v", err)
 	}
-	sp, ok, _ := r.lb.LatestSpawn(ctx, "peon-995-8")
-	if !ok || sp.Workspace != ws.ID || sp.Bead != "beads-995.8" || sp.Ended {
+	sp, ok, _ := r.lb.LatestSpawn(ctx, "peons-8")
+	if !ok || sp.Workspace != ws.ID || sp.Bead != "peons.8" || sp.Ended {
 		t.Fatalf("spawn record = %+v ok=%v", sp, ok)
 	}
-	unread, _ := r.lb.Unread(ctx, "peon-995-8")
+	unread, _ := r.lb.Unread(ctx, "peons-8")
 	if len(unread) != 1 || unread[0].From != "chief-peons" || !strings.Contains(unread[0].Body, "spawn and end peons") || !strings.Contains(unread[0].Body, "Build pns spawn.") {
 		t.Fatalf("brief = %+v", unread)
 	}
 	start := r.h.started[0]
-	if start[0] != ws.Pane || start[1] != "peon-995-8" || !strings.HasPrefix(start[len(start)-1], "[pns]") {
+	if start[0] != ws.Pane || start[1] != "peons-8" || !strings.HasPrefix(start[len(start)-1], "[pns]") {
 		t.Fatalf("start = %q", start)
 	}
-	if i := slices.Index(start, "--name"); i < 0 || start[i+1] != "peon-995-8" {
-		t.Fatalf("start = %q, want --name peon-995-8", start)
+	if i := slices.Index(start, "--name"); i < 0 || start[i+1] != "peons-8" {
+		t.Fatalf("start = %q, want --name peons-8", start)
 	}
 	i := slices.Index(start, "--settings")
 	if i < 0 {
@@ -164,10 +163,10 @@ func TestSpawnStartsAPeonInItsOwnWorkspace(t *testing.T) {
 func TestSecondSpawnWhileLiveIsRefused(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	if _, err := r.fleet.Spawn(ctx, "beads-995.8"); err != nil {
+	if _, err := r.fleet.Spawn(ctx, "peons.8"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.fleet.Spawn(ctx, "beads-995.8"); !errors.Is(err, peon.ErrRunning) {
+	if _, err := r.fleet.Spawn(ctx, "peons.8"); !errors.Is(err, peon.ErrRunning) {
 		t.Fatalf("err = %v, want ErrRunning", err)
 	}
 	if len(r.h.workspaces) != 1 {
@@ -178,9 +177,9 @@ func TestSecondSpawnWhileLiveIsRefused(t *testing.T) {
 func TestSpawnResumesADeadPeonInItsRecordedWorkspace(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	r.fleet.Spawn(ctx, "beads-995.8")
-	r.h.exit("peon-995-8")
-	if _, err := r.fleet.Spawn(ctx, "beads-995.8"); err != nil {
+	r.fleet.Spawn(ctx, "peons.8")
+	r.h.exit("peons-8")
+	if _, err := r.fleet.Spawn(ctx, "peons.8"); err != nil {
 		t.Fatal(err)
 	}
 	if len(r.h.workspaces) != 1 || len(r.h.started) != 2 || r.h.started[1][0] != r.h.workspaces[0].Pane {
@@ -192,11 +191,11 @@ func TestFailedStartIsHealedBySpawningAgain(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	r.h.failStart = errors.New("agent_not_ready")
-	if _, err := r.fleet.Spawn(ctx, "beads-995.8"); err == nil {
+	if _, err := r.fleet.Spawn(ctx, "peons.8"); err == nil {
 		t.Fatal("spawn succeeded, want the start error")
 	}
 	r.h.failStart = nil
-	if _, err := r.fleet.Spawn(ctx, "beads-995.8"); err != nil {
+	if _, err := r.fleet.Spawn(ctx, "peons.8"); err != nil {
 		t.Fatal(err)
 	}
 	if len(r.h.workspaces) != 1 {
@@ -207,8 +206,8 @@ func TestFailedStartIsHealedBySpawningAgain(t *testing.T) {
 func TestUnrecordedWorkspaceForTheBeadIsAnOrphan(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	r.h.workspaces = []peon.Workspace{{ID: "w42", Label: "beads-995.8"}}
-	if _, err := r.fleet.Spawn(ctx, "beads-995.8"); !errors.Is(err, peon.ErrOrphan) {
+	r.h.workspaces = []peon.Workspace{{ID: "w42", Label: "peons.8"}}
+	if _, err := r.fleet.Spawn(ctx, "peons.8"); !errors.Is(err, peon.ErrOrphan) {
 		t.Fatalf("err = %v, want ErrOrphan", err)
 	}
 	if len(r.h.removed) != 0 || len(r.h.workspaces) != 1 {
@@ -219,13 +218,13 @@ func TestUnrecordedWorkspaceForTheBeadIsAnOrphan(t *testing.T) {
 func TestBeadMustBelongToTheProject(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	for _, bead := range []string{"beads-7qx", "beads-nol"} {
+	for _, bead := range []string{"dotfiles.3", "beads-x7q"} {
 		if _, err := r.fleet.Spawn(ctx, bead); !errors.Is(err, peon.ErrWrongRepo) {
 			t.Errorf("%s: err = %v, want ErrWrongRepo", bead, err)
 		}
 	}
 	r.fleet.ForeignRepo = true
-	if _, err := r.fleet.Spawn(ctx, "beads-7qx"); err != nil {
+	if _, err := r.fleet.Spawn(ctx, "dotfiles.3"); err != nil {
 		t.Fatalf("with ForeignRepo: %v", err)
 	}
 }
@@ -233,21 +232,21 @@ func TestBeadMustBelongToTheProject(t *testing.T) {
 func TestEndRemovesOnlyTheRecordedWorkspace(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	if _, err := r.fleet.End(ctx, "peon-995-8"); !errors.Is(err, peon.ErrNotSpawned) {
+	if _, err := r.fleet.End(ctx, "peons-8"); !errors.Is(err, peon.ErrNotSpawned) {
 		t.Fatalf("never spawned: err = %v, want ErrNotSpawned", err)
 	}
-	r.fleet.Spawn(ctx, "beads-995.8")
+	r.fleet.Spawn(ctx, "peons.8")
 	recorded := r.h.workspaces[0].ID
-	r.h.workspaces = append(r.h.workspaces, peon.Workspace{ID: "w-other", Label: "beads-995.8"}) // a decoy
+	r.h.workspaces = append(r.h.workspaces, peon.Workspace{ID: "w-other", Label: "peons.8"}) // a decoy
 	for range 2 {
-		if _, err := r.fleet.End(ctx, "peon-995-8"); err != nil {
+		if _, err := r.fleet.End(ctx, "peons-8"); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if !slices.Equal(r.h.removed, []string{recorded}) {
 		t.Fatalf("removed = %v, want only %s", r.h.removed, recorded)
 	}
-	if sp, _, _ := r.lb.LatestSpawn(ctx, "peon-995-8"); !sp.Ended {
+	if sp, _, _ := r.lb.LatestSpawn(ctx, "peons-8"); !sp.Ended {
 		t.Fatalf("spawn not marked ended: %+v", sp)
 	}
 }
@@ -257,17 +256,17 @@ func TestEndDeletesTheBranchOnlyIfMerged(t *testing.T) {
 	r := newRig(t)
 	gitRun(t, "", "init", "-q", "-b", "main", r.repo)
 	gitRun(t, r.repo, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "init")
-	r.fleet.Spawn(ctx, "beads-995.8")
-	gitRun(t, r.repo, "branch", "peon-995-8") // merged: no commits of its own
-	if kept, err := r.fleet.End(ctx, "peon-995-8"); err != nil || kept {
+	r.fleet.Spawn(ctx, "peons.8")
+	gitRun(t, r.repo, "branch", "peons-8") // merged: no commits of its own
+	if kept, err := r.fleet.End(ctx, "peons-8"); err != nil || kept {
 		t.Fatalf("merged branch: kept=%v err=%v", kept, err)
 	}
-	r.h.exit("peon-995-8")
-	r.fleet.Spawn(ctx, "beads-995.8")
-	gitRun(t, r.repo, "checkout", "-q", "-b", "peon-995-8")
+	r.h.exit("peons-8")
+	r.fleet.Spawn(ctx, "peons.8")
+	gitRun(t, r.repo, "checkout", "-q", "-b", "peons-8")
 	gitRun(t, r.repo, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "work")
 	gitRun(t, r.repo, "checkout", "-q", "main")
-	if kept, err := r.fleet.End(ctx, "peon-995-8"); err != nil || !kept {
+	if kept, err := r.fleet.End(ctx, "peons-8"); err != nil || !kept {
 		t.Fatalf("unmerged branch: kept=%v err=%v", kept, err)
 	}
 }
@@ -276,8 +275,8 @@ func TestSpawnRecordsTheBriefWithTheSpawn(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	r.h.failStart = errors.New("crash after recording")
-	r.fleet.Spawn(ctx, "beads-995.8")
-	unread, err := r.lb.Unread(ctx, "peon-995-8")
+	r.fleet.Spawn(ctx, "peons.8")
+	unread, err := r.lb.Unread(ctx, "peons-8")
 	if err != nil || len(unread) != 1 {
 		t.Fatalf("brief after a failed start: %+v, %v", unread, err)
 	}

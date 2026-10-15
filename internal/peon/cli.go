@@ -129,11 +129,9 @@ func (BeadsCLI) Show(ctx context.Context, id string) (Bead, error) {
 		return Bead{}, fmt.Errorf("bd show %s: %w", id, err)
 	}
 	var bs []struct {
-		ID          string   `json:"id"`
-		Title       string   `json:"title"`
-		Description string   `json:"description"`
-		Parent      string   `json:"parent"`
-		Labels      []string `json:"labels"`
+		ID          string `json:"id"`
+		Title       string `json:"title"`
+		Description string `json:"description"`
 	}
 	if err := json.Unmarshal(out, &bs); err != nil {
 		return Bead{}, fmt.Errorf("bd show %s: %w", id, err)
@@ -142,5 +140,5 @@ func (BeadsCLI) Show(ctx context.Context, id string) (Bead, error) {
 		return Bead{}, fmt.Errorf("bd show %s: no such bead", id)
 	}
 	b := bs[0]
-	return Bead{ID: b.ID, Title: b.Title, Description: b.Description, Parent: b.Parent, Labels: b.Labels}, nil
+	return Bead{ID: b.ID, Title: b.Title, Description: b.Description}, nil
 }

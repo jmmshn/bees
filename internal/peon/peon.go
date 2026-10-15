@@ -31,10 +31,7 @@ type Workspace struct{ ID, Label, Pane, Path string }
 type Agent struct{ Name, Pane string }
 
 // Bead is the part of a bead pns reads.
-type Bead struct {
-	ID, Title, Description, Parent string
-	Labels                         []string
-}
+type Bead struct{ ID, Title, Description string }
 
 // Herdr is the slice of herdr pns drives.
 type Herdr interface {
@@ -63,12 +60,12 @@ type Fleet struct {
 var herdrName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 
 // Name is the peon's one name for a bead: session, herdr agent, branch, worktree dir
-// and address. beads-995.8 → peon-995-8.
+// and address. Beads live under a project epic named for the repo (R27), so the name is
+// the bead id with "." → "-": peons.8 → peons-8.
 func Name(bead string) (string, error) {
-	id, ok := strings.CutPrefix(bead, "beads-")
-	n := "peon-" + strings.ReplaceAll(id, ".", "-")
-	if !ok || id == "" || !herdrName.MatchString(n) {
-		return "", fmt.Errorf("%q can't be a peon name (need beads-<id>, at most 27 characters after beads-)", bead)
+	n := strings.ReplaceAll(bead, ".", "-")
+	if !herdrName.MatchString(n) {
+		return "", fmt.Errorf("%q can't be a peon name (lowercase, starting with a letter, at most 32 characters)", bead)
 	}
 	return n, nil
 }
@@ -92,14 +89,12 @@ func (f Fleet) Spawn(ctx context.Context, bead string) (string, error) {
 		}
 		return name, f.start(ctx, sp) // resume
 	}
+	if !f.ForeignRepo && !strings.HasPrefix(bead, f.P.Name+".") {
+		return "", fmt.Errorf("%s is not under the %q epic: %w (file it with bd create --parent %s, or pass --repo)", bead, f.P.Name, ErrWrongRepo, f.P.Name)
+	}
 	b, err := f.B.Show(ctx, bead)
 	if err != nil {
 		return "", err
-	}
-	if !f.ForeignRepo {
-		if err := f.checkProject(ctx, b); err != nil {
-			return "", err
-		}
 	}
 	wss, err := f.H.Workspaces(ctx)
 	if err != nil {
@@ -131,23 +126,6 @@ const peonSettings = `{"crossSessionInbound":"accept"}`
 func (f Fleet) start(ctx context.Context, sp logbook.Spawn) error {
 	doorbell := fmt.Sprintf("[pns] you are %s, working on %s. Run: pns inbox   (reply with: pns send %s \"...\")", sp.Name, sp.Bead, f.Me)
 	return f.H.StartClaude(ctx, sp.Pane, sp.Name, "--name", sp.Name, "--settings", peonSettings, doorbell)
-}
-
-// checkProject requires the project's label on the bead or one of its ancestors.
-func (f Fleet) checkProject(ctx context.Context, b Bead) error {
-	start := b.ID
-	for {
-		if slices.Contains(b.Labels, f.P.Name) {
-			return nil
-		}
-		if b.Parent == "" {
-			return fmt.Errorf("neither %s nor its ancestors are labelled %q: %w (label its epic, or pass --repo)", start, f.P.Name, ErrWrongRepo)
-		}
-		var err error
-		if b, err = f.B.Show(ctx, b.Parent); err != nil {
-			return err
-		}
-	}
 }
 
 // End removes the peon's recorded workspace and records the end. It never asks herdr

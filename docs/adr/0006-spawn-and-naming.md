@@ -1,6 +1,6 @@
 # Spawn the crew way: one name per bead, project as scope, herdr behind a port
 
-A peon's name is a function of its bead: `peon-` plus the bead id without `beads-`, with `.` turned into `-` (`beads-995.8` → `peon-995-8`).
+A peon's name is a function of its bead. Beads live under a named project epic whose id is the repo name, as in crew (`bd create --id peons --force`, children `peons.<n>`), so the name is the bead id with `.` turned into `-` (`peons.8` → `peons-8`). Ids are unique and start with the project name, so names can't collide across projects.
 
 That one string is used for everything:
 - the Claude session name;
@@ -16,7 +16,7 @@ The herdr workspace label is the full bead id. A name too long for herdr (32 cha
 - its repo, `$PNS_REPOS/<project>`;
 - a chief named `chief-<project>`.
 
-The project goes into the chief's name because Claude's and herdr's names are machine-wide. Peon names don't need it, because bead ids are already global. A bead's repo label (its own or its nearest ancestor's) must equal the project, unless `--repo` overrides.
+The project goes into the chief's name because Claude's and herdr's names are machine-wide; peon names already carry it through the bead id. A bead belongs to the project when its id starts with `<project>.`, unless `--repo` overrides.
 
 **Spawn steps, in order:**
 1. `herdr worktree create`.

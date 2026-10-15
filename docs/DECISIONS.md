@@ -30,7 +30,7 @@ Status: **accepted**, **superseded** (replaced by a later decision), or **open**
 
 | Id | Decision | Status | Recorded in |
 |---|---|---|---|
-| R17 | The logbook is a SQLite file (`~/.local/share/peons/logbook.db`, WAL, `modernc.org/sqlite`). Writes use `BEGIN IMMEDIATE`. pns uses none of Dolt's features, and every session runs on one machine. | accepted | ADR-0005 |
+| R17 | The logbook is a SQLite file (per project since R23, WAL, `modernc.org/sqlite`). Writes use `BEGIN IMMEDIATE`. pns uses none of Dolt's features, and every session runs on one machine. | accepted | ADR-0005 |
 | R15 | The record keeps the name "logbook" (not "ledger"); the table is `entries`. | accepted | GLOSSARY, SPEC |
 | R2′ | One Dolt commit per write, with a disk-size warning instead of a GC timer. | superseded by R17 | ADR-0005 |
 | R14 | Dolt's `GET_LOCK` instead of a flock file. | superseded by R17: SQLite's write lock | ADR-0003, ADR-0005 |
@@ -45,7 +45,7 @@ Status: **accepted**, **superseded** (replaced by a later decision), or **open**
 | R8b | Only `pns` writes to session sockets; the chief doesn't use Claude's own cross-session send for peon traffic. | accepted | SPEC |
 | R8c | Each peon worktree sets `"crossSessionInbound": "accept"`, because a session in bypass mode otherwise holds peer messages. | accepted | SPEC |
 | R8d | The Claude adapter only talks to sessions with `peerProtocol == 1`, whose pid is alive with a matching start time. | accepted | SPEC |
-| R16 | Whether a session is alive is worked out each time from Claude's registry, never stored. No `spawned`/`ended`/`reaped` entries and no reaping. | accepted | ADR-0004 |
+| R16 | Whether a session is alive is worked out each time (Claude's registry, herdr), never stored. No reaping. | accepted, amended by R18″ (`spawned`/`ended` entries record workspace ownership) | ADR-0004 |
 | M4 | A session finds its own name from `--as`, then `PNS_SESSION`, then by walking up its parent processes to a Claude registry file. | accepted | SPEC |
 
 ## Waking and reconciling
@@ -61,7 +61,7 @@ Status: **accepted**, **superseded** (replaced by a later decision), or **open**
 
 | Id | Decision | Status | Recorded in |
 |---|---|---|---|
-| R6 | One binary, `pns`, from `cmd/pns`. Packages: `logbook`, `harness/claude`, `whoami` in v0; `plan`, `reconcile`, `hook`, `spawn`, `herdr` in v1. | accepted | SPEC |
+| R6 | One binary, `pns`, from `cmd/pns`. Packages: `logbook`, `project`, `peon`, `harness/claude`; `plan` and `reconcile` in v1. | accepted, packages revised by R24 | SPEC |
 | — | Dependency: `modernc.org/sqlite` (pure Go, no cgo; crew's choice too). | accepted | ADR-0005 |
 
 ## v0 scope (walking skeleton)
@@ -71,8 +71,19 @@ Status: **accepted**, **superseded** (replaced by a later decision), or **open**
 | M1 | v0 is `pns init`, `send`, `inbox`, `status`; peons started by hand. | accepted | SPEC |
 | M2 | A receipt means "shown by `pns inbox`"; `--peek` writes nothing; no hooks in v0. | accepted | SPEC |
 | M3 | Ring every unread message on every send; no lock, no timers. A missed doorbell waits for the next send. | accepted | SPEC |
-| M5 | The kind list is declared up front: `message`, `received`, `rang` (narrowed from M5's original list by R16). | accepted | SPEC |
+| M5 | The kind list is declared up front: `message`, `received`, `rang`, `spawned`, `ended` (R16 narrowed it; R18″ restored `spawned`/`ended`). | accepted | SPEC |
 | M6 | (Was: database on the shared beads server.) Now the SQLite file from R17. | superseded by R17 | ADR-0005 |
 | M7 | Tests: logbook against a temp file; Claude adapter against a fake unix socket; a scripted end-to-end run with two real sessions. | accepted | SPEC |
 | M8 | The doorbell explains itself; no peon prompt file in v0. | accepted | SPEC |
 | M9 | Manual setup: `crossSessionInbound` in the worktree's settings, then `claude --name peon-a`. | accepted | SPEC |
+
+## Spawning peons
+
+| Id | Decision | Status | Recorded in |
+|---|---|---|---|
+| R18″ | Spawn the crew way: `herdr worktree create` labelled with the bead, one `spawned` entry recording the herdr workspace id, `pns end` removes only that recorded id. No roster table; never guess a workspace from herdr. | accepted | ADR-0006 |
+| R20 | One peon per bead in v1; a role prefix only when a second peon per bead is needed. | accepted | ADR-0006 |
+| R21′ | One name everywhere: `peon-` + bead id without `beads-`, `.` → `-`. Session, herdr agent, branch, worktree dir (`<repo>-WT/<name>`) and address; herdr label is the bead id. Too long is refused, not hashed. | accepted | ADR-0006 |
+| R23 | Project is the scope (crew's `--project`): `--project` → `PNS_PROJECT` → git common-dir basename. Per-project logbook `~/.local/share/peons/<project>.db`, repo `$PNS_REPOS/<project>`, chief `chief-<project>`. The bead's repo label must equal the project unless `--repo`. | accepted | ADR-0006 |
+| R24 | Implementation: packages `project` and `peon`; typed `Herdr` and `Beads` ports with CLI adapters and stateful fakes; `spawned` written right after the worktree is created; first assignment delivered as Claude's first prompt; logbook gains `RecordSpawn`, `RecordEnd`, `LatestSpawn`. Spawn resumes a dead peon's recorded workspace and reports orphans. | accepted | ADR-0006 |
+| R19, R22, R18′ | Roster table, reserve-first spawn, label-only project. | superseded by R18″/R23 | ADR-0006 |

@@ -248,6 +248,8 @@ peons-1-4    not running  2
 
 ## Setup
 
+Full guide: [SETUP.md](SETUP.md).
+
 ```sh
 pns chief                 # chief-<project>, in $PNS_REPOS/<project>
 pns epic "ringing"        # → peons-2; then bd create --parent peons-2 --force …
@@ -270,7 +272,8 @@ Manual peon (no herdr): `claude --name peon-a --settings '{"crossSessionInbound"
 | `claude` tests (`claudetest.FakeRegistry`) | a fake unix listener sees the auth line only when a key exists, then the user line with its priority, then EOF; a `procStart` mismatch or another `peerProtocol` gives `ErrNotRunning` |
 | `cmd/pns` status tests | running with 0 and N unread, not running with N unread; `--json`; status records no receipts |
 | `cmd/pns` ring tests | doorbell text and `--now`; not running → stored, "queued", exit 0; failed ring → warning, exit 0 |
-| `scripts/e2e.sh` | two real Claude sessions; checks "Done when" 1–3 |
+| `TestKilledWriterLosesNoCommittedMessage` | "Done when" 4: a separate process SIGKILLed mid-way through sends; every acknowledged send survives and the logbook still writes |
+| `scripts/e2e.sh <bead>` | "Done when" 1–3 with a real chief and peon in herdr: wake time from the peon's transcript, round trip, mail queued while stopped |
 
 ## v1 outline
 

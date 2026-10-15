@@ -1,10 +1,13 @@
 package logbook_test
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/jmmshn/peons/internal/logbook"
@@ -215,5 +218,70 @@ func TestCountsNamesEverySessionWithItsUnread(t *testing.T) {
 	want := map[string]int{"chief": 0, "peon-a": 2, "peon-b": 1} // peon-b's brief is unread
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("Counts = %v, want %v", got, want)
+	}
+}
+
+// TestKilledWriterLosesNoCommittedMessage SIGKILLs a separate process mid-way through a
+// stream of sends. Every send it acknowledged must survive, and the logbook must still
+// read and write.
+func TestKilledWriterLosesNoCommittedMessage(t *testing.T) {
+	if path := os.Getenv("PNS_TEST_WRITER"); path != "" {
+		writeForever(path) // the child: never returns
+	}
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "logbook.db")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestKilledWriterLosesNoCommittedMessage$")
+	cmd.Env = append(os.Environ(), "PNS_TEST_WRITER="+path)
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	acked := map[logbook.ID]bool{}
+	sc := bufio.NewScanner(out)
+	for len(acked) < 200 && sc.Scan() {
+		acked[logbook.ID(sc.Text())] = true
+	}
+	cmd.Process.Signal(syscall.SIGKILL) // mid-write: the child is still sending
+	cmd.Wait()
+	if len(acked) < 200 {
+		t.Fatalf("writer acknowledged only %d sends", len(acked))
+	}
+
+	lb, err := logbook.Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lb.Close()
+	got, err := lb.Unread(ctx, "chief")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range got {
+		delete(acked, m.ID)
+	}
+	if len(acked) != 0 {
+		t.Fatalf("%d acknowledged sends lost", len(acked))
+	}
+	if _, err := lb.Send(ctx, "peon-b", "chief", "after the crash"); err != nil {
+		t.Fatalf("send after the crash: %v", err)
+	}
+}
+
+// writeForever sends to chief in a loop, printing each id once Send has returned.
+func writeForever(path string) {
+	ctx := context.Background()
+	lb, err := logbook.Open(ctx, path)
+	if err != nil {
+		os.Exit(1)
+	}
+	for {
+		id, err := lb.Send(ctx, "peon-a", "chief", "work")
+		if err != nil {
+			os.Exit(1)
+		}
+		fmt.Println(id)
 	}
 }

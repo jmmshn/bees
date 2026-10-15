@@ -34,8 +34,6 @@ internal/harness/claude/   registry lookup, auth token, NDJSON ring
 internal/whoami/           which session is running pns
 ```
 
-The existing `cmd/peons` is renamed to `cmd/pns`.
-
 ## Logbook
 
 The logbook is a SQLite file in WAL mode ([ADR-0005](adr/0005-sqlite-not-dolt.md)), opened through `modernc.org/sqlite`.

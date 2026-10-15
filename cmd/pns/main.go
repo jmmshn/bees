@@ -10,9 +10,9 @@ import (
 const usage = `usage: pns <command> [arguments]
 
 commands:
-  init      create the logbook if missing
+  init      create the logbook file and table if missing
   send      store a message for a session, then ring it
-  inbox     print your unread messages and mark them read
+  inbox     print your unread messages and record receipts
   status    list sessions and their unread counts
 `
 
@@ -29,6 +29,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "-h", "--help", "help":
 		fmt.Fprint(stdout, usage)
 		return 0
+	case "init", "send", "inbox", "status":
+		fmt.Fprintf(stderr, "pns: %s is not implemented yet\n", args[0])
+		return 2
 	default:
 		fmt.Fprintf(stderr, "pns: unknown command %q\n\n%s", args[0], usage)
 		return 2

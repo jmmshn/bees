@@ -7,21 +7,21 @@ import (
 )
 
 func TestNoArgsPrintsUsageAndFails(t *testing.T) {
-	var out, errb bytes.Buffer
-	code := run(nil, &out, &errb)
+	var out, stderr bytes.Buffer
+	code := run(nil, &out, &stderr)
 	if code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
 	}
 	for _, cmd := range []string{"init", "send", "inbox", "status"} {
-		if !strings.Contains(errb.String(), cmd) {
-			t.Errorf("usage missing %q:\n%s", cmd, errb.String())
+		if !strings.Contains(stderr.String(), cmd) {
+			t.Errorf("usage missing %q:\n%s", cmd, stderr.String())
 		}
 	}
 }
 
 func TestHelpPrintsUsageAndSucceeds(t *testing.T) {
-	var out, errb bytes.Buffer
-	if code := run([]string{"--help"}, &out, &errb); code != 0 {
+	var out, stderr bytes.Buffer
+	if code := run([]string{"--help"}, &out, &stderr); code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
 	if !strings.Contains(out.String(), "usage: pns") {
@@ -30,11 +30,21 @@ func TestHelpPrintsUsageAndSucceeds(t *testing.T) {
 }
 
 func TestUnknownCommandFails(t *testing.T) {
-	var out, errb bytes.Buffer
-	if code := run([]string{"frobnicate"}, &out, &errb); code != 2 {
+	var out, stderr bytes.Buffer
+	if code := run([]string{"frobnicate"}, &out, &stderr); code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
 	}
-	if !strings.Contains(errb.String(), `unknown command "frobnicate"`) {
-		t.Errorf("stderr = %q", errb.String())
+	if !strings.Contains(stderr.String(), `unknown command "frobnicate"`) {
+		t.Errorf("stderr = %q", stderr.String())
+	}
+}
+
+func TestPlannedCommandSaysNotImplemented(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"init"}, &stdout, &stderr); code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if got := stderr.String(); got != "pns: init is not implemented yet\n" {
+		t.Errorf("stderr = %q", got)
 	}
 }

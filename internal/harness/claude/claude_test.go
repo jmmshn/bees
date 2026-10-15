@@ -2,6 +2,8 @@ package claude_test
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/jmmshn/peons/internal/harness/claude"
@@ -88,5 +90,20 @@ func TestFindRejectsSessionsWithoutASocket(t *testing.T) {
 	reg.Edit(t, func(e map[string]any) { e["messagingSocketPath"] = "" })
 	if _, err := claude.Find("peon-a"); !errors.Is(err, claude.ErrNotRunning) {
 		t.Fatalf("err = %v, want ErrNotRunning", err)
+	}
+}
+
+func TestTrustedReadsClaudesFolderTrust(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if claude.Trusted("/repo/a") {
+		t.Fatal("trusted with no ~/.claude.json")
+	}
+	cfg := `{"projects":{"/repo/a":{"hasTrustDialogAccepted":true},"/repo/b":{"hasTrustDialogAccepted":false}}}`
+	if err := os.WriteFile(filepath.Join(home, ".claude.json"), []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !claude.Trusted("/repo/a") || claude.Trusted("/repo/b") || claude.Trusted("/repo/c") {
+		t.Fatal("Trusted disagrees with ~/.claude.json")
 	}
 }

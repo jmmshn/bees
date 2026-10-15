@@ -145,12 +145,15 @@ func TestNextEpic(t *testing.T) {
 func TestSpawnStartsAPeonInItsOwnWorkspace(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	name, err := r.fleet.Spawn(ctx, "peons-8")
+	st, err := r.fleet.Spawn(ctx, "peons-8")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if name != "peons-8" {
-		t.Fatalf("name = %q", name)
+	if st.Name != "peons-8" || st.Resumed || st.Waiting {
+		t.Fatalf("started = %+v", st)
+	}
+	if slices.Contains(r.h.started[0], "--continue") {
+		t.Fatalf("fresh start passed --continue: %q", r.h.started[0])
 	}
 	wt := r.repo + "-WT/peons-8"
 	ws := r.h.workspaces[0]
@@ -212,6 +215,33 @@ func TestSpawnResumesADeadPeonInItsRecordedWorkspace(t *testing.T) {
 	}
 }
 
+func TestResumeContinuesThePeonsConversation(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	r.fleet.Spawn(ctx, "peons-8")
+	r.h.exit("peons-8")
+	st, err := r.fleet.Spawn(ctx, "peons-8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.Resumed || st.Workspace != r.h.workspaces[0].ID {
+		t.Fatalf("started = %+v, want resumed in %s", st, r.h.workspaces[0].ID)
+	}
+	if !slices.Contains(r.h.started[1], "--continue") {
+		t.Fatalf("resume args = %q, want --continue", r.h.started[1])
+	}
+}
+
+func TestPeonWaitingAtAPromptCountsAsStarted(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	r.h.failStart = fmt.Errorf("herdr agent start: blocked during startup: %w", peon.ErrWaiting)
+	st, err := r.fleet.Spawn(ctx, "peons-8")
+	if err != nil || !st.Waiting || st.Name != "peons-8" {
+		t.Fatalf("started = %+v, err = %v; want waiting, no error", st, err)
+	}
+}
+
 func TestFailedStartIsHealedBySpawningAgain(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
@@ -232,8 +262,9 @@ func TestUnrecordedWorkspaceForTheBeadIsAnOrphan(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	r.h.workspaces = []peon.Workspace{{ID: "w42", Label: "peons-8"}}
-	if _, err := r.fleet.Spawn(ctx, "peons-8"); !errors.Is(err, peon.ErrOrphan) {
-		t.Fatalf("err = %v, want ErrOrphan", err)
+	_, err := r.fleet.Spawn(ctx, "peons-8")
+	if !errors.Is(err, peon.ErrOrphan) || !strings.Contains(err.Error(), "herdr worktree remove --workspace w42 --force") {
+		t.Fatalf("err = %v, want ErrOrphan with the cleanup command", err)
 	}
 	if len(r.h.removed) != 0 || len(r.h.workspaces) != 1 {
 		t.Fatalf("removed=%v workspaces=%v; orphans must be left alone", r.h.removed, r.h.workspaces)

@@ -100,6 +100,25 @@ func Find(name string) (Session, error) {
 	return found, nil
 }
 
+// Trusted reports whether Claude has accepted its folder-trust dialog for dir, the main
+// checkout of a repo (its worktrees share the answer). It only reads ~/.claude.json.
+func Trusted(dir string) bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	b, err := os.ReadFile(filepath.Join(home, ".claude.json"))
+	if err != nil {
+		return false
+	}
+	var cfg struct {
+		Projects map[string]struct {
+			HasTrustDialogAccepted bool
+		}
+	}
+	return json.Unmarshal(b, &cfg) == nil && cfg.Projects[dir].HasTrustDialogAccepted
+}
+
 // Ring sends text into s as a user prompt: an NDJSON auth line when s has a token, then
 // the user line, then a half-close. Claude sends no reply.
 func Ring(s Session, text string, p Priority) error {

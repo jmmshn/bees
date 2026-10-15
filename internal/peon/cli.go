@@ -63,7 +63,10 @@ func (HerdrCLI) CreateWorktree(ctx context.Context, repo, branch, path, label st
 }
 
 func (HerdrCLI) StartClaude(ctx context.Context, pane, name string, args ...string) error {
-	_, err := herdr(ctx, nil, append([]string{"agent", "start", name, "--kind", "claude", "--pane", pane, "--"}, args...)...)
+	code, err := herdr(ctx, nil, append([]string{"agent", "start", name, "--kind", "claude", "--pane", pane, "--"}, args...)...)
+	if code == "agent_not_ready" { // Claude started but is blocked at a startup prompt
+		return fmt.Errorf("%w: %w", err, ErrWaiting)
+	}
 	return err
 }
 

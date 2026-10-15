@@ -26,7 +26,7 @@ The project goes into the chief's name because Claude's and herdr's names are ma
 
 No settings file is written: in a worktree Claude reads `.claude/settings.local.json` from the main checkout, so per-peon settings must ride `--settings`. No `PNS_*` variables are set either: the peon's `pns` finds its name by walking up to its Claude process, and its project from the worktree's git common directory.
 
-Any failure after step 2 is healed by running spawn again, which resumes in the recorded workspace. Delivering the first assignment as the first prompt avoids racing Claude's socket registration, so spawn doesn't depend on ringing. `pns end` removes only the workspace id recorded in `spawned`, deletes the branch if it is fully merged (`git branch -d`), then writes `ended`.
+Any failure after step 2 is healed by running spawn again, which resumes in the recorded workspace with `claude --continue`, so the peon keeps its conversation. Delivering the first assignment as the first prompt avoids racing Claude's socket registration, so spawn doesn't depend on ringing. `pns end` removes only the workspace id recorded in `spawned`, deletes the branch if it is fully merged (`git branch -d`), then writes `ended`.
 
 ## Considered Options
 

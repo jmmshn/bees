@@ -20,7 +20,8 @@ import (
 var (
 	ErrNoAgent    = errors.New("no live agent with that name")
 	ErrRunning    = errors.New("peon is already running")
-	ErrOrphan     = errors.New("a herdr workspace is labelled with this bead but pns has no record of it; remove it by hand")
+	ErrOrphan     = errors.New("a herdr workspace is labelled with this bead but pns has no record of it")
+	ErrWaiting    = errors.New("claude is waiting at a prompt") // started, but needs an answer in its pane
 	ErrWrongRepo  = errors.New("bead does not belong to this project")
 	ErrNotSpawned = errors.New("pns has no record of spawning this peon")
 )
@@ -37,9 +38,9 @@ type Bead struct{ ID, Title, Description string }
 // Herdr is the slice of herdr pns drives.
 type Herdr interface {
 	CreateWorktree(ctx context.Context, repo, branch, path, label string) (Workspace, error)
-	StartClaude(ctx context.Context, pane, name string, args ...string) error
-	RemoveWorktree(ctx context.Context, workspace string) error // already gone → nil
-	Agent(ctx context.Context, name string) (Agent, error)      // ErrNoAgent when not live
+	StartClaude(ctx context.Context, pane, name string, args ...string) error // ErrWaiting when blocked at a prompt
+	RemoveWorktree(ctx context.Context, workspace string) error               // already gone → nil
+	Agent(ctx context.Context, name string) (Agent, error)                    // ErrNoAgent when not live
 	Workspaces(ctx context.Context) ([]Workspace, error)
 }
 
@@ -92,50 +93,57 @@ func NextEpic(project string, ids []string) string {
 	return fmt.Sprintf("%s-%d", project, top+1)
 }
 
+// Started describes a peon Spawn started.
+type Started struct {
+	Name, Workspace string
+	Resumed         bool // restarted in its recorded workspace, continuing its conversation
+	Waiting         bool // Claude is waiting at a prompt (e.g. folder trust) in its pane
+}
+
 // Spawn starts a peon for bead, or restarts it in its recorded workspace if its
-// session has died. It returns the peon's name.
-func (f Fleet) Spawn(ctx context.Context, bead string) (string, error) {
+// session has died.
+func (f Fleet) Spawn(ctx context.Context, bead string) (Started, error) {
 	name, err := Name(bead)
 	if err != nil {
-		return "", err
+		return Started{}, err
 	}
 	sp, ok, err := f.LB.LatestSpawn(ctx, name)
 	if err != nil {
-		return "", err
+		return Started{}, err
 	}
 	if ok && !sp.Ended {
 		if _, err := f.H.Agent(ctx, name); err == nil {
-			return name, fmt.Errorf("%s: %w", name, ErrRunning)
+			return Started{}, fmt.Errorf("%s: %w", name, ErrRunning)
 		} else if !errors.Is(err, ErrNoAgent) {
-			return name, err
+			return Started{}, err
 		}
-		return name, f.start(ctx, sp) // resume
+		return f.start(ctx, sp, true)
 	}
 	if !f.ForeignRepo && !Belongs(f.P.Name, bead) {
-		return "", fmt.Errorf("%s is not a %s bead (want %s-<n>[.<m>]): %w (or pass --repo)", bead, f.P.Name, f.P.Name, ErrWrongRepo)
+		return Started{}, fmt.Errorf("%s is not a %s bead (want %s-<n>[.<m>]): %w (or pass --repo)", bead, f.P.Name, f.P.Name, ErrWrongRepo)
 	}
 	b, err := f.B.Show(ctx, bead)
 	if err != nil {
-		return "", err
+		return Started{}, err
 	}
 	wss, err := f.H.Workspaces(ctx)
 	if err != nil {
-		return "", err
+		return Started{}, err
 	}
 	if i := slices.IndexFunc(wss, func(w Workspace) bool { return w.Label == bead }); i >= 0 {
-		return "", fmt.Errorf("%s (workspace %s): %w", bead, wss[i].ID, ErrOrphan)
+		return Started{}, fmt.Errorf("%s: %w; check it, then remove it with: herdr worktree remove --workspace %s --force", bead, ErrOrphan, wss[i].ID)
 	}
 
 	ws, err := f.H.CreateWorktree(ctx, f.P.Repo, name, f.P.Repo+"-WT/"+name, bead)
 	if err != nil {
-		return "", err
+		return Started{}, err
 	}
 	// Record straight away: any failure after this point is healed by spawning again.
 	sp = logbook.Spawn{Name: name, Bead: bead, Workspace: ws.ID, Pane: ws.Pane, Worktree: ws.Path, Branch: name, Repo: f.P.Repo}
 	if sp.ID, err = f.LB.RecordSpawn(ctx, f.Me, sp, brief(b)); err != nil {
-		return "", err
+		return Started{}, err
 	}
-	return name, f.start(ctx, sp)
+	return f.start(ctx, sp, false)
 }
 
 // peonSettings is passed with --settings: Claude reads settings.local.json from the main
@@ -144,10 +152,20 @@ func (f Fleet) Spawn(ctx context.Context, bead string) (string, error) {
 const peonSettings = `{"crossSessionInbound":"accept"}`
 
 // start starts Claude with a doorbell as its first prompt, so the peon reads its unread
-// messages without needing a ring.
-func (f Fleet) start(ctx context.Context, sp logbook.Spawn) error {
+// messages without needing a ring. A resumed peon continues its last conversation in
+// the worktree instead of starting its task over.
+func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Started, error) {
+	st := Started{Name: sp.Name, Workspace: sp.Workspace, Resumed: resume}
 	doorbell := fmt.Sprintf("[pns] you are %s, working on %s. Run: pns inbox   (reply with: pns send %s \"...\")", sp.Name, sp.Bead, f.Me)
-	return f.H.StartClaude(ctx, sp.Pane, sp.Name, "--name", sp.Name, "--settings", peonSettings, doorbell)
+	args := []string{"--name", sp.Name, "--settings", peonSettings, doorbell}
+	if resume {
+		args = append([]string{"--continue"}, args...)
+	}
+	err := f.H.StartClaude(ctx, sp.Pane, sp.Name, args...)
+	if errors.Is(err, ErrWaiting) {
+		st.Waiting, err = true, nil
+	}
+	return st, err
 }
 
 // End removes the peon's recorded workspace and records the end. It never asks herdr

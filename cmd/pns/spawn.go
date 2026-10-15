@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/jmmshn/peons/internal/harness/claude"
 	"github.com/jmmshn/peons/internal/peon"
 	"github.com/jmmshn/peons/internal/project"
 )
@@ -54,11 +55,21 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return err
 	}
 	defer f.LB.Close()
-	name, err := f.Spawn(ctx, pos[0])
+	if !claude.Trusted(f.P.Repo) {
+		fmt.Fprintf(stderr, "pns spawn: Claude hasn't trusted %s yet; the peon will wait at the trust prompt until you answer it in its pane\n", f.P.Repo)
+	}
+	st, err := f.Spawn(ctx, pos[0])
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "spawned %s for %s\n", name, pos[0])
+	if st.Resumed {
+		fmt.Fprintf(stdout, "resumed %s in workspace %s\n", st.Name, st.Workspace)
+	} else {
+		fmt.Fprintf(stdout, "spawned %s for %s in workspace %s\n", st.Name, pos[0], st.Workspace)
+	}
+	if st.Waiting {
+		fmt.Fprintf(stdout, "%s is waiting at a prompt (probably folder trust); answer it in its pane\n", st.Name)
+	}
 	return nil
 }
 

@@ -173,8 +173,14 @@ type Fleet struct {
 	B  Beads
 	Me string
 }
-func (f Fleet) Spawn(ctx context.Context, bead string) (string, error) // ErrRunning, ErrWrongRepo, ErrOrphan
-func (f Fleet) End(ctx context.Context, name string) error              // ErrNotSpawned; already ended → nil
+type Started struct {
+	Name, Workspace string
+	Resumed         bool // restarted in its recorded workspace with --continue
+	Waiting         bool // herdr said agent_not_ready: Claude is blocked at a prompt (folder trust)
+}
+
+func (f Fleet) Spawn(ctx context.Context, bead string) (Started, error)              // ErrRunning, ErrWrongRepo, ErrOrphan
+func (f Fleet) End(ctx context.Context, name string) (branchKept bool, err error) // ErrNotSpawned; already ended → nil
 ```
 
 `Spawn(bead)`:
@@ -182,12 +188,12 @@ func (f Fleet) End(ctx context.Context, name string) error              // ErrNo
 1. `name = Name(bead)`.
 2. If `LatestSpawn(name)` is open:
    - herdr reports the agent live → `ErrRunning`;
-   - otherwise → resume at step 7 in the recorded workspace.
+   - otherwise → resume at step 7 in the recorded workspace, adding `--continue` so the peon keeps its conversation instead of redoing its task.
 3. The bead id must be `<project>-<n>[.<m>…]` (`Belongs`), unless `--repo` → else `ErrWrongRepo`.
-4. A herdr workspace labelled with the bead but no `spawned` entry → `ErrOrphan`. It is never removed automatically.
+4. A herdr workspace labelled with the bead but no `spawned` entry → `ErrOrphan`, with the command to remove it by hand (`herdr worktree remove --workspace <id> --force`). It is never removed automatically.
 5. `herdr worktree create --cwd <repo> --branch <name> --path <repo>-WT/<name> --label <bead> --no-focus` (herdr prints JSON).
 6. `RecordSpawn` immediately, in one transaction with the brief (`bd show` title and description) as a message from the chief: subject = name; data = bead, workspace, pane, worktree, branch, repo.
-7. `herdr agent start <name> --kind claude --pane <pane> -- --name <name> --settings '{"crossSessionInbound":"accept"}' "<doorbell>"`. The doorbell is Claude's first prompt, so spawn doesn't depend on ringing. No settings file is written (Claude reads `settings.local.json` from the main checkout in a worktree), and no `PNS_*` variables are needed.
+7. `herdr agent start <name> --kind claude --pane <pane> -- --name <name> --settings '{"crossSessionInbound":"accept"}' "<doorbell>"`. The doorbell is Claude's first prompt, so spawn doesn't depend on ringing. herdr's `agent_not_ready` means Claude started but is blocked at a prompt: spawn succeeds with `Waiting` and tells the captain to answer it in the peon's pane. Before spawning, `pns spawn` warns if `~/.claude.json` shows the repo isn't trusted yet (read only; trust is keyed by the main checkout, so its worktrees share it). No settings file is written (Claude reads `settings.local.json` from the main checkout in a worktree), and no `PNS_*` variables are needed.
 
 `End(name)`: read `LatestSpawn`; none → `ErrNotSpawned` (never ask herdr). Otherwise `herdr worktree remove --workspace <recorded id> --force`, then `git -C <recorded repo> branch -d <name>` (kept, and reported, if not fully merged), then `RecordEnd`.
 
@@ -252,7 +258,7 @@ Manual peon (no herdr): `claude --name peon-a --settings '{"crossSessionInbound"
 | `TestUnreadIsSet` | reading a newer message leaves older ones unread |
 | `TestRecordReceiptsIdempotent` | recording the same receipt twice is a no-op |
 | `project` tests | resolution order; a linked worktree resolves to its main repo's project |
-| `peon` tests (fake Herdr and Beads) | spawn → settings + entry + brief + start args; second spawn `ErrRunning`; dead agent resumes in the same workspace; orphan `ErrOrphan` and nothing removed; end removes exactly the recorded id; wrong repo label refused |
+| `peon` tests (fake Herdr and Beads) | spawn → settings + entry + brief + start args; second spawn `ErrRunning`; dead agent resumes in the same workspace with `--continue`; `agent_not_ready` counts as started; orphan `ErrOrphan` with the cleanup command and nothing removed; end removes exactly the recorded id; wrong repo label refused |
 | `claude` tests (`claudetest.FakeRegistry`) | a fake unix listener sees the auth line only when a key exists, then the user line with its priority, then EOF; a `procStart` mismatch or another `peerProtocol` gives `ErrNotRunning` |
 | `cmd/pns` ring tests | doorbell text and `--now`; not running → stored, "queued", exit 0; failed ring → warning, exit 0 |
 | `scripts/e2e.sh` | two real Claude sessions; checks "Done when" 1–3 |

@@ -203,7 +203,7 @@ func TestSpawnRecordsTrackTheLatestSpawnAndItsEnd(t *testing.T) {
 	}
 }
 
-func TestCountsNamesEverySessionWithItsUnread(t *testing.T) {
+func TestUnreadCountsNamesEverySessionWithItsUnread(t *testing.T) {
 	ctx := context.Background()
 	lb := open(t)
 	lb.Send(ctx, "chief", "peon-a", "one")
@@ -211,7 +211,7 @@ func TestCountsNamesEverySessionWithItsUnread(t *testing.T) {
 	id, _ := lb.Send(ctx, "peon-a", "chief", "done")
 	lb.RecordReceipts(ctx, "chief", []logbook.ID{id})
 	lb.RecordSpawn(ctx, "chief", logbook.Spawn{Name: "peon-b", Bead: "p-2", Workspace: "w1"}, "brief")
-	got, err := lb.Counts(ctx)
+	got, err := lb.UnreadCounts(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

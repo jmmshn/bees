@@ -124,9 +124,9 @@ ORDER BY m.rowid`, session)
 	return out, rows.Err()
 }
 
-// Counts returns every session the logbook names (a writer, recipient or peon) with its
+// UnreadCounts returns every session the logbook names (a writer, recipient or peon) with its
 // unread count, which is 0 for sessions with nothing unread.
-func (l *Logbook) Counts(ctx context.Context) (map[string]int, error) {
+func (l *Logbook) UnreadCounts(ctx context.Context) (map[string]int, error) {
 	rows, err := l.db.QueryContext(ctx, `
 SELECT name, SUM(unread) FROM (
   SELECT actor AS name, 0 AS unread FROM entries

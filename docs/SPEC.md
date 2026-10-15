@@ -92,7 +92,7 @@ func (l *Logbook) RecordReceipts(ctx context.Context, session string, ids []ID) 
 func (l *Logbook) RecordSpawn(ctx context.Context, by string, s Spawn) (ID, error)
 func (l *Logbook) RecordEnd(ctx context.Context, by string, spawn ID) error
 func (l *Logbook) LatestSpawn(ctx context.Context, name string) (Spawn, bool, error) // Spawn.Ended set from a matching ended entry
-func (l *Logbook) Counts(ctx context.Context) (map[string]int, error)          // every session the logbook names → unread (0 if none)
+func (l *Logbook) UnreadCounts(ctx context.Context) (map[string]int, error)          // every session the logbook names → unread (0 if none)
 ```
 
 ## Claude adapter
@@ -236,7 +236,7 @@ The doorbell text explains itself, so peons need no setup prompt in v0:
 
 Senders are listed in order of their oldest unread message; "reply with" names whoever just sent.
 
-`pns status` combines `claude.List()` with `lb.Counts()`. It shows every session this project's logbook names (writers, recipients, peons), each running or not, with its unread count. Claude's registry is machine-wide, so a running session the logbook has never named is left out. It writes nothing.
+`pns status` combines `claude.List()` with `lb.UnreadCounts()`. It shows the sessions this project's logbook names (writers, recipients, peons) that are running or have unread messages, with their unread counts. A stopped session with nothing unread is history and is left out. Claude's registry is machine-wide, so a running session this project's logbook has never named (another project's, or one that hasn't used pns yet) is left out too (R30). It writes nothing.
 
 ```text
 SESSION      STATE        UNREAD
@@ -270,7 +270,7 @@ Manual peon (no herdr): `claude --name peon-a --settings '{"crossSessionInbound"
 | `project` tests | resolution order; a linked worktree resolves to its main repo's project |
 | `peon` tests (fake Herdr and Beads) | spawn → settings + entry + brief + start args; second spawn `ErrRunning`; dead agent resumes in the same workspace with `--continue`; `agent_not_ready` counts as started; orphan `ErrOrphan` with the cleanup command and nothing removed; end removes exactly the recorded id; wrong repo label refused |
 | `claude` tests (`claudetest.FakeRegistry`) | a fake unix listener sees the auth line only when a key exists, then the user line with its priority, then EOF; a `procStart` mismatch or another `peerProtocol` gives `ErrNotRunning` |
-| `cmd/pns` status tests | running with 0 and N unread, not running with N unread; `--json`; status records no receipts |
+| `cmd/pns` status tests | running with 0 and N unread, not running with N unread, stopped with none left out; `--json`; status records no receipts |
 | `cmd/pns` ring tests | doorbell text and `--now`; not running → stored, "queued", exit 0; failed ring → warning, exit 0 |
 | `TestKilledWriterLosesNoCommittedMessage` | "Done when" 4: a separate process SIGKILLed mid-way through sends; every acknowledged send survives and the logbook still writes |
 | `scripts/e2e.sh <bead>` | "Done when" 1–3 with a real chief and peon in herdr: wake time from the peon's transcript, round trip, mail queued while stopped |

@@ -38,7 +38,7 @@ func cmdStatus(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 		return err
 	}
 	defer lb.Close()
-	counts, err := lb.Counts(ctx)
+	counts, err := lb.UnreadCounts(ctx)
 	if err != nil {
 		return err
 	}
@@ -50,13 +50,15 @@ func cmdStatus(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 	rows := []sessionStatus{}
 	for _, name := range slices.Sorted(maps.Keys(counts)) {
 		running := slices.ContainsFunc(live, func(s claude.Session) bool { return s.Name == name })
-		rows = append(rows, sessionStatus{Session: name, Running: running, Unread: counts[name]})
+		if running || counts[name] > 0 { // a stopped session with nothing waiting is history
+			rows = append(rows, sessionStatus{Session: name, Running: running, Unread: counts[name]})
+		}
 	}
 	if *asJSON {
 		return json.NewEncoder(stdout).Encode(rows)
 	}
 	if len(rows) == 0 {
-		fmt.Fprintln(stdout, "no sessions yet")
+		fmt.Fprintln(stdout, "no running sessions and no unread messages")
 		return nil
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)

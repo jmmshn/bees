@@ -11,7 +11,7 @@ bead=${1:?usage: scripts/e2e.sh <throwaway bead, e.g. peons-1.11>}
 peon=${bead//./-}
 chief=e2e-chief
 captain=e2e-captain
-settings='{"crossSessionInbound":"accept"}'
+settings='{"crossSessionInbound":"accept"}' # as pns spawn passes to peons
 repo=$(git rev-parse --show-toplevel)
 cd "$repo"
 
@@ -67,6 +67,8 @@ id=$(pns send --as "$captain" "$peon" "e2e 1: reply with exactly: pns send $capt
 sent_ms=$((16#${id:0:13}))
 wait_until 120 "the peon's wake-ok" captain_got wake-ok
 s=$(session "$peon")
+# ponytail: Claude names a project's transcript dir after its cwd with every
+# non-alphanumeric character as "-" (observed, not documented).
 transcript=~/.claude/projects/$(jq -r .cwd <<<"$s" | sed 's/[^A-Za-z0-9]/-/g')/$(jq -r .sessionId <<<"$s").jsonl
 rang=$(jq -r 'select(.type == "user") | select(.message.content | tostring | contains("[pns]")) | .timestamp' "$transcript" |
 	while read -r ts; do d=$(date -d "$ts" +%s%3N); [ "$d" -ge "$sent_ms" ] && echo "$d" && break; done)
@@ -84,7 +86,8 @@ pass "2. chief -> peon -> chief round trip, nobody typing"
 wait_until 60 "$peon to go idle" is_idle "$peon"
 kill "$(session "$peon" | jq -r .pid)"
 wait_until 30 "$peon to exit" is_gone "$peon"
-sleep 2 # let herdr notice the agent exited
+agent_gone() { ! herdr agent get "$peon" >/dev/null 2>&1; }
+wait_until 30 "herdr to clear $peon" agent_gone
 pns send --as "$captain" "$peon" "e2e 3: reply with exactly: pns send $captain queued-ok" | grep -q "queued; $peon is not running" ||
 	fail "3. send to a stopped peon didn't say queued"
 pns spawn --as "$chief" "$bead" | grep -q "^resumed $peon" || fail "3. respawn didn't resume $peon"

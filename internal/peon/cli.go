@@ -64,7 +64,9 @@ func (HerdrCLI) CreateWorktree(ctx context.Context, repo, branch, path, label st
 
 func (HerdrCLI) StartClaude(ctx context.Context, pane, name string, args ...string) error {
 	code, err := herdr(ctx, nil, append([]string{"agent", "start", name, "--kind", "claude", "--pane", pane, "--"}, args...)...)
-	if code == "agent_not_ready" { // Claude started but is blocked at a startup prompt
+	// herdr exits non-zero with this code when the agent is blocked during startup, e.g.
+	// at Claude's folder-trust prompt (seen with herdr 0.9.3).
+	if code == "agent_not_ready" {
 		return fmt.Errorf("%w: %w", err, ErrWaiting)
 	}
 	return err

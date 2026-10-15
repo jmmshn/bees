@@ -21,7 +21,7 @@ commands:
   epic      create the project's next epic (<project>-<n>)
   send      store a message for a session, then ring it
   inbox     print your unread messages and record receipts
-  status    list sessions and their unread counts
+  status    list running sessions and unread counts (--json for scripts)
 `
 
 // commands maps each implemented subcommand to its handler.

@@ -18,8 +18,7 @@ func TestStatusShowsRunningAndUnreadForEachSession(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	want := "SESSION  STATE        UNREAD\n" +
-		"chief    not running  0\n" +
+	want := "SESSION  STATE        UNREAD\n" + // chief: stopped with nothing unread, so left out
 		"peon-a   running      2\n" +
 		"peon-b   not running  1\n"
 	if out != want {
@@ -57,7 +56,7 @@ func TestStatusRecordsNoReceipts(t *testing.T) {
 
 func TestStatusWithAnEmptyLogbook(t *testing.T) {
 	useTempLogbook(t)
-	if out, _, code := pns(t, "status"); code != 0 || out != "no sessions yet\n" {
+	if out, _, code := pns(t, "status"); code != 0 || out != "no running sessions and no unread messages\n" {
 		t.Fatalf("exit %d, %q", code, out)
 	}
 }

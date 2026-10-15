@@ -55,9 +55,7 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return err
 	}
 	defer f.LB.Close()
-	if !claude.Trusted(f.P.Repo) {
-		fmt.Fprintf(stderr, "pns spawn: Claude hasn't trusted %s yet; the peon will wait at the trust prompt until you answer it in its pane\n", f.P.Repo)
-	}
+	trusted := claude.Trusted(f.P.Repo) // before Spawn: starting the peon can't change it
 	st, err := f.Spawn(ctx, pos[0])
 	if err != nil {
 		return err
@@ -67,8 +65,11 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	} else {
 		fmt.Fprintf(stdout, "spawned %s for %s in workspace %s\n", st.Name, pos[0], st.Workspace)
 	}
-	if st.Waiting {
+	switch {
+	case st.Waiting:
 		fmt.Fprintf(stdout, "%s is waiting at a prompt (probably folder trust); answer it in its pane\n", st.Name)
+	case !trusted && !st.Resumed:
+		fmt.Fprintf(stderr, "pns spawn: Claude hasn't trusted %s yet; if %s asks, answer the trust prompt in its pane\n", f.P.Repo, st.Name)
 	}
 	return nil
 }

@@ -2,6 +2,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -29,7 +31,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "-h", "--help", "help":
 		fmt.Fprint(stdout, usage)
 		return 0
-	case "init", "send", "inbox", "status":
+	case "init", "send", "inbox":
+		cmds := map[string]func(context.Context, []string, io.Writer, io.Writer) error{
+			"init": cmdInit, "send": cmdSend, "inbox": cmdInbox,
+		}
+		switch err := cmds[args[0]](context.Background(), args[1:], stdout, stderr); {
+		case errors.Is(err, errUsage):
+			return 2
+		case err != nil:
+			fmt.Fprintf(stderr, "pns %s: %v\n", args[0], err)
+			return 1
+		}
+		return 0
+	case "status":
 		fmt.Fprintf(stderr, "pns: %s is not implemented yet\n", args[0])
 		return 2
 	default:

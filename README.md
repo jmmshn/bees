@@ -13,6 +13,14 @@ go build -o bin/pns ./cmd/pns
 go test ./...
 ```
 
+![Lindsay: "Beads." Gob: "BEES?" Lindsay: "BEADS!" Gob: "BEADS?!?"](docs/img/bees-beads.gif)
+
+> **Lindsay:** Beads. **Gob:** BEES? **Lindsay:** BEADS. **Gob:** BEADS?
+> **Michael:** Gob's not on board.
+>
+> *Arrested Development*, S1E22 "Let 'Em Eat Cake". The work is tracked in beads (`bd`).
+> GIF via [Tenor](https://tenor.com/search/arrested-development-bees-gifs).
+
 Setup: [docs/SETUP.md](docs/SETUP.md) · details: [docs/SPEC.md](docs/SPEC.md) ·
 decisions: [docs/adr/](docs/adr/) · vocabulary: [GLOSSARY.md](GLOSSARY.md)
 

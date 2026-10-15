@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -35,7 +36,7 @@ const schema = `
 CREATE TABLE IF NOT EXISTS entries (
   id      TEXT PRIMARY KEY,
   ts      TEXT NOT NULL,
-  kind    TEXT NOT NULL CHECK (kind IN ('message','received','rang')),
+  kind    TEXT NOT NULL CHECK (kind IN ('message','received','rang','spawned','ended')),
   actor   TEXT NOT NULL,
   subject TEXT,
   ref     TEXT REFERENCES entries(id),
@@ -151,4 +152,72 @@ func newID(t time.Time) ID {
 	var b [8]byte
 	rand.Read(b[:])
 	return ID(fmt.Sprintf("%013x%013x", t.UnixMilli(), binary.BigEndian.Uint64(b[:])>>12))
+}
+
+// Spawn records a peon pns started: its herdr workspace is the key pns end needs once
+// the agent is gone (ADR-0006). It says nothing about whether the peon is running.
+type Spawn struct {
+	ID        ID     `json:"-"`
+	Name      string `json:"-"`
+	Bead      string `json:"bead"`
+	Workspace string `json:"workspace"`
+	Pane      string `json:"pane"`
+	Worktree  string `json:"worktree"`
+	Branch    string `json:"branch"`
+	Ended     bool   `json:"-"`
+}
+
+// RecordSpawn records that by spawned s.Name.
+func (l *Logbook) RecordSpawn(ctx context.Context, by string, s Spawn) (ID, error) {
+	now := time.Now().UTC()
+	id := newID(now)
+	data, err := json.Marshal(s)
+	if err != nil {
+		return "", err
+	}
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO entries (id, ts, kind, actor, subject, data) VALUES (?, ?, 'spawned', ?, ?, ?)`,
+		string(id), now.Format(tsLayout), by, s.Name, string(data)); err != nil {
+		return "", err
+	}
+	return id, tx.Commit()
+}
+
+// RecordEnd records that by ended the given spawn. Ending it again is a no-op.
+func (l *Logbook) RecordEnd(ctx context.Context, by string, spawn ID) error {
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `
+INSERT OR IGNORE INTO entries (id, ts, kind, actor, subject, ref)
+SELECT 'end:' || id, ?, 'ended', ?, subject, id FROM entries WHERE id = ? AND kind = 'spawned'`,
+		time.Now().UTC().Format(tsLayout), by, string(spawn)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// LatestSpawn returns the most recent spawn of the named peon, and whether it has ended.
+// ok is false when the peon was never spawned.
+func (l *Logbook) LatestSpawn(ctx context.Context, name string) (s Spawn, ok bool, err error) {
+	var data string
+	err = l.db.QueryRowContext(ctx, `
+SELECT s.id, s.data, EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = s.id)
+FROM entries s WHERE s.kind = 'spawned' AND s.subject = ? ORDER BY s.rowid DESC LIMIT 1`, name,
+	).Scan(&s.ID, &data, &s.Ended)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Spawn{}, false, nil
+	}
+	if err != nil {
+		return Spawn{}, false, err
+	}
+	s.Name = name
+	return s, true, json.Unmarshal([]byte(data), &s)
 }

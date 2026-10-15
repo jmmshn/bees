@@ -163,3 +163,36 @@ func TestOpenHandlesOddPathsAndCreatesSchema(t *testing.T) {
 		t.Fatalf("logbook not at the given path: %v", err)
 	}
 }
+
+func TestSpawnRecordsTrackTheLatestSpawnAndItsEnd(t *testing.T) {
+	ctx := context.Background()
+	lb := open(t)
+	if _, ok, err := lb.LatestSpawn(ctx, "peon-995-8"); err != nil || ok {
+		t.Fatalf("before any spawn: ok=%v err=%v", ok, err)
+	}
+	first := logbook.Spawn{Name: "peon-995-8", Bead: "beads-995.8", Workspace: "w7", Pane: "w7:p1", Worktree: "/r-WT/peon-995-8", Branch: "peon-995-8"}
+	id, err := lb.RecordSpawn(ctx, "chief-peons", first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := lb.LatestSpawn(ctx, "peon-995-8")
+	if err != nil || !ok || got.ID != id || got.Workspace != "w7" || got.Bead != "beads-995.8" || got.Ended {
+		t.Fatalf("latest = %+v ok=%v err=%v", got, ok, err)
+	}
+	for range 2 { // ending twice is a no-op
+		if err := lb.RecordEnd(ctx, "chief-peons", id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, _, _ = lb.LatestSpawn(ctx, "peon-995-8"); !got.Ended {
+		t.Fatalf("after end: %+v, want Ended", got)
+	}
+	second := first
+	second.Workspace = "w9"
+	if _, err := lb.RecordSpawn(ctx, "chief-peons", second); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ = lb.LatestSpawn(ctx, "peon-995-8"); got.Workspace != "w9" || got.Ended {
+		t.Fatalf("respawn: %+v, want open spawn in w9", got)
+	}
+}

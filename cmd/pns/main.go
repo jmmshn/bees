@@ -16,6 +16,8 @@ const usage = `usage: pns <command> [arguments]
 commands:
   init      create the logbook file and table if missing
   chief     start this project's chief session
+  spawn     start a peon for a bead in its own herdr workspace
+  end       remove a peon's workspace
   send      store a message for a session, then ring it
   inbox     print your unread messages and record receipts
   status    list sessions and their unread counts
@@ -27,6 +29,8 @@ var commands = map[string]func(ctx context.Context, args []string, stdin io.Read
 	"send":  cmdSend,
 	"inbox": cmdInbox,
 	"chief": cmdChief,
+	"spawn": cmdSpawn,
+	"end":   cmdEnd,
 }
 
 func main() {

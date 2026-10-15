@@ -153,3 +153,14 @@ func TestEachProjectHasItsOwnLogbook(t *testing.T) {
 		t.Fatalf("alpha inbox = %q", out)
 	}
 }
+
+func TestSpawnAndEndUsage(t *testing.T) {
+	useTempLogbook(t)
+	if _, _, code := pns(t, "spawn", "--as", "chief-test"); code != 2 {
+		t.Errorf("spawn without bead: exit %d, want 2", code)
+	}
+	_, stderr, code := pns(t, "end", "--as", "chief-test", "peon-995-8")
+	if code != 1 || !strings.Contains(stderr, "no record of spawning") {
+		t.Errorf("end of never-spawned peon: exit %d, stderr %q", code, stderr)
+	}
+}

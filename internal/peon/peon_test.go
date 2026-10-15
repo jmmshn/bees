@@ -132,19 +132,8 @@ func TestSpawnStartsAPeonInItsOwnWorkspace(t *testing.T) {
 	if ws.Path != wt || ws.Label != "beads-995.8" {
 		t.Fatalf("workspace = %+v", ws)
 	}
-	var settings struct {
-		CrossSessionInbound string            `json:"crossSessionInbound"`
-		Env                 map[string]string `json:"env"`
-	}
-	b, err := os.ReadFile(filepath.Join(wt, ".claude", "settings.local.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(b, &settings); err != nil {
-		t.Fatal(err)
-	}
-	if settings.CrossSessionInbound != "accept" || settings.Env["PNS_PROJECT"] != "peons" || settings.Env["PNS_SESSION"] != "peon-995-8" {
-		t.Fatalf("settings = %s", b)
+	if _, err := os.Stat(filepath.Join(wt, ".claude")); !os.IsNotExist(err) {
+		t.Fatalf("spawn wrote into the worktree's .claude (Claude reads settings from the main checkout): %v", err)
 	}
 	sp, ok, _ := r.lb.LatestSpawn(ctx, "peon-995-8")
 	if !ok || sp.Workspace != ws.ID || sp.Bead != "beads-995.8" || sp.Ended {
@@ -155,8 +144,19 @@ func TestSpawnStartsAPeonInItsOwnWorkspace(t *testing.T) {
 		t.Fatalf("brief = %+v", unread)
 	}
 	start := r.h.started[0]
-	if start[0] != ws.Pane || start[1] != "peon-995-8" || !slices.Contains(start, "--name") || !strings.HasPrefix(start[len(start)-1], "[pns]") {
+	if start[0] != ws.Pane || start[1] != "peon-995-8" || !strings.HasPrefix(start[len(start)-1], "[pns]") {
 		t.Fatalf("start = %q", start)
+	}
+	if i := slices.Index(start, "--name"); i < 0 || start[i+1] != "peon-995-8" {
+		t.Fatalf("start = %q, want --name peon-995-8", start)
+	}
+	i := slices.Index(start, "--settings")
+	if i < 0 {
+		t.Fatalf("start = %q, want --settings", start)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal([]byte(start[i+1]), &settings); err != nil || settings["crossSessionInbound"] != "accept" {
+		t.Fatalf("--settings %q: %v", start[i+1], err)
 	}
 }
 

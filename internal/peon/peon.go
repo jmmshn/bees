@@ -4,11 +4,9 @@ package peon
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
+	"os/exec"
 	"regexp"
 	"slices"
 	"strings"
@@ -125,14 +123,16 @@ func (f Fleet) Spawn(ctx context.Context, bead string) (string, error) {
 	return name, f.start(ctx, sp)
 }
 
-// start writes the worktree's Claude settings and starts Claude with a doorbell as its
-// first prompt, so the peon reads its unread messages without needing a ring.
+// peonSettings is passed with --settings: Claude reads settings.local.json from the main
+// checkout even in a worktree, so per-peon settings can't live in a file. The peon's pns
+// finds its name from its Claude process and its project from the worktree's git dir.
+const peonSettings = `{"crossSessionInbound":"accept"}`
+
+// start starts Claude with a doorbell as its first prompt, so the peon reads its unread
+// messages without needing a ring.
 func (f Fleet) start(ctx context.Context, sp logbook.Spawn) error {
-	if err := writeSettings(sp.Worktree, map[string]string{"PNS_PROJECT": f.P.Name, "PNS_SESSION": sp.Name}); err != nil {
-		return err
-	}
 	doorbell := fmt.Sprintf("[pns] you are %s, working on %s. Run: pns inbox   (reply with: pns send %s \"...\")", sp.Name, sp.Bead, f.Me)
-	return f.H.StartClaude(ctx, sp.Pane, sp.Name, "--name", sp.Name, doorbell)
+	return f.H.StartClaude(ctx, sp.Pane, sp.Name, "--name", sp.Name, "--settings", peonSettings, doorbell)
 }
 
 // checkProject requires the bead's repo label, or its nearest labelled ancestor's, to
@@ -171,37 +171,12 @@ func (f Fleet) End(ctx context.Context, name string) error {
 	if err := f.H.RemoveWorktree(ctx, sp.Workspace); err != nil {
 		return err
 	}
+	// Delete the branch only if it is fully merged (-d refuses otherwise), so a later
+	// spawn of the same bead can create it again. An unmerged branch keeps its work.
+	exec.CommandContext(ctx, "git", "-C", f.P.Repo, "branch", "-d", sp.Branch).Run()
 	return f.LB.RecordEnd(ctx, f.Me, sp.ID)
 }
 
 func brief(b Bead) string {
 	return fmt.Sprintf("You own %s: %s\n\n%s\n\nRun `bd show %s` for the full bead.", b.ID, b.Title, b.Description, b.ID)
-}
-
-// writeSettings merges pns's keys into the worktree's .claude/settings.local.json.
-func writeSettings(worktree string, env map[string]string) error {
-	path := filepath.Join(worktree, ".claude", "settings.local.json")
-	settings := map[string]any{}
-	if b, err := os.ReadFile(path); err == nil {
-		if err := json.Unmarshal(b, &settings); err != nil {
-			return fmt.Errorf("%s: %w", path, err)
-		}
-	}
-	settings["crossSessionInbound"] = "accept"
-	merged, _ := settings["env"].(map[string]any)
-	if merged == nil {
-		merged = map[string]any{}
-	}
-	for k, v := range env {
-		merged[k] = v
-	}
-	settings["env"] = merged
-	b, err := json.MarshalIndent(settings, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(path, append(b, '\n'), 0o644)
 }

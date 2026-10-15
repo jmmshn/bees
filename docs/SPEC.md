@@ -179,16 +179,15 @@ func (f Fleet) End(ctx context.Context, name string) error              // ErrNo
 1. `name = Name(bead)`.
 2. If `LatestSpawn(name)` is open:
    - herdr reports the agent live → `ErrRunning`;
-   - otherwise → resume at step 7 in the recorded workspace.
+   - otherwise → resume at step 8 in the recorded workspace.
 3. The bead's repo label (its own, else its nearest ancestor's) must equal the project, unless `--repo` → else `ErrWrongRepo`.
 4. A herdr workspace labelled with the bead but no `spawned` entry → `ErrOrphan`. It is never removed automatically.
 5. `herdr worktree create --cwd <repo> --branch <name> --path <repo>-WT/<name> --label <bead> --no-focus --json`.
 6. `RecordSpawn` immediately: subject = name; data = bead, workspace, pane, worktree, branch.
-7. Write `<worktree>/.claude/settings.local.json`: `{"crossSessionInbound":"accept","env":{"PNS_PROJECT":…,"PNS_SESSION":<name>}}`.
-8. Send the brief (`bd show` title and description) as a message from the chief.
-9. `herdr agent start <name> --kind claude --pane <pane> -- --name <name> "<doorbell>"`. The doorbell is Claude's first prompt, so spawn doesn't depend on ringing.
+7. Send the brief (`bd show` title and description) as a message from the chief.
+8. `herdr agent start <name> --kind claude --pane <pane> -- --name <name> --settings '{"crossSessionInbound":"accept"}' "<doorbell>"`. The doorbell is Claude's first prompt, so spawn doesn't depend on ringing. No settings file is written (Claude reads `settings.local.json` from the main checkout in a worktree), and no `PNS_*` variables are needed.
 
-`End(name)`: read `LatestSpawn`; none → `ErrNotSpawned` (never ask herdr). Otherwise `herdr worktree remove --workspace <recorded id> --force`, then `RecordEnd`. The branch is kept.
+`End(name)`: read `LatestSpawn`; none → `ErrNotSpawned` (never ask herdr). Otherwise `herdr worktree remove --workspace <recorded id> --force`, then `git branch -d <name>` (kept if not fully merged), then `RecordEnd`.
 
 ## Commands
 
@@ -233,7 +232,7 @@ pns chief                 # chief-<project>, in $PNS_REPOS/<project>
 pns spawn beads-995.8     # inside the chief: peon-995-8 in peons-WT/peon-995-8
 ```
 
-Manual peon (no herdr): put `{"crossSessionInbound":"accept","env":{"PNS_SESSION":"peon-a"}}` in the worktree's `.claude/settings.local.json`, then `claude --name peon-a`.
+Manual peon (no herdr): `claude --name peon-a --settings '{"crossSessionInbound":"accept"}'` in its worktree.
 
 ## Tests
 

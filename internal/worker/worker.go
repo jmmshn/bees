@@ -137,7 +137,8 @@ type Started struct {
 
 // Spawn starts a worker for bead with label as its herdr workspace label, or restarts it
 // in its recorded workspace if its session has died. A restart keeps the recorded
-// label: label may be empty, and any other label is refused.
+// label: label may be empty, and any other label is refused. Respawning an ended
+// worker with an empty label reuses its recorded one.
 func (f Fleet) Spawn(ctx context.Context, bead, label string) (Started, error) {
 	p, err := f.check(ctx, bead, label)
 	if err != nil {
@@ -258,7 +259,10 @@ func (f Fleet) check(ctx context.Context, bead, label string) (plan, error) {
 		p.sp, p.resume = sp, true
 		return p, nil
 	}
-	if label == "" {
+	if label == "" && ok {
+		p.label = sp.Label // an ended worker comes back under its recorded label
+	}
+	if p.label == "" {
 		return p, fmt.Errorf("%s: %w", name, ErrNoLabel)
 	}
 	if !f.ForeignRepo && !Belongs(f.P.Name, bead) {

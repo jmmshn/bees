@@ -272,6 +272,19 @@ func TestEndedHalfStartedBeeRespawnsWithOneBrief(t *testing.T) {
 	}
 }
 
+func TestRestartInAnotherProjectsRepoContinues(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	r.fleet.ForeignRepo, r.fleet.P.Repo = true, filepath.Join(t.TempDir(), "dotfiles")
+	r.fleet.Spawn(ctx, "dotfiles-3")
+	r.h.exit("dotfiles-3")
+	// Its bs resolves the other project, so its receipts are in that logbook: this one
+	// can't tell whether it has a conversation, and keeps the old behaviour.
+	if st, err := r.fleet.Spawn(ctx, "dotfiles-3"); err != nil || !st.Continued || !slices.Contains(r.h.started[1], "--continue") {
+		t.Fatalf("started = %+v, err = %v, args = %q; want --continue", st, err, r.h.started[1])
+	}
+}
+
 // readInbox does what the bee's bs inbox does: records receipts for its unread messages.
 func readInbox(t *testing.T, lb *logbook.Logbook, name string) {
 	t.Helper()

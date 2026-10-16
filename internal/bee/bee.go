@@ -170,12 +170,14 @@ const beeSettings = `{"crossSessionInbound":"accept"}`
 // its inbox since this spawn (its first start failed) starts fresh, since
 // claude --continue exits when there is no conversation.
 func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Started, error) {
-	st := Started{Name: sp.Name, Workspace: sp.Workspace, Resumed: resume, Continued: resume && sp.Read}
+	// In another repo (--repo, now or when first spawned) the bee's own bs resolves that
+	// repo's project: a system prompt naming P would mislead it, and its receipts go to
+	// that project's logbook, so sp.Read can't tell and a restart always continues.
+	foreign := f.ForeignRepo || cmp.Or(sp.Repo, f.P.Repo) != f.P.Repo
+	st := Started{Name: sp.Name, Workspace: sp.Workspace, Resumed: resume, Continued: resume && (sp.Read || foreign)}
 	doorbell := fmt.Sprintf("[bs] you are %s, working on %s. Run: bs inbox   (reply with: bs send %s \"...\")", sp.Name, sp.Bead, f.Me)
 	args := []string{"--name", sp.Name, "--settings", beeSettings}
-	// In another repo (--repo, now or when first spawned) the bee's own bs resolves that
-	// repo's project, so a system prompt naming P would mislead it.
-	if !f.ForeignRepo && cmp.Or(sp.Repo, f.P.Repo) == f.P.Repo {
+	if !foreign {
 		file, err := prompt.File(f.P.Name)
 		if err != nil {
 			return st, err

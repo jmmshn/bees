@@ -59,3 +59,15 @@ scripts/e2e.sh <throwaway bead>    # real queen + bee in herdr: wake ≤ 2 s, ro
 ```
 
 `scripts/e2e.sh` writes to the project's logbook (as `e2e-queen`, `e2e-captain` and the bee) and cleans up its workspaces.
+
+## CI
+
+`.github/workflows/ci.yml` runs on every pull request and push to `main`; the same checks locally:
+
+```sh
+test -z "$(gofmt -l .)" && go vet ./... && go test -race ./... && go build ./cmd/bs
+```
+
+Tests that need a real herdr skip when none is running; `scripts/e2e.sh` stays local-only.
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`: it builds `bs-linux-amd64` and `bs-linux-arm64` (`CGO_ENABLED=0`, commit stamped via `-buildvcs=true` so `bs version` works) and attaches them with `SHA256SUMS` to a GitHub release.

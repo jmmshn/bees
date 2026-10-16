@@ -1,0 +1,7 @@
+azure
+crimson
+olive
+silver
+tan
+teal
+violet

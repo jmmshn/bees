@@ -1,0 +1,18 @@
+{
+ "files": [
+  "data/f01.txt",
+  "data/f03.txt",
+  "data/f05.txt",
+  "data/f07.txt",
+  "data/f11.txt",
+  "data/f15.txt",
+  "data/f16.txt",
+  "data/f20.txt",
+  "data/f21.txt",
+  "data/f23.txt",
+  "data/f32.txt",
+  "data/f37.txt",
+  "data/f39.txt"
+ ],
+ "total_lines": 226
+}

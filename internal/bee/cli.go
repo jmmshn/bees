@@ -148,33 +148,6 @@ func (BeadsCLI) Show(ctx context.Context, id string) (Bead, error) {
 	return Bead{ID: b.ID, Title: b.Title, Description: b.Description}, nil
 }
 
-// Query lists the beads matching a bd query expression.
-func (BeadsCLI) Query(ctx context.Context, expr string) ([]Bead, error) {
-	out, err := exec.CommandContext(ctx, "bd", "query", "--json", "--limit", "0", expr).Output()
-	if err != nil {
-		var e struct{ Error string } // with --json, bd prints its error as JSON on stdout
-		if json.Unmarshal(out, &e) == nil && e.Error != "" {
-			return nil, fmt.Errorf("bd query %s: %s", expr, e.Error)
-		}
-		return nil, fmt.Errorf("bd query %s: %w", expr, err)
-	}
-	var bs []struct {
-		ID       string `json:"id"`
-		Title    string `json:"title"`
-		Status   string `json:"status"`
-		Type     string `json:"issue_type"`
-		Priority int    `json:"priority"`
-	}
-	if err := json.Unmarshal(out, &bs); err != nil {
-		return nil, fmt.Errorf("bd query: %w", err)
-	}
-	beads := make([]Bead, len(bs))
-	for i, b := range bs {
-		beads[i] = Bead{ID: b.ID, Title: b.Title, Status: b.Status, Type: b.Type, Priority: b.Priority}
-	}
-	return beads, nil
-}
-
 // IDs lists every bead id in the store, open or closed.
 func (BeadsCLI) IDs(ctx context.Context) ([]string, error) {
 	out, err := exec.CommandContext(ctx, "bd", "list", "--all", "--limit", "0", "--json").Output()

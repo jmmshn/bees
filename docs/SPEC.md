@@ -144,7 +144,7 @@ func (p Project) BeadsGuide() string        // one line naming bs bead ls/new an
 func Me(flagAs string) (string, error)      // --as → parent-process walk → BS_SESSION
 ```
 
-- The name is lowercased with `-` → `_` (`pymatgen-analysis-defects` → `pymatgen_analysis_defects`) and must match `^[a-z][a-z0-9_]{0,24}$`, else `ErrBadProject` (set `BS_PROJECT`).
+- The name is lowercased with `-` and `_` dropped (`pymatgen-analysis-defects` → `pymatgenanalysisdefects`) and must match `^[a-z][a-z0-9]{0,24}$`, else `ErrBadProject` (set `BS_PROJECT`).
 - The project comes from git's *common* directory, so a shell inside `<repo>-WT/bees-2-1` resolves to the main repo's project.
 - `Repo` is the main checkout when the project comes from git, else `$BS_REPOS/<project>` (default `~/repos/jmmshn`); `Logbook` is `$BS_LOGBOOK`, else `~/.local/share/bees/<project>.db`.
 - `BeadsGuide` is passed as `--append-system-prompt` to the queen and every bee whose repo is the project's, so they list and file beads with `bs bead`, which keeps them in the project (R32). Claude records it with the conversation until compaction, so restart a queen with `bs queen`, not a bare `claude --resume`.
@@ -207,7 +207,7 @@ bs queen                      start the queen: claude --name queen-<project> --a
 bs spawn <bead> [--repo P]    start a bee for the bead in its own herdr workspace
 bs end <bee>                 remove the bee's recorded workspace
 bs epic <title>               create the project's next epic, <project>-<n>
-bs bead ls [--all] [<expr>]   the project's beads, not closed unless --all; <expr> is ANDed as a bd query
+bs bead ls [--all] [<expr>]   bd query 'id="<project>-*"', not closed unless --all; <expr> is ANDed
 bs bead new --parent <project>-N [--description D] [--type T] [--priority P] <title>
                               bd create --force under that parent; prints the new id
 bs send <to> [--now] <body|-> store a message, then ring <to>   (flags may follow <to>)

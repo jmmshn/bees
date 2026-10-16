@@ -5,7 +5,7 @@ bees coordinates several Claude Code sessions working on one codebase: a queen h
 ## Work
 
 **Project**:
-The codebase a queen and its bees work on, named in one word (`pymatgen-analysis-defects` → `pymatgen_analysis_defects`).
+The codebase a queen and its bees work on, named in one word (`pymatgen-analysis-defects` → `pymatgenanalysisdefects`).
 _Avoid_: repo, rig, workspace
 
 **Bead**:

@@ -1,6 +1,6 @@
 # Spawn the crew way: one name per bead, project as scope, herdr behind a port
 
-A bee's name is a function of its bead. Bead ids are Jira-style, `<project>-<n>` with children `<project>-<n>.<m>` (`bs epic` assigns the next top-level number), and the name is the id with `.` turned into `-` (`bees-12.3` → `bees-12-3`). Project names are lowercased with `-` → `_` and match `^[a-z][a-z0-9_]{0,24}$`, so a name's first `-` always ends the project and names can't collide across projects (`web_2-3` vs `web-2-3`).
+A bee's name is a function of its bead. Bead ids are Jira-style, `<project>-<n>` with children `<project>-<n>.<m>` (`bs epic` assigns the next top-level number), and the name is the id with `.` turned into `-` (`bees-12.3` → `bees-12-3`). Project names are lowercased with `-` and `_` dropped and match `^[a-z][a-z0-9]{0,24}$` (R27⁶), so a name's first `-` always ends the project, and `bd query`'s id wildcard (a SQL LIKE, where `_` matches any character) selects exactly one project's beads.
 
 That one string is used for everything:
 - the Claude session name;

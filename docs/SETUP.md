@@ -26,14 +26,14 @@ bs queen                       # execs claude --name queen-<project> in the repo
 bs epic "ringing"              # → <project>-2
 bs bead new --parent <project>-2 --description "…" "…"   # → <project>-2.1
 bs bead ls                     # this project's beads that aren't closed
-bs spawn <project>-2.1         # bee <project>-2-1 in its own herdr workspace and worktree
+bs spawn --label "ring on send" <project>-2.1   # bee <project>-2-1 in its own herdr workspace and worktree
 bs send <project>-2-1 "…"      # store, then ring it awake; --now interrupts its current turn
 bs inbox                       # your unread messages; --peek leaves them unread
 bs status                      # every session the logbook knows: running or not, unread
 bs end <project>-2-1           # remove its workspace; its branch is deleted if merged
 ```
 
-`bs spawn` on a bee whose Claude has exited resumes it in the same workspace with `claude --continue`, or starts it fresh there if it never read its brief (its first start failed). `bs spawn` takes about 10 s: herdr gives up waiting for an idle prompt while the worker gets on with its doorbell, and bs then confirms the worker from Claude's session registry.
+A first spawn needs `--label`: 1–4 lowercase words naming the work, shown as the herdr workspace name (the queen writes it from the bead). `bs spawn` on a bee whose Claude has exited keeps its recorded label (leave `--label` off) and resumes it in the same workspace with `claude --continue`, or starts it fresh there if it never read its brief (its first start failed). `bs spawn` takes about 10 s: herdr gives up waiting for an idle prompt while the worker gets on with its doorbell, and bs then confirms the worker from Claude's session registry.
 
 After merging changes to bs, rebuild it with `go install ./cmd/bs`. Inside this repo, bs warns when it was built from a commit behind `main`; `bs version` prints the commit it was built from.
 
@@ -59,3 +59,22 @@ scripts/e2e.sh <throwaway bead>    # real queen + bee in herdr: wake ≤ 2 s, ro
 ```
 
 `scripts/e2e.sh` writes to the project's logbook (as `e2e-queen`, `e2e-captain` and the bee) and cleans up its workspaces.
+
+## CI
+
+`.github/workflows/ci.yml` runs two parallel jobs on every pull request and push to `main`. The same checks locally:
+
+```sh
+# lint
+test -z "$(gofmt -l .)"
+go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run   # default linters, .golangci.yml
+npx markdownlint-cli2@0.23.3                                                 # README, GLOSSARY, AGENTS, docs/
+# test
+go vet ./... && go test -race ./... && go build ./cmd/bs
+```
+
+Tests that need a real herdr skip when none is running; `scripts/e2e.sh` stays local-only.
+
+## Releases
+
+Tag by hand and push the tag (`git tag v0.1.0 && git push origin v0.1.0`). `.github/workflows/release.yml` runs GoReleaser (`.goreleaser.yaml`): `bs` for linux amd64 and arm64, `CGO_ENABLED=0`, a changelog from the commits since the last tag, and `SHA256SUMS`. `bs version` prints the commit from Go's VCS stamp (`-buildvcs=true` fails the build without one). Dry run: `goreleaser release --snapshot --clean`.

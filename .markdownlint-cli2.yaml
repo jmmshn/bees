@@ -1,0 +1,7 @@
+config:
+  MD013: false # prose is one line per paragraph
+  MD010:
+    code_blocks: false # Go examples keep gofmt's tabs
+  MD029: false # AGENTS.md motifs are numbered 1-15 across sections; other docs cite them by number
+  MD060: false # compact tables (|a|b|) are fine
+globs: [README.md, GLOSSARY.md, AGENTS.md, "docs/**/*.md"]

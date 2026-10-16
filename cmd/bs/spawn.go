@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -42,13 +43,25 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	proj := fs.String("project", "", "project (default: BS_PROJECT, else the current git repo)")
 	as := fs.String("as", "", "session doing the spawning (default: this Claude session)")
 	repo := fs.String("repo", "", "spawn in this repo even if the bead belongs to another project")
+	label := fs.String("label", "", "the herdr workspace label: 1-4 lowercase words naming the work (required on a first spawn)")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
 	}
-	if len(pos) != 1 {
-		fmt.Fprintln(stderr, "usage: bs spawn [--repo <path>] <bead>")
+	spawnUsage := func(err error) error {
+		if err != nil {
+			fmt.Fprintf(stderr, "bs spawn: %v\n", err)
+		}
+		fmt.Fprintf(stderr, "usage: bs spawn --label \"<words>\" [--repo <path>] <bead>\n%s\n", bee.LabelRules)
 		return errUsage
+	}
+	if len(pos) != 1 {
+		return spawnUsage(nil)
+	}
+	if *label != "" {
+		if err := bee.CheckLabel(*label); err != nil {
+			return spawnUsage(err)
+		}
 	}
 	f, err := fleet(ctx, *proj, *as, *repo)
 	if err != nil {
@@ -56,17 +69,20 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	}
 	defer f.LB.Close()
 	trusted := claude.Trusted(f.P.Repo) // before Spawn: starting the bee can't change it
-	st, err := f.Spawn(ctx, pos[0])
+	st, err := f.Spawn(ctx, pos[0], *label)
+	if errors.Is(err, bee.ErrNoLabel) || errors.Is(err, bee.ErrLabelChange) {
+		return spawnUsage(err)
+	}
 	if err != nil {
 		return err
 	}
 	switch {
 	case st.Continued:
-		fmt.Fprintf(stdout, "resumed %s in workspace %s\n", st.Name, st.Workspace)
+		fmt.Fprintf(stdout, "resumed %s (%s) in workspace %s\n", st.Name, st.Label, st.Workspace)
 	case st.Resumed:
-		fmt.Fprintf(stdout, "restarted %s in workspace %s with a new conversation: it never read its brief\n", st.Name, st.Workspace)
+		fmt.Fprintf(stdout, "restarted %s (%s) in workspace %s with a new conversation: it never read its brief\n", st.Name, st.Label, st.Workspace)
 	default:
-		fmt.Fprintf(stdout, "spawned %s for %s in workspace %s\n", st.Name, pos[0], st.Workspace)
+		fmt.Fprintf(stdout, "spawned %s (%s) for %s in workspace %s\n", st.Name, st.Label, pos[0], st.Workspace)
 	}
 	switch {
 	case st.Waiting:

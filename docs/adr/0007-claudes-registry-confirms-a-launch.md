@@ -3,6 +3,7 @@
 `herdr agent start` reports whether Claude reached an *idle* prompt in time, which is not the same as "Claude started". A worker's first prompt is its doorbell, so a healthy worker goes straight to work and herdr times out on it (`timeout`, herdr 0.9.3, probed in bees-1.14). The same code comes back when Claude exits at once, as `claude --continue` does when there is no conversation. After a timeout herdr also leaves the agent unnamed, so `herdr agent get <name>` says "not found" while the worker runs.
 
 So bs reads herdr's answers like this:
+
 - `timeout` means *unconfirmed*;
 - the worker's liveness comes from Claude's session registry, the same source `bs status` uses (ADR-0004);
 - the registry decides both whether an unconfirmed start succeeded (wait up to 20 s for a live session with the worker's name) and whether a spawn would start a twin.
@@ -19,5 +20,5 @@ herdr refuses any agent argument containing a Unicode control character. The rul
 
 ## Consequences
 
-- A worker herdr timed out on shows no name in `herdr agent list`. Find it by its workspace label (the bead id) or with `bs status`.
+- A worker herdr timed out on shows no name in `herdr agent list`. Find it with `bs status` (which shows its label) or by its worktree path.
 - A restart continues the conversation only if the worker has read a message since this spawn (a `received` entry after the `spawned` one), which is the logbook's evidence that a conversation exists. Otherwise it starts fresh.

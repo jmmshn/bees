@@ -3,15 +3,17 @@
 A bee's name is a function of its bead. Bead ids are Jira-style, `<project>-<n>` with children `<project>-<n>.<m>` (`bs epic` assigns the next top-level number), and the name is the id with `.` turned into `-` (`bees-12.3` → `bees-12-3`). Project names are lowercased with `-` and `_` dropped and match `^[a-z][a-z0-9]{0,24}$` (R27⁶), so a name's first `-` always ends the project, and `bd query`'s id wildcard (a SQL LIKE, where `_` matches any character) selects exactly one project's beads.
 
 That one string is used for everything:
+
 - the Claude session name;
 - the herdr agent name;
 - the git branch;
 - the worktree directory `<repo>-WT/<name>`;
 - the message address.
 
-The herdr workspace label is the full bead id. A name too long for herdr (32 characters) is refused rather than hashed. In v1 there is one bee per bead.
+The herdr workspace label is 1–4 words the queen writes from the bead (R41, bees-1.20); it was the bead id before. Nothing finds a bee by its label. A name too long for herdr (32 characters) is refused rather than hashed. In v1 there is one bee per bead.
 
 **Project is the scope, as in crew's `--project`.** It is resolved from `--project`, then `BS_PROJECT`, then the basename of git's common directory. Using the common directory means a worktree resolves to its main repo. Each project gets:
+
 - its own logbook, `~/.local/share/bees/<project>.db`;
 - its repo, `$BS_REPOS/<project>`;
 - a queen named `queen-<project>`.
@@ -19,6 +21,7 @@ The herdr workspace label is the full bead id. A name too long for herdr (32 cha
 The project goes into the queen's name because Claude's and herdr's names are machine-wide; bee names already carry it through the bead id. A bead belongs to the project when its id matches `^<project>-\d+(\.\d+)*$`, unless `--repo` overrides.
 
 **Spawn steps, in order:**
+
 1. `herdr worktree create`.
 2. Write a `spawned` entry (subject = name; data = bead, workspace, worktree, branch) straight away.
 3. Store the brief as a message.
@@ -37,5 +40,5 @@ Any failure after step 2 is healed by running spawn again, which resumes in the 
 
 ## Consequences
 
-- **Orphans:** a workspace labelled with a bead but with no `spawned` entry (a crash between steps 1 and 2) is reported and never removed automatically.
+- **Orphans:** a workspace open on the bee's worktree `<repo>-WT/<name>` but with no `spawned` entry (a crash between steps 1 and 2) is reported and never removed automatically.
 - **Code:** two packages, `internal/project` (resolution and identity) and `internal/bee` (`Fleet.Spawn`, `Fleet.End`, the ports and their CLI adapters).

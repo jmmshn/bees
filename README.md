@@ -43,26 +43,9 @@ vocabulary: [GLOSSARY.md](GLOSSARY.md)
 
 ## How bs compares
 
-The usual ways to put several agents on one job, and what each gives you:
-
-- **Subagent fan-out** (Claude Code's Task tool, orchestrator–worker): the parent starts
-  workers inside its own session; each returns one final result and ends with its task.
-- **Agent-graph frameworks** (LangGraph, CrewAI, AutoGen): you code the agents and the
-  edges between them; one program runs the graph and hands each agent its turn.
-- **Shared queue or blackboard**: agents post to and poll a common store.
-- **Human as the bus**: separate chat sessions; you copy the brief across and the answer back.
-- **tmux + send-keys**: separate sessions in panes; a script types into the other pane.
-
-| | Subagents | Agent graph | Queue / blackboard | Human as bus | tmux send-keys | **bs** |
-|---|---|---|---|---|---|---|
-| Each agent is a full Claude Code session in its own worktree | no, a task inside the parent (worktree optional) | no, agents you code | depends on the agents | yes, if you make one | yes, if you make one | **yes**, `bs spawn` |
-| Agents outlive their lead | no | resumable from a checkpointer | yes | yes | yes | **yes** |
-| An agent messages its lead mid-task | final result only; the lead can message it | when the graph routes to it | yes | you relay | keystrokes | **yes**, `bs send` |
-| An idle agent acts on a message | n/a | n/a | only if it polls | you type | if the keys land | **yes**, doorbell |
-| Message kept while the recipient is down | n/a | in the checkpoint | yes | only if you saved it | no | **yes**, logbook |
-| Record of who said what | parent transcript | framework traces | the store | scrollback | scrollback | **yes**, append-only |
-| Work tied to a tracked issue | no | no | no | by discipline | by discipline | **yes**, one bead each |
-| Watch or steer an agent live | watch only | pause and edit state at interrupts | post to the store | yes | yes | **yes**, the bee's herdr pane |
+Subagents end with their task and report once; agent graphs make you code the routing;
+queues make agents poll; copy-paste makes you the bus. In bs each agent is a full Claude
+Code session tied to one bead: it outlives its lead and wakes when a message arrives.
 
 What bs costs you: Linux, Claude Code sessions only, one machine. The doorbell rides on
 Claude's own cross-session socket, which keeps nothing after a session exits and drops

@@ -124,7 +124,7 @@ Notes on the table:
 - The t5ba (S5b, arm A) interventions were tab handling in a three-tab question menu.
 - The **t5bc** (S5b, arm C) intervention is a real one: the captain had to type the answer into the worker's own pane.
 
-The full per-run table with tokens is in [bakeoff/results/table.md](../bakeoff/results/table.md). Each run's captain log, metrics and merged timeline of every session are in [bakeoff/results/runs/](../bakeoff/results/runs/), and the running observation log is in [observations.md](../bakeoff/results/observations.md).
+The full per-run table with tokens is in [bakeoff/results/table.md](../bakeoff/results/table.md). Each run's captain log, metrics and merged timeline stay out of git, in `~/.cache/bees-bakeoff/runs`; the running observation log is in [observations.md](../bakeoff/results/observations.md), and each round's headline numbers in [HISTORY.md](../bakeoff/HISTORY.md).
 
 ## Observations
 

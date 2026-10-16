@@ -1,9 +1,0 @@
-2026-10-16T04:36:01.717Z captain: make acrostic.txt, an acrostic poem spelling HONEYBEE. Write it one line at a time: append a line, commit, push, then sleep 20 seconds before the next (keep the sleeps)
-2026-10-16T04:37:02.935Z event: lead delegated (1 worker, pane w83:p1, branch acrostic) ~04:36:17-22
-2026-10-16T04:37:03.246Z captain: scrap that, cancel it and clean up everything it made
-2026-10-16T04:37:03.250Z event: commit count at cancel = 2 (acrostic=d94905e, origin: d94905ef4f43c16b75c353bbdac9e4a37d791d20 refs/heads/acrostic)
-2026-10-16T04:37:35.000Z event: lead reports cancelled/done: closed worker workspace w83 + stopped its own background watcher; deleted origin/acrostic, worktree t8b-WT/acrostic (+parent dir), local branch acrostic; worker had pushed 2/8 lines (2771bf8 H, d94905e O); says origin only main@a97828d; left 2 'observer loop' processes mentioning acrostic.txt
-2026-10-16T04:38:00.109Z event: branches/origin gone by 04:37:25 (local+origin acrostic deleted); polling 60s for further commits
-2026-10-16T04:39:12.911Z event: worker stopped: commit count frozen at 2 (last d94905e ~04:36:57), worker pane w83:p1 gone by 04:37:15; no new commit/ref locally or on origin through 04:39:00
-2026-10-16T04:39:18.694Z event: strays: only lead-t8b claude (pid 290347) has t8b in its args; no t8b-WT process; the 2 acrostic.txt processes the lead saw are other captains' poll loops (t8c, t8a), not a worker
-2026-10-16T04:39:18.727Z end

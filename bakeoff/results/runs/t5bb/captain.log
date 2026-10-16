@@ -1,7 +1,0 @@
-2026-10-16T04:12:08.973Z captain: title-case the names in vet.txt
-2026-10-16T04:12:22.743Z event: lead found the question itself (choice menu: Dr. / Doctor / Dr / Type something)
-2026-10-16T04:12:38.328Z captain: Doctor, and drop the note line
-2026-10-16T04:13:13.857Z event: lead reports ready (worker vet-titlecase w7D:p1, branch vet-titlecase=4024c6b)
-2026-10-16T04:13:14.164Z captain: merge it
-2026-10-16T04:13:33.330Z event: lead merged itself (e61a8ff, pushed) and already cleaned up (workspace closed, worktree + local branch removed; remote branch kept) -> no clean up line
-2026-10-16T04:13:33.333Z end

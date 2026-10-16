@@ -161,7 +161,13 @@ const beeSettings = `{"crossSessionInbound":"accept"}`
 func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Started, error) {
 	st := Started{Name: sp.Name, Workspace: sp.Workspace, Resumed: resume}
 	doorbell := fmt.Sprintf("[bs] you are %s, working on %s. Run: bs inbox   (reply with: bs send %s \"...\")", sp.Name, sp.Bead, f.Me)
-	args := []string{"--name", sp.Name, "--settings", beeSettings, doorbell}
+	args := []string{"--name", sp.Name, "--settings", beeSettings}
+	// In another repo (--repo, now or when first spawned) the bee's own bs resolves that
+	// repo's project, so a guide naming P would mislead it.
+	if !f.ForeignRepo && cmp.Or(sp.Repo, f.P.Repo) == f.P.Repo {
+		args = append(args, "--append-system-prompt", f.P.BeadsGuide())
+	}
+	args = append(args, doorbell)
 	if resume {
 		args = append([]string{"--continue"}, args...)
 	}

@@ -232,6 +232,35 @@ func TestResumeContinuesTheBeesConversation(t *testing.T) {
 	}
 }
 
+func TestBeesStartWithTheProjectsBeadsGuide(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	r.fleet.Spawn(ctx, "bees-8")
+	r.h.exit("bees-8")
+	r.fleet.Spawn(ctx, "bees-8")
+	for _, start := range r.h.started {
+		i := slices.Index(start, "--append-system-prompt")
+		if i < 0 || !strings.Contains(start[i+1], "bs bead new --parent bees-N") {
+			t.Fatalf("start = %q, want the beads guide appended to the system prompt", start)
+		}
+	}
+}
+
+func TestABeeForAnotherProjectsBeadGetsNoGuide(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	own := r.fleet
+	r.fleet.ForeignRepo, r.fleet.P.Repo = true, filepath.Join(t.TempDir(), "dotfiles") // as --repo does
+	r.fleet.Spawn(ctx, "dotfiles-3")
+	r.h.exit("dotfiles-3")
+	own.Spawn(ctx, "dotfiles-3") // a resume doesn't repeat --repo
+	for _, start := range r.h.started {
+		if slices.Contains(start, "--append-system-prompt") {
+			t.Fatalf("start = %q: the guide would name bees, but the bee's bs resolves its own repo's project", start)
+		}
+	}
+}
+
 func TestBeeWaitingAtAPromptCountsAsStarted(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)

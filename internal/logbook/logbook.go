@@ -1,4 +1,4 @@
-// Package logbook is the append-only record of every message in peons (ADR-0001, ADR-0002),
+// Package logbook is the append-only record of every message in bees (ADR-0001, ADR-0002),
 // stored in a local SQLite file (ADR-0005).
 package logbook
 
@@ -124,7 +124,7 @@ ORDER BY m.rowid`, session)
 	return out, rows.Err()
 }
 
-// UnreadCounts returns every session the logbook names (a writer, recipient or peon) with its
+// UnreadCounts returns every session the logbook names (a writer, recipient or bee) with its
 // unread count, which is 0 for sessions with nothing unread.
 func (l *Logbook) UnreadCounts(ctx context.Context) (map[string]int, error) {
 	rows, err := l.db.QueryContext(ctx, `
@@ -181,8 +181,8 @@ func newID(t time.Time) ID {
 	return ID(fmt.Sprintf("%013x%013x", t.UnixMilli(), binary.BigEndian.Uint64(b[:])>>12))
 }
 
-// Spawn records a peon pns started: its herdr workspace is the key pns end needs once
-// the agent is gone (ADR-0006). It says nothing about whether the peon is running.
+// Spawn records a bee bs started: its herdr workspace is the key bs end needs once
+// the agent is gone (ADR-0006). It says nothing about whether the bee is running.
 type Spawn struct {
 	ID        ID     `json:"-"`
 	Name      string `json:"-"`
@@ -191,12 +191,12 @@ type Spawn struct {
 	Pane      string `json:"pane"`
 	Worktree  string `json:"worktree"`
 	Branch    string `json:"branch"`
-	Repo      string `json:"repo"` // where the branch lives, for pns end
+	Repo      string `json:"repo"` // where the branch lives, for bs end
 	Ended     bool   `json:"-"`
 }
 
 // RecordSpawn records that by spawned s.Name and, in the same transaction, sends it
-// brief (if any), so a crash can't leave a recorded peon without its brief.
+// brief (if any), so a crash can't leave a recorded bee without its brief.
 func (l *Logbook) RecordSpawn(ctx context.Context, by string, s Spawn, brief string) (ID, error) {
 	now := time.Now().UTC()
 	id := newID(now)
@@ -244,8 +244,8 @@ SELECT 'end:' || id, ?, 'ended', ?, subject, id FROM entries WHERE id = ? AND ki
 	return tx.Commit()
 }
 
-// LatestSpawn returns the most recent spawn of the named peon, and whether it has ended.
-// ok is false when the peon was never spawned.
+// LatestSpawn returns the most recent spawn of the named bee, and whether it has ended.
+// ok is false when the bee was never spawned.
 func (l *Logbook) LatestSpawn(ctx context.Context, name string) (s Spawn, ok bool, err error) {
 	var data string
 	err = l.db.QueryRowContext(ctx, `

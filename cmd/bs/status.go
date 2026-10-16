@@ -10,10 +10,10 @@ import (
 	"slices"
 	"text/tabwriter"
 
-	"github.com/jmmshn/peons/internal/harness/claude"
+	"github.com/jmmshn/bees/internal/harness/claude"
 )
 
-// sessionStatus is one row of pns status, and one object of pns status --json.
+// sessionStatus is one row of bs status, and one object of bs status --json.
 type sessionStatus struct {
 	Session string `json:"session"`
 	Running bool   `json:"running"`
@@ -23,14 +23,14 @@ type sessionStatus struct {
 func cmdStatus(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	proj := fs.String("project", "", "project (default: PNS_PROJECT, else the current git repo)")
+	proj := fs.String("project", "", "project (default: BS_PROJECT, else the current git repo)")
 	asJSON := fs.Bool("json", false, `print [{"session": "...", "running": true, "unread": 0}, ...], sorted by session`)
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) > 0 {
-		fmt.Fprintln(stderr, "usage: pns status [--json]")
+		fmt.Fprintln(stderr, "usage: bs status [--json]")
 		return errUsage
 	}
 	_, lb, err := scope(ctx, *proj)

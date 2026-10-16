@@ -2,17 +2,17 @@
   <rect width="960" height="330" rx="10" fill="#0d1117"/>
   <rect x="16" y="16" width="928" height="298" rx="8" fill="#161b22" stroke="#30363d"/>
   <circle cx="34" cy="32" r="5" fill="#ff5f57"/><circle cx="50" cy="32" r="5" fill="#febc2e"/><circle cx="66" cy="32" r="5" fill="#28c840"/>
-  <text x="480" y="36" fill="#8b949e" text-anchor="middle">bash — peons-2-1 is not running; messages wait in the logbook</text>
-  <text x="32" y="70"><tspan fill="#7ee787">$ </tspan><tspan fill="#c9d1d9">pns send --as chief-peons peons-2-1 "Implement the ring adapter per SPEC…"</tspan></text>
-  <text x="32" y="88" fill="#8b949e">sent 001a13e175195019bc42ea68c4 to peons-2-1</text>
-  <text x="32" y="106" fill="#f0883e">queued; peons-2-1 is not running</text>
-  <text x="32" y="130"><tspan fill="#7ee787">$ </tspan><tspan fill="#c9d1d9">pns send --as peons-2-2 peons-2-1 "I touched cmd/pns/messaging.go too, rebase before you push"</tspan></text>
-  <text x="32" y="148" fill="#8b949e">sent 001a13e17519c33acf881972c7 to peons-2-1</text>
-  <text x="32" y="166" fill="#f0883e">queued; peons-2-1 is not running</text>
-  <text x="32" y="192" fill="#6e7681"># later, inside the restarted peons-2-1 session:</text>
-  <text x="32" y="212"><tspan fill="#7ee787">$ </tspan><tspan fill="#c9d1d9">pns inbox</tspan></text>
-  <text x="32" y="232" fill="#58a6ff">── 001a13e175195019bc42ea68c4 from chief-peons · 2026-10-14 22:44:38</text>
+  <text x="480" y="36" fill="#8b949e" text-anchor="middle">bash — bees-2-1 is not running; messages wait in the logbook</text>
+  <text x="32" y="70"><tspan fill="#7ee787">$ </tspan><tspan fill="#c9d1d9">bs send --as queen-bees bees-2-1 "Implement the ring adapter per SPEC…"</tspan></text>
+  <text x="32" y="88" fill="#8b949e">sent 001a13e175195019bc42ea68c4 to bees-2-1</text>
+  <text x="32" y="106" fill="#f0883e">queued; bees-2-1 is not running</text>
+  <text x="32" y="130"><tspan fill="#7ee787">$ </tspan><tspan fill="#c9d1d9">bs send --as bees-2-2 bees-2-1 "I touched cmd/bs/messaging.go too, rebase before you push"</tspan></text>
+  <text x="32" y="148" fill="#8b949e">sent 001a13e17519c33acf881972c7 to bees-2-1</text>
+  <text x="32" y="166" fill="#f0883e">queued; bees-2-1 is not running</text>
+  <text x="32" y="192" fill="#6e7681"># later, inside the restarted bees-2-1 session:</text>
+  <text x="32" y="212"><tspan fill="#7ee787">$ </tspan><tspan fill="#c9d1d9">bs inbox</tspan></text>
+  <text x="32" y="232" fill="#58a6ff">── 001a13e175195019bc42ea68c4 from queen-bees · 2026-10-14 22:44:38</text>
   <text x="32" y="250" fill="#c9d1d9">Implement the ring adapter per SPEC 'Claude adapter'. Reply when tests pass.</text>
-  <text x="32" y="274" fill="#58a6ff">── 001a13e17519c33acf881972c7 from peons-2-2 · 2026-10-14 22:44:38</text>
-  <text x="32" y="292" fill="#c9d1d9">I touched cmd/pns/messaging.go too, rebase before you push</text>
+  <text x="32" y="274" fill="#58a6ff">── 001a13e17519c33acf881972c7 from bees-2-2 · 2026-10-14 22:44:38</text>
+  <text x="32" y="292" fill="#c9d1d9">I touched cmd/bs/messaging.go too, rebase before you push</text>
 </svg>

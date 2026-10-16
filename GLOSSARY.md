@@ -1,29 +1,29 @@
-# peons
+# bees
 
-peons coordinates several Claude Code sessions working on one codebase: a chief hands out work to peons and they report back, all through a shared logbook.
+bees coordinates several Claude Code sessions working on one codebase: a queen hands out work to bees and they report back, all through a shared logbook.
 
 ## People and sessions
 
 **Captain**:
-The human who directs the work and talks to the chief.
+The human who directs the work and talks to the queen.
 _Avoid_: user, operator, admin
 
-**Chief**:
-The one coordinating Claude Code session that assigns work to peons and reports to the captain.
+**Queen**:
+The one coordinating Claude Code session that assigns work to bees and reports to the captain.
 _Avoid_: orchestrator, manager, lead, coordinator
 
-**Peon**:
+**Bee**:
 A worker Claude Code session that owns one worktree and one bead.
 _Avoid_: worker, agent, subagent, crew member
 
 **Session**:
-One running Claude Code process, known by its name (`chief-<project>`, or for a peon its bead id with `.` → `-`: `peons-2-1`).
+One running Claude Code process, known by its name (`queen-<project>`, or for a bee its bead id with `.` → `-`: `bees-2-1`).
 _Avoid_: pane, agent, instance
 
 ## The logbook
 
 **Logbook**:
-The shared, append-only record of every message and fact in peons, and the only source of truth.
+The shared, append-only record of every message and fact in bees, and the only source of truth.
 _Avoid_: ledger, event log, bus, database
 
 **Entry**:
@@ -43,7 +43,7 @@ The messages addressed to a session that have no receipt from it.
 _Avoid_: pending, backlog, queue
 
 **Inbox**:
-A session's unread messages as shown by `pns inbox`.
+A session's unread messages as shown by `bs inbox`.
 _Avoid_: mailbox, queue
 
 ## Waking sessions

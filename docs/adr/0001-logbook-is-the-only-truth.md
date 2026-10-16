@@ -9,4 +9,4 @@ Every message and fact lives in the logbook, a local SQLite file (see ADR-0005).
 
 ## Consequences
 
-`pns send` writes the entry first, then rings. A send whose ring fails is still delivered on the next ring.
+`bs send` writes the entry first, then rings. A send whose ring fails is still delivered on the next ring.

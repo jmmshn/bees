@@ -1,6 +1,6 @@
 # Decisions
 
-Every design decision for peons, from the design grill (peons-1, October 2026). Hard-to-reverse decisions also have an ADR in [adr/](adr/); behaviour is specified in [SPEC.md](SPEC.md); words are defined in [GLOSSARY.md](../GLOSSARY.md). Ids (S, R, M) match the decisions page used during the grill.
+Every design decision for bees, from the design grill (bees-1, October 2026). Hard-to-reverse decisions also have an ADR in [adr/](adr/); behaviour is specified in [SPEC.md](SPEC.md); words are defined in [GLOSSARY.md](../GLOSSARY.md). Ids (S, R, M) match the decisions page used during the grill.
 
 Status: **accepted**, **superseded** (replaced by a later decision), or **open** (decided when its version is built).
 
@@ -8,12 +8,12 @@ Status: **accepted**, **superseded** (replaced by a later decision), or **open**
 
 | Id | Decision | Status | Recorded in |
 |---|---|---|---|
-| — | Build peons now. Claude Code's own tools don't cover: messages that survive a session exiting, peons in herdr panes, binding a session to a bead and worktree, and omp. v0 alone is thin; the real value is v1. Re-check Claude Code's native features before starting v1. | accepted | peons-1 notes |
+| — | Build bees now. Claude Code's own tools don't cover: messages that survive a session exiting, bees in herdr panes, binding a session to a bead and worktree, and omp. v0 alone is thin; the real value is v1. Re-check Claude Code's native features before starting v1. | accepted | bees-1 notes |
 | S1 | The spec lives in the repo: `docs/SPEC.md`, `GLOSSARY.md`, `docs/adr/`. | accepted | this file |
-| S3 | Desk only; no phone path in v1 (that stays with beads-00m). Things that need the captain show up in `pns status`. | accepted | SPEC v1 outline |
+| S3 | Desk only; no phone path in v1 (that stays with beads-00m). Things that need the captain show up in `bs status`. | accepted | SPEC v1 outline |
 | S4 | Claude Code only for v0/v1, behind a harness interface (`Launch`, `Ring`, `Alive`). omp comes in v1.1 through an in-process extension. | accepted | SPEC v1 outline |
 | R5 | Linux only. | accepted | SPEC |
-| R7 | Vocabulary: captain, chief, peon, session, logbook, entry, message, receipt, unread, inbox, doorbell, ring. | accepted | GLOSSARY |
+| R7 | Vocabulary: captain, queen, bee, session, logbook, entry, message, receipt, unread, inbox, doorbell, ring. | accepted | GLOSSARY |
 
 ## Messaging model
 
@@ -21,7 +21,7 @@ Status: **accepted**, **superseded** (replaced by a later decision), or **open**
 |---|---|---|---|
 | S2 | A doorbell carries only "you have unread messages", never a body. A send writes the entry first, then rings. A failed ring loses nothing. | accepted | ADR-0001 |
 | R4 | Messages are addressed to a session; there is no publish/subscribe bus. Only a message wakes anyone. Topics, if ever needed, become a `subscriptions` table that turns them into addressed messages. | accepted | ADR-0001 |
-| — | Claude Code's 50-message socket queue is not a limit for peons, because one doorbell covers all of a session's unread messages. | accepted | ADR-0001 |
+| — | Claude Code's 50-message socket queue is not a limit for bees, because one doorbell covers all of a session's unread messages. | accepted | ADR-0001 |
 | R1 | One append-only `entries` table. Unread = messages to me with no receipt from me, computed every time. No cursor, no time window, no mutable inbox. | accepted | ADR-0002 |
 | R12 | A receipt's id is derived from the message and the session (`rcv:<msg>:<session>`) and written with `INSERT OR IGNORE`, so a duplicate is a no-op. | accepted | ADR-0002, SPEC |
 | R13 | "Needs the captain" is a message addressed to `captain`, not a separate field. | open (v1) | SPEC v1 outline |
@@ -30,7 +30,7 @@ Status: **accepted**, **superseded** (replaced by a later decision), or **open**
 
 | Id | Decision | Status | Recorded in |
 |---|---|---|---|
-| R17 | The logbook is a SQLite file (per project since R23, WAL, `modernc.org/sqlite`). Writes use `BEGIN IMMEDIATE`. pns uses none of Dolt's features, and every session runs on one machine. | accepted | ADR-0005 |
+| R17 | The logbook is a SQLite file (per project since R23, WAL, `modernc.org/sqlite`). Writes use `BEGIN IMMEDIATE`. bs uses none of Dolt's features, and every session runs on one machine. | accepted | ADR-0005 |
 | R15 | The record keeps the name "logbook" (not "ledger"); the table is `entries`. | accepted | GLOSSARY, SPEC |
 | R2′ | One Dolt commit per write, with a disk-size warning instead of a GC timer. | superseded by R17 | ADR-0005 |
 | R14 | Dolt's `GET_LOCK` instead of a flock file. | superseded by R17: SQLite's write lock | ADR-0003, ADR-0005 |
@@ -41,57 +41,58 @@ Status: **accepted**, **superseded** (replaced by a later decision), or **open**
 
 | Id | Decision | Status | Recorded in |
 |---|---|---|---|
-| R8a | Peons launch with `claude --name peon-<slug>` (lowercase letters, digits, `-`; never `:`). | accepted | SPEC |
-| R8b | Only `pns` writes to session sockets; the chief doesn't use Claude's own cross-session send for peon traffic. | accepted | SPEC |
-| R8c | Each peon worktree sets `"crossSessionInbound": "accept"`, because a session in bypass mode otherwise holds peer messages. | accepted | SPEC |
+| R8a | Bees launch with `claude --name bee-<slug>` (lowercase letters, digits, `-`; never `:`). | accepted | SPEC |
+| R8b | Only `bs` writes to session sockets; the queen doesn't use Claude's own cross-session send for bee traffic. | accepted | SPEC |
+| R8c | Each bee worktree sets `"crossSessionInbound": "accept"`, because a session in bypass mode otherwise holds peer messages. | accepted | SPEC |
 | R8d | The Claude adapter only talks to sessions with `peerProtocol == 1`, whose pid is alive with a matching start time. | accepted | SPEC |
 | R16 | Whether a session is alive is worked out each time (Claude's registry, herdr), never stored. No reaping. | accepted, amended by R18″ (`spawned`/`ended` entries record workspace ownership) | ADR-0004 |
-| M4 | A session finds its own name from `--as`, then `PNS_SESSION`, then by walking up its parent processes to a Claude registry file. | accepted | SPEC |
+| M4 | A session finds its own name from `--as`, then `BS_SESSION`, then by walking up its parent processes to a Claude registry file. | accepted | SPEC |
 
 ## Waking and reconciling
 
 | Id | Decision | Status | Recorded in |
 |---|---|---|---|
-| R3 | From v1, all "what should happen now" logic is a pure `Plan(facts, now)`. It runs from send, hooks (5 s debounce), status, inbox and a 60 s watchdog. No daemon, no `pns tick`, no `pns wait`. One reconcile at a time. | accepted (v1) | ADR-0003 |
-| R9 | One doorbell in flight per session; re-ring after 60 s; flag the chief after 120 s. | open (v1) | SPEC v1 outline |
-| R10 | `pns send --now` rings with priority "now", which interrupts the current turn; the default is "next". | accepted | SPEC |
-| R11 | Peon contract: a prompt starting with `[pns]` is a doorbell; run the `pns inbox` it names, act, and reply with `pns send`. | open (v1, with `pns spawn`) | SPEC v1 outline |
+| R3 | From v1, all "what should happen now" logic is a pure `Plan(facts, now)`. It runs from send, hooks (5 s debounce), status, inbox and a 60 s watchdog. No daemon, no `bs tick`, no `bs wait`. One reconcile at a time. | accepted (v1) | ADR-0003 |
+| R9 | One doorbell in flight per session; re-ring after 60 s; flag the queen after 120 s. | open (v1) | SPEC v1 outline |
+| R10 | `bs send --now` rings with priority "now", which interrupts the current turn; the default is "next". | accepted | SPEC |
+| R11 | Bee contract: a prompt starting with `[bs]` is a doorbell; run the `bs inbox` it names, act, and reply with `bs send`. | open (v1, with `bs spawn`) | SPEC v1 outline |
 
 ## Code and build
 
 | Id | Decision | Status | Recorded in |
 |---|---|---|---|
-| R6 | One binary, `pns`, from `cmd/pns`. Packages: `logbook`, `project`, `peon`, `harness/claude`; `plan` and `reconcile` in v1. | accepted, packages revised by R24 | SPEC |
+| R6 | One binary, `bs`, from `cmd/bs`. Packages: `logbook`, `project`, `bee`, `harness/claude`; `plan` and `reconcile` in v1. | accepted, packages revised by R24 | SPEC |
 | — | Dependency: `modernc.org/sqlite` (pure Go, no cgo; crew's choice too). | accepted | ADR-0005 |
 
 ## v0 scope (walking skeleton)
 
 | Id | Decision | Status | Recorded in |
 |---|---|---|---|
-| M1 | v0 is `pns init`, `send`, `inbox`, `status`; peons started by hand. | accepted | SPEC |
-| M2 | A receipt means "shown by `pns inbox`"; `--peek` writes nothing; no hooks in v0. | accepted | SPEC |
+| M1 | v0 is `bs init`, `send`, `inbox`, `status`; bees started by hand. | accepted | SPEC |
+| M2 | A receipt means "shown by `bs inbox`"; `--peek` writes nothing; no hooks in v0. | accepted | SPEC |
 | M3 | Ring every unread message on every send; no lock, no timers. A missed doorbell waits for the next send. | accepted | SPEC |
 | M5 | The kind list is declared up front: `message`, `received`, `rang`, `spawned`, `ended` (R16 narrowed it; R18″ restored `spawned`/`ended`). | accepted | SPEC |
 | M6 | (Was: database on the shared beads server.) Now the SQLite file from R17. | superseded by R17 | ADR-0005 |
 | M7 | Tests: logbook against a temp file; Claude adapter against a fake unix socket; a scripted end-to-end run with two real sessions. | accepted | SPEC |
-| M8 | The doorbell explains itself; no peon prompt file in v0. | accepted | SPEC |
-| M9 | Manual setup: `crossSessionInbound` in the worktree's settings, then `claude --name peon-a`. | accepted | SPEC |
+| M8 | The doorbell explains itself; no bee prompt file in v0. | accepted | SPEC |
+| M9 | Manual setup: `crossSessionInbound` in the worktree's settings, then `claude --name bee-a`. | accepted | SPEC |
 
-## Spawning peons
+## Spawning bees
 
 | Id | Decision | Status | Recorded in |
 |---|---|---|---|
-| R18″ | Spawn the crew way: `herdr worktree create` labelled with the bead, one `spawned` entry recording the herdr workspace id, `pns end` removes only that recorded id. No roster table; never guess a workspace from herdr. | accepted | ADR-0006 |
-| R20 | One peon per bead in v1; a role prefix only when a second peon per bead is needed. | accepted | ADR-0006 |
-| R21′ | One name everywhere: `peon-` + bead id without `beads-`, `.` → `-`. Session, herdr agent, branch, worktree dir (`<repo>-WT/<name>`) and address; herdr label is the bead id. Too long is refused, not hashed. | accepted | ADR-0006 |
-| R23 | Project is the scope (crew's `--project`): `--project` → `PNS_PROJECT` → git common-dir basename. Per-project logbook `~/.local/share/peons/<project>.db`, repo `$PNS_REPOS/<project>`, chief `chief-<project>`. The bead's repo label must equal the project unless `--repo`. | accepted | ADR-0006 |
-| R24 | Implementation: packages `project` and `peon`; typed `Herdr` and `Beads` ports with CLI adapters and stateful fakes; `spawned` written right after the worktree is created; first assignment delivered as Claude's first prompt; logbook gains `RecordSpawn`, `RecordEnd`, `LatestSpawn`. Spawn resumes a dead peon's recorded workspace and reports orphans. | accepted | ADR-0006 |
-| R25 | Worktrees stay at `<repo>-WT/<name>`. Per-peon Claude settings ride `--settings` (Claude reads `settings.local.json` from the main checkout in a worktree); no `PNS_*` variables; `pns end` deletes the branch only if fully merged. | accepted | ADR-0006 |
-| R26 | Review fixes: the `spawned` entry and the brief are written in one transaction; the registry walk beats `PNS_SESSION`, and `pns chief` sets no `PNS_*`; the spawn records its repo so `pns end` deletes the branch there; the project label may be on the bead or any ancestor. | accepted | SPEC |
-| R27 | Named project epics, as in crew: the epic id is the repo name (`bd create --id peons --force`), beads are `peons.<n>`. A peon's name is the bead id with `.` → `-` (`peons-8`); the project check is the `<project>.` prefix, replacing the label walk. Supersedes R21′'s `peon-` prefix and R23's label check. | accepted | ADR-0006 |
-| R28 | Migrate peons now: epic `peons`; open peons-1 children renamed to `peons.<n>`; peons-1 stays as the design-spec epic. Other repos migrate when next worked on. | accepted | beads |
-| R27⁵ | Jira-style ids: beads are `<project>-<n>[.<m>…]`, `pns epic` creates the next `<project>-<n>`. Project names are lowercased with `-` → `_` and must match `^[a-z][a-z0-9_]{0,24}$`, so names can't collide (tested: `web` vs `web-2`). A peon's name is the id with `.` → `-`; a bead belongs to the project if it matches `^<project>-\d+(\.\d+)*$`. Supersedes R27 (named epics; `bd` rejects a bare `peons` id) and R27′–R27⁗′. | accepted | ADR-0006 |
-| R28″ | Migration: peons-1 → `peons-1`, its children → `peons-1.<n>`. Supersedes R28. | accepted | beads |
-| R29 | Resume a dead peon with `claude --continue` in its recorded worktree; herdr's `agent_not_ready` (Claude blocked at a startup prompt) counts as started; `pns spawn` warns when `~/.claude.json` shows the repo untrusted (read only). | accepted | SPEC |
-| R30 | `pns status` lists sessions this project's logbook names that are running or have unread mail. Running sessions the logbook never named (other projects, sessions that haven't used pns) are left out, because Claude's registry is machine-wide; stopped sessions with nothing unread are history. Narrows peons-1.6's "every running Claude session". | accepted | SPEC |
+| R18″ | Spawn the crew way: `herdr worktree create` labelled with the bead, one `spawned` entry recording the herdr workspace id, `bs end` removes only that recorded id. No roster table; never guess a workspace from herdr. | accepted | ADR-0006 |
+| R20 | One bee per bead in v1; a role prefix only when a second bee per bead is needed. | accepted | ADR-0006 |
+| R21′ | One name everywhere: `bee-` + bead id without `beads-`, `.` → `-`. Session, herdr agent, branch, worktree dir (`<repo>-WT/<name>`) and address; herdr label is the bead id. Too long is refused, not hashed. | accepted | ADR-0006 |
+| R23 | Project is the scope (crew's `--project`): `--project` → `BS_PROJECT` → git common-dir basename. Per-project logbook `~/.local/share/bees/<project>.db`, repo `$BS_REPOS/<project>`, queen `queen-<project>`. The bead's repo label must equal the project unless `--repo`. | accepted | ADR-0006 |
+| R24 | Implementation: packages `project` and `bee`; typed `Herdr` and `Beads` ports with CLI adapters and stateful fakes; `spawned` written right after the worktree is created; first assignment delivered as Claude's first prompt; logbook gains `RecordSpawn`, `RecordEnd`, `LatestSpawn`. Spawn resumes a dead bee's recorded workspace and reports orphans. | accepted | ADR-0006 |
+| R25 | Worktrees stay at `<repo>-WT/<name>`. Per-bee Claude settings ride `--settings` (Claude reads `settings.local.json` from the main checkout in a worktree); no `BS_*` variables; `bs end` deletes the branch only if fully merged. | accepted | ADR-0006 |
+| R26 | Review fixes: the `spawned` entry and the brief are written in one transaction; the registry walk beats `BS_SESSION`, and `bs queen` sets no `BS_*`; the spawn records its repo so `bs end` deletes the branch there; the project label may be on the bead or any ancestor. | accepted | SPEC |
+| R27 | Named project epics, as in crew: the epic id is the repo name (`bd create --id bees --force`), beads are `bees.<n>`. A bee's name is the bead id with `.` → `-` (`bees-8`); the project check is the `<project>.` prefix, replacing the label walk. Supersedes R21′'s `bee-` prefix and R23's label check. | accepted | ADR-0006 |
+| R28 | Migrate bees now: epic `bees`; open bees-1 children renamed to `bees.<n>`; bees-1 stays as the design-spec epic. Other repos migrate when next worked on. | accepted | beads |
+| R27⁵ | Jira-style ids: beads are `<project>-<n>[.<m>…]`, `bs epic` creates the next `<project>-<n>`. Project names are lowercased with `-` → `_` and must match `^[a-z][a-z0-9_]{0,24}$`, so names can't collide (tested: `web` vs `web-2`). A bee's name is the id with `.` → `-`; a bead belongs to the project if it matches `^<project>-\d+(\.\d+)*$`. Supersedes R27 (named epics; `bd` rejects a bare `bees` id) and R27′–R27⁗′. | accepted | ADR-0006 |
+| R28″ | Migration: bees-1 → `bees-1`, its children → `bees-1.<n>`. Supersedes R28. | accepted | beads |
+| R29 | Resume a dead bee with `claude --continue` in its recorded worktree; herdr's `agent_not_ready` (Claude blocked at a startup prompt) counts as started; `bs spawn` warns when `~/.claude.json` shows the repo untrusted (read only). | accepted | SPEC |
+| R30 | `bs status` lists sessions this project's logbook names that are running or have unread mail. Running sessions the logbook never named (other projects, sessions that haven't used bs) are left out, because Claude's registry is machine-wide; stopped sessions with nothing unread are history. Narrows bees-1.6's "every running Claude session". | accepted | SPEC |
+| R31 | Renamed the project from peons to bees: repo and module `bees`, CLI `pns` → `bs` (`cmd/bs`), package `peon` → `bee`, peon → bee, chief → queen (`queen-<project>`, `bs queen`), `PNS_*` → `BS_*`, data in `~/.local/share/bees/`, beads `peons-*` → `bees-*`. Captain, logbook, doorbell/ring and spawn keep their names. Older commits, close reasons and logbook entries use the old words. | accepted | all docs |
 | R19, R22, R18′ | Roster table, reserve-first spawn, label-only project. | superseded by R18″/R23 | ADR-0006 |

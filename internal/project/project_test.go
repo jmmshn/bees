@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jmmshn/peons/internal/project"
+	"github.com/jmmshn/bees/internal/project"
 )
 
 // gitRepo creates a git repo named name under a temp dir and returns its path.
@@ -31,41 +31,41 @@ func git(t *testing.T, dir string, args ...string) {
 
 func clearEnv(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	for _, k := range []string{"PNS_PROJECT", "PNS_SESSION", "PNS_LOGBOOK", "PNS_REPOS"} {
+	for _, k := range []string{"BS_PROJECT", "BS_SESSION", "BS_LOGBOOK", "BS_REPOS"} {
 		t.Setenv(k, "")
 	}
 }
 
 func TestProjectComesFromGitRepo(t *testing.T) {
 	clearEnv(t)
-	repo := gitRepo(t, "peons")
+	repo := gitRepo(t, "bees")
 	t.Chdir(repo)
 	p, err := project.Resolve("")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Name != "peons" || p.Repo != repo {
-		t.Fatalf("got %+v, want name peons, repo %s", p, repo)
+	if p.Name != "bees" || p.Repo != repo {
+		t.Fatalf("got %+v, want name bees, repo %s", p, repo)
 	}
-	if want := filepath.Join(os.Getenv("HOME"), ".local/share/peons/peons.db"); p.Logbook != want {
+	if want := filepath.Join(os.Getenv("HOME"), ".local/share/bees/bees.db"); p.Logbook != want {
 		t.Fatalf("logbook = %s, want %s", p.Logbook, want)
 	}
-	if p.Chief() != "chief-peons" {
-		t.Fatalf("chief = %s", p.Chief())
+	if p.Queen() != "queen-bees" {
+		t.Fatalf("queen = %s", p.Queen())
 	}
 }
 
 func TestLinkedWorktreeResolvesToMainRepo(t *testing.T) {
 	clearEnv(t)
-	repo := gitRepo(t, "peons")
-	wt := filepath.Join(filepath.Dir(repo), "peons-WT", "peon-995-8")
-	git(t, repo, "worktree", "add", "-q", "-b", "peon-995-8", wt)
+	repo := gitRepo(t, "bees")
+	wt := filepath.Join(filepath.Dir(repo), "bees-WT", "bee-995-8")
+	git(t, repo, "worktree", "add", "-q", "-b", "bee-995-8", wt)
 	t.Chdir(wt)
 	p, err := project.Resolve("")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Name != "peons" || p.Repo != repo {
+	if p.Name != "bees" || p.Repo != repo {
 		t.Fatalf("got %+v, want the main repo %s", p, repo)
 	}
 }
@@ -73,9 +73,9 @@ func TestLinkedWorktreeResolvesToMainRepo(t *testing.T) {
 func TestEnvBeatsGitAndFlagBeatsEnv(t *testing.T) {
 	clearEnv(t)
 	repos := t.TempDir()
-	t.Setenv("PNS_REPOS", repos)
-	t.Chdir(gitRepo(t, "peons"))
-	t.Setenv("PNS_PROJECT", "dotfiles")
+	t.Setenv("BS_REPOS", repos)
+	t.Chdir(gitRepo(t, "bees"))
+	t.Setenv("BS_PROJECT", "dotfiles")
 	p, err := project.Resolve("")
 	if err != nil {
 		t.Fatal(err)
@@ -90,8 +90,8 @@ func TestEnvBeatsGitAndFlagBeatsEnv(t *testing.T) {
 
 func TestLogbookOverride(t *testing.T) {
 	clearEnv(t)
-	t.Setenv("PNS_LOGBOOK", "/tmp/x.db")
-	p, err := project.Resolve("peons")
+	t.Setenv("BS_LOGBOOK", "/tmp/x.db")
+	p, err := project.Resolve("bees")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestMeResolutionOrder(t *testing.T) {
 	if _, err := project.Me(""); !errors.Is(err, project.ErrNoSession) {
 		t.Fatalf("nothing set: err = %v, want ErrNoSession", err)
 	}
-	t.Setenv("PNS_SESSION", "outside-claude")
+	t.Setenv("BS_SESSION", "outside-claude")
 	if me, _ := project.Me(""); me != "outside-claude" {
 		t.Fatalf("env outside Claude: %q", me)
 	}
@@ -121,16 +121,16 @@ func TestMeResolutionOrder(t *testing.T) {
 	if err := os.MkdirAll(reg, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// The test binary's parent stands in for the Claude process that ran pns.
-	body := `{"name":"peon-995-8","pid":` + fmt.Sprint(os.Getppid()) + `}`
+	// The test binary's parent stands in for the Claude process that ran bs.
+	body := `{"name":"bee-995-8","pid":` + fmt.Sprint(os.Getppid()) + `}`
 	if err := os.WriteFile(filepath.Join(reg, fmt.Sprintf("%d.json", os.Getppid())), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if me, err := project.Me(""); err != nil || me != "peon-995-8" {
+	if me, err := project.Me(""); err != nil || me != "bee-995-8" {
 		t.Fatalf("ppid walk: %q, %v", me, err)
 	}
-	t.Setenv("PNS_SESSION", "chief-peons") // a stale or inherited value must not beat the registry
-	if me, _ := project.Me(""); me != "peon-995-8" {
+	t.Setenv("BS_SESSION", "queen-bees") // a stale or inherited value must not beat the registry
+	if me, _ := project.Me(""); me != "bee-995-8" {
 		t.Fatalf("registry vs env: %q", me)
 	}
 	if me, _ := project.Me("captain"); me != "captain" {
@@ -141,7 +141,7 @@ func TestMeResolutionOrder(t *testing.T) {
 func TestProjectNamesAreNormalisedAndValidated(t *testing.T) {
 	clearEnv(t)
 	for raw, want := range map[string]string{
-		"peons": "peons", "pymatgen-analysis-defects": "pymatgen_analysis_defects",
+		"bees": "bees", "pymatgen-analysis-defects": "pymatgen_analysis_defects",
 		"web-2": "web_2", "Jobflow-Ray": "jobflow_ray", "obsidian_vault": "obsidian_vault",
 	} {
 		p, err := project.Resolve(raw)

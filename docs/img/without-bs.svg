@@ -5,7 +5,7 @@
   <circle cx="34" cy="32" r="5" fill="#ff5f57"/><circle cx="50" cy="32" r="5" fill="#febc2e"/><circle cx="66" cy="32" r="5" fill="#28c840"/>
   <text x="242" y="36" fill="#8b949e" text-anchor="middle">claude — main checkout</text>
   <text x="32" y="70" fill="#c9d1d9">&gt; split SPEC into tickets and hand</text>
-  <text x="32" y="88" fill="#c9d1d9">  peons-2.1 to the other session</text>
+  <text x="32" y="88" fill="#c9d1d9">  bees-2.1 to the other session</text>
   <text x="32" y="118" fill="#d2a8ff">● I can't reach another Claude Code</text>
   <text x="32" y="136" fill="#d2a8ff">  session. Paste this brief into it:</text>
   <rect x="32" y="148" width="420" height="58" rx="4" fill="#0d1117" stroke="#30363d"/>
@@ -18,7 +18,7 @@
   <!-- right pane -->
   <rect x="492" y="16" width="452" height="340" rx="8" fill="#161b22" stroke="#30363d"/>
   <circle cx="510" cy="32" r="5" fill="#ff5f57"/><circle cx="526" cy="32" r="5" fill="#febc2e"/><circle cx="542" cy="32" r="5" fill="#28c840"/>
-  <text x="718" y="36" fill="#8b949e" text-anchor="middle">claude — worktree peons-2-1</text>
+  <text x="718" y="36" fill="#8b949e" text-anchor="middle">claude — worktree bees-2-1</text>
   <text x="508" y="70" fill="#c9d1d9">&gt; Implement the ring adapter per</text>
   <text x="508" y="88" fill="#c9d1d9">  SPEC "Claude adapter"…</text>
   <text x="508" y="118" fill="#d2a8ff">● Done. go test ./... is green.</text>
@@ -30,5 +30,5 @@
   <path d="M 504 128 C 470 128, 486 275, 456 275" fill="none" stroke="#f0883e" stroke-width="2" stroke-dasharray="6 5"/>
   <path d="M 456 275 l 11 -5 l 0 10 z" fill="#f0883e"/>
   <text x="480" y="384" fill="#f0883e" text-anchor="middle">you: copy, switch window, paste, wait, check, copy back</text>
-  <text x="480" y="406" fill="#6e7681" text-anchor="middle" font-size="11">illustration: two plain Claude Code sessions, no pns</text>
+  <text x="480" y="406" fill="#6e7681" text-anchor="middle" font-size="11">illustration: two plain Claude Code sessions, no bs</text>
 </svg>

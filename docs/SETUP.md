@@ -1,58 +1,58 @@
-# Setting up pns
+# Setting up bs
 
-Linux only. Needs Go, [Claude Code](https://code.claude.com) with cross-session messaging (2.1.296 or later), [herdr](https://herdr.dev) for spawning peons, and `bd` for beads.
+Linux only. Needs Go, [Claude Code](https://code.claude.com) with cross-session messaging (2.1.296 or later), [herdr](https://herdr.dev) for spawning bees, and `bd` for beads.
 
 ## Install
 
 ```sh
-go install ./cmd/pns     # from this repo
-pns init                 # optional: creates ~/.local/share/peons/<project>.db (any pns command does)
+go install ./cmd/bs     # from this repo
+bs init                 # optional: creates ~/.local/share/bees/<project>.db (any bs command does)
 ```
 
 ## Names
 
-- **Project:** the basename of the git repo you are in (a worktree counts as its main repo), lowercased with `-` → `_`. It must be a letter and then up to 24 letters, digits or `_`. Otherwise set `PNS_PROJECT` or pass `--project`.
-- **Chief:** `chief-<project>`.
-- **Bead ids:** `<project>-<n>` for epics (`pns epic "<title>"` makes the next one), `<project>-<n>.<m>` for their children (`bd create --parent <epic> --force …`).
-- **Peon:** the bead id with `.` → `-` (`peons-2.1` → `peons-2-1`). That one name is its Claude session, herdr agent, git branch, worktree directory (`<repo>-WT/<name>`) and address for `pns send`.
+- **Project:** the basename of the git repo you are in (a worktree counts as its main repo), lowercased with `-` → `_`. It must be a letter and then up to 24 letters, digits or `_`. Otherwise set `BS_PROJECT` or pass `--project`.
+- **Queen:** `queen-<project>`.
+- **Bead ids:** `<project>-<n>` for epics (`bs epic "<title>"` makes the next one), `<project>-<n>.<m>` for their children (`bd create --parent <epic> --force …`).
+- **Bee:** the bead id with `.` → `-` (`bees-2.1` → `bees-2-1`). That one name is its Claude session, herdr agent, git branch, worktree directory (`<repo>-WT/<name>`) and address for `bs send`.
 - Session names never contain `:`.
 
-## Run a chief and peons
+## Run a queen and bees
 
 ```sh
 cd ~/repos/<you>/<project>
-pns chief                       # execs claude --name chief-<project> in the repo
-# inside the chief:
-pns epic "ringing"              # → <project>-2
+bs queen                       # execs claude --name queen-<project> in the repo
+# inside the queen:
+bs epic "ringing"              # → <project>-2
 bd create --parent <project>-2 --force --title "…" --description "…"   # → <project>-2.1
-pns spawn <project>-2.1         # peon <project>-2-1 in its own herdr workspace and worktree
-pns send <project>-2-1 "…"      # store, then ring it awake; --now interrupts its current turn
-pns inbox                       # your unread messages; --peek leaves them unread
-pns status                      # every session the logbook knows: running or not, unread
-pns end <project>-2-1           # remove its workspace; its branch is deleted if merged
+bs spawn <project>-2.1         # bee <project>-2-1 in its own herdr workspace and worktree
+bs send <project>-2-1 "…"      # store, then ring it awake; --now interrupts its current turn
+bs inbox                       # your unread messages; --peek leaves them unread
+bs status                      # every session the logbook knows: running or not, unread
+bs end <project>-2-1           # remove its workspace; its branch is deleted if merged
 ```
 
-`pns spawn` on a peon whose Claude has exited resumes it in the same workspace with `claude --continue`.
+`bs spawn` on a bee whose Claude has exited resumes it in the same workspace with `claude --continue`.
 
 ## Folder trust
 
-Claude asks whether to trust a repo the first time it opens one, and its worktrees share the answer. Open the repo in Claude once (`pns chief` does) before spawning. If a peon is spawned into an untrusted repo, `pns spawn` warns and the peon waits at the trust prompt in its herdr pane until you answer it.
+Claude asks whether to trust a repo the first time it opens one, and its worktrees share the answer. Open the repo in Claude once (`bs queen` does) before spawning. If a bee is spawned into an untrusted repo, `bs spawn` warns and the bee waits at the trust prompt in its herdr pane until you answer it.
 
-## A peon without herdr
+## A bee without herdr
 
 Any Claude session can take part if it was started with a name and accepts cross-session messages:
 
 ```sh
-claude --name peon-a --settings '{"crossSessionInbound":"accept"}'
+claude --name bee-a --settings '{"crossSessionInbound":"accept"}'
 ```
 
-Without `crossSessionInbound: accept`, a session in bypass mode holds rung messages instead of acting on them. Outside Claude, say who you are with `--as <name>` or `PNS_SESSION`.
+Without `crossSessionInbound: accept`, a session in bypass mode holds rung messages instead of acting on them. Outside Claude, say who you are with `--as <name>` or `BS_SESSION`.
 
 ## Check it works
 
 ```sh
 go test ./...                      # includes a writer killed mid-send losing nothing
-scripts/e2e.sh <throwaway bead>    # real chief + peon in herdr: wake ≤ 2 s, round trip, queued mail
+scripts/e2e.sh <throwaway bead>    # real queen + bee in herdr: wake ≤ 2 s, round trip, queued mail
 ```
 
-`scripts/e2e.sh` writes to the project's logbook (as `e2e-chief`, `e2e-captain` and the peon) and cleans up its workspaces.
+`scripts/e2e.sh` writes to the project's logbook (as `e2e-queen`, `e2e-captain` and the bee) and cleans up its workspaces.

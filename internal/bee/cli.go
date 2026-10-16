@@ -1,4 +1,4 @@
-package peon
+package bee
 
 import (
 	"bytes"

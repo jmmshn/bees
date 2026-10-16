@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # e2e.sh <bead>: check SPEC "Done when" 1-3 with two real Claude Code sessions in herdr.
 #
-# Starts a chief (e2e-chief) in a plain herdr workspace and spawns a peon for <bead>, a
+# Starts a queen (e2e-queen) in a plain herdr workspace and spawns a bee for <bead>, a
 # throwaway bead of this repo's project, then plays the captain (e2e-captain) from this
 # shell. Run it from the main checkout; it writes to the project's logbook.
 # "Done when" 4 (a killed writer loses nothing) is TestKilledWriterLosesNoCommittedMessage.
 set -euo pipefail
 
-bead=${1:?usage: scripts/e2e.sh <throwaway bead, e.g. peons-1.11>}
-peon=${bead//./-}
-chief=e2e-chief
+bead=${1:?usage: scripts/e2e.sh <throwaway bead, e.g. bees-1.11>}
+bee=${bead//./-}
+queen=e2e-queen
 captain=e2e-captain
-settings='{"crossSessionInbound":"accept"}' # as pns spawn passes to peons
+settings='{"crossSessionInbound":"accept"}' # as bs spawn passes to bees
 repo=$(git rev-parse --show-toplevel)
 cd "$repo"
 
@@ -38,60 +38,60 @@ wait_until() {
 
 is_idle() { [ "$(session "$1" | jq -r .status)" = idle ]; }
 is_gone() { [ -z "$(session "$1")" ]; }
-captain_got() { pns inbox --as "$captain" --peek | grep -qx "$1"; }
+captain_got() { bs inbox --as "$captain" --peek | grep -qx "$1"; }
 
 cleanup() {
-	pns end --as "$chief" "$peon" >/dev/null 2>&1 || true
+	bs end --as "$queen" "$bee" >/dev/null 2>&1 || true
 	[ -n "${ws:-}" ] && herdr workspace close "$ws" >/dev/null 2>&1 || true
-	pns inbox --as "$captain" >/dev/null 2>&1 || true
+	bs inbox --as "$captain" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-command -v pns >/dev/null || fail "pns is not on PATH (go install ./cmd/pns)"
-[ -z "$(session "$chief")$(session "$peon")" ] || fail "$chief or $peon is already running"
-pns inbox --as "$captain" >/dev/null # start from an empty captain inbox
+command -v bs >/dev/null || fail "bs is not on PATH (go install ./cmd/bs)"
+[ -z "$(session "$queen")$(session "$bee")" ] || fail "$queen or $bee is already running"
+bs inbox --as "$captain" >/dev/null # start from an empty captain inbox
 
-echo "starting $chief and $peon"
-created=$(herdr workspace create --cwd "$repo" --label "$chief" --no-focus)
+echo "starting $queen and $bee"
+created=$(herdr workspace create --cwd "$repo" --label "$queen" --no-focus)
 ws=$(jq -r .result.root_pane.workspace_id <<<"$created")
 pane=$(jq -r .result.root_pane.pane_id <<<"$created")
-herdr agent start "$chief" --kind claude --pane "$pane" -- --name "$chief" --settings "$settings" \
-	"You are $chief, the chief in an automated pns test. Do only what pns messages ask, then stop and wait." >/dev/null
-pns spawn --as "$chief" "$bead"
-wait_until 180 "$chief to go idle" is_idle "$chief"
-wait_until 180 "$peon to go idle" is_idle "$peon"
+herdr agent start "$queen" --kind claude --pane "$pane" -- --name "$queen" --settings "$settings" \
+	"You are $queen, the queen in an automated bs test. Do only what bs messages ask, then stop and wait." >/dev/null
+bs spawn --as "$queen" "$bead"
+wait_until 180 "$queen to go idle" is_idle "$queen"
+wait_until 180 "$bee to go idle" is_idle "$bee"
 
-# 1. An idle peon wakes within 2 s of pns send: the doorbell's time in the peon's
+# 1. An idle bee wakes within 2 s of bs send: the doorbell's time in the bee's
 #    transcript against the message id's time (its first 13 hex digits are Unix ms).
-id=$(pns send --as "$captain" "$peon" "e2e 1: reply with exactly: pns send $captain wake-ok" | awk '/^sent/ {print $2}')
+id=$(bs send --as "$captain" "$bee" "e2e 1: reply with exactly: bs send $captain wake-ok" | awk '/^sent/ {print $2}')
 sent_ms=$((16#${id:0:13}))
-wait_until 120 "the peon's wake-ok" captain_got wake-ok
-s=$(session "$peon")
+wait_until 120 "the bee's wake-ok" captain_got wake-ok
+s=$(session "$bee")
 # ponytail: Claude names a project's transcript dir after its cwd with every
 # non-alphanumeric character as "-" (observed, not documented).
 transcript=~/.claude/projects/$(jq -r .cwd <<<"$s" | sed 's/[^A-Za-z0-9]/-/g')/$(jq -r .sessionId <<<"$s").jsonl
-rang=$(jq -r 'select(.type == "user") | select(.message.content | tostring | contains("[pns]")) | .timestamp' "$transcript" |
+rang=$(jq -r 'select(.type == "user") | select(.message.content | tostring | contains("[bs]")) | .timestamp' "$transcript" |
 	while read -r ts; do d=$(date -d "$ts" +%s%3N); [ "$d" -ge "$sent_ms" ] && echo "$d" && break; done)
 [ -n "$rang" ] || fail "no doorbell in $transcript after the send"
 wake=$((rang - sent_ms))
-[ "$wake" -le 2000 ] || fail "1. peon woke ${wake} ms after the send, want <= 2000"
-pass "1. idle peon woke ${wake} ms after pns send"
+[ "$wake" -le 2000 ] || fail "1. bee woke ${wake} ms after the send, want <= 2000"
+pass "1. idle bee woke ${wake} ms after bs send"
 
-# 2. chief -> peon -> chief with nobody typing in either session.
-pns send --as "$captain" "$chief" "e2e 2: send $peon this message: 'reply with exactly: pns send $chief pong'. When $peon replies pong, run: pns send $captain round-trip-ok" >/dev/null
-wait_until 240 "the chief's round-trip-ok" captain_got round-trip-ok
-pass "2. chief -> peon -> chief round trip, nobody typing"
+# 2. queen -> bee -> queen with nobody typing in either session.
+bs send --as "$captain" "$queen" "e2e 2: send $bee this message: 'reply with exactly: bs send $queen pong'. When $bee replies pong, run: bs send $captain round-trip-ok" >/dev/null
+wait_until 240 "the queen's round-trip-ok" captain_got round-trip-ok
+pass "2. queen -> bee -> queen round trip, nobody typing"
 
-# 3. Mail sent while the peon is not running is delivered once it starts again.
-wait_until 60 "$peon to go idle" is_idle "$peon"
-kill "$(session "$peon" | jq -r .pid)"
-wait_until 30 "$peon to exit" is_gone "$peon"
-agent_gone() { ! herdr agent get "$peon" >/dev/null 2>&1; }
-wait_until 30 "herdr to clear $peon" agent_gone
-pns send --as "$captain" "$peon" "e2e 3: reply with exactly: pns send $captain queued-ok" | grep -q "queued; $peon is not running" ||
-	fail "3. send to a stopped peon didn't say queued"
-pns spawn --as "$chief" "$bead" | grep -q "^resumed $peon" || fail "3. respawn didn't resume $peon"
-wait_until 180 "the resumed peon's queued-ok" captain_got queued-ok
-pass "3. mail queued while $peon was stopped was delivered when it resumed"
+# 3. Mail sent while the bee is not running is delivered once it starts again.
+wait_until 60 "$bee to go idle" is_idle "$bee"
+kill "$(session "$bee" | jq -r .pid)"
+wait_until 30 "$bee to exit" is_gone "$bee"
+agent_gone() { ! herdr agent get "$bee" >/dev/null 2>&1; }
+wait_until 30 "herdr to clear $bee" agent_gone
+bs send --as "$captain" "$bee" "e2e 3: reply with exactly: bs send $captain queued-ok" | grep -q "queued; $bee is not running" ||
+	fail "3. send to a stopped bee didn't say queued"
+bs spawn --as "$queen" "$bead" | grep -q "^resumed $bee" || fail "3. respawn didn't resume $bee"
+wait_until 180 "the resumed bee's queued-ok" captain_got queued-ok
+pass "3. mail queued while $bee was stopped was delivered when it resumed"
 
 echo "PASS"

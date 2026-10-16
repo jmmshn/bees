@@ -160,7 +160,7 @@ func uuid() string {
 }
 
 // procStart is field 22 of /proc/<pid>/stat, the process start time in clock ticks.
-// ponytail: Linux /proc only, like the rest of pns.
+// ponytail: Linux /proc only, like the rest of bs.
 func procStart(pid int) (string, error) {
 	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {

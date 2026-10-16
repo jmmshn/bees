@@ -1,4 +1,4 @@
-// Command pns lets Claude Code sessions message each other through a shared logbook.
+// Command bs lets Claude Code sessions message each other through a shared logbook.
 package main
 
 import (
@@ -8,16 +8,16 @@ import (
 	"io"
 	"os"
 
-	"github.com/jmmshn/peons/internal/project"
+	"github.com/jmmshn/bees/internal/project"
 )
 
-const usage = `usage: pns <command> [arguments]
+const usage = `usage: bs <command> [arguments]
 
 commands:
   init      create the logbook file and table if missing
-  chief     start this project's chief session
-  spawn     start a peon for a bead in its own herdr workspace
-  end       remove a peon's workspace
+  queen     start this project's queen session
+  spawn     start a bee for a bead in its own herdr workspace
+  end       remove a bee's workspace
   epic      create the project's next epic (<project>-<n>)
   send      store a message for a session, then ring it
   inbox     print your unread messages and record receipts
@@ -29,7 +29,7 @@ var commands = map[string]func(ctx context.Context, args []string, stdin io.Read
 	"init":   cmdInit,
 	"send":   cmdSend,
 	"inbox":  cmdInbox,
-	"chief":  cmdChief,
+	"queen":  cmdQueen,
 	"spawn":  cmdSpawn,
 	"end":    cmdEnd,
 	"epic":   cmdEpic,
@@ -52,10 +52,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		case errors.Is(err, errUsage):
 			return 2
 		case errors.Is(err, project.ErrNoSession), errors.Is(err, project.ErrNoProject):
-			fmt.Fprintf(stderr, "pns %s: %v\n", args[0], err)
+			fmt.Fprintf(stderr, "bs %s: %v\n", args[0], err)
 			return 2
 		case err != nil:
-			fmt.Fprintf(stderr, "pns %s: %v\n", args[0], err)
+			fmt.Fprintf(stderr, "bs %s: %v\n", args[0], err)
 			return 1
 		}
 		return 0
@@ -65,7 +65,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprint(stdout, usage)
 		return 0
 	default:
-		fmt.Fprintf(stderr, "pns: unknown command %q\n\n%s", args[0], usage)
+		fmt.Fprintf(stderr, "bs: unknown command %q\n\n%s", args[0], usage)
 		return 2
 	}
 }

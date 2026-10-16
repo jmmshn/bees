@@ -1,4 +1,4 @@
-module github.com/jmmshn/peons
+module github.com/jmmshn/bees
 
 go 1.27
 

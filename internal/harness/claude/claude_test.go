@@ -6,14 +6,14 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jmmshn/peons/internal/harness/claude"
-	"github.com/jmmshn/peons/internal/harness/claude/claudetest"
+	"github.com/jmmshn/bees/internal/harness/claude"
+	"github.com/jmmshn/bees/internal/harness/claude/claudetest"
 )
 
 func TestRingSendsAuthThenUserLineThenEOF(t *testing.T) {
 	reg := claudetest.FakeRegistry(t)
-	got := reg.Add(t, "peon-a", "tok123")
-	s, err := claude.Find("peon-a")
+	got := reg.Add(t, "bee-a", "tok123")
+	s, err := claude.Find("bee-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,8 +36,8 @@ func TestRingSendsAuthThenUserLineThenEOF(t *testing.T) {
 
 func TestRingWithoutTokenSendsNoAuthLine(t *testing.T) {
 	reg := claudetest.FakeRegistry(t)
-	got := reg.Add(t, "peon-a", "")
-	s, err := claude.Find("peon-a")
+	got := reg.Add(t, "bee-a", "")
+	s, err := claude.Find("bee-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,18 +52,18 @@ func TestRingWithoutTokenSendsNoAuthLine(t *testing.T) {
 
 func TestFindRejectsStaleStartTime(t *testing.T) {
 	reg := claudetest.FakeRegistry(t)
-	reg.Add(t, "peon-a", "")
+	reg.Add(t, "bee-a", "")
 	reg.Edit(t, func(e map[string]any) { e["procStart"] = "1" }) // the pid was reused by another process
-	if _, err := claude.Find("peon-a"); !errors.Is(err, claude.ErrNotRunning) {
+	if _, err := claude.Find("bee-a"); !errors.Is(err, claude.ErrNotRunning) {
 		t.Fatalf("err = %v, want ErrNotRunning", err)
 	}
 }
 
 func TestFindRejectsOtherPeerProtocols(t *testing.T) {
 	reg := claudetest.FakeRegistry(t)
-	reg.Add(t, "peon-a", "")
+	reg.Add(t, "bee-a", "")
 	reg.Edit(t, func(e map[string]any) { e["peerProtocol"] = 2 })
-	if _, err := claude.Find("peon-a"); !errors.Is(err, claude.ErrNotRunning) {
+	if _, err := claude.Find("bee-a"); !errors.Is(err, claude.ErrNotRunning) {
 		t.Fatalf("err = %v, want ErrNotRunning", err)
 	}
 }
@@ -77,18 +77,18 @@ func TestFindUnknownNameIsNotRunning(t *testing.T) {
 
 func TestFindRejectsDeadPids(t *testing.T) {
 	reg := claudetest.FakeRegistry(t)
-	reg.Add(t, "peon-a", "")
+	reg.Add(t, "bee-a", "")
 	reg.Edit(t, func(e map[string]any) { e["pid"] = 1 << 30 }) // above Linux's pid_max
-	if _, err := claude.Find("peon-a"); !errors.Is(err, claude.ErrNotRunning) {
+	if _, err := claude.Find("bee-a"); !errors.Is(err, claude.ErrNotRunning) {
 		t.Fatalf("err = %v, want ErrNotRunning", err)
 	}
 }
 
 func TestFindRejectsSessionsWithoutASocket(t *testing.T) {
 	reg := claudetest.FakeRegistry(t)
-	reg.Add(t, "peon-a", "")
+	reg.Add(t, "bee-a", "")
 	reg.Edit(t, func(e map[string]any) { e["messagingSocketPath"] = "" })
-	if _, err := claude.Find("peon-a"); !errors.Is(err, claude.ErrNotRunning) {
+	if _, err := claude.Find("bee-a"); !errors.Is(err, claude.ErrNotRunning) {
 		t.Fatalf("err = %v, want ErrNotRunning", err)
 	}
 }

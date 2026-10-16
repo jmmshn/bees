@@ -1,6 +1,6 @@
-// Package peon starts and ends peons: one Claude Code session per bead, each in its
+// Package bee starts and ends bees: one Claude Code session per bead, each in its
 // own herdr workspace and git worktree (ADR-0006).
-package peon
+package bee
 
 import (
 	"cmp"
@@ -13,17 +13,17 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jmmshn/peons/internal/logbook"
-	"github.com/jmmshn/peons/internal/project"
+	"github.com/jmmshn/bees/internal/logbook"
+	"github.com/jmmshn/bees/internal/project"
 )
 
 var (
 	ErrNoAgent    = errors.New("no live agent with that name")
-	ErrRunning    = errors.New("peon is already running")
-	ErrOrphan     = errors.New("a herdr workspace is labelled with this bead but pns has no record of it")
+	ErrRunning    = errors.New("bee is already running")
+	ErrOrphan     = errors.New("a herdr workspace is labelled with this bead but bs has no record of it")
 	ErrWaiting    = errors.New("claude is waiting at a prompt") // started, but needs an answer in its pane
 	ErrWrongRepo  = errors.New("bead does not belong to this project")
-	ErrNotSpawned = errors.New("pns has no record of spawning this peon")
+	ErrNotSpawned = errors.New("bs has no record of spawning this bee")
 )
 
 // Workspace is a herdr workspace opened on a git worktree.
@@ -32,10 +32,10 @@ type Workspace struct{ ID, Label, Pane, Path string }
 // Agent is a live agent in a herdr pane.
 type Agent struct{ Name, Pane string }
 
-// Bead is the part of a bead pns reads.
+// Bead is the part of a bead bs reads.
 type Bead struct{ ID, Title, Description string }
 
-// Herdr is the slice of herdr pns drives.
+// Herdr is the slice of herdr bs drives.
 type Herdr interface {
 	CreateWorktree(ctx context.Context, repo, branch, path, label string) (Workspace, error)
 	StartClaude(ctx context.Context, pane, name string, args ...string) error // ErrWaiting when blocked at a prompt
@@ -49,25 +49,25 @@ type Beads interface {
 	Show(ctx context.Context, id string) (Bead, error)
 }
 
-// Fleet spawns and ends the peons of one project.
+// Fleet spawns and ends the bees of one project.
 type Fleet struct {
 	P           project.Project
 	LB          *logbook.Logbook
 	H           Herdr
 	B           Beads
-	Me          string // the chief doing the spawning
+	Me          string // the queen doing the spawning
 	ForeignRepo bool   // skip the check that the bead belongs to P (--repo)
 }
 
 var herdrName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 
-// Name is the peon's one name for a bead: session, herdr agent, branch, worktree dir
+// Name is the bee's one name for a bead: session, herdr agent, branch, worktree dir
 // and address. Bead ids are Jira-style, <project>-<n>[.<m>…] (R27), and project names
-// have no "-", so the name is the id with "." → "-": peons-12.3 → peons-12-3.
+// have no "-", so the name is the id with "." → "-": bees-12.3 → bees-12-3.
 func Name(bead string) (string, error) {
 	n := strings.ReplaceAll(bead, ".", "-")
 	if !herdrName.MatchString(n) {
-		return "", fmt.Errorf("%q can't be a peon name (lowercase, starting with a letter, at most 32 characters)", bead)
+		return "", fmt.Errorf("%q can't be a bee name (lowercase, starting with a letter, at most 32 characters)", bead)
 	}
 	return n, nil
 }
@@ -93,14 +93,14 @@ func NextEpic(project string, ids []string) string {
 	return fmt.Sprintf("%s-%d", project, top+1)
 }
 
-// Started describes a peon Spawn started.
+// Started describes a bee Spawn started.
 type Started struct {
 	Name, Workspace string
 	Resumed         bool // restarted in its recorded workspace, continuing its conversation
 	Waiting         bool // Claude is waiting at a prompt (e.g. folder trust) in its pane
 }
 
-// Spawn starts a peon for bead, or restarts it in its recorded workspace if its
+// Spawn starts a bee for bead, or restarts it in its recorded workspace if its
 // session has died.
 func (f Fleet) Spawn(ctx context.Context, bead string) (Started, error) {
 	name, err := Name(bead)
@@ -146,18 +146,18 @@ func (f Fleet) Spawn(ctx context.Context, bead string) (Started, error) {
 	return f.start(ctx, sp, false)
 }
 
-// peonSettings is passed with --settings: Claude reads settings.local.json from the main
-// checkout even in a worktree, so per-peon settings can't live in a file. The peon's pns
+// beeSettings is passed with --settings: Claude reads settings.local.json from the main
+// checkout even in a worktree, so per-bee settings can't live in a file. The bee's bs
 // finds its name from its Claude process and its project from the worktree's git dir.
-const peonSettings = `{"crossSessionInbound":"accept"}`
+const beeSettings = `{"crossSessionInbound":"accept"}`
 
-// start starts Claude with a doorbell as its first prompt, so the peon reads its unread
-// messages without needing a ring. A resumed peon continues its last conversation in
+// start starts Claude with a doorbell as its first prompt, so the bee reads its unread
+// messages without needing a ring. A resumed bee continues its last conversation in
 // the worktree instead of starting its task over.
 func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Started, error) {
 	st := Started{Name: sp.Name, Workspace: sp.Workspace, Resumed: resume}
-	doorbell := fmt.Sprintf("[pns] you are %s, working on %s. Run: pns inbox   (reply with: pns send %s \"...\")", sp.Name, sp.Bead, f.Me)
-	args := []string{"--name", sp.Name, "--settings", peonSettings, doorbell}
+	doorbell := fmt.Sprintf("[bs] you are %s, working on %s. Run: bs inbox   (reply with: bs send %s \"...\")", sp.Name, sp.Bead, f.Me)
+	args := []string{"--name", sp.Name, "--settings", beeSettings, doorbell}
 	if resume {
 		args = append([]string{"--continue"}, args...)
 	}
@@ -168,8 +168,8 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 	return st, err
 }
 
-// End removes the peon's recorded workspace and records the end. It never asks herdr
-// which workspace to remove. Ending an ended peon is a no-op. The peon's branch is
+// End removes the bee's recorded workspace and records the end. It never asks herdr
+// which workspace to remove. Ending an ended bee is a no-op. The bee's branch is
 // deleted if fully merged, so the bead can be spawned again; branchKept reports an
 // unmerged branch left in place with its work.
 func (f Fleet) End(ctx context.Context, name string) (branchKept bool, err error) {

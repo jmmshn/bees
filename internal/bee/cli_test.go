@@ -1,4 +1,4 @@
-package peon_test
+package bee_test
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jmmshn/peons/internal/peon"
+	"github.com/jmmshn/bees/internal/bee"
 )
 
 // fakeHerdrBinary puts a herdr on PATH that prints herdr's JSON error envelope with
@@ -24,16 +24,16 @@ func fakeHerdrBinary(t *testing.T, code string) {
 
 func TestHerdrAgentNotReadyMeansWaiting(t *testing.T) {
 	fakeHerdrBinary(t, "agent_not_ready")
-	err := peon.HerdrCLI{}.StartClaude(context.Background(), "w1:p1", "peons-8")
-	if !errors.Is(err, peon.ErrWaiting) {
+	err := bee.HerdrCLI{}.StartClaude(context.Background(), "w1:p1", "bees-8")
+	if !errors.Is(err, bee.ErrWaiting) {
 		t.Fatalf("err = %v, want ErrWaiting", err)
 	}
 }
 
 func TestHerdrOtherErrorsAreNotWaiting(t *testing.T) {
 	fakeHerdrBinary(t, "pane_not_found")
-	err := peon.HerdrCLI{}.StartClaude(context.Background(), "w1:p1", "peons-8")
-	if err == nil || errors.Is(err, peon.ErrWaiting) {
+	err := bee.HerdrCLI{}.StartClaude(context.Background(), "w1:p1", "bees-8")
+	if err == nil || errors.Is(err, bee.ErrWaiting) {
 		t.Fatalf("err = %v, want a plain error", err)
 	}
 }

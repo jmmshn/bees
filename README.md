@@ -1,15 +1,15 @@
-# peons
+# bees
 
-> Private. A small Go CLI, `pns`, that lets several Claude Code sessions on one codebase
+> Private. A small Go CLI, `bs`, that lets several Claude Code sessions on one codebase
 > hand each other work and **wake each other up**, with nobody typing in either window.
 
-A **chief** session splits work into beads and spawns a **peon** for each one, in its own
-git worktree. They talk through `pns send` and `pns inbox`. Each message is stored in a
+A **queen** session splits work into beads and spawns a **bee** for each one, in its own
+git worktree. They talk through `bs send` and `bs inbox`. Each message is stored in a
 SQLite **logbook** first, and then a **doorbell** prompt is pushed into the recipient's
 Claude session so it acts even when it was sitting idle.
 
 ```sh
-go build -o bin/pns ./cmd/pns
+go build -o bin/bs ./cmd/bs
 go test ./...
 ```
 
@@ -32,26 +32,26 @@ Claude Code is good at running *one* agent on a task, and **subagents** fan out 
 session and report back to it. Neither lets two long-running sessions, each with its own
 context and conversation, coordinate without a human relaying between them.
 
-### Without pns: you are the message bus
+### Without bs: you are the message bus
 
-![Two plain Claude Code sessions: the human copies the brief across and copies the answer back](docs/img/without-pns.svg)
+![Two plain Claude Code sessions: the human copies the brief across and copies the answer back](docs/img/without-bs.svg)
 
-### With pns: the sessions ring each other
+### With bs: the sessions ring each other
 
-![Chief spawns a peon, sends it a note; the peon is woken by a doorbell, works, replies; the chief is woken in turn](docs/img/with-pns.svg)
+![Queen spawns a bee, sends it a note; the bee is woken by a doorbell, works, replies; the queen is woken in turn](docs/img/with-bs.svg)
 
 ### Messages survive a session that is down
 
-![pns send to a stopped session prints "queued"; the messages show up in pns inbox when it restarts](docs/img/queued.svg)
+![bs send to a stopped session prints "queued"; the messages show up in bs inbox when it restarts](docs/img/queued.svg)
 
-The first two images are illustrations of the Claude Code UI. Every `pns` line in them,
+The first two images are illustrations of the Claude Code UI. Every `bs` line in them,
 and the whole third image, is real v0 output.
 
 ### What each option gives you
 
-| Need | Plain sessions | Subagents (Task tool) | Claude's peer socket alone | **pns** |
+| Need | Plain sessions | Subagents (Task tool) | Claude's peer socket alone | **bs** |
 |---|---|---|---|---|
-| Own worktree and long-lived conversation per worker | yes | worktree optional; ends with its task | yes | **yes**, `pns spawn` |
+| Own worktree and long-lived conversation per worker | yes | worktree optional; ends with its task | yes | **yes**, `bs spawn` |
 | Worker outlives the parent session | yes | no | yes | **yes** |
 | Worker → coordinator, unprompted | human relays | only its final result | yes, if you find the socket | **yes** |
 | Wake an idle session | human types | n/a | yes | **yes**, doorbell |
@@ -61,7 +61,7 @@ and the whole third image, is real v0 output.
 | Address by name, not pid and socket | no | n/a | no | **yes** |
 
 The socket limits in the fourth column come from
-[ADR-0001](docs/adr/0001-logbook-is-the-only-truth.md). pns uses that socket only to say
+[ADR-0001](docs/adr/0001-logbook-is-the-only-truth.md). bs uses that socket only to say
 "you have mail" and keeps every message body in the logbook, so a lost or duplicated ring
 can never lose a message.
 
@@ -74,16 +74,16 @@ can never lose a message.
 ```mermaid
 flowchart LR
     subgraph captain["Captain (you)"]
-        H[talks only to the chief]
+        H[talks only to the queen]
     end
-    subgraph chief["claude --name chief-peons"]
-        C[pns spawn / send / inbox]
+    subgraph queen["claude --name queen-bees"]
+        C[bs spawn / send / inbox]
     end
-    subgraph peons["peons, one per bead"]
-        P1["peons-2-1<br/>worktree peons-WT/peons-2-1"]
-        P2["peons-2-2<br/>worktree peons-WT/peons-2-2"]
+    subgraph bees["bees, one per bead"]
+        P1["bees-2-1<br/>worktree bees-WT/bees-2-1"]
+        P2["bees-2-2<br/>worktree bees-WT/bees-2-2"]
     end
-    LB[("logbook<br/>~/.local/share/peons/peons.db<br/>SQLite WAL, append-only")]
+    LB[("logbook<br/>~/.local/share/bees/bees.db<br/>SQLite WAL, append-only")]
     REG[["~/.claude/sessions/&lt;pid&gt;.json<br/>Claude's session registry"]]
     HD[herdr<br/>worktrees + panes]
     BD[bd<br/>beads]
@@ -101,38 +101,38 @@ flowchart LR
     HD -- "starts" --> P2
 ```
 
-### A round trip, chief → peon → chief
+### A round trip, queen → bee → queen
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant C as chief-peons
+    participant C as queen-bees
     participant L as logbook (SQLite)
     participant R as ~/.claude/sessions
-    participant P as peons-2-1 (idle)
+    participant P as bees-2-1 (idle)
 
-    C->>L: pns send peons-2-1 "…"  (INSERT message)
-    C->>R: Find("peons-2-1")
+    C->>L: bs send bees-2-1 "…"  (INSERT message)
+    C->>R: Find("bees-2-1")
     R-->>C: pid, procStart, socket, token
     Note over C,R: kept only if peerProtocol = 1,<br/>/proc/pid exists and its start time = procStart
-    C->>L: Unread("peons-2-1")
+    C->>L: Unread("bees-2-1")
     C->>P: NDJSON: auth line (if token), then user line, then half-close
-    Note over P: arrives as a prompt:<br/>[pns] 1 unread (chief-peons) — run: pns inbox
-    P->>L: pns inbox  (read, record receipts)
+    Note over P: arrives as a prompt:<br/>[bs] 1 unread (queen-bees) — run: bs inbox
+    P->>L: bs inbox  (read, record receipts)
     P->>P: does the work
-    P->>L: pns send chief-peons "pong: …"
+    P->>L: bs send queen-bees "pong: …"
     P->>C: ring
-    C->>L: pns inbox
+    C->>L: bs inbox
 ```
 
-`scripts/e2e.sh` checks this with real sessions: the idle peon's doorbell lands about
-20 ms after `pns send`, and a full chief → peon → chief round trip needs nobody typing.
+`scripts/e2e.sh` checks this with real sessions: the idle bee's doorbell lands about
+20 ms after `bs send`, and a full queen → bee → queen round trip needs nobody typing.
 
-### What one `pns send` does
+### What one `bs send` does
 
 ```mermaid
 flowchart TD
-    A["pns send &lt;to&gt; body"] --> B["INSERT message entry<br/>(BEGIN IMMEDIATE)"]
+    A["bs send &lt;to&gt; body"] --> B["INSERT message entry<br/>(BEGIN IMMEDIATE)"]
     B --> O["print: sent &lt;id&gt; to &lt;to&gt;"]
     O --> F{"claude.Find(to)"}
     F -- "no live session<br/>by that name" --> Q["print: queued; &lt;to&gt; is not running<br/>exit 0"]
@@ -146,21 +146,21 @@ flowchart TD
 The message is stored before anything can fail, so the worst case is a late message,
 never a lost one.
 
-### Spawning a peon
+### Spawning a bee
 
 ```mermaid
 flowchart LR
-    S["pns spawn peons-2.1"] --> N["name = peons-2-1<br/>(one string: session, herdr agent,<br/>branch, worktree dir, address)"]
+    S["bs spawn bees-2.1"] --> N["name = bees-2-1<br/>(one string: session, herdr agent,<br/>branch, worktree dir, address)"]
     N --> X{open 'spawned'<br/>entry?}
     X -- "yes, agent live" --> E1[ErrRunning]
     X -- "yes, agent gone" --> RS["resume in the same workspace<br/>claude --continue"]
     RS --> ST
-    X -- no --> WT["herdr worktree create<br/>peons-WT/peons-2-1"]
+    X -- no --> WT["herdr worktree create<br/>bees-WT/bees-2-1"]
     WT --> REC["RecordSpawn + brief (bd show)<br/>in one transaction"]
-    REC --> ST["herdr agent start … claude --name peons-2-1<br/>--settings crossSessionInbound=accept<br/>first prompt = doorbell"]
+    REC --> ST["herdr agent start … claude --name bees-2-1<br/>--settings crossSessionInbound=accept<br/>first prompt = doorbell"]
 ```
 
-`pns end peons-2-1` removes only the workspace recorded in that `spawned` entry, deletes
+`bs end bees-2-1` removes only the workspace recorded in that `spawned` entry, deletes
 the branch if it is merged, and writes `ended`.
 
 ### The logbook is the only truth
@@ -181,20 +181,20 @@ time from Claude's registry and `/proc`. A dead session needs no cleanup: its ma
 ## Commands
 
 ```text
-pns chief                      start claude --name chief-<project> in the repo
-pns epic <title>               create the project's next epic, <project>-<n>
-pns spawn <bead> [--repo P]    start a peon for the bead in its own herdr workspace
-pns send <to> [--now] <body|-> store a message, then ring <to>
-pns inbox [--peek]             print unread; without --peek, record receipts
-pns end <peon>                 remove the peon's recorded workspace
-pns status [--json]            running sessions and unread counts
-pns init                       create the logbook (optional)
+bs queen                      start claude --name queen-<project> in the repo
+bs epic <title>               create the project's next epic, <project>-<n>
+bs spawn <bead> [--repo P]    start a bee for the bead in its own herdr workspace
+bs send <to> [--now] <body|-> store a message, then ring <to>
+bs inbox [--peek]             print unread; without --peek, record receipts
+bs end <bee>                 remove the bee's recorded workspace
+bs status [--json]            running sessions and unread counts
+bs init                       create the logbook (optional)
 ```
 
-To run a peon by hand, without herdr:
+To run a bee by hand, without herdr:
 
 ```sh
-claude --name peon-a --settings '{"crossSessionInbound":"accept"}'
+claude --name bee-a --settings '{"crossSessionInbound":"accept"}'
 ```
 
 Without `crossSessionInbound: accept`, a session in bypass mode holds peer messages

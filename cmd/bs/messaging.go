@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jmmshn/peons/internal/harness/claude"
-	"github.com/jmmshn/peons/internal/logbook"
-	"github.com/jmmshn/peons/internal/project"
+	"github.com/jmmshn/bees/internal/harness/claude"
+	"github.com/jmmshn/bees/internal/logbook"
+	"github.com/jmmshn/bees/internal/project"
 )
 
 // errUsage means the arguments were wrong; the message has already been printed.
@@ -59,13 +59,13 @@ var errHelp = errors.New("help")
 func cmdInit(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	proj := fs.String("project", "", "project (default: PNS_PROJECT, else the current git repo)")
+	proj := fs.String("project", "", "project (default: BS_PROJECT, else the current git repo)")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) > 0 {
-		fmt.Fprintln(stderr, "usage: pns init [--project <name>]")
+		fmt.Fprintln(stderr, "usage: bs init [--project <name>]")
 		return errUsage
 	}
 	_, lb, err := scope(ctx, *proj)
@@ -79,14 +79,14 @@ func cmdSend(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	fs := flag.NewFlagSet("send", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	as := fs.String("as", "", "session sending the message")
-	proj := fs.String("project", "", "project (default: PNS_PROJECT, else the current git repo)")
+	proj := fs.String("project", "", "project (default: BS_PROJECT, else the current git repo)")
 	now := fs.Bool("now", false, "ring with priority now: interrupt the recipient's current turn")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) < 2 {
-		fmt.Fprintln(stderr, "usage: pns send [--as <session>] [--now] <to> <body | ->")
+		fmt.Fprintln(stderr, "usage: bs send [--as <session>] [--now] <to> <body | ->")
 		return errUsage
 	}
 	from, err := project.Me(*as)
@@ -115,14 +115,14 @@ func cmdSend(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 }
 
 // ring rings to with its unread count. The message is already stored, so a failed ring
-// is only a warning: to reads it on its next pns inbox.
+// is only a warning: to reads it on its next bs inbox.
 func ring(ctx context.Context, lb *logbook.Logbook, from, to string, now bool, stdout, stderr io.Writer) error {
 	err := ringOnce(ctx, lb, from, to, now)
 	switch {
 	case errors.Is(err, claude.ErrNotRunning):
 		fmt.Fprintf(stdout, "queued; %s is not running\n", to)
 	case err != nil:
-		fmt.Fprintf(stderr, "pns send: couldn't ring %s (the message is stored): %v\n", to, err)
+		fmt.Fprintf(stderr, "bs send: couldn't ring %s (the message is stored): %v\n", to, err)
 	}
 	return nil
 }
@@ -144,7 +144,7 @@ func ringOnce(ctx context.Context, lb *logbook.Logbook, from, to string, now boo
 }
 
 // doorbell names who the unread messages are from, never what they say:
-// [pns] 3 unread (chief ×2, peons-1-2) — run: pns inbox   (reply with: pns send chief "...")
+// [bs] 3 unread (queen ×2, bees-1-2) — run: bs inbox   (reply with: bs send queen "...")
 func doorbell(unread []logbook.Message, from string) string {
 	var senders []string
 	count := map[string]int{}
@@ -159,21 +159,21 @@ func doorbell(unread []logbook.Message, from string) string {
 			senders[i] = fmt.Sprintf("%s ×%d", s, count[s])
 		}
 	}
-	return fmt.Sprintf(`[pns] %d unread (%s) — run: pns inbox   (reply with: pns send %s "...")`, len(unread), strings.Join(senders, ", "), from)
+	return fmt.Sprintf(`[bs] %d unread (%s) — run: bs inbox   (reply with: bs send %s "...")`, len(unread), strings.Join(senders, ", "), from)
 }
 
 func cmdInbox(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("inbox", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	as := fs.String("as", "", "session whose inbox to show")
-	proj := fs.String("project", "", "project (default: PNS_PROJECT, else the current git repo)")
+	proj := fs.String("project", "", "project (default: BS_PROJECT, else the current git repo)")
 	peek := fs.Bool("peek", false, "show unread messages without recording receipts")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) > 0 {
-		fmt.Fprintln(stderr, "usage: pns inbox [--as <session>] [--peek]")
+		fmt.Fprintln(stderr, "usage: bs inbox [--as <session>] [--peek]")
 		return errUsage
 	}
 	session, err := project.Me(*as)

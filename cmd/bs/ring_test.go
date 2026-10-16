@@ -4,21 +4,21 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jmmshn/peons/internal/harness/claude/claudetest"
+	"github.com/jmmshn/bees/internal/harness/claude/claudetest"
 )
 
 func TestSendRingsTheRecipientWithItsUnreadCount(t *testing.T) {
 	useTempLogbook(t)
-	pns(t, "send", "--as", "peons-1-3", "chief", "first")
+	bs(t, "send", "--as", "bees-1-3", "queen", "first")
 	reg := claudetest.FakeRegistry(t)
-	got := reg.Add(t, "chief", "")
-	pns(t, "send", "--as", "peons-1-2", "chief", "second")
-	if _, stderr, code := pns(t, "send", "--as", "peons-1-2", "chief", "third"); code != 0 {
+	got := reg.Add(t, "queen", "")
+	bs(t, "send", "--as", "bees-1-2", "queen", "second")
+	if _, stderr, code := bs(t, "send", "--as", "bees-1-2", "queen", "third"); code != 0 {
 		t.Fatalf("send: exit %d: %s", code, stderr)
 	}
 	lines := got() // the fake listener takes only the first ring, sent after "second"
 	msg, _ := lines[0]["message"].(map[string]any)
-	want := `[pns] 2 unread (peons-1-3, peons-1-2) — run: pns inbox   (reply with: pns send peons-1-2 "...")`
+	want := `[bs] 2 unread (bees-1-3, bees-1-2) — run: bs inbox   (reply with: bs send bees-1-2 "...")`
 	if msg["content"] != want || lines[0]["priority"] != "next" {
 		t.Fatalf("doorbell = %v %q\nwant %q", lines[0]["priority"], msg["content"], want)
 	}
@@ -26,12 +26,12 @@ func TestSendRingsTheRecipientWithItsUnreadCount(t *testing.T) {
 
 func TestSendCountsRepeatSenders(t *testing.T) {
 	useTempLogbook(t)
-	pns(t, "send", "--as", "chief", "peon-a", "one")
-	got := claudetest.FakeRegistry(t).Add(t, "peon-a", "")
-	pns(t, "send", "--as", "chief", "--now", "peon-a", "two")
+	bs(t, "send", "--as", "queen", "bee-a", "one")
+	got := claudetest.FakeRegistry(t).Add(t, "bee-a", "")
+	bs(t, "send", "--as", "queen", "--now", "bee-a", "two")
 	lines := got()
 	msg, _ := lines[0]["message"].(map[string]any)
-	want := `[pns] 2 unread (chief ×2) — run: pns inbox   (reply with: pns send chief "...")`
+	want := `[bs] 2 unread (queen ×2) — run: bs inbox   (reply with: bs send queen "...")`
 	if msg["content"] != want || lines[0]["priority"] != "now" {
 		t.Fatalf("doorbell = %v %q\nwant now %q", lines[0]["priority"], msg["content"], want)
 	}
@@ -39,11 +39,11 @@ func TestSendCountsRepeatSenders(t *testing.T) {
 
 func TestSendToAStoppedSessionQueuesTheMessage(t *testing.T) {
 	useTempLogbook(t)
-	out, stderr, code := pns(t, "send", "--as", "chief", "peon-a", "hello")
-	if code != 0 || !strings.Contains(out, "queued; peon-a is not running") {
+	out, stderr, code := bs(t, "send", "--as", "queen", "bee-a", "hello")
+	if code != 0 || !strings.Contains(out, "queued; bee-a is not running") {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, out, stderr)
 	}
-	if inbox, _, _ := pns(t, "inbox", "--as", "peon-a"); !strings.Contains(inbox, "hello") {
+	if inbox, _, _ := bs(t, "inbox", "--as", "bee-a"); !strings.Contains(inbox, "hello") {
 		t.Fatalf("inbox = %q", inbox)
 	}
 }
@@ -51,13 +51,13 @@ func TestSendToAStoppedSessionQueuesTheMessage(t *testing.T) {
 func TestSendWarnsWhenTheRingFailsButKeepsTheMessage(t *testing.T) {
 	useTempLogbook(t)
 	reg := claudetest.FakeRegistry(t)
-	reg.Add(t, "peon-a", "")
+	reg.Add(t, "bee-a", "")
 	reg.Edit(t, func(e map[string]any) { e["messagingSocketPath"] = "/nonexistent/s.sock" })
-	_, stderr, code := pns(t, "send", "--as", "chief", "peon-a", "hello")
-	if code != 0 || !strings.Contains(stderr, "couldn't ring peon-a") {
+	_, stderr, code := bs(t, "send", "--as", "queen", "bee-a", "hello")
+	if code != 0 || !strings.Contains(stderr, "couldn't ring bee-a") {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
-	if inbox, _, _ := pns(t, "inbox", "--as", "peon-a"); !strings.Contains(inbox, "hello") {
+	if inbox, _, _ := bs(t, "inbox", "--as", "bee-a"); !strings.Contains(inbox, "hello") {
 		t.Fatalf("inbox = %q", inbox)
 	}
 }

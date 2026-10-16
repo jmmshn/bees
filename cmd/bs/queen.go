@@ -11,10 +11,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/jmmshn/peons/internal/project"
+	"github.com/jmmshn/bees/internal/project"
 )
 
-// execClaude replaces pns with claude, run in dir with env. Tests swap it out.
+// execClaude replaces bs with claude, run in dir with env. Tests swap it out.
 var execClaude = execClaudeProcess
 
 func execClaudeProcess(dir string, env []string, args ...string) error {
@@ -28,26 +28,26 @@ func execClaudeProcess(dir string, env []string, args ...string) error {
 	return syscall.Exec(path, append([]string{"claude"}, args...), env)
 }
 
-func cmdChief(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	fs := flag.NewFlagSet("chief", flag.ContinueOnError)
+func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("queen", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	proj := fs.String("project", "", "project (default: PNS_PROJECT, else the current git repo)")
+	proj := fs.String("project", "", "project (default: BS_PROJECT, else the current git repo)")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) > 0 {
-		fmt.Fprintln(stderr, "usage: pns chief [--project <name>]")
+		fmt.Fprintln(stderr, "usage: bs queen [--project <name>]")
 		return errUsage
 	}
 	p, err := project.Resolve(*proj)
 	if err != nil {
 		return err
 	}
-	// No PNS_* variables: the chief's pns finds its name from --name and its project from
+	// No BS_* variables: the queen's bs finds its name from --name and its project from
 	// the repo (R25). Drop inherited ones so they can't override either.
 	env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
-		return strings.HasPrefix(kv, "PNS_SESSION=") || strings.HasPrefix(kv, "PNS_PROJECT=")
+		return strings.HasPrefix(kv, "BS_SESSION=") || strings.HasPrefix(kv, "BS_PROJECT=")
 	})
-	return execClaude(p.Repo, env, "--name", p.Chief())
+	return execClaude(p.Repo, env, "--name", p.Queen())
 }

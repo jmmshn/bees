@@ -24,7 +24,7 @@ func TestHelpPrintsUsageAndSucceeds(t *testing.T) {
 	if code := run([]string{"--help"}, strings.NewReader(""), &out, &stderr); code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
-	if !strings.Contains(out.String(), "usage: pns") {
+	if !strings.Contains(out.String(), "usage: bs") {
 		t.Errorf("stdout = %q, want usage", out.String())
 	}
 }

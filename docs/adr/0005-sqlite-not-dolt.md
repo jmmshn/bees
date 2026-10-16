@@ -1,6 +1,6 @@
 # The logbook is a SQLite file, not a Dolt database
 
-The logbook is `~/.local/share/peons/logbook.db`, opened in WAL mode through the pure-Go `modernc.org/sqlite` driver (the same choice as crew). Writes use `BEGIN IMMEDIATE` with a busy timeout. All sessions run on one Linux machine, and pns uses none of what makes Dolt worth having (branch, diff, merge, clone). What remained was a plain table plus the costs of a server.
+The logbook is `~/.local/share/bees/logbook.db`, opened in WAL mode through the pure-Go `modernc.org/sqlite` driver (the same choice as crew). Writes use `BEGIN IMMEDIATE` with a busy timeout. All sessions run on one Linux machine, and bs uses none of what makes Dolt worth having (branch, diff, merge, clone). What remained was a plain table plus the costs of a server.
 
 ## Considered Options
 

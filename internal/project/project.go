@@ -1,5 +1,5 @@
-// Package project resolves the scope every pns command runs in: which project,
-// its logbook and repo, and which session is running pns (ADR-0006).
+// Package project resolves the scope every bs command runs in: which project,
+// its logbook and repo, and which session is running bs (ADR-0006).
 package project
 
 import (
@@ -15,32 +15,32 @@ import (
 )
 
 var (
-	ErrNoProject  = errors.New("can't tell which project; run inside its git repo, set PNS_PROJECT or pass --project")
-	ErrBadProject = errors.New("project names must be a letter then up to 24 letters, digits or _ (after - → _); set PNS_PROJECT")
-	ErrNoSession  = errors.New("can't tell which session you are; run pns from inside a named Claude session, or pass --as")
+	ErrNoProject  = errors.New("can't tell which project; run inside its git repo, set BS_PROJECT or pass --project")
+	ErrBadProject = errors.New("project names must be a letter then up to 24 letters, digits or _ (after - → _); set BS_PROJECT")
+	ErrNoSession  = errors.New("can't tell which session you are; run bs from inside a named Claude session, or pass --as")
 )
 
 // validName is what a project name must be once lowercased with - → _. With no "-" in
-// the project, the first "-" in a bead id or peon name always ends the project (R27).
+// the project, the first "-" in a bead id or bee name always ends the project (R27).
 var validName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,24}$`)
 
-// Project is the scope of one chief, its peons and its logbook.
+// Project is the scope of one queen, its bees and its logbook.
 type Project struct {
-	Name    string // e.g. "peons"
+	Name    string // e.g. "bees"
 	Repo    string // main checkout of the project's git repo
 	Logbook string // path to this project's logbook file
 }
 
-// Chief is the chief's session name. It carries the project because Claude's and
+// Queen is the queen's session name. It carries the project because Claude's and
 // herdr's session names are machine-wide.
-func (p Project) Chief() string { return "chief-" + p.Name }
+func (p Project) Queen() string { return "queen-" + p.Name }
 
-// Resolve finds the project from flag, then PNS_PROJECT, then the git repo containing
+// Resolve finds the project from flag, then BS_PROJECT, then the git repo containing
 // the working directory. A linked worktree resolves to its main repo.
 func Resolve(flag string) (Project, error) {
 	name, repo := flag, ""
 	if name == "" {
-		name = os.Getenv("PNS_PROJECT")
+		name = os.Getenv("BS_PROJECT")
 	}
 	if name == "" {
 		repo = mainRepo()
@@ -58,15 +58,15 @@ func Resolve(flag string) (Project, error) {
 		return Project{}, err
 	}
 	if repo == "" {
-		repos := os.Getenv("PNS_REPOS")
+		repos := os.Getenv("BS_REPOS")
 		if repos == "" {
-			repos = filepath.Join(home, "repos", "jmmshn") // ponytail: the author's layout; set PNS_REPOS elsewhere
+			repos = filepath.Join(home, "repos", "jmmshn") // ponytail: the author's layout; set BS_REPOS elsewhere
 		}
 		repo = filepath.Join(repos, name)
 	}
-	lb := os.Getenv("PNS_LOGBOOK")
+	lb := os.Getenv("BS_LOGBOOK")
 	if lb == "" {
-		lb = filepath.Join(home, ".local", "share", "peons", name+".db")
+		lb = filepath.Join(home, ".local", "share", "bees", name+".db")
 	}
 	return Project{Name: name, Repo: repo, Logbook: lb}, nil
 }
@@ -82,8 +82,8 @@ func mainRepo() string {
 	return filepath.Dir(strings.TrimSpace(string(out)))
 }
 
-// Me returns the session running pns: flag, then the name of the nearest ancestor
-// process that is a registered Claude Code session, then PNS_SESSION (for use outside
+// Me returns the session running bs: flag, then the name of the nearest ancestor
+// process that is a registered Claude Code session, then BS_SESSION (for use outside
 // Claude). The registry beats the environment, which a session can inherit stale.
 func Me(flag string) (string, error) {
 	if flag != "" {
@@ -103,7 +103,7 @@ func Me(flag string) (string, error) {
 			break // the nearest Claude session has no usable name
 		}
 	}
-	if s := os.Getenv("PNS_SESSION"); s != "" {
+	if s := os.Getenv("BS_SESSION"); s != "" {
 		return s, nil
 	}
 	return "", ErrNoSession

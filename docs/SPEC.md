@@ -1,37 +1,37 @@
-# pns spec
+# bs spec
 
-`pns` lets Claude Code sessions in herdr panes send each other messages through a shared logbook, and wakes an idle session when it has mail. Vocabulary is in [GLOSSARY.md](../GLOSSARY.md); the reasons behind the shape are in [docs/adr/](adr/); every decision is indexed in [DECISIONS.md](DECISIONS.md).
+`bs` lets Claude Code sessions in herdr panes send each other messages through a shared logbook, and wakes an idle session when it has mail. Vocabulary is in [GLOSSARY.md](../GLOSSARY.md); the reasons behind the shape are in [docs/adr/](adr/); every decision is indexed in [DECISIONS.md](DECISIONS.md).
 
 This spec covers **v0**, the walking skeleton, plus **spawn**, which v0 grows into for dogfooding. [v1](#v1-outline) is outlined at the end and gets its own spec pass.
 
 ## Scope
 
-v0 proves the core loop: the chief sends a message, an idle peon wakes, reads it and replies, and the chief wakes. Spawn then lets the chief start a peon per bead in its own herdr workspace ([ADR-0006](adr/0006-spawn-and-naming.md)).
+v0 proves the core loop: the queen sends a message, an idle bee wakes, reads it and replies, and the queen wakes. Spawn then lets the queen start a bee per bead in its own herdr workspace ([ADR-0006](adr/0006-spawn-and-naming.md)).
 
 | In v0 + spawn | Deferred to v1 |
 |---|---|
-| `pns init`, `send`, `inbox`, `status`, `chief`, `spawn`, `end` | `pns hook` |
+| `bs init`, `send`, `inbox`, `status`, `queen`, `spawn`, `end` | `bs hook` |
 | `entries` table; writes `message`, `received`, `spawned`, `ended` | `rang` entries |
 | Claude adapter: find, ring; herdr and bd adapters | reconciler |
-| Ring every unread message on every send | `Plan` reconciler, coalescing, re-ring, flag the chief, watchdog |
+| Ring every unread message on every send | `Plan` reconciler, coalescing, re-ring, flag the queen, watchdog |
 | `--now` | Captain inbox, disk warning, omp adapter |
 
 Platform: Linux only.
 
 ## Done when
 
-1. An idle peon wakes within 2 s of `pns send`.
-2. A chief → peon → chief round trip completes with nobody typing in either session.
-3. Messages sent while a peon is not running are delivered on the first send after it starts.
-4. A pns process killed mid-write loses no committed message and leaves the logbook readable.
+1. An idle bee wakes within 2 s of `bs send`.
+2. A queen → bee → queen round trip completes with nobody typing in either session.
+3. Messages sent while a bee is not running are delivered on the first send after it starts.
+4. A bs process killed mid-write loses no committed message and leaves the logbook readable.
 
 ## Layout
 
 ```text
-cmd/pns/                   subcommands, flags, output
+cmd/bs/                   subcommands, flags, output
 internal/logbook/          the entries table
 internal/project/          which project, logbook and repo; which session am I
-internal/peon/             Fleet.Spawn / Fleet.End; Herdr and Beads ports with CLI adapters
+internal/bee/             Fleet.Spawn / Fleet.End; Herdr and Beads ports with CLI adapters
 internal/harness/claude/   registry lookup, auth token, NDJSON ring
 ```
 
@@ -40,7 +40,7 @@ internal/harness/claude/   registry lookup, auth token, NDJSON ring
 The logbook is a SQLite file in WAL mode ([ADR-0005](adr/0005-sqlite-not-dolt.md)), opened through `modernc.org/sqlite`.
 
 ```text
-PNS_LOGBOOK  default  ~/.local/share/peons/<project>.db   (one logbook per project, R23)
+BS_LOGBOOK  default  ~/.local/share/bees/<project>.db   (one logbook per project, R23)
 pragmas      journal_mode=WAL, busy_timeout=5000, foreign_keys=ON; writes use BEGIN IMMEDIATE
 ```
 
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS entries (
   ts      TEXT NOT NULL,              -- RFC 3339, UTC, milliseconds
   kind    TEXT NOT NULL CHECK (kind IN ('message','received','rang','spawned','ended')),
   actor   TEXT NOT NULL,              -- session that wrote the entry
-  subject TEXT,                       -- message: recipient; spawned/ended: peon name
+  subject TEXT,                       -- message: recipient; spawned/ended: bee name
   ref     TEXT REFERENCES entries(id), -- received: the message; ended: the spawned entry
   data    TEXT CHECK (data IS NULL OR json_valid(data)) -- message: {"body": "..."}
 ) STRICT;
@@ -63,7 +63,7 @@ Rules:
 - Entries are only inserted, never updated or deleted.
 - Each write is one `BEGIN IMMEDIATE` transaction; concurrent writers wait on the busy timeout instead of failing.
 - A receipt id is deterministic and written with `INSERT OR IGNORE`, so a duplicate is a no-op.
-- `Open` creates the table and indexes if missing, so `pns init` is optional.
+- `Open` creates the table and indexes if missing, so `bs init` is optional.
 - Unread is always this query, in insertion order (`rowid`). Never use a cursor or a time window.
 
 ```sql
@@ -138,22 +138,22 @@ A receiving session must have `"crossSessionInbound": "accept"` in its settings.
 package project
 
 type Project struct{ Name, Repo, Logbook string }
-func Resolve(flag string) (Project, error) // --project → PNS_PROJECT → basename of git's common dir
-func (p Project) Chief() string             // "chief-" + Name
-func Me(flagAs string) (string, error)      // --as → parent-process walk → PNS_SESSION
+func Resolve(flag string) (Project, error) // --project → BS_PROJECT → basename of git's common dir
+func (p Project) Queen() string             // "queen-" + Name
+func Me(flagAs string) (string, error)      // --as → parent-process walk → BS_SESSION
 ```
 
-- The name is lowercased with `-` → `_` (`pymatgen-analysis-defects` → `pymatgen_analysis_defects`) and must match `^[a-z][a-z0-9_]{0,24}$`, else `ErrBadProject` (set `PNS_PROJECT`).
-- The project comes from git's *common* directory, so a shell inside `<repo>-WT/peons-2-1` resolves to the main repo's project.
-- `Repo` is the main checkout when the project comes from git, else `$PNS_REPOS/<project>` (default `~/repos/jmmshn`); `Logbook` is `$PNS_LOGBOOK`, else `~/.local/share/peons/<project>.db`.
-- `Me` walks `getppid()` upward to the first pid with `~/.claude/sessions/<pid>.json` and uses its `name`. The registry beats `PNS_SESSION`, which a session can inherit stale; `PNS_SESSION` is for use outside Claude. Otherwise it fails with `run pns from inside a named Claude session, or pass --as`.
+- The name is lowercased with `-` → `_` (`pymatgen-analysis-defects` → `pymatgen_analysis_defects`) and must match `^[a-z][a-z0-9_]{0,24}$`, else `ErrBadProject` (set `BS_PROJECT`).
+- The project comes from git's *common* directory, so a shell inside `<repo>-WT/bees-2-1` resolves to the main repo's project.
+- `Repo` is the main checkout when the project comes from git, else `$BS_REPOS/<project>` (default `~/repos/jmmshn`); `Logbook` is `$BS_LOGBOOK`, else `~/.local/share/bees/<project>.db`.
+- `Me` walks `getppid()` upward to the first pid with `~/.claude/sessions/<pid>.json` and uses its `name`. The registry beats `BS_SESSION`, which a session can inherit stale; `BS_SESSION` is for use outside Claude. Otherwise it fails with `run bs from inside a named Claude session, or pass --as`.
 
 ## Spawn
 
 ```go
-package peon
+package bee
 
-func Name(bead string) (string, error) // peons-12.3 → peons-12-3; refuses names herdr can't take
+func Name(bead string) (string, error) // bees-12.3 → bees-12-3; refuses names herdr can't take
 func Belongs(project, bead string) bool // ^<project>-\d+(\.\d+)*$
 func NextEpic(project string, ids []string) string // <project>-<max+1>
 
@@ -188,30 +188,30 @@ func (f Fleet) End(ctx context.Context, name string) (branchKept bool, err error
 1. `name = Name(bead)`.
 2. If `LatestSpawn(name)` is open:
    - herdr reports the agent live → `ErrRunning`;
-   - otherwise → resume at step 7 in the recorded workspace, adding `--continue` so the peon keeps its conversation instead of redoing its task.
+   - otherwise → resume at step 7 in the recorded workspace, adding `--continue` so the bee keeps its conversation instead of redoing its task.
 3. The bead id must be `<project>-<n>[.<m>…]` (`Belongs`), unless `--repo` → else `ErrWrongRepo`.
 4. A herdr workspace labelled with the bead but no `spawned` entry → `ErrOrphan`, with the command to remove it by hand (`herdr worktree remove --workspace <id> --force`). It is never removed automatically.
 5. `herdr worktree create --cwd <repo> --branch <name> --path <repo>-WT/<name> --label <bead> --no-focus` (herdr prints JSON).
-6. `RecordSpawn` immediately, in one transaction with the brief (`bd show` title and description) as a message from the chief: subject = name; data = bead, workspace, pane, worktree, branch, repo.
-7. `herdr agent start <name> --kind claude --pane <pane> -- --name <name> --settings '{"crossSessionInbound":"accept"}' "<doorbell>"`. The doorbell is Claude's first prompt, so spawn doesn't depend on ringing. herdr's `agent_not_ready` means Claude started but is blocked at a prompt: spawn succeeds with `Waiting` and tells the captain to answer it in the peon's pane. Before spawning, `pns spawn` warns if `~/.claude.json` shows the repo isn't trusted yet (read only; trust is keyed by the main checkout, so its worktrees share it). No settings file is written (Claude reads `settings.local.json` from the main checkout in a worktree), and no `PNS_*` variables are needed.
+6. `RecordSpawn` immediately, in one transaction with the brief (`bd show` title and description) as a message from the queen: subject = name; data = bead, workspace, pane, worktree, branch, repo.
+7. `herdr agent start <name> --kind claude --pane <pane> -- --name <name> --settings '{"crossSessionInbound":"accept"}' "<doorbell>"`. The doorbell is Claude's first prompt, so spawn doesn't depend on ringing. herdr's `agent_not_ready` means Claude started but is blocked at a prompt: spawn succeeds with `Waiting` and tells the captain to answer it in the bee's pane. Before spawning, `bs spawn` warns if `~/.claude.json` shows the repo isn't trusted yet (read only; trust is keyed by the main checkout, so its worktrees share it). No settings file is written (Claude reads `settings.local.json` from the main checkout in a worktree), and no `BS_*` variables are needed.
 
 `End(name)`: read `LatestSpawn`; none → `ErrNotSpawned` (never ask herdr). Otherwise `herdr worktree remove --workspace <recorded id> --force`, then `git -C <recorded repo> branch -d <name>` (kept, and reported, if not fully merged), then `RecordEnd`.
 
 ## Commands
 
 ```text
-pns init                       create the logbook file and table if missing (optional)
-pns chief                      start the chief: claude --name chief-<project> in the repo (no PNS_* set)
-pns spawn <bead> [--repo P]    start a peon for the bead in its own herdr workspace
-pns end <peon>                 remove the peon's recorded workspace
-pns epic <title>               create the project's next epic, <project>-<n>
-pns send <to> [--now] <body|-> store a message, then ring <to>   (flags may follow <to>)
-pns inbox [--peek]             print unread; without --peek, record receipts in one commit
-pns status [--json]            each known session: running or not, unread count
-send, inbox, spawn, end        --project, --as     (init, chief: --project)
+bs init                       create the logbook file and table if missing (optional)
+bs queen                      start the queen: claude --name queen-<project> in the repo (no BS_* set)
+bs spawn <bead> [--repo P]    start a bee for the bead in its own herdr workspace
+bs end <bee>                 remove the bee's recorded workspace
+bs epic <title>               create the project's next epic, <project>-<n>
+bs send <to> [--now] <body|-> store a message, then ring <to>   (flags may follow <to>)
+bs inbox [--peek]             print unread; without --peek, record receipts in one commit
+bs status [--json]            each known session: running or not, unread count
+send, inbox, spawn, end        --project, --as     (init, queen: --project)
 ```
 
-`pns send`:
+`bs send`:
 
 ```go
 id := lb.Send(ctx, me, to, body)
@@ -227,21 +227,21 @@ if err := claude.Ring(s, doorbell(unread, me), prio); err != nil {
 }
 ```
 
-The doorbell text explains itself, so peons need no setup prompt in v0:
+The doorbell text explains itself, so bees need no setup prompt in v0:
 
 ```text
-[pns] 2 unread (chief ×2) — run: pns inbox   (reply with: pns send chief "...")
-[pns] 2 unread (peons-1-3, peons-1-2) — run: pns inbox   (reply with: pns send peons-1-2 "...")
+[bs] 2 unread (queen ×2) — run: bs inbox   (reply with: bs send queen "...")
+[bs] 2 unread (bees-1-3, bees-1-2) — run: bs inbox   (reply with: bs send bees-1-2 "...")
 ```
 
 Senders are listed in order of their oldest unread message; "reply with" names whoever just sent.
 
-`pns status` combines `claude.List()` with `lb.UnreadCounts()`. It shows the sessions this project's logbook names (writers, recipients, peons) that are running or have unread messages, with their unread counts. A stopped session with nothing unread is history and is left out. Claude's registry is machine-wide, so a running session this project's logbook has never named (another project's, or one that hasn't used pns yet) is left out too (R30). It writes nothing.
+`bs status` combines `claude.List()` with `lb.UnreadCounts()`. It shows the sessions this project's logbook names (writers, recipients, bees) that are running or have unread messages, with their unread counts. A stopped session with nothing unread is history and is left out. Claude's registry is machine-wide, so a running session this project's logbook has never named (another project's, or one that hasn't used bs yet) is left out too (R30). It writes nothing.
 
 ```text
 SESSION      STATE        UNREAD
-chief-peons  running      0
-peons-1-4    not running  2
+queen-bees  running      0
+bees-1-4    not running  2
 ```
 
 `--json` prints `[{"session": "...", "running": true, "unread": 0}, ...]`, sorted by session.
@@ -251,12 +251,12 @@ peons-1-4    not running  2
 Full guide: [SETUP.md](SETUP.md).
 
 ```sh
-pns chief                 # chief-<project>, in $PNS_REPOS/<project>
-pns epic "ringing"        # → peons-2; then bd create --parent peons-2 --force …
-pns spawn peons-2.1       # inside the chief: peons-2-1 in peons-WT/peons-2-1
+bs queen                 # queen-<project>, in $BS_REPOS/<project>
+bs epic "ringing"        # → bees-2; then bd create --parent bees-2 --force …
+bs spawn bees-2.1       # inside the queen: bees-2-1 in bees-WT/bees-2-1
 ```
 
-Manual peon (no herdr): `claude --name peon-a --settings '{"crossSessionInbound":"accept"}'` in its worktree.
+Manual bee (no herdr): `claude --name bee-a --settings '{"crossSessionInbound":"accept"}'` in its worktree.
 
 ## Tests
 
@@ -268,20 +268,20 @@ Manual peon (no herdr): `claude --name peon-a --settings '{"crossSessionInbound"
 | `TestUnreadIsSet` | reading a newer message leaves older ones unread |
 | `TestRecordReceiptsIdempotent` | recording the same receipt twice is a no-op |
 | `project` tests | resolution order; a linked worktree resolves to its main repo's project |
-| `peon` tests (fake Herdr and Beads) | spawn → settings + entry + brief + start args; second spawn `ErrRunning`; dead agent resumes in the same workspace with `--continue`; `agent_not_ready` counts as started; orphan `ErrOrphan` with the cleanup command and nothing removed; end removes exactly the recorded id; wrong repo label refused |
+| `bee` tests (fake Herdr and Beads) | spawn → settings + entry + brief + start args; second spawn `ErrRunning`; dead agent resumes in the same workspace with `--continue`; `agent_not_ready` counts as started; orphan `ErrOrphan` with the cleanup command and nothing removed; end removes exactly the recorded id; wrong repo label refused |
 | `claude` tests (`claudetest.FakeRegistry`) | a fake unix listener sees the auth line only when a key exists, then the user line with its priority, then EOF; a `procStart` mismatch or another `peerProtocol` gives `ErrNotRunning` |
-| `cmd/pns` status tests | running with 0 and N unread, not running with N unread, stopped with none left out; `--json`; status records no receipts |
-| `cmd/pns` ring tests | doorbell text and `--now`; not running → stored, "queued", exit 0; failed ring → warning, exit 0 |
+| `cmd/bs` status tests | running with 0 and N unread, not running with N unread, stopped with none left out; `--json`; status records no receipts |
+| `cmd/bs` ring tests | doorbell text and `--now`; not running → stored, "queued", exit 0; failed ring → warning, exit 0 |
 | `TestKilledWriterLosesNoCommittedMessage` | "Done when" 4: a separate process SIGKILLed mid-way through sends; every acknowledged send survives and the logbook still writes |
-| `scripts/e2e.sh <bead>` | "Done when" 1–3 with a real chief and peon in herdr: wake time from the peon's transcript, round trip, mail queued while stopped |
+| `scripts/e2e.sh <bead>` | "Done when" 1–3 with a real queen and bee in herdr: wake time from the bee's transcript, round trip, mail queued while stopped |
 
 ## v1 outline
 
 - **Reconciler** ([ADR-0003](adr/0003-reconcile-on-triggers-not-a-daemon.md)):
   - `Plan(Facts, now) []Action`, run from send, hooks (5 s debounce), status, inbox and a 60 s watchdog;
   - one reconcile at a time, serialized by SQLite's write lock;
-  - one doorbell in flight per session, re-ring at 60 s, flag the chief at 120 s.
-- **Hook:** `pns hook` on UserPromptSubmit writes a `rang`/landed entry for `[pns]` prompts.
-- **Peon contract:** a fuller system prompt for spawned peons (R11).
-- **Captain:** a message to `captain` is something that needs the human; `pns status` lists them first.
+  - one doorbell in flight per session, re-ring at 60 s, flag the queen at 120 s.
+- **Hook:** `bs hook` on UserPromptSubmit writes a `rang`/landed entry for `[bs]` prompts.
+- **Bee contract:** a fuller system prompt for spawned bees (R11).
+- **Captain:** a message to `captain` is something that needs the human; `bs status` lists them first.
 - **Harness seam:** `Harness{Launch, Ring, Alive}`, with an omp adapter in v1.1.

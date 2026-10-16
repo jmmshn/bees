@@ -23,19 +23,21 @@ commands:
   send      store a message for a session, then ring it
   inbox     print your unread messages and record receipts
   status    list running sessions and unread counts (--json for scripts)
+  version   print the commit bs was built from
 `
 
 // commands maps each implemented subcommand to its handler.
 var commands = map[string]func(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error{
-	"init":   cmdInit,
-	"send":   cmdSend,
-	"inbox":  cmdInbox,
-	"queen":  cmdQueen,
-	"spawn":  cmdSpawn,
-	"end":    cmdEnd,
-	"epic":   cmdEpic,
-	"bead":   cmdBead,
-	"status": cmdStatus,
+	"init":    cmdInit,
+	"send":    cmdSend,
+	"inbox":   cmdInbox,
+	"queen":   cmdQueen,
+	"spawn":   cmdSpawn,
+	"end":     cmdEnd,
+	"epic":    cmdEpic,
+	"bead":    cmdBead,
+	"status":  cmdStatus,
+	"version": cmdVersion,
 }
 
 func main() {
@@ -48,6 +50,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if cmd, ok := commands[args[0]]; ok {
+		warnIfStale(context.Background(), stderr)
 		switch err := cmd(context.Background(), args[1:], stdin, stdout, stderr); {
 		case errors.Is(err, errHelp):
 			return 0

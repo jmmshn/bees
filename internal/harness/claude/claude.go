@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -160,10 +161,11 @@ func uuid() string {
 }
 
 // Exited reports whether the process pid that started at start (clock ticks, as in
-// Session.ProcStart) has exited: its pid is gone, or reused by a later process.
+// Session.ProcStart) has exited: its pid is gone (also ESRCH, when it dies mid-read), or
+// reused by a later process.
 func Exited(pid int, start string) (bool, error) {
 	got, err := procStart(pid)
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
 		return true, nil
 	}
 	if err != nil {

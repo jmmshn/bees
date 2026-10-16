@@ -377,3 +377,32 @@ func TestRecordExitIgnoresAnEndedOrSupersededSpawn(t *testing.T) {
 		t.Fatalf("superseded spawn: recorded %v, %v", ok, err)
 	}
 }
+
+func TestRecordExitAfterReworkIsRecorded(t *testing.T) {
+	ctx := context.Background()
+	lb := open(t)
+	id, _ := lb.RecordSpawn(ctx, "queen", logbook.Spawn{Name: "bee-a", Bead: "x-1"}, "brief")
+	exit := func(key string) bool {
+		t.Helper()
+		ok, err := lb.RecordExit(ctx, "queen", "bee-a", id, key, "bee-a exited")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	send := func(from, to, body string) {
+		t.Helper()
+		if _, err := lb.Send(ctx, from, to, body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	send("bee-a", "queen", "done: x-1 PR #3")
+	send("queen", "bee-a", "review: fix the test") // done meant ready for review
+	if !exit("1") {
+		t.Fatal("an exit during rework after review was not recorded")
+	}
+	send("bee-a", "queen", "done: x-1 PR #3 updated")
+	if exit("2") {
+		t.Fatal("recorded an exit after the rework's done")
+	}
+}

@@ -28,8 +28,9 @@ type fakeHerdr struct {
 	mu         sync.Mutex // agents, between a watcher and the test
 	next       int
 	workspaces []bee.Workspace
-	agents     map[string]string // live Claude sessions: name → pane
-	started    [][]string        // pane, name, args...
+	agents     map[string]string   // live Claude sessions: name → pane
+	procs      map[string]bee.Proc // each live session's process; a start is a new one
+	started    [][]string          // pane, name, args...
 	removed    []string
 	failStart  error
 	liveAnyway bool  // with failStart: Claude came up all the same, as after herdr's timeout
@@ -54,6 +55,7 @@ func (h *fakeHerdr) StartClaude(ctx context.Context, pane, name string, args ...
 		h.started = append(h.started, append([]string{pane, name}, args...))
 		h.mu.Lock()
 		h.agents[name] = pane
+		h.procs[name] = bee.Proc{Name: name, PID: len(h.started), Start: fmt.Sprint(len(h.started))}
 		h.mu.Unlock()
 	}
 	return h.failStart
@@ -66,19 +68,20 @@ func (h *fakeHerdr) Alive(ctx context.Context, name string, wait time.Duration) 
 	return ok, h.aliveErr
 }
 
-// Proc and Exited use the pane as the process's identity: a restart is a new start.
 func (h *fakeHerdr) Proc(ctx context.Context, name string) (bee.Proc, bool, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	pane, ok := h.agents[name]
-	return bee.Proc{Name: name, PID: len(h.started), Start: pane}, ok, h.aliveErr
+	_, ok := h.agents[name]
+	return h.procs[name], ok, h.aliveErr
 }
 
+// Exited compares pid and start time like the real registry: a restart under the same
+// name is another process.
 func (h *fakeHerdr) Exited(p bee.Proc) (bool, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	_, ok := h.agents[p.Name]
-	return !ok, nil
+	return !ok || h.procs[p.Name] != p, nil
 }
 
 func (h *fakeHerdr) RemoveWorktree(ctx context.Context, workspace string) error {
@@ -125,7 +128,7 @@ func newRig(t *testing.T) rig {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { lb.Close() })
-	h := &fakeHerdr{agents: map[string]string{}}
+	h := &fakeHerdr{agents: map[string]string{}, procs: map[string]bee.Proc{}}
 	beads := fakeBeads{
 		"bees-8":     {ID: "bees-8", Title: "spawn and end bees", Description: "Build bs spawn."},
 		"dotfiles-3": {ID: "dotfiles-3", Title: "dotfiles thing"},

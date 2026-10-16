@@ -300,8 +300,9 @@ func (f Fleet) open(ctx context.Context, p plan) (logbook.Spawn, error) {
 // workerSettings is passed with --settings: Claude reads settings.local.json from the main
 // checkout even in a worktree, so per-worker settings can't live in a file, and the auto
 // mode classifier reads autoMode only from user, managed or --settings settings. The
-// worker's bs finds its name from its Claude process and its project from the worktree's
-// git dir.
+// worker's bs finds its name from its Claude process and its project from env.BS_PROJECT,
+// the spawner's project: never from the worktree's git dir, which names another project in
+// a --repo worktree and would send its messages and receipts to that logbook (bees-1.54).
 //
 // A worker owns its worktree and branch, and the keeper merges every PR by hand, so the
 // classifier may let it build, test and push its own branch (bees-1.51). Every autoMode list
@@ -309,7 +310,7 @@ func (f Fleet) open(ctx context.Context, p plan) (logbook.Spawn, error) {
 // exfiltration). The deny rules run before the classifier, and a Bash rule matches only a
 // command spelled as written, so they also cover git -C dir push. Not git * push: that
 // would deny a commit whose message says "push … main".
-func workerSettings(sp logbook.Spawn) (string, error) {
+func workerSettings(project string, sp logbook.Spawn) (string, error) {
 	branch := cmp.Or(sp.Branch, sp.Name)
 	var deny []string
 	for _, push := range []string{"git push", "git -C * push"} {
@@ -320,6 +321,7 @@ func workerSettings(sp logbook.Spawn) (string, error) {
 	deny = append(deny, "Bash(gh pr merge*)", "Bash(gh * pr merge*)", "Bash(gh pr review* --approve*)", "Bash(gh pr review* -a*)", "Bash(gh api *merge*)")
 	b, err := json.Marshal(map[string]any{
 		"crossSessionInbound": "accept",
+		"env":                 map[string]string{"BS_PROJECT": project},
 		"autoMode": map[string][]string{
 			"environment": {"$defaults", fmt.Sprintf("Host containment: a bees worker, working in its own git worktree %s on its own branch %s of the repository %s. The keeper reviews and merges every pull request by hand, so nothing the worker pushes reaches main without a human.", sp.Worktree, branch, sp.Repo)},
 			"allow": {"$defaults",
@@ -339,25 +341,17 @@ func workerSettings(sp logbook.Spawn) (string, error) {
 // its inbox since this spawn (its first start failed) starts fresh, since
 // claude --continue exits when there is no conversation.
 func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Started, error) {
-	// In another repo (--repo, now or when first spawned) the worker's own bs resolves that
-	// repo's project: a system prompt naming P would mislead it, and its receipts go to
-	// that project's logbook, so sp.Read can't tell and a restart always continues.
-	foreign := f.ForeignRepo || cmp.Or(sp.Repo, f.P.Repo) != f.P.Repo
-	st := Started{Name: sp.Name, Label: sp.Label, Workspace: sp.Workspace, Resumed: resume, Continued: resume && (sp.Read || foreign)}
+	st := Started{Name: sp.Name, Label: sp.Label, Workspace: sp.Workspace, Resumed: resume, Continued: resume && sp.Read}
 	doorbell := fmt.Sprintf("[bs] you are %s, working on %s — run: bs inbox   (reply with: bs send %s \"...\")", sp.Name, sp.Bead, f.Me)
-	settings, err := workerSettings(sp)
+	settings, err := workerSettings(f.P.Name, sp)
 	if err != nil {
 		return st, err
 	}
-	args := []string{"--name", sp.Name, "--settings", settings}
-	if !foreign {
-		file, err := prompt.File(prompt.Worker, f.P.Name)
-		if err != nil {
-			return st, err
-		}
-		args = append(args, "--append-system-prompt-file", file)
+	file, err := prompt.File(prompt.Worker, f.P.Name)
+	if err != nil {
+		return st, err
 	}
-	args = append(args, doorbell)
+	args := []string{"--name", sp.Name, "--settings", settings, "--append-system-prompt-file", file, doorbell}
 	if st.Continued {
 		args = append([]string{"--continue"}, args...)
 	}

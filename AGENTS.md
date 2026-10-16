@@ -7,7 +7,7 @@ Terms (queen, worker, bead, project, logbook) are defined in `GLOSSARY.md`; deci
 bees is built with bees. Run this repo's own work through `bs`, and treat every rough edge you hit as a bug in `bs`.
 
 - Track work with `bs bead ls` / `bs bead new --parent bees-N` / `bs epic`.
-- Hand a bead to a worker with `bs spawn <bead>`; talk with `bs send` / `bs inbox`; check the fleet with `bs status`; tear down with `bs end`.
+- Hand a bead to a worker with `bs spawn --label "<words>" <bead>`; talk with `bs send` / `bs inbox`; check the fleet with `bs status`; tear down with `bs end`.
 - When `bs` fails, misleads, or needs a manual workaround: write down the exact output, file a bead under the bees epic describing it, then fix `bs` (or spawn a worker to). The workaround is evidence, not the fix.
 - Rebuild before dogfooding: `go install ./cmd/bs`. A stale `bs` on PATH silently tests yesterday's code.
 - Verify with `go vet ./... && go test ./...`, then exercise the change live through `bs` (real herdr, real Claude sessions) before calling it done.

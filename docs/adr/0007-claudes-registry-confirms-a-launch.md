@@ -19,5 +19,5 @@ herdr refuses any agent argument containing a Unicode control character. The rul
 
 ## Consequences
 
-- A worker herdr timed out on shows no name in `herdr agent list`. Find it by its workspace label (the bead id) or with `bs status`.
+- A worker herdr timed out on shows no name in `herdr agent list`. Find it with `bs status` (which shows its label) or by its worktree path.
 - A restart continues the conversation only if the worker has read a message since this spawn (a `received` entry after the `spawned` one), which is the logbook's evidence that a conversation exists. Otherwise it starts fresh.

@@ -25,8 +25,13 @@ func TestQueenStartsClaudeNamedForTheProject(t *testing.T) {
 	if gotDir != "/src/bees" {
 		t.Errorf("dir = %q", gotDir)
 	}
-	if !slices.Equal(gotArgs, []string{"--name", "queen-bees"}) {
-		t.Errorf("args = %q", gotArgs)
+	if len(gotArgs) != 4 || !slices.Equal(gotArgs[:3], []string{"--name", "queen-bees", "--append-system-prompt"}) {
+		t.Fatalf("args = %q", gotArgs)
+	}
+	for _, want := range []string{"bees", "bs bead ls", "bs epic", "bs bead new --parent bees-N"} {
+		if !strings.Contains(gotArgs[3], want) {
+			t.Errorf("system prompt %q lacks %q", gotArgs[3], want)
+		}
 	}
 	for _, kv := range gotEnv {
 		if strings.HasPrefix(kv, "BS_SESSION=") || strings.HasPrefix(kv, "BS_PROJECT=") {

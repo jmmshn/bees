@@ -49,5 +49,5 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
 		return strings.HasPrefix(kv, "BS_SESSION=") || strings.HasPrefix(kv, "BS_PROJECT=")
 	})
-	return execClaude(p.Repo, env, "--name", p.Queen())
+	return execClaude(p.Repo, env, "--name", p.Queen(), "--append-system-prompt", p.BeadsGuide())
 }

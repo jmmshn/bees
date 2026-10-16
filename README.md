@@ -2,8 +2,6 @@
 
 ![beads → bees → bs](docs/img/beads-bees-bs.svg)
 
-> You ask the queen. The workers do the work.
-
 **One queen, many workers.** The **queen** is a taskmaster and never writes the code. It
 splits your request into [beads](https://github.com/steveyegge/beads) (`bd`), spawns a
 **worker** per bead in a labelled [herdr](https://herdr.dev) workspace, and reports back to

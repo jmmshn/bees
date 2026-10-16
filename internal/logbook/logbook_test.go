@@ -208,11 +208,11 @@ func TestEndingASpawnRetiresItsUnreadBrief(t *testing.T) {
 	lb := open(t)
 	// A spawn whose start failed: its brief was never read (bees-1.14).
 	id, _ := lb.RecordSpawn(ctx, "queen", logbook.Spawn{Name: "bee-a", Bead: "p-2", Workspace: "w1"}, "old brief")
-	lb.Send(ctx, "queen", "bee-a", "a message, not a brief")
+	_, _ = lb.Send(ctx, "queen", "bee-a", "a message, not a brief")
 	if err := lb.RecordEnd(ctx, "queen", id); err != nil {
 		t.Fatal(err)
 	}
-	lb.RecordSpawn(ctx, "queen", logbook.Spawn{Name: "bee-a", Bead: "p-2", Workspace: "w2"}, "new brief")
+	_, _ = lb.RecordSpawn(ctx, "queen", logbook.Spawn{Name: "bee-a", Bead: "p-2", Workspace: "w2"}, "new brief")
 	unread, err := lb.Unread(ctx, "bee-a")
 	if err != nil || len(unread) != 2 || unread[0].Body != "a message, not a brief" || unread[1].Body != "new brief" {
 		t.Fatalf("unread = %+v, %v; want the message and the new brief only", unread, err)
@@ -231,12 +231,12 @@ func TestLatestSpawnKnowsWhetherTheBeeHasReadSinceIt(t *testing.T) {
 		t.Fatalf("before any inbox: %+v, want not Read", got)
 	}
 	unread, _ := lb.Unread(ctx, "bee-a")
-	lb.RecordReceipts(ctx, "bee-a", []logbook.ID{unread[0].ID})
+	_ = lb.RecordReceipts(ctx, "bee-a", []logbook.ID{unread[0].ID})
 	if got, _, _ := lb.LatestSpawn(ctx, "bee-a"); !got.Read {
 		t.Fatalf("after its inbox: %+v, want Read", got)
 	}
-	lb.RecordEnd(ctx, "queen", first)
-	lb.RecordSpawn(ctx, "queen", sp, "brief")
+	_ = lb.RecordEnd(ctx, "queen", first)
+	_, _ = lb.RecordSpawn(ctx, "queen", sp, "brief")
 	if got, _, _ := lb.LatestSpawn(ctx, "bee-a"); got.Read {
 		t.Fatalf("respawned: %+v, want not Read (an earlier spawn's reads don't count)", got)
 	}
@@ -245,11 +245,11 @@ func TestLatestSpawnKnowsWhetherTheBeeHasReadSinceIt(t *testing.T) {
 func TestUnreadCountsNamesEverySessionWithItsUnread(t *testing.T) {
 	ctx := context.Background()
 	lb := open(t)
-	lb.Send(ctx, "queen", "bee-a", "one")
-	lb.Send(ctx, "queen", "bee-a", "two")
+	_, _ = lb.Send(ctx, "queen", "bee-a", "one")
+	_, _ = lb.Send(ctx, "queen", "bee-a", "two")
 	id, _ := lb.Send(ctx, "bee-a", "queen", "done")
-	lb.RecordReceipts(ctx, "queen", []logbook.ID{id})
-	lb.RecordSpawn(ctx, "queen", logbook.Spawn{Name: "bee-b", Bead: "p-2", Workspace: "w1"}, "brief")
+	_ = lb.RecordReceipts(ctx, "queen", []logbook.ID{id})
+	_, _ = lb.RecordSpawn(ctx, "queen", logbook.Spawn{Name: "bee-b", Bead: "p-2", Workspace: "w1"}, "brief")
 	got, err := lb.UnreadCounts(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -283,8 +283,8 @@ func TestKilledWriterLosesNoCommittedMessage(t *testing.T) {
 	for len(acked) < 200 && sc.Scan() {
 		acked[logbook.ID(sc.Text())] = true
 	}
-	cmd.Process.Signal(syscall.SIGKILL) // mid-write: the child is still sending
-	cmd.Wait()
+	_ = cmd.Process.Signal(syscall.SIGKILL) // mid-write: the child is still sending
+	_ = cmd.Wait()
 	if len(acked) < 200 {
 		t.Fatalf("writer acknowledged only %d sends", len(acked))
 	}

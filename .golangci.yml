@@ -1,0 +1,9 @@
+version: "2"
+linters:
+  settings:
+    errcheck:
+      exclude-functions:
+        - (*database/sql.Tx).Rollback # deferred after Commit: its error is always ErrTxDone
+  exclusions:
+    # Unchecked Close/Remove/Fprint* in defers and output: idiomatic Go, not lost errors.
+    presets: [std-error-handling]

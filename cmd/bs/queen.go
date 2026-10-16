@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/jmmshn/bees/internal/project"
+	"github.com/jmmshn/bees/internal/prompt"
 )
 
 // execClaude replaces bs with claude, run in dir with env. Tests swap it out.
@@ -49,5 +50,5 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
 		return strings.HasPrefix(kv, "BS_SESSION=") || strings.HasPrefix(kv, "BS_PROJECT=")
 	})
-	return execClaude(p.Repo, env, "--name", p.Queen(), "--append-system-prompt", p.BeadsGuide())
+	return execClaude(p.Repo, env, "--name", p.Queen(), "--append-system-prompt", prompt.System(p.Name))
 }

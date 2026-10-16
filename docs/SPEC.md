@@ -140,14 +140,13 @@ package project
 type Project struct{ Name, Repo, Logbook string }
 func Resolve(flag string) (Project, error) // --project → BS_PROJECT → basename of git's common dir
 func (p Project) Queen() string             // "queen-" + Name
-func (p Project) BeadsGuide() string        // one line naming bs bead ls/new and bs epic
 func Me(flagAs string) (string, error)      // --as → parent-process walk → BS_SESSION
 ```
 
 - The name is lowercased with `-` and `_` dropped (`pymatgen-analysis-defects` → `pymatgenanalysisdefects`) and must match `^[a-z][a-z0-9]{0,24}$`, else `ErrBadProject` (set `BS_PROJECT`).
 - The project comes from git's *common* directory, so a shell inside `<repo>-WT/bees-2-1` resolves to the main repo's project.
 - `Repo` is the main checkout when the project comes from git, else `$BS_REPOS/<project>` (default `~/repos/jmmshn`); `Logbook` is `$BS_LOGBOOK`, else `~/.local/share/bees/<project>.db`.
-- `BeadsGuide` is passed as `--append-system-prompt` to the queen and every bee whose repo is the project's, so they list and file beads with `bs bead`, which keeps them in the project (R32). Claude records it with the conversation until compaction, so restart a queen with `bs queen`, not a bare `claude --resume`.
+- `internal/prompt/system.md`, embedded in bs with `{{project}}` filled in by `prompt.System`, is passed as `--append-system-prompt` to the queen and every bee whose repo is the project's. It is the one place the instructions for queens and bees live; today it tells them to list and file beads with `bs bead`, which keeps them in the project (R32). Claude records it with the conversation until compaction, so restart a queen with `bs queen`, not a bare `claude --resume`.
 - `Me` walks `getppid()` upward to the first pid with `~/.claude/sessions/<pid>.json` and uses its `name`. The registry beats `BS_SESSION`, which a session can inherit stale; `BS_SESSION` is for use outside Claude. Otherwise it fails with `run bs from inside a named Claude session, or pass --as`.
 
 ## Spawn
@@ -195,7 +194,7 @@ func (f Fleet) End(ctx context.Context, name string) (branchKept bool, err error
 4. A herdr workspace labelled with the bead but no `spawned` entry → `ErrOrphan`, with the command to remove it by hand (`herdr worktree remove --workspace <id> --force`). It is never removed automatically.
 5. `herdr worktree create --cwd <repo> --branch <name> --path <repo>-WT/<name> --label <bead> --no-focus` (herdr prints JSON).
 6. `RecordSpawn` immediately, in one transaction with the brief (`bd show` title and description) as a message from the queen: subject = name; data = bead, workspace, pane, worktree, branch, repo.
-7. `herdr agent start <name> --kind claude --pane <pane> -- --name <name> --settings '{"crossSessionInbound":"accept"}' --append-system-prompt <BeadsGuide> "<doorbell>"` (no guide when the bee runs in another project's repo). The doorbell is Claude's first prompt, so spawn doesn't depend on ringing. herdr's `agent_not_ready` means Claude started but is blocked at a prompt: spawn succeeds with `Waiting` and tells the captain to answer it in the bee's pane. Before spawning, `bs spawn` warns if `~/.claude.json` shows the repo isn't trusted yet (read only; trust is keyed by the main checkout, so its worktrees share it). No settings file is written (Claude reads `settings.local.json` from the main checkout in a worktree), and no `BS_*` variables are needed.
+7. `herdr agent start <name> --kind claude --pane <pane> -- --name <name> --settings '{"crossSessionInbound":"accept"}' --append-system-prompt <system.md> "<doorbell>"` (none when the bee runs in another project's repo). The doorbell is Claude's first prompt, so spawn doesn't depend on ringing. herdr's `agent_not_ready` means Claude started but is blocked at a prompt: spawn succeeds with `Waiting` and tells the captain to answer it in the bee's pane. Before spawning, `bs spawn` warns if `~/.claude.json` shows the repo isn't trusted yet (read only; trust is keyed by the main checkout, so its worktrees share it). No settings file is written (Claude reads `settings.local.json` from the main checkout in a worktree), and no `BS_*` variables are needed.
 
 `End(name)`: read `LatestSpawn`; none → `ErrNotSpawned` (never ask herdr). Otherwise `herdr worktree remove --workspace <recorded id> --force`, then `git -C <recorded repo> branch -d <name>` (kept, and reported, if not fully merged), then `RecordEnd`.
 
@@ -203,7 +202,7 @@ func (f Fleet) End(ctx context.Context, name string) (branchKept bool, err error
 
 ```text
 bs init                       create the logbook file and table if missing (optional)
-bs queen                      start the queen: claude --name queen-<project> --append-system-prompt <BeadsGuide> in the repo (no BS_* set)
+bs queen                      start the queen: claude --name queen-<project> --append-system-prompt <system.md> in the repo (no BS_* set)
 bs spawn <bead> [--repo P]    start a bee for the bead in its own herdr workspace
 bs end <bee>                 remove the bee's recorded workspace
 bs epic <title>               create the project's next epic, <project>-<n>

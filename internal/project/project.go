@@ -35,12 +35,6 @@ type Project struct {
 // herdr's session names are machine-wide.
 func (p Project) Queen() string { return "queen-" + p.Name }
 
-// BeadsGuide is appended to the system prompt of the queen and every bee, so they file
-// and list beads through bs, which keeps them inside the project (R32).
-func (p Project) BeadsGuide() string {
-	return fmt.Sprintf("Project %[1]s: list its beads with `bs bead ls`, add with `bs epic \"<title>\"` / `bs bead new --parent %[1]s-N \"<title>\"`. Don't use bd list/create directly; bd show/update/close are fine.", p.Name)
-}
-
 // Resolve finds the project from flag, then BS_PROJECT, then the git repo containing
 // the working directory. A linked worktree resolves to its main repo.
 func Resolve(flag string) (Project, error) {

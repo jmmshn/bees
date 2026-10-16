@@ -41,17 +41,17 @@ func TestInitIsIdempotent(t *testing.T) {
 
 func TestSendThenInboxShowsMessageOnce(t *testing.T) {
 	useTempLogbook(t)
-	if _, stderr, code := bs(t, "send", "--as", "queen", "bee-a", "add tests for parser"); code != 0 {
+	if _, stderr, code := bs(t, "send", "--as", "queen", "worker-a", "add tests for parser"); code != 0 {
 		t.Fatalf("send: exit %d: %s", code, stderr)
 	}
-	out, stderr, code := bs(t, "inbox", "--as", "bee-a")
+	out, stderr, code := bs(t, "inbox", "--as", "worker-a")
 	if code != 0 {
 		t.Fatalf("inbox: exit %d: %s", code, stderr)
 	}
 	if !strings.Contains(out, "from queen") || !strings.Contains(out, "add tests for parser") {
 		t.Fatalf("inbox output = %q", out)
 	}
-	again, _, _ := bs(t, "inbox", "--as", "bee-a")
+	again, _, _ := bs(t, "inbox", "--as", "worker-a")
 	if again != "no unread messages\n" {
 		t.Fatalf("second inbox = %q, want no unread", again)
 	}
@@ -59,9 +59,9 @@ func TestSendThenInboxShowsMessageOnce(t *testing.T) {
 
 func TestInboxPeekLeavesMessagesUnread(t *testing.T) {
 	useTempLogbook(t)
-	bs(t, "send", "--as", "queen", "bee-a", "hello")
+	bs(t, "send", "--as", "queen", "worker-a", "hello")
 	for range 2 {
-		out, _, code := bs(t, "inbox", "--as", "bee-a", "--peek")
+		out, _, code := bs(t, "inbox", "--as", "worker-a", "--peek")
 		if code != 0 || !strings.Contains(out, "hello") {
 			t.Fatalf("peek: exit %d, output %q", code, out)
 		}
@@ -70,8 +70,8 @@ func TestInboxPeekLeavesMessagesUnread(t *testing.T) {
 
 func TestSendJoinsBodyWords(t *testing.T) {
 	useTempLogbook(t)
-	bs(t, "send", "--as", "queen", "bee-a", "rebase", "on", "main")
-	out, _, _ := bs(t, "inbox", "--as", "bee-a")
+	bs(t, "send", "--as", "queen", "worker-a", "rebase", "on", "main")
+	out, _, _ := bs(t, "inbox", "--as", "worker-a")
 	if !strings.Contains(out, "rebase on main") {
 		t.Fatalf("inbox output = %q", out)
 	}
@@ -79,7 +79,7 @@ func TestSendJoinsBodyWords(t *testing.T) {
 
 func TestSendWithoutIdentityFails(t *testing.T) {
 	useTempLogbook(t)
-	_, stderr, code := bs(t, "send", "bee-a", "hi")
+	_, stderr, code := bs(t, "send", "worker-a", "hi")
 	if code != 2 || !strings.Contains(stderr, "--as") {
 		t.Fatalf("exit %d, stderr %q; want exit 2 mentioning --as", code, stderr)
 	}
@@ -87,7 +87,7 @@ func TestSendWithoutIdentityFails(t *testing.T) {
 
 func TestSendNeedsRecipientAndBody(t *testing.T) {
 	useTempLogbook(t)
-	_, stderr, code := bs(t, "send", "--as", "queen", "bee-a")
+	_, stderr, code := bs(t, "send", "--as", "queen", "worker-a")
 	if code != 2 || !strings.Contains(stderr, "usage: bs send") {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
@@ -97,17 +97,17 @@ func TestSendWorksWithoutInit(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("BS_PROJECT", "test")
 	t.Setenv("BS_LOGBOOK", filepath.Join(t.TempDir(), "logbook.db"))
-	if _, stderr, code := bs(t, "send", "--as", "queen", "bee-a", "hi"); code != 0 {
+	if _, stderr, code := bs(t, "send", "--as", "queen", "worker-a", "hi"); code != 0 {
 		t.Fatalf("send: exit %d: %s", code, stderr)
 	}
 }
 
 func TestFlagsMayFollowRecipient(t *testing.T) {
 	useTempLogbook(t)
-	if _, stderr, code := bs(t, "send", "bee-a", "--as", "queen", "hi"); code != 0 {
+	if _, stderr, code := bs(t, "send", "worker-a", "--as", "queen", "hi"); code != 0 {
 		t.Fatalf("send: exit %d: %s", code, stderr)
 	}
-	out, _, _ := bs(t, "inbox", "--as", "bee-a")
+	out, _, _ := bs(t, "inbox", "--as", "worker-a")
 	if !strings.Contains(out, "from queen") {
 		t.Fatalf("inbox output = %q", out)
 	}
@@ -115,10 +115,10 @@ func TestFlagsMayFollowRecipient(t *testing.T) {
 
 func TestSendDashReadsBodyFromStdin(t *testing.T) {
 	useTempLogbook(t)
-	if _, stderr, code := bsIn(t, "line one\nline two\n", "send", "--as", "queen", "bee-a", "-"); code != 0 {
+	if _, stderr, code := bsIn(t, "line one\nline two\n", "send", "--as", "queen", "worker-a", "-"); code != 0 {
 		t.Fatalf("send: exit %d: %s", code, stderr)
 	}
-	out, _, _ := bs(t, "inbox", "--as", "bee-a")
+	out, _, _ := bs(t, "inbox", "--as", "worker-a")
 	if !strings.Contains(out, "line one\nline two") {
 		t.Fatalf("inbox output = %q", out)
 	}
@@ -143,12 +143,12 @@ func TestInitRejectsArguments(t *testing.T) {
 func TestEachProjectHasItsOwnLogbook(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("BS_LOGBOOK", "")
-	bs(t, "send", "--project", "alpha", "--as", "queen-alpha", "bee-1", "for alpha")
-	out, _, _ := bs(t, "inbox", "--project", "beta", "--as", "bee-1")
+	bs(t, "send", "--project", "alpha", "--as", "queen-alpha", "worker-1", "for alpha")
+	out, _, _ := bs(t, "inbox", "--project", "beta", "--as", "worker-1")
 	if out != "no unread messages\n" {
 		t.Fatalf("beta inbox = %q, want empty", out)
 	}
-	out, _, _ = bs(t, "inbox", "--project", "alpha", "--as", "bee-1")
+	out, _, _ = bs(t, "inbox", "--project", "alpha", "--as", "worker-1")
 	if !strings.Contains(out, "for alpha") {
 		t.Fatalf("alpha inbox = %q", out)
 	}
@@ -166,8 +166,8 @@ func TestSpawnAndEndUsage(t *testing.T) {
 			t.Errorf("spawn %q: exit %d, stderr %q; want usage with the label rules", args, code, stderr)
 		}
 	}
-	_, stderr, code := bs(t, "end", "--as", "queen-test", "bee-995-8")
+	_, stderr, code := bs(t, "end", "--as", "queen-test", "test-995-8")
 	if code != 1 || !strings.Contains(stderr, "no record of spawning") {
-		t.Errorf("end of never-spawned bee: exit %d, stderr %q", code, stderr)
+		t.Errorf("end of never-spawned worker: exit %d, stderr %q", code, stderr)
 	}
 }

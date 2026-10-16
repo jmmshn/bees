@@ -10,30 +10,30 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jmmshn/bees/internal/bee"
 	"github.com/jmmshn/bees/internal/harness/claude"
 	"github.com/jmmshn/bees/internal/project"
+	"github.com/jmmshn/bees/internal/worker"
 )
 
 // newFleet builds the Fleet for a command. Tests swap in fakes.
-var newFleet = func(f bee.Fleet) bee.Fleet {
-	f.H, f.S, f.B, f.G = bee.HerdrCLI{}, bee.ClaudeSessions{}, bee.BeadsCLI{}, bee.GitHubCLI{}
+var newFleet = func(f worker.Fleet) worker.Fleet {
+	f.H, f.S, f.B, f.G = worker.HerdrCLI{}, worker.ClaudeSessions{}, worker.BeadsCLI{}, worker.GitHubCLI{}
 	return f
 }
 
 // fleet resolves the project, the calling session and the logbook into a Fleet.
 // The caller closes the returned Fleet's logbook.
-func fleet(ctx context.Context, flagProject, flagAs, flagRepo string) (bee.Fleet, error) {
+func fleet(ctx context.Context, flagProject, flagAs, flagRepo string) (worker.Fleet, error) {
 	p, lb, err := scope(ctx, flagProject)
 	if err != nil {
-		return bee.Fleet{}, err
+		return worker.Fleet{}, err
 	}
 	me, err := project.Me(flagAs)
 	if err != nil {
 		lb.Close()
-		return bee.Fleet{}, err
+		return worker.Fleet{}, err
 	}
-	f := bee.Fleet{P: p, LB: lb, Me: me}
+	f := worker.Fleet{P: p, LB: lb, Me: me}
 	if flagRepo != "" {
 		f.P.Repo, f.ForeignRepo = flagRepo, true
 	}
@@ -45,7 +45,7 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	fs.SetOutput(stderr)
 	proj := fs.String("project", "", "project (default: BS_PROJECT, else the current git repo)")
 	as := fs.String("as", "", "session doing the spawning (default: this Claude session)")
-	var reqs []bee.Request
+	var reqs []worker.Request
 	repo := ""
 	fs.Func("repo", "spawn in this repo even if the beads belong to another project; before the first bead", func(s string) error {
 		if len(reqs) > 0 {
@@ -66,7 +66,7 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		if err != nil {
 			fmt.Fprintf(stderr, "bs spawn: %v\n", err)
 		}
-		fmt.Fprintf(stderr, "usage: bs spawn --label \"<words>\" <bead> [--label \"<words>\" <bead> ...] [--repo <path>]\n%s\n", bee.LabelRules)
+		fmt.Fprintf(stderr, "usage: bs spawn --label \"<words>\" <bead> [--label \"<words>\" <bead> ...] [--repo <path>]\n%s\n", worker.LabelRules)
 		return errUsage
 	}
 	// Like parseFlags, but each --label goes with the bead after it.
@@ -75,7 +75,7 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		args, tail = args[:i], args[i+1:]
 	}
 	addBead := func(b string) {
-		reqs = append(reqs, bee.Request{Bead: b, Label: label})
+		reqs = append(reqs, worker.Request{Bead: b, Label: label})
 		label, labelled = "", false
 	}
 	for {
@@ -102,7 +102,7 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	}
 	for _, r := range reqs {
 		if r.Label != "" {
-			if err := bee.CheckLabel(r.Label); err != nil {
+			if err := worker.CheckLabel(r.Label); err != nil {
 				return spawnUsage(err)
 			}
 		}
@@ -112,14 +112,14 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return err
 	}
 	defer f.LB.Close()
-	trusted := claude.Trusted(f.P.Repo) // before spawning: starting a bee can't change it
+	trusted := claude.Trusted(f.P.Repo) // before spawning: starting a worker can't change it
 	var untrusted []string
 	failed, refused := false, false
 	for _, r := range f.SpawnAll(ctx, reqs) {
 		st := r.Started
 		if r.Err != nil {
 			fmt.Fprintf(stderr, "bs spawn: %s: %v\n", r.Bead, r.Err)
-			failed, refused = true, refused || bee.Refused(r.Err)
+			failed, refused = true, refused || worker.Refused(r.Err)
 			continue
 		}
 		took := r.Took.Round(100 * time.Millisecond).Seconds()
@@ -160,7 +160,7 @@ func cmdEnd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 		return err
 	}
 	if len(pos) != 1 {
-		fmt.Fprintln(stderr, "usage: bs end <bee>")
+		fmt.Fprintln(stderr, "usage: bs end <worker>")
 		return errUsage
 	}
 	f, err := fleet(ctx, *proj, *as, "")
@@ -199,25 +199,25 @@ func cmdPrune(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return err
 	}
 	defer lb.Close()
-	pruned, err := newFleet(bee.Fleet{P: p, LB: lb}).Prune(ctx, *dry)
+	pruned, err := newFleet(worker.Fleet{P: p, LB: lb}).Prune(ctx, *dry)
 	if err != nil {
 		return err
 	}
 	if len(pruned) == 0 {
-		fmt.Fprintln(stdout, "nothing to prune: no ended bee has a branch left")
+		fmt.Fprintln(stdout, "nothing to prune: no ended worker has a branch left")
 		return nil
 	}
 	code := 0
 	for _, r := range pruned {
 		switch {
-		case r.Merge == bee.Merged && *dry:
+		case r.Merge == worker.Merged && *dry:
 			fmt.Fprintf(stdout, "would delete local branch %s: merged, %s\n", r.Branch, r.Why)
 		case r.Deleted:
 			fmt.Fprintf(stdout, "deleted local branch %s: merged, %s\n", r.Branch, r.Why)
-		case r.Merge == bee.Merged:
+		case r.Merge == worker.Merged:
 			fmt.Fprintf(stdout, "kept %s: merged, but deleting it failed: %v\n", r.Branch, r.DeleteErr)
 			code = exitKeptUnknown
-		case r.Merge == bee.NotMerged:
+		case r.Merge == worker.NotMerged:
 			fmt.Fprintf(stdout, "kept %s: not merged: %s\n", r.Branch, r.Why)
 			code = max(code, exitKeptUnmerged)
 		default:

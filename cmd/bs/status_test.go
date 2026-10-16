@@ -13,23 +13,23 @@ import (
 
 func TestStatusShowsRunningAndUnreadForEachSession(t *testing.T) {
 	useTempLogbook(t)
-	bs(t, "send", "--as", "queen", "bee-a", "one")
-	bs(t, "send", "--as", "queen", "bee-a", "two")
-	bs(t, "send", "--as", "queen", "bee-b", "three")
-	claudetest.FakeRegistry(t).Add(t, "bee-a", "") // queen and bee-b are not running
+	bs(t, "send", "--as", "queen", "worker-a", "one")
+	bs(t, "send", "--as", "queen", "worker-a", "two")
+	bs(t, "send", "--as", "queen", "worker-b", "three")
+	claudetest.FakeRegistry(t).Add(t, "worker-a", "") // queen and worker-b are not running
 	out, stderr, code := bs(t, "status")
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	want := "SESSION  LABEL  STATE        UNREAD\n" + // queen: stopped with nothing unread, so left out
-		"bee-a    -      running      2\n" +
-		"bee-b    -      not running  1\n"
+	want := "SESSION   LABEL  STATE        UNREAD\n" + // queen: stopped with nothing unread, so left out
+		"worker-a  -      running      2\n" +
+		"worker-b  -      not running  1\n"
 	if out != want {
 		t.Fatalf("status =\n%s\nwant\n%s", out, want)
 	}
 }
 
-func TestStatusShowsABeesLabel(t *testing.T) {
+func TestStatusShowsAWorkersLabel(t *testing.T) {
 	useTempLogbook(t)
 	ctx := context.Background()
 	lb, err := logbook.Open(ctx, os.Getenv("BS_LOGBOOK"))
@@ -52,7 +52,7 @@ func TestStatusShowsABeesLabel(t *testing.T) {
 
 func TestStatusJSON(t *testing.T) {
 	useTempLogbook(t)
-	bs(t, "send", "--as", "queen", "bee-a", "one")
+	bs(t, "send", "--as", "queen", "worker-a", "one")
 	claudetest.FakeRegistry(t).Add(t, "queen", "")
 	out, _, code := bs(t, "status", "--json")
 	var got []struct {
@@ -63,17 +63,17 @@ func TestStatusJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &got); code != 0 || err != nil {
 		t.Fatalf("exit %d, %v: %q", code, err, out)
 	}
-	if len(got) != 2 || got[0].Session != "bee-a" || got[0].Running || got[0].Unread != 1 ||
-		got[1].Session != "queen" || !got[1].Running || got[1].Unread != 0 {
+	if len(got) != 2 || got[0].Session != "queen" || !got[0].Running || got[0].Unread != 0 ||
+		got[1].Session != "worker-a" || got[1].Running || got[1].Unread != 1 {
 		t.Fatalf("status --json = %+v", got)
 	}
 }
 
 func TestStatusRecordsNoReceipts(t *testing.T) {
 	useTempLogbook(t)
-	bs(t, "send", "--as", "queen", "bee-a", "hello")
+	bs(t, "send", "--as", "queen", "worker-a", "hello")
 	bs(t, "status")
-	if out, _, _ := bs(t, "inbox", "--as", "bee-a"); !strings.Contains(out, "hello") {
+	if out, _, _ := bs(t, "inbox", "--as", "worker-a"); !strings.Contains(out, "hello") {
 		t.Fatalf("inbox after status = %q", out)
 	}
 }

@@ -26,9 +26,9 @@ func TestSendRingsTheRecipientWithItsUnreadCount(t *testing.T) {
 
 func TestSendCountsRepeatSenders(t *testing.T) {
 	useTempLogbook(t)
-	bs(t, "send", "--as", "queen", "bee-a", "one")
-	got := claudetest.FakeRegistry(t).Add(t, "bee-a", "")
-	bs(t, "send", "--as", "queen", "--now", "bee-a", "two")
+	bs(t, "send", "--as", "queen", "worker-a", "one")
+	got := claudetest.FakeRegistry(t).Add(t, "worker-a", "")
+	bs(t, "send", "--as", "queen", "--now", "worker-a", "two")
 	lines := got()
 	msg, _ := lines[0]["message"].(map[string]any)
 	want := `[bs] 2 unread (queen ×2) — run: bs inbox   (reply with: bs send queen "...")`
@@ -39,11 +39,11 @@ func TestSendCountsRepeatSenders(t *testing.T) {
 
 func TestSendToAStoppedSessionQueuesTheMessage(t *testing.T) {
 	useTempLogbook(t)
-	out, stderr, code := bs(t, "send", "--as", "queen", "bee-a", "hello")
-	if code != 0 || !strings.Contains(out, "queued; bee-a is not running") {
+	out, stderr, code := bs(t, "send", "--as", "queen", "worker-a", "hello")
+	if code != 0 || !strings.Contains(out, "queued; worker-a is not running") {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, out, stderr)
 	}
-	if inbox, _, _ := bs(t, "inbox", "--as", "bee-a"); !strings.Contains(inbox, "hello") {
+	if inbox, _, _ := bs(t, "inbox", "--as", "worker-a"); !strings.Contains(inbox, "hello") {
 		t.Fatalf("inbox = %q", inbox)
 	}
 }
@@ -51,13 +51,13 @@ func TestSendToAStoppedSessionQueuesTheMessage(t *testing.T) {
 func TestSendWarnsWhenTheRingFailsButKeepsTheMessage(t *testing.T) {
 	useTempLogbook(t)
 	reg := claudetest.FakeRegistry(t)
-	reg.Add(t, "bee-a", "")
+	reg.Add(t, "worker-a", "")
 	reg.Edit(t, func(e map[string]any) { e["messagingSocketPath"] = "/nonexistent/s.sock" })
-	_, stderr, code := bs(t, "send", "--as", "queen", "bee-a", "hello")
-	if code != 0 || !strings.Contains(stderr, "couldn't ring bee-a") {
+	_, stderr, code := bs(t, "send", "--as", "queen", "worker-a", "hello")
+	if code != 0 || !strings.Contains(stderr, "couldn't ring worker-a") {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
-	if inbox, _, _ := bs(t, "inbox", "--as", "bee-a"); !strings.Contains(inbox, "hello") {
+	if inbox, _, _ := bs(t, "inbox", "--as", "worker-a"); !strings.Contains(inbox, "hello") {
 		t.Fatalf("inbox = %q", inbox)
 	}
 }

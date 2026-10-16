@@ -1,4 +1,4 @@
-package bee_test
+package worker_test
 
 import (
 	"context"
@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jmmshn/bees/internal/bee"
 	"github.com/jmmshn/bees/internal/harness/claude/claudetest"
+	"github.com/jmmshn/bees/internal/worker"
 )
 
 // fakeHerdrBinary puts a herdr on PATH that prints herdr's JSON error envelope with
@@ -29,16 +29,16 @@ func fakeHerdrBinary(t *testing.T, code string) {
 
 func TestHerdrAgentNotReadyMeansWaiting(t *testing.T) {
 	fakeHerdrBinary(t, "agent_not_ready")
-	err := bee.HerdrCLI{}.StartClaude(context.Background(), "w1:p1", "bees-8")
-	if !errors.Is(err, bee.ErrWaiting) {
+	err := worker.HerdrCLI{}.StartClaude(context.Background(), "w1:p1", "bees-8")
+	if !errors.Is(err, worker.ErrWaiting) {
 		t.Fatalf("err = %v, want ErrWaiting", err)
 	}
 }
 
 func TestHerdrTimeoutIsUnconfirmed(t *testing.T) {
 	fakeHerdrBinary(t, "timeout")
-	err := bee.HerdrCLI{}.StartClaude(context.Background(), "w1:p1", "bees-8")
-	if !errors.Is(err, bee.ErrUnconfirmed) || errors.Is(err, bee.ErrWaiting) {
+	err := worker.HerdrCLI{}.StartClaude(context.Background(), "w1:p1", "bees-8")
+	if !errors.Is(err, worker.ErrUnconfirmed) || errors.Is(err, worker.ErrWaiting) {
 		t.Fatalf("err = %v, want ErrUnconfirmed", err)
 	}
 }
@@ -47,7 +47,7 @@ func TestClaudeSessionsAliveReadsClaudesRegistry(t *testing.T) {
 	reg := claudetest.FakeRegistry(t)
 	reg.Add(t, "bees-8", "")
 	for name, want := range map[string]bool{"bees-8": true, "bees-9": false} {
-		if got, err := (bee.ClaudeSessions{}).Alive(context.Background(), name, 300*time.Millisecond); err != nil || got != want {
+		if got, err := (worker.ClaudeSessions{}).Alive(context.Background(), name, 300*time.Millisecond); err != nil || got != want {
 			t.Errorf("Alive(%s) = %v, %v; want %v", name, got, err, want)
 		}
 	}
@@ -55,8 +55,8 @@ func TestClaudeSessionsAliveReadsClaudesRegistry(t *testing.T) {
 
 func TestHerdrOtherErrorsAreNotWaiting(t *testing.T) {
 	fakeHerdrBinary(t, "pane_not_found")
-	err := bee.HerdrCLI{}.StartClaude(context.Background(), "w1:p1", "bees-8")
-	if err == nil || errors.Is(err, bee.ErrWaiting) {
+	err := worker.HerdrCLI{}.StartClaude(context.Background(), "w1:p1", "bees-8")
+	if err == nil || errors.Is(err, worker.ErrWaiting) {
 		t.Fatalf("err = %v, want a plain error", err)
 	}
 }
@@ -72,8 +72,8 @@ var agentArgCases = map[string]bool{
 
 func TestCheckAgentArgs(t *testing.T) {
 	for arg, ok := range agentArgCases {
-		err := bee.CheckAgentArgs([]string{"--name", "bees-8", arg})
-		if (err == nil) != ok || (err != nil && !errors.Is(err, bee.ErrUnsafeArg)) {
+		err := worker.CheckAgentArgs([]string{"--name", "bees-8", arg})
+		if (err == nil) != ok || (err != nil && !errors.Is(err, worker.ErrUnsafeArg)) {
 			t.Errorf("CheckAgentArgs(%q) = %v, want ok=%v", arg, err, ok)
 		}
 	}
@@ -81,8 +81,8 @@ func TestCheckAgentArgs(t *testing.T) {
 
 func TestStartClaudeRefusesUnsafeArgsWithoutRunningHerdr(t *testing.T) {
 	fakeHerdrBinary(t, "herdr_was_run")
-	err := bee.HerdrCLI{}.StartClaude(context.Background(), "w1:p1", "bees-8", "a\nb")
-	if !errors.Is(err, bee.ErrUnsafeArg) || strings.Contains(err.Error(), "herdr_was_run") {
+	err := worker.HerdrCLI{}.StartClaude(context.Background(), "w1:p1", "bees-8", "a\nb")
+	if !errors.Is(err, worker.ErrUnsafeArg) || strings.Contains(err.Error(), "herdr_was_run") {
 		t.Fatalf("err = %v, want ErrUnsafeArg before herdr runs", err)
 	}
 }

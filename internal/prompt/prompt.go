@@ -41,7 +41,7 @@ func Text(r Role, project string) string {
 
 // File writes Text(r, project) to <user cache dir>/bees/<project>-<role>.md and returns
 // its path, for claude --append-system-prompt-file. Queen and workers both launch with a
-// file, because herdr refuses agent arguments containing newlines (bee.CheckAgentArgs).
+// file, because herdr refuses agent arguments containing newlines (worker.CheckAgentArgs).
 // It is rewritten at every launch, through a rename so a concurrent launch never reads
 // half a file, and Claude reads it only at startup.
 func File(r Role, project string) (string, error) {

@@ -17,7 +17,7 @@ import (
 // sessionStatus is one row of bs status, and one object of bs status --json.
 type sessionStatus struct {
 	Session string `json:"session"`
-	Label   string `json:"label,omitempty"` // a bee's herdr workspace label, from its latest spawn
+	Label   string `json:"label,omitempty"` // a worker's herdr workspace label, from its latest spawn
 	Running bool   `json:"running"`
 	Unread  int    `json:"unread"`
 }

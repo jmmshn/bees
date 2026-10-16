@@ -21,10 +21,10 @@ var (
 )
 
 // validName is what a project name must be once lowercased with - and _ dropped. With no "-" in
-// the project, the first "-" in a bead id or bee name always ends the project (R27).
+// the project, the first "-" in a bead id or worker name always ends the project (R27).
 var validName = regexp.MustCompile(`^[a-z][a-z0-9]{0,24}$`)
 
-// Project is the scope of one queen, its bees and its logbook.
+// Project is the scope of one queen, its workers and its logbook.
 type Project struct {
 	Name    string // e.g. "bees"
 	Repo    string // main checkout of the project's git repo

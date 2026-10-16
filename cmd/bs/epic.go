@@ -7,8 +7,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/jmmshn/bees/internal/bee"
 	"github.com/jmmshn/bees/internal/project"
+	"github.com/jmmshn/bees/internal/worker"
 )
 
 func cmdEpic(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -27,12 +27,12 @@ func cmdEpic(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	if err != nil {
 		return err
 	}
-	ids, err := bee.BeadsCLI{}.IDs(ctx)
+	ids, err := worker.BeadsCLI{}.IDs(ctx)
 	if err != nil {
 		return err
 	}
-	id := bee.NextEpic(p.Name, ids)
-	if err := (bee.BeadsCLI{}).CreateEpic(ctx, id, strings.Join(pos, " ")); err != nil {
+	id := worker.NextEpic(p.Name, ids)
+	if err := (worker.BeadsCLI{}).CreateEpic(ctx, id, strings.Join(pos, " ")); err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "%s\nadd beads with: bs bead new --parent %s \"...\"\n", id, id)

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jmmshn/bees/internal/bee"
+	"github.com/jmmshn/bees/internal/worker"
 )
 
 // fakeHive is herdr, Claude's registry and bd for cmd tests: every bead exists, and
@@ -16,32 +16,32 @@ import (
 type fakeHive struct {
 	mu     sync.Mutex
 	next   int
-	labels map[string]string // workspace label → bee
+	labels map[string]string // workspace label → worker
 	live   map[string]bool
 }
 
-func (h *fakeHive) CreateWorktree(ctx context.Context, repo, branch, path, label string) (bee.Workspace, error) {
+func (h *fakeHive) CreateWorktree(ctx context.Context, repo, branch, path, label string) (worker.Workspace, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.next++
 	h.labels[label] = branch
-	return bee.Workspace{ID: fmt.Sprintf("w%d", h.next), Label: label, Pane: fmt.Sprintf("w%d:p1", h.next), Path: path}, nil
+	return worker.Workspace{ID: fmt.Sprintf("w%d", h.next), Label: label, Pane: fmt.Sprintf("w%d:p1", h.next), Path: path}, nil
 }
 
 func (h *fakeHive) StartClaude(ctx context.Context, pane, name string, args ...string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.live[name] = true
-	return bee.CheckAgentArgs(args)
+	return worker.CheckAgentArgs(args)
 }
 
 func (h *fakeHive) RemoveWorktree(ctx context.Context, workspace string) error { return nil }
-func (h *fakeHive) Workspaces(ctx context.Context) ([]bee.Workspace, error)    { return nil, nil }
-func (h *fakeHive) Show(ctx context.Context, id string) (bee.Bead, error) {
+func (h *fakeHive) Workspaces(ctx context.Context) ([]worker.Workspace, error) { return nil, nil }
+func (h *fakeHive) Show(ctx context.Context, id string) (worker.Bead, error) {
 	if strings.HasSuffix(id, ".404") {
-		return bee.Bead{}, fmt.Errorf("no bead %s", id)
+		return worker.Bead{}, fmt.Errorf("no bead %s", id)
 	}
-	return bee.Bead{ID: id, Title: "t"}, nil
+	return worker.Bead{ID: id, Title: "t"}, nil
 }
 
 func (h *fakeHive) Alive(ctx context.Context, name string, wait time.Duration) (bool, error) {
@@ -55,7 +55,7 @@ func useFakeHive(t *testing.T) *fakeHive {
 	h := &fakeHive{labels: map[string]string{}, live: map[string]bool{}}
 	saved := newFleet
 	t.Cleanup(func() { newFleet = saved })
-	newFleet = func(f bee.Fleet) bee.Fleet {
+	newFleet = func(f worker.Fleet) worker.Fleet {
 		f.H, f.S, f.B = h, h, h
 		return f
 	}

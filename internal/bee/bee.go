@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jmmshn/bees/internal/logbook"
@@ -31,6 +32,7 @@ var (
 	ErrNoLabel     = errors.New("a first spawn needs a label")
 	ErrBadLabel    = errors.New("not a valid label")
 	ErrLabelChange = errors.New("the bee is recorded with another label")
+	ErrTwice       = errors.New("named twice in one spawn")
 )
 
 // LabelRules says what a bee's label must be. The queen writes the label; bs only checks it.
@@ -135,62 +137,117 @@ type Started struct {
 // in its recorded workspace if its session has died. A restart keeps the recorded
 // label: label may be empty, and any other label is refused.
 func (f Fleet) Spawn(ctx context.Context, bead, label string) (Started, error) {
-	name, err := Name(bead)
+	sp, resume, err := f.prepare(ctx, bead, label)
 	if err != nil {
 		return Started{}, err
 	}
+	return f.start(ctx, sp, resume)
+}
+
+// Request asks SpawnAll for one bee.
+type Request struct{ Bead, Label string }
+
+// Result is what SpawnAll did for one Request.
+type Result struct {
+	Bead    string
+	Started Started
+	Err     error
+	Took    time.Duration
+}
+
+// SpawnAll spawns a bee for each request, as Spawn does, and returns one Result per
+// request in order. Each bee's checks, worktree and spawn record are done one bee at a
+// time (git and herdr state stay simple); the slow part, waiting for each Claude to
+// start, runs concurrently. One failure doesn't stop the others. A bee named twice
+// fails the second time: two starts of one bee would race into two Claudes.
+func (f Fleet) SpawnAll(ctx context.Context, reqs []Request) []Result {
+	out := make([]Result, len(reqs))
+	seen := map[string]bool{}
+	var wg sync.WaitGroup
+	for i, r := range reqs {
+		t0 := time.Now()
+		out[i].Bead = r.Bead
+		if name, err := Name(r.Bead); err == nil && seen[name] {
+			out[i].Err = fmt.Errorf("%s: %w", name, ErrTwice)
+			continue
+		} else if err == nil {
+			seen[name] = true
+		}
+		sp, resume, err := f.prepare(ctx, r.Bead, r.Label)
+		if err != nil {
+			out[i].Err, out[i].Took = err, time.Since(t0)
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			out[i].Started, out[i].Err = f.start(ctx, sp, resume)
+			out[i].Took = time.Since(t0)
+		}()
+	}
+	wg.Wait()
+	return out
+}
+
+// prepare checks a spawn and, for a first spawn, opens the bee's worktree and records
+// it. resume: the bee is recorded and its session has died.
+func (f Fleet) prepare(ctx context.Context, bead, label string) (sp logbook.Spawn, resume bool, err error) {
+	name, err := Name(bead)
+	if err != nil {
+		return sp, false, err
+	}
 	if label != "" {
 		if err := CheckLabel(label); err != nil {
-			return Started{}, err
+			return sp, false, err
 		}
 	}
 	sp, ok, err := f.LB.LatestSpawn(ctx, name)
 	if err != nil {
-		return Started{}, err
+		return sp, false, err
 	}
 	if ok && !sp.Ended {
 		if label != "" && label != sp.Label {
-			return Started{}, fmt.Errorf("%s is labelled %q, not %q: %w; spawn it again without --label", name, sp.Label, label, ErrLabelChange)
+			return sp, false, fmt.Errorf("%s is labelled %q, not %q: %w; spawn it again without --label", name, sp.Label, label, ErrLabelChange)
 		}
 		// Fail closed: an unreadable registry must not start a second Claude.
 		if alive, err := f.S.Alive(ctx, name, 0); err != nil {
-			return Started{}, err
+			return sp, false, err
 		} else if alive {
-			return Started{}, fmt.Errorf("%s: %w", name, ErrRunning)
+			return sp, false, fmt.Errorf("%s: %w", name, ErrRunning)
 		}
-		return f.start(ctx, sp, true)
+		return sp, true, nil
 	}
 	if label == "" {
-		return Started{}, fmt.Errorf("%s: %w", name, ErrNoLabel)
+		return sp, false, fmt.Errorf("%s: %w", name, ErrNoLabel)
 	}
 	if !f.ForeignRepo && !Belongs(f.P.Name, bead) {
-		return Started{}, fmt.Errorf("%s is not a %s bead (want %s-<n>[.<m>]): %w (or pass --repo)", bead, f.P.Name, f.P.Name, ErrWrongRepo)
+		return sp, false, fmt.Errorf("%s is not a %s bead (want %s-<n>[.<m>]): %w (or pass --repo)", bead, f.P.Name, f.P.Name, ErrWrongRepo)
 	}
 	b, err := f.B.Show(ctx, bead)
 	if err != nil {
-		return Started{}, err
+		return sp, false, err
 	}
 	wss, err := f.H.Workspaces(ctx)
 	if err != nil {
-		return Started{}, err
+		return sp, false, err
 	}
 	// Find an orphan by its worktree, never its label: the path is built forward from
 	// the name, while a label is free text.
 	wt := filepath.Join(f.P.Repo+"-WT", name)
 	if i := slices.IndexFunc(wss, func(w Workspace) bool { return w.Path != "" && filepath.Clean(w.Path) == wt }); i >= 0 {
-		return Started{}, fmt.Errorf("%s: %w; check it, then remove it with: herdr worktree remove --workspace %s --force", name, ErrOrphan, wss[i].ID)
+		return sp, false, fmt.Errorf("%s: %w; check it, then remove it with: herdr worktree remove --workspace %s --force", name, ErrOrphan, wss[i].ID)
 	}
 
 	ws, err := f.H.CreateWorktree(ctx, f.P.Repo, name, wt, label)
 	if err != nil {
-		return Started{}, err
+		return sp, false, err
 	}
 	// Record straight away: any failure after this point is healed by spawning again.
 	sp = logbook.Spawn{Name: name, Bead: bead, Label: label, Workspace: ws.ID, Pane: ws.Pane, Worktree: ws.Path, Branch: name, Repo: f.P.Repo}
 	if sp.ID, err = f.LB.RecordSpawn(ctx, f.Me, sp, brief(b)); err != nil {
-		return Started{}, err
+		return sp, false, err
 	}
-	return f.start(ctx, sp, false)
+	return sp, false, nil
 }
 
 // beeSettings is passed with --settings: Claude reads settings.local.json from the main

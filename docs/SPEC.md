@@ -219,7 +219,7 @@ func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error)           
 ```text
 bs init                       create the logbook file and table if missing (optional)
 bs queen                      start the queen: claude --name queen-<project> --append-system-prompt-file <project>-queen.md in the repo (no BS_* set)
-bs spawn --label L <bead> [--repo P]  start a bee for the bead in its own herdr workspace labelled L (--label only on a first spawn)
+bs spawn --label L <bead> [--label L <bead> …] [--repo P]  start a bee per bead, in parallel, each in its own herdr workspace labelled by the --label before it (--label only on a first spawn)
 bs end <bee>                 remove the bee's recorded workspace; keep its branch
 bs prune [--dry-run]          delete ended bees' branches once merged; exit 3 if one is kept unmerged, 4 if one couldn't be checked or deleted
 bs epic <title>               create the project's next epic, <project>-<n>

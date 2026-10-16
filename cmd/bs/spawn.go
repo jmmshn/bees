@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
+	"time"
 
 	"github.com/jmmshn/bees/internal/bee"
 	"github.com/jmmshn/bees/internal/harness/claude"
@@ -43,24 +45,44 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	proj := fs.String("project", "", "project (default: BS_PROJECT, else the current git repo)")
 	as := fs.String("as", "", "session doing the spawning (default: this Claude session)")
 	repo := fs.String("repo", "", "spawn in this repo even if the bead belongs to another project")
-	label := fs.String("label", "", "the herdr workspace label: 1-4 lowercase words naming the work (required on a first spawn)")
-	pos, err := parseFlags(fs, args)
-	if err != nil {
-		return err
-	}
+	var reqs []bee.Request
+	label, labelled := "", false // the --label waiting for its bead
+	fs.Func("label", "the herdr workspace label of the bead after it: 1-4 lowercase words naming the work (required on a first spawn)", func(s string) error {
+		label, labelled = s, true
+		return nil
+	})
 	spawnUsage := func(err error) error {
 		if err != nil {
 			fmt.Fprintf(stderr, "bs spawn: %v\n", err)
 		}
-		fmt.Fprintf(stderr, "usage: bs spawn --label \"<words>\" [--repo <path>] <bead>\n%s\n", bee.LabelRules)
+		fmt.Fprintf(stderr, "usage: bs spawn --label \"<words>\" <bead> [--label \"<words>\" <bead> ...] [--repo <path>]\n%s\n", bee.LabelRules)
 		return errUsage
 	}
-	if len(pos) != 1 {
+	// Like parseFlags, but each --label goes with the bead after it.
+	for {
+		if err := fs.Parse(args); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return errHelp
+			}
+			return errUsage
+		}
+		if args = fs.Args(); len(args) == 0 {
+			break
+		}
+		reqs = append(reqs, bee.Request{Bead: args[0], Label: label})
+		label, labelled, args = "", false, args[1:]
+	}
+	if len(reqs) == 0 {
 		return spawnUsage(nil)
 	}
-	if *label != "" {
-		if err := bee.CheckLabel(*label); err != nil {
-			return spawnUsage(err)
+	if labelled {
+		return spawnUsage(fmt.Errorf("--label %q has no bead after it", label))
+	}
+	for _, r := range reqs {
+		if r.Label != "" {
+			if err := bee.CheckLabel(r.Label); err != nil {
+				return spawnUsage(err)
+			}
 		}
 	}
 	f, err := fleet(ctx, *proj, *as, *repo)
@@ -68,27 +90,41 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return err
 	}
 	defer f.LB.Close()
-	trusted := claude.Trusted(f.P.Repo) // before Spawn: starting the bee can't change it
-	st, err := f.Spawn(ctx, pos[0], *label)
-	if errors.Is(err, bee.ErrNoLabel) || errors.Is(err, bee.ErrLabelChange) {
-		return spawnUsage(err)
+	trusted := claude.Trusted(f.P.Repo) // before spawning: starting a bee can't change it
+	var untrusted []string
+	failed, labelErr := false, false
+	for _, r := range f.SpawnAll(ctx, reqs) {
+		st := r.Started
+		if r.Err != nil {
+			fmt.Fprintf(stderr, "bs spawn: %s: %v\n", r.Bead, r.Err)
+			failed = true
+			labelErr = labelErr || errors.Is(r.Err, bee.ErrNoLabel) || errors.Is(r.Err, bee.ErrLabelChange)
+			continue
+		}
+		took := r.Took.Round(100 * time.Millisecond).Seconds()
+		switch {
+		case st.Continued:
+			fmt.Fprintf(stdout, "resumed %s (%s) in workspace %s (%.1f s)\n", st.Name, st.Label, st.Workspace, took)
+		case st.Resumed:
+			fmt.Fprintf(stdout, "restarted %s (%s) in workspace %s with a new conversation: it never read its brief (%.1f s)\n", st.Name, st.Label, st.Workspace, took)
+		default:
+			fmt.Fprintf(stdout, "spawned %s (%s) for %s in workspace %s (%.1f s)\n", st.Name, st.Label, r.Bead, st.Workspace, took)
+		}
+		switch {
+		case st.Waiting:
+			fmt.Fprintf(stdout, "%s is waiting at a prompt (probably folder trust); answer it in its pane\n", st.Name)
+		case !trusted && !st.Continued: // a fresh restart may meet the prompt its first start did
+			untrusted = append(untrusted, st.Name)
+		}
 	}
-	if err != nil {
-		return err
+	if len(untrusted) > 0 {
+		fmt.Fprintf(stderr, "bs spawn: Claude hasn't trusted %s yet; if %s asks, answer the trust prompt in its pane\n", f.P.Repo, strings.Join(untrusted, " or "))
 	}
 	switch {
-	case st.Continued:
-		fmt.Fprintf(stdout, "resumed %s (%s) in workspace %s\n", st.Name, st.Label, st.Workspace)
-	case st.Resumed:
-		fmt.Fprintf(stdout, "restarted %s (%s) in workspace %s with a new conversation: it never read its brief\n", st.Name, st.Label, st.Workspace)
-	default:
-		fmt.Fprintf(stdout, "spawned %s (%s) for %s in workspace %s\n", st.Name, st.Label, pos[0], st.Workspace)
-	}
-	switch {
-	case st.Waiting:
-		fmt.Fprintf(stdout, "%s is waiting at a prompt (probably folder trust); answer it in its pane\n", st.Name)
-	case !trusted && !st.Continued: // a fresh restart may meet the prompt its first start did
-		fmt.Fprintf(stderr, "bs spawn: Claude hasn't trusted %s yet; if %s asks, answer the trust prompt in its pane\n", f.P.Repo, st.Name)
+	case labelErr:
+		return spawnUsage(nil)
+	case failed:
+		return exitCode(1)
 	}
 	return nil
 }

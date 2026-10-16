@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,6 +25,8 @@ import (
 // (TestHerdrKeepsLabelsVerbatim), so CheckLabel is bs's rule, not herdr's.
 // It is also the fake Claude registry (bee.Sessions), so a start shows up there.
 type fakeHerdr struct {
+	mu         sync.Mutex    // SpawnAll starts bees concurrently
+	gate       chan struct{} // non-nil: StartClaude waits for it, as a slow herdr start
 	next       int
 	workspaces []bee.Workspace
 	agents     map[string]string // live Claude sessions: name → pane
@@ -48,6 +51,11 @@ func (h *fakeHerdr) StartClaude(ctx context.Context, pane, name string, args ...
 	if err := bee.CheckAgentArgs(args); err != nil { // herdr's own rule, held to real herdr
 		return err
 	}
+	if h.gate != nil {
+		<-h.gate
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if h.failStart == nil || h.liveAnyway {
 		h.started = append(h.started, append([]string{pane, name}, args...))
 		h.agents[name] = pane
@@ -56,6 +64,8 @@ func (h *fakeHerdr) StartClaude(ctx context.Context, pane, name string, args ...
 }
 
 func (h *fakeHerdr) Alive(ctx context.Context, name string, wait time.Duration) (bool, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	_, ok := h.agents[name]
 	return ok, h.aliveErr
 }
@@ -103,6 +113,7 @@ func newRig(t *testing.T) rig {
 	h := &fakeHerdr{agents: map[string]string{}}
 	beads := fakeBeads{
 		"bees-8":     {ID: "bees-8", Title: "spawn and end bees", Description: "Build bs spawn."},
+		"bees-9":     {ID: "bees-9", Title: "second bee"},
 		"dotfiles-3": {ID: "dotfiles-3", Title: "dotfiles thing"},
 		"beads-x7q":  {ID: "beads-x7q", Title: "flat id"},
 	}
@@ -192,6 +203,51 @@ func TestSpawnStartsABeeInItsOwnWorkspace(t *testing.T) {
 	var settings map[string]any
 	if err := json.Unmarshal([]byte(start[i+1]), &settings); err != nil || settings["crossSessionInbound"] != "accept" {
 		t.Fatalf("--settings %q: %v", start[i+1], err)
+	}
+}
+
+func TestSpawnAllStartsBeesConcurrently(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	r.h.gate = make(chan struct{})
+	done := make(chan []bee.Result)
+	go func() {
+		done <- r.fleet.SpawnAll(ctx, []bee.Request{{Bead: "bees-8", Label: "spawn and end"}, {Bead: "bees-9", Label: "second bee"}})
+	}()
+	// Both starts are in flight before either finishes: a serial spawn would hang here.
+	r.h.gate <- struct{}{}
+	r.h.gate <- struct{}{}
+	res := <-done
+	if len(res) != 2 || res[0].Bead != "bees-8" || res[1].Bead != "bees-9" {
+		t.Fatalf("results = %+v, want one per bead in order", res)
+	}
+	for _, x := range res {
+		if x.Err != nil || x.Started.Name == "" {
+			t.Fatalf("result = %+v", x)
+		}
+		if _, ok, _ := r.lb.LatestSpawn(ctx, x.Started.Name); !ok {
+			t.Fatalf("%s not recorded", x.Started.Name)
+		}
+	}
+}
+
+func TestSpawnAllReportsEachFailureAndStartsTheRest(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	res := r.fleet.SpawnAll(ctx, []bee.Request{
+		{Bead: "bees-8", Label: "spawn and end"},
+		{Bead: "bees-404", Label: "no such bead"},
+		{Bead: "bees-9"},                         // a first spawn without a label
+		{Bead: "bees-8", Label: "spawn and end"}, // named twice: never two Claudes
+	})
+	if res[0].Err != nil {
+		t.Fatalf("bees-8: %v", res[0].Err)
+	}
+	if res[1].Err == nil || !errors.Is(res[2].Err, bee.ErrNoLabel) || !errors.Is(res[3].Err, bee.ErrTwice) {
+		t.Fatalf("errs = %v, %v, %v", res[1].Err, res[2].Err, res[3].Err)
+	}
+	if len(r.h.started) != 1 || len(r.h.workspaces) != 1 {
+		t.Fatalf("starts = %d, workspaces = %d; want only bees-8", len(r.h.started), len(r.h.workspaces))
 	}
 }
 

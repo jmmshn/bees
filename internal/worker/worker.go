@@ -5,6 +5,7 @@ package worker
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -297,9 +298,40 @@ func (f Fleet) open(ctx context.Context, p plan) (logbook.Spawn, error) {
 }
 
 // workerSettings is passed with --settings: Claude reads settings.local.json from the main
-// checkout even in a worktree, so per-worker settings can't live in a file. The worker's bs
-// finds its name from its Claude process and its project from the worktree's git dir.
-const workerSettings = `{"crossSessionInbound":"accept"}`
+// checkout even in a worktree, so per-worker settings can't live in a file, and the auto
+// mode classifier reads autoMode only from user, managed or --settings settings. The
+// worker's bs finds its name from its Claude process and its project from the worktree's
+// git dir.
+//
+// A worker owns its worktree and branch, and the keeper merges every PR by hand, so the
+// classifier may let it build, test and push its own branch (bees-1.51). Every autoMode list
+// keeps "$defaults": a list without it replaces the built-in rules (force push,
+// exfiltration). The deny rules run before the classifier, and a Bash rule matches only a
+// command spelled as written, so they also cover git -C dir push. Not git * push: that
+// would deny a commit whose message says "push … main".
+func workerSettings(sp logbook.Spawn) (string, error) {
+	branch := cmp.Or(sp.Branch, sp.Name)
+	var deny []string
+	for _, push := range []string{"git push", "git -C * push"} {
+		for _, bad := range []string{"--force*", "-f*", "+*", "main*", "master*", "*:main*", "*:master*"} {
+			deny = append(deny, "Bash("+push+" "+bad+")", "Bash("+push+" * "+bad+")")
+		}
+	}
+	deny = append(deny, "Bash(gh pr merge*)", "Bash(gh * pr merge*)", "Bash(gh pr review* --approve*)", "Bash(gh pr review* -a*)", "Bash(gh api *merge*)")
+	b, err := json.Marshal(map[string]any{
+		"crossSessionInbound": "accept",
+		"autoMode": map[string][]string{
+			"environment": {"$defaults", fmt.Sprintf("Host containment: a bees worker, working in its own git worktree %s on its own branch %s of the repository %s. The keeper reviews and merges every pull request by hand, so nothing the worker pushes reaches main without a human.", sp.Worktree, branch, sp.Repo)},
+			"allow": {"$defaults",
+				fmt.Sprintf("Running this repository's own build, lint and test commands (such as go vet, go test, go build -o into the worktree, pre-commit) inside the worktree %s.", sp.Worktree),
+				fmt.Sprintf("Committing to and pushing (never force-pushing) the worker's own branch %s to the repository's origin, opening a pull request from it, and pushing further commits to that open pull request.", branch),
+				"Running bs and bd, the bees tools, to read and send its project's messages and to read and update its own beads.",
+			},
+		},
+		"permissions": map[string][]string{"deny": deny},
+	})
+	return string(b), err
+}
 
 // start starts Claude with a doorbell as its first prompt, so the worker reads its unread
 // messages without needing a ring. A resumed worker continues its last conversation in
@@ -313,7 +345,11 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 	foreign := f.ForeignRepo || cmp.Or(sp.Repo, f.P.Repo) != f.P.Repo
 	st := Started{Name: sp.Name, Label: sp.Label, Workspace: sp.Workspace, Resumed: resume, Continued: resume && (sp.Read || foreign)}
 	doorbell := fmt.Sprintf("[bs] you are %s, working on %s — run: bs inbox   (reply with: bs send %s \"...\")", sp.Name, sp.Bead, f.Me)
-	args := []string{"--name", sp.Name, "--settings", workerSettings}
+	settings, err := workerSettings(sp)
+	if err != nil {
+		return st, err
+	}
+	args := []string{"--name", sp.Name, "--settings", settings}
 	if !foreign {
 		file, err := prompt.File(prompt.Worker, f.P.Name)
 		if err != nil {
@@ -325,7 +361,7 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 	if st.Continued {
 		args = append([]string{"--continue"}, args...)
 	}
-	err := f.H.StartClaude(ctx, sp.Pane, sp.Name, args...)
+	err = f.H.StartClaude(ctx, sp.Pane, sp.Name, args...)
 	switch {
 	case errors.Is(err, ErrWaiting):
 		st.Waiting, err = true, nil

@@ -221,9 +221,31 @@ func TestSpawnStartsAWorkerInItsOwnWorkspace(t *testing.T) {
 	if i < 0 {
 		t.Fatalf("start = %q, want --settings", start)
 	}
-	var settings map[string]any
-	if err := json.Unmarshal([]byte(start[i+1]), &settings); err != nil || settings["crossSessionInbound"] != "accept" {
+	if err := worker.CheckAgentArgs(start[2:]); err != nil {
+		t.Fatalf("herdr would refuse the start: %v", err)
+	}
+	var settings struct {
+		CrossSessionInbound string              `json:"crossSessionInbound"`
+		AutoMode            map[string][]string `json:"autoMode"`
+		Permissions         struct{ Deny []string }
+	}
+	if err := json.Unmarshal([]byte(start[i+1]), &settings); err != nil || settings.CrossSessionInbound != "accept" {
 		t.Fatalf("--settings %q: %v", start[i+1], err)
+	}
+	// A list without $defaults would drop the built-in rules (force push, exfiltration).
+	for _, k := range []string{"environment", "allow"} {
+		l := settings.AutoMode[k]
+		if !slices.Contains(l, "$defaults") || !strings.Contains(strings.Join(l, " "), "bees-8") {
+			t.Errorf("autoMode.%s = %q, want $defaults and the worker's branch", k, l)
+		}
+	}
+	if !strings.Contains(strings.Join(settings.AutoMode["environment"], " "), wt) {
+		t.Errorf("autoMode.environment = %q, want the worktree %s", settings.AutoMode["environment"], wt)
+	}
+	for _, rule := range []string{"Bash(git push --force*)", "Bash(git push * main*)", "Bash(git -C * push * --force*)", "Bash(gh pr merge*)", "Bash(gh pr review* --approve*)"} {
+		if !slices.Contains(settings.Permissions.Deny, rule) {
+			t.Errorf("permissions.deny = %q, want %s", settings.Permissions.Deny, rule)
+		}
 	}
 }
 

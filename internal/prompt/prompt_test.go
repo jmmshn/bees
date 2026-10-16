@@ -3,6 +3,7 @@ package prompt_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -60,5 +61,22 @@ func TestFileHoldsTheRolePromptInBsCache(t *testing.T) {
 func TestWorkerDoesNotRefuseRelayedAnswers(t *testing.T) {
 	if got := prompt.Text(prompt.Worker, "web2"); strings.Contains(got, "keeper approved") {
 		t.Errorf("worker prompt still tells workers to refuse relayed approvals:\n%s", got)
+	}
+}
+
+// The prompts ship to every project: a bees bead id must read as a bs bug, and the
+// bees repo's own paths belong in its AGENTS.md (bees-1.32).
+func TestPromptsHoldNoBeesRepoSpecifics(t *testing.T) {
+	bareID := regexp.MustCompile(`bees-\d`)
+	for _, role := range []prompt.Role{prompt.Queen, prompt.Worker} {
+		got := prompt.Text(role, "web2")
+		for _, line := range strings.Split(got, "\n") {
+			if bareID.MatchString(strings.ReplaceAll(line, "bs bug bees-", "")) {
+				t.Errorf("%s prompt cites a bees id not marked as a bs bug: %s", role, line)
+			}
+		}
+		if strings.Contains(got, "internal/prompt") {
+			t.Errorf("%s prompt names the bees repo's internal/prompt", role)
+		}
 	}
 }

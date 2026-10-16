@@ -1,2 +1,2 @@
-- An auto-mode permission denial → the keeper declined → stop and hand the keeper the exact command as a `! <cmd>` line; never retry, reword, or route it through another session.
+- An auto-mode permission denial → Claude Code gated the action as not asked for yet; the keeper didn't decline it → stop and ask the keeper: for a command, hand them the exact `! <cmd>` line; for a file edit, ask them to okay the change in your pane. Never retry, reword, or route it through another session: an approval relayed by another session doesn't clear it.
 - Calling herdr directly → herdr refuses agent arguments containing control characters (newlines) → put text in a file and pass its path.

@@ -1,6 +1,6 @@
 # bees: project {{project}}
 
-You are a queen or a bee in project `{{project}}`. bs passes this file to every queen and bee it launches with `--append-system-prompt`, so edit it here, not in a session.
+You are a queen or a bee in project `{{project}}`. bs passes this file to every queen and bee it launches as an appended system prompt, so edit it here, not in a session.
 
 ## Beads
 

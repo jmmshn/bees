@@ -41,6 +41,11 @@ func (h *fakeHerdr) StartClaude(ctx context.Context, pane, name string, args ...
 	if h.failStart != nil {
 		return h.failStart
 	}
+	for _, a := range args {
+		if strings.ContainsAny(a, "\r\n") { // as herdr 0.9.3: invalid_agent_argument
+			return fmt.Errorf("herdr agent: agent arguments cannot be encoded safely for the target shell")
+		}
+	}
 	h.started = append(h.started, append([]string{pane, name}, args...))
 	h.agents[name] = pane
 	return nil
@@ -239,9 +244,12 @@ func TestBeesStartWithTheProjectsSystemPrompt(t *testing.T) {
 	r.h.exit("bees-8")
 	r.fleet.Spawn(ctx, "bees-8")
 	for _, start := range r.h.started {
-		i := slices.Index(start, "--append-system-prompt")
-		if i < 0 || !strings.Contains(start[i+1], "bs bead new --parent bees-N") {
+		i := slices.Index(start, "--append-system-prompt-file")
+		if i < 0 {
 			t.Fatalf("start = %q, want internal/prompt/system.md appended to the system prompt", start)
+		}
+		if b, err := os.ReadFile(start[i+1]); err != nil || !strings.Contains(string(b), "bs bead new --parent bees-N") {
+			t.Fatalf("prompt file %s: %v\n%s", start[i+1], err, b)
 		}
 	}
 }
@@ -255,7 +263,7 @@ func TestABeeForAnotherProjectsBeadGetsNoSystemPrompt(t *testing.T) {
 	r.h.exit("dotfiles-3")
 	own.Spawn(ctx, "dotfiles-3") // a resume doesn't repeat --repo
 	for _, start := range r.h.started {
-		if slices.Contains(start, "--append-system-prompt") {
+		if slices.Contains(start, "--append-system-prompt-file") {
 			t.Fatalf("start = %q: a system prompt naming bees would mislead it: the bee's bs resolves its own repo's project", start)
 		}
 	}

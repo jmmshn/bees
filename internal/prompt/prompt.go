@@ -1,6 +1,7 @@
 // Package prompt holds the role prompts bs appends to the sessions it launches:
-// QUEEN.md for the queen, WORKER.md for workers, each followed by BEADS.md, the bead
-// rules both share. The text is tracked in the repo (R32, R40).
+// QUEEN.md for the queen, WORKER.md for workers, each followed by PITFALLS.md (the
+// Known pitfalls lines both roles hit, continuing the role's list) and BEADS.md (the
+// bead rules both share). The text is tracked in the repo (R32, R40).
 package prompt
 
 import (
@@ -23,17 +24,19 @@ var (
 	queen string
 	//go:embed WORKER.md
 	worker string
+	//go:embed PITFALLS.md
+	pitfalls string
 	//go:embed BEADS.md
 	beads string
 )
 
-// Text is r's prompt followed by BEADS.md, with {{project}} filled in.
+// Text is r's prompt followed by PITFALLS.md and BEADS.md, with {{project}} filled in.
 func Text(r Role, project string) string {
 	role := worker
 	if r == Queen {
 		role = queen
 	}
-	return strings.ReplaceAll(role+beads, "{{project}}", project)
+	return strings.ReplaceAll(role+pitfalls+"\n"+beads, "{{project}}", project)
 }
 
 // File writes Text(r, project) to <user cache dir>/bees/<project>-<role>.md and returns

@@ -5,3 +5,4 @@ One row per bake-off round, appended after it is written up; never edit an old r
 | Date | bs | Cards | Runs | Pass | Captain turns | Runs with leftovers | Context tok/run (M) | Lead did the work | Note |
 |---|---|---|---|---|---|---|---|---|---|
 | 2026-10-16 | 3d05f1a | S1–S8, S3b S4b S5b S5c | 36 | 12/12/12 | 40/38/37 | 5/4/8 | 0.79/0.94/1.02 | 0/0/2 | bees wins only durability (S7); WORKER.md relay refusal (S5b, S5c); prune leaves origin branches |
+| 2026-10-16 | 3d05f1a | S9–S17, S13b (long-running, crew incidents) | 30 | 9/9/10 | 40/29/34 | 7/7/8 | 1.25/1.09/1.29 | 0/1/1 | only bees: stored mail (S12), resume in its own conversation (S11), project-scoped rediscovery (S10); queen polls (S15) |

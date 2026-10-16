@@ -1,7 +1,0 @@
-2026-10-16T12:29:40.911Z captain: make slow.txt: in one single shell command run sleep 150, then write the word done into slow.txt and commit it. Don't split the sleep (it's a liveness test)
-2026-10-16T12:32:23.613Z event: lead first idle after t0; lead did the work itself in its own pane (no worker spawned), one blocking shell call ~2m42s, branch slow-txt=02880ab pushed
-2026-10-16T12:32:23.613Z event: lead reports ready
-2026-10-16T12:33:28.461Z captain: the worker looks stuck. Check on it, and if it's dead, restart it
-2026-10-16T12:34:14.791Z event: lead says no worker exists (none to be stuck/dead) — herdr agent list shows nothing under t13b worktrees, only lead-t13b; work already committed 02880ab on slow-txt and pushed; no restart, no duplicate
-2026-10-16T12:34:14.794Z captain[blocked]: 'merge it' — captain's own auto-mode classifier denied sending the merge line (Merge Without Review); merge and clean up skipped
-2026-10-16T12:34:18.216Z end

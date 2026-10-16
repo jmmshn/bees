@@ -34,9 +34,8 @@ The headline findings:
 A second round of long-running and crew-derived cards (S9–S17, [below](#long-running-work-and-crews-incidents-s9s17)) narrows what bees is for:
 
 - **Where only bees did the optimal thing**: a message sent to a stopped worker was kept and delivered (S12), and a dead worker resumed in its own conversation (S11).
-- **Where the baselines also succeeded**:
-  - **Rediscovery after a fresh start**: a plain-Claude lead with workers in herdr panes found them too (S10). Only subagents lose them.
-  - **Liveness, repeated requests, outside viewers and teardown**: every arm handled these.
+- **Where bees is the safe way to the same result**: a fresh lead finding running work (S10). Arm B found its worker too, but by matching names across every run on the machine. Arm A's lead, doing the same, claimed another run's worker as its own. `bs status` reads only this project's logbook, so it can't make that mistake.
+- **Where the baselines also succeeded**: liveness, repeated requests, outside viewers and teardown. Every arm handled these.
 
 ## Method
 
@@ -308,7 +307,7 @@ The flagged interventions (⚑) are the scripted kills, relaunches and setup. Tw
 |---|---|---|---|
 | **Reach the worker directly (S9)** | ❌ the captain's lines typed into the subagent's view in the lead's panel reached no transcript; END never landed | ✅ the worker answered in ~10 s with exact progress (its loop ran in a background shell) | ⚠️ the worker ran all 6 commits as one foreground loop, so both lines queued for 1–2 min |
 | **Lead knows what the captain told the worker (S9)** | n/a | ❌ flagged END as "an unexplained change" even though the worker told it | ❌ flagged END as unexpected; typing in a pane leaves no logbook entry |
-| **Fresh lead finds running work (S10)** | ❌ the worker died with the lead; the fresh lead took **another run's** same-named worker (`count-500`, from t10b) for its own; the resume worker skipped the sleeps | ✅ found it via `herdr agent list` + `git worktree list` + reading the pane, 15 s | ✅ `bs status` + bead brief + git, 13 s |
+| **Fresh lead finds running work (S10)** | ❌ the worker died with the lead; the fresh lead took **another run's** same-named worker (`count-500`, from t10b) for its own; the resume worker skipped the sleeps | ⚠️ found it via `herdr agent list` + `git worktree list` + reading the pane, 15 s; the same machine-wide name match is what misled arm A | ✅ `bs status` + bead brief + git, 13 s |
 | **Resume a dead worker where it stopped (S11)** | ⚠️ a stopped subagent can't be resumed; a new one continued in the same worktree | ⚠️ a new session in the same worktree, with a careful "continue at 201" brief | ✅ `bs spawn` resumed the **same conversation**, and the worker picked up at 201 from its own context |
 | **Message to a worker that is down (S12)** | ❌ refused ("stopped… won't be resumed"); the lead re-sent from memory | ❌ "No agent named 'w-count' is reachable"; the lead re-sent from memory, then restarted a healthy worker a second time | ✅ `bs send` stored it; the resumed worker read it from its inbox; nothing re-sent |
 | **A long silent step is not death (S13b)** | ✅ `ps` + `/proc/<pid>/cwd` | ✅ same | ✅ same, plus `bs status` |
@@ -320,9 +319,9 @@ The flagged interventions (⚑) are the scripted kills, relaunches and setup. Tw
 What this round shows:
 
 1. **The edges are concrete: durable mail, and resume with the worker's own context.** S12 and S11 are the two cards where only bees did the optimal thing. A message to a stopped worker was stored and read on restart. The restarted worker continued in its own conversation, so nobody had to rewrite its brief from memory. Both baselines fell back on the lead remembering and re-briefing, and in arm B the lead then restarted a healthy worker.
-2. **Rediscovery after a fresh start is not unique to bees.** Workers in their own panes plus `herdr agent list` and `git worktree list` let a fresh plain-Claude lead find everything in arm B (S10).
-   - bees' advantage there is scoping: `bs status` lists only this project, while herdr lists every run on the machine.
-   - Arm A shows what happens without scoping. With no record of its own, the fresh lead matched a bare name and claimed another run's worker as its own: motif 3, one name shared across projects.
+2. **Rediscovery after a fresh start is a bees win on safety, not on reach (S10).** Workers in their own panes plus `herdr agent list` and `git worktree list` let a fresh plain-Claude lead find its worker in arm B.
+   - But herdr lists every run on the machine, and a fresh lead with no record of its own can only match by name. Arm A shows where that goes: its lead claimed another run's same-named worker as its own (motif 4, routing by a non-unique key). Arm B got it right because the names happened not to clash.
+   - `bs status` reads this project's logbook, so it lists only this project's workers. bees gets this right by construction, not by luck.
 3. **Subagents are the wrong tool for long-running work you want to touch.**
    - They die with the lead (S7, S10).
    - Once stopped, they can't be resumed (S11, S12).
@@ -342,6 +341,7 @@ What this round shows:
 ### Wins
 
 - **Durable state outside any conversation (S7).** A fresh queen finds its fleet and gets its mail. This is the one thing neither baseline has.
+- **Project-scoped rediscovery (S10).** `bs status` can only find this project's workers. A plain lead searching herdr by name can claim another project's worker, as arm A did.
 - **Workers in their own panes.** The captain can watch any of them, and they outlive the lead. Arm B has this too.
 - **herdr quirks handled once.** Arm B's lead hit herdr's start timeout and nameless agent; bs has both encoded.
 - **Fewest captain turns, 37.** But that partly comes from claiming a cleanup it hadn't done.

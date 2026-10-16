@@ -1,4 +1,6 @@
-# bees
+# ![Beads. BEES? BEADS! BEADS?!?](docs/img/bees-beads.gif)
+
+![beads → bees → bs](docs/img/beads-bees-bs.svg)
 
 > You ask the queen. The bees do the work.
 
@@ -9,7 +11,7 @@ you. Each bee works on its own, in its own git worktree, and tells the queen whe
 done. You talk only to the queen. `bs` is the small Go CLI that ties Claude Code, herdr
 and beads together.
 
-![The keeper asks the queen for three jobs; the queen runs bs epic and bs bead new, bs spawn opens three labelled herdr workspaces, the bees report done in bs inbox, and after "merge all three" the queen runs bd close, bs end and bs prune](docs/img/queen.gif)
+![The keeper asks the queen for three jobs in a Claude Code chat; the queen calls bs epic and bs bead new, bs spawn opens three labelled herdr workspaces, the bees report done in bs inbox, and after "merge all three" the queen calls bd close, bs end and bs prune](docs/img/queen.gif)
 
 **Every piece of work is a bead.** The bead is the bee's brief, its name (`bees-2.1` →
 session, branch and worktree `bees-2-1`) and its exit: the work is done only when its PR
@@ -21,10 +23,11 @@ Queen and bees talk with `bs send` and `bs inbox`. Each message lands in a SQLit
 **logbook** first; then a **doorbell** prompt goes into the recipient's Claude session,
 so an idle session acts on it without anyone typing.
 
-Both GIFs replay bake-off run t2c ([bakeoff/cards/S2.md](bakeoff/cards/S2.md), a toy
-repo that pushes branches instead of opening PRs). Every line in the session pane is
-copied from the run's transcripts (`…` marks a cut); the herdr sidebar is an
-illustration. Rebuild them with `uv run docs/img/src/gifs.py`.
+The two chat GIFs replay bake-off run t2c ([bakeoff/cards/S2.md](bakeoff/cards/S2.md),
+a toy repo that pushes branches instead of opening PRs). The herdr window and the Claude
+Code chat are an illustration; the keeper's lines, the tool calls, their output and the
+sessions' replies are copied from the run's transcripts (`…` marks a cut). Rebuild them
+with `uv run docs/img/src/gifs.py`.
 
 ## Install
 
@@ -44,10 +47,6 @@ store via `BEADS_DIR`), and run `bs queen`.
 Full setup: [docs/SETUP.md](docs/SETUP.md). For a guided setup, open Claude Code in this
 repo and run the [`/setup-bees`](.claude/skills/setup-bees/SKILL.md) skill; it installs
 and checks each piece in turn.
-
-![Beads. BEES? BEADS! BEADS?!?](docs/img/bees-beads.gif)
-
-![beads → bees → bs](docs/img/beads-bees-bs.svg)
 
 Details: [docs/SPEC.md](docs/SPEC.md) · decisions: [docs/adr/](docs/adr/) ·
 vocabulary: [GLOSSARY.md](GLOSSARY.md)

@@ -49,7 +49,7 @@ func Resolve(flag string) (Project, error) {
 		}
 		name = filepath.Base(repo)
 	}
-	name = strings.ToLower(strings.NewReplacer("-", "", "_", "").Replace(name))
+	name = normalise(name)
 	if !validName.MatchString(name) {
 		return Project{}, fmt.Errorf("%q: %w", name, ErrBadProject)
 	}
@@ -62,13 +62,30 @@ func Resolve(flag string) (Project, error) {
 		if repos == "" {
 			repos = filepath.Join(home, "repos", "jmmshn") // ponytail: the author's layout; set BS_REPOS elsewhere
 		}
-		repo = filepath.Join(repos, name)
+		repo = repoDir(repos, name)
 	}
 	lb := os.Getenv("BS_LOGBOOK")
 	if lb == "" {
 		lb = filepath.Join(home, ".local", "share", "bees", name+".db")
 	}
 	return Project{Name: name, Repo: repo, Logbook: lb}, nil
+}
+
+// normalise lowercases a project or directory name and drops - and _ (R27⁶).
+func normalise(s string) string {
+	return strings.ToLower(strings.NewReplacer("-", "", "_", "").Replace(s))
+}
+
+// repoDir returns the directory under repos whose normalised name is name, so project
+// jobflowray finds repos/jobflow-ray; repos/<name> if none matches.
+func repoDir(repos, name string) string {
+	entries, _ := os.ReadDir(repos)
+	for _, e := range entries {
+		if e.IsDir() && normalise(e.Name()) == name {
+			return filepath.Join(repos, e.Name())
+		}
+	}
+	return filepath.Join(repos, name)
 }
 
 // mainRepo returns the main checkout of the git repo containing the working directory,

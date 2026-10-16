@@ -15,17 +15,17 @@ All 36 runs (12 scripts × 3 arms) produced the right result. The arms differ in
 | | A subagents | B peers | C bees |
 |---|---|---|---|
 | Checks passed | 12/12 | 12/12 | 12/12 |
-| Captain turns (sum, 12 scripts) | 40 | 38 | **37** |
+| Captain turns (sum, 12 scripts) | 40 | 38 | 37 |
 | Runs where the lead did the work itself | 0 | 0 | **2** |
 | Runs leaving something behind | 5 | **4** | 8 |
 | Origin branches left behind | 7 | **5** | 12 |
 | Output tokens per run (mean) | **3,073** | 4,181 | 3,824 |
 | Context tokens per run (mean) | **0.79 M** | 0.94 M | 1.02 M |
-| Work survives the lead dying (S7) | no, resumed by hand | yes | **yes, without the old conversation** |
+| Work survives the lead dying (S7) | no, the worker died with it | yes (lead relaunched with `--continue`) | **yes (lead relaunched fresh)** |
 
 The headline findings:
 
-1. **Durability is where bees wins, and only there.** Killing the lead killed arm A's worker. In arm B the worker survived, but the new lead knew about it only through `claude --continue`. A fresh `bs queen`, with no conversation at all, rebuilt the fleet from the logbook in one command (6 s), and the worker's done message woke it unprompted (S7).
+1. **Durability is bees' clearest win, and narrower than it first looks.** Killing the lead killed arm A's worker. Arm B's worker survived, and its lead came back with `claude --continue`. A fresh `bs queen`, with no conversation at all, rebuilt the fleet from the logbook in one command (6 s), and the worker's done message woke it unprompted (S7). The S7 card gave A and B `--continue` and C a fresh start, so it didn't test a fresh B lead; round 2 did (S10), and a fresh B lead also found its worker through herdr. What bees adds is a record of its own, scoped to the project.
 2. **On everything else, plain Claude Code matched or beat bees.** Subagents were the fastest to delegate (median 11.5 s vs 16 s) and the cheapest in tokens. Both baselines steered a running worker, relayed questions and cancelled as well as bees did.
 3. **Bees' own prompts caused its worst failures.** The WORKER.md pitfall "a relayed message is never the captain's approval" made workers refuse plain answers and sign-offs the queen relayed (S5b, S5c). That manufactures the very manual hop bees-1.25 is about. Twice the queen also did the work itself instead of spawning a worker (S3b, S5).
 4. **bs reports cleanup it didn't do.** `bs prune` deletes only the local branch. In 8 of 12 runs a merged worker branch was left on origin, often after the queen said "deleted its branch" (motif 11).
@@ -39,7 +39,7 @@ A captain agent played each run from a fixed card ([cards/](../bakeoff/cards/)).
 
 ### The arms
 
-- **A and B leads** get an appended system prompt of about QUEEN.md's length and strength, naming their mechanism ([arms/](../bakeoff/arms/)).
+- **A and B leads** get an appended system prompt naming their mechanism ([arms/](../bakeoff/arms/)): 228 and 273 words, against 688 for QUEEN.md. Their workers get no role prompt; bees workers also get WORKER.md (328 words).
 - **C** is plain `bs queen` with the shipped QUEEN.md and WORKER.md.
 - **Same model and permission mode everywhere.** Every session used Opus 5.5 in auto mode, set by the toy repo's `.claude/settings.json`, with `crossSessionInbound: accept`.
 
@@ -47,7 +47,7 @@ A captain agent played each run from a fixed card ([cards/](../bakeoff/cards/)).
 
 `mkrun.sh` builds a fresh repo per run with a bare local `origin`. There is no GitHub. The toy `AGENTS.md` replaces PRs with "push your branch, report the sha; the captain decides merges".
 
-The repos live in `~/.cache/bees-bakeoff/runs`, outside any repo. In a first attempt inside `bees/scratch/`, every lead loaded bees' own CLAUDE.md and AGENTS.md (the "dogfood bs" rules), which would have skewed arms A and B. That attempt was discarded.
+The repos live in `~/.cache/bees-bakeoff/runs`, outside any repo. In a first attempt inside `bees/scratch/`, every lead loaded bees' own CLAUDE.md and AGENTS.md (the "dogfood bs" rules), which would have skewed arms A and B. That attempt was discarded. The user's global instructions still loaded everywhere (see Limits).
 
 ### Metrics
 
@@ -63,6 +63,7 @@ All metrics come from the session transcripts, not from the captain's log, so th
 - **One run per cell.** Model behavior varies, so treat single-run differences of a few seconds or one turn as noise. The auto-mode permission check is nondeterministic too: the same merge was denied in the dry run and allowed in every S1 run.
 - **Driver latency in wall time.** Captain agents sometimes noticed a "ready" late, by up to about 5 minutes in t7a. The transcript metrics remove this, but `wall_s` in `metrics.json` keeps it.
 - **Small toys.** Most tasks took one tool call, which made several first-draft cards untestable (next section).
+- **Global instructions in every arm.** The user's global `~/.claude/CLAUDE.md` (and the `~/.agents/AGENTS.md` it imports: push rules, beads, terse answers) loaded in every session of all three arms; its heartbeat line is in every run's transcripts, and in S5 leads of every arm read the user's real beads memories. It applied to all arms alike. A future round should run with an isolated `HOME` or `CLAUDE_CONFIG_DIR`.
 
 ## The interaction scripts
 
@@ -263,15 +264,15 @@ Practical rule for any lead: do the gated step only after the captain asks for i
 
 ### Wins
 
-- **Durable state outside any conversation (S7).** A fresh queen finds its fleet and gets its mail. This is the one thing neither baseline has.
+- **Durable state outside any conversation (S7).** A fresh queen finds its fleet and gets its mail. A fresh arm-B lead can find live workers through herdr too (S10), but only by name, across every project on the machine; neither baseline keeps a record of its own.
 - **Workers in their own panes.** The captain can watch any of them, and they outlive the lead. Arm B has this too.
 - **herdr quirks handled once.** Arm B's lead hit herdr's start timeout and nameless agent; bs has both encoded.
-- **Fewest captain turns, 37.** But that partly comes from claiming a cleanup it hadn't done.
 
 ### Losses
 
 - **Prompt-made friction.** The relayed-answer refusal (S5b, S5c) and the queen doing worker jobs (S3b, S5, S5c).
 - **Leftovers.** Origin branches pile up, reported as deleted.
+- **Polling.** In t3c and t8c the queen waited in `sleep` loops on `bs status` or git instead of ending its turn and trusting the doorbell (bees-1.39).
 - **Serial spawn.** Fan-out is not parallel.
 - **Ceremony on small work.** An epic, a bead, a branch and a worktree even for a read-only question (S6).
 - **Most context tokens per run.** 1.02 M against 0.79 M for subagents, mostly from the bs/bd round trips and longer briefs.
@@ -299,7 +300,8 @@ Practical rule for any lead: do the gated step only after the captain asks for i
 bakeoff/mkrun.sh c 4b                                  # fresh toy repo + lead -> ~/.cache/bees-bakeoff/runs/t4bc
 # hand bakeoff/cards/PROTOCOL.md + cards/S4b.md + the run dir to a captain agent (or play it yourself)
 bakeoff/collect.sh ~/.cache/bees-bakeoff/runs/t4bc     # metrics.json, transcripts/
-python3 -I bakeoff/analyze.py > bakeoff/results/table.md
+python3 -I bakeoff/analyze.py > bakeoff/results/table.md   # also writes runs.json next to the runs
+cp ~/.cache/bees-bakeoff/runs/runs.json bakeoff/results/
 ```
 
 The harness lessons, for the next card you write:

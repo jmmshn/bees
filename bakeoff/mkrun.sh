@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# mkrun.sh <arm a|b|c> <script 0-8>: fresh toy repo runs/t<s><arm>/t<s><arm> with a bare origin, then a lead in a herdr workspace.
+# mkrun.sh <arm a|b|c> <script, e.g. 4b>: fresh toy repo runs/t<s><arm>/t<s><arm> with a bare origin, then a lead in a herdr workspace.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 arm=$1 s=$2 id=t$2$1

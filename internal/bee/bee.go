@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -248,28 +247,57 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 const confirmWait = 20 * time.Second
 
 // End removes the bee's recorded workspace and records the end. It never asks herdr
-// which workspace to remove. Ending an ended bee is a no-op. The bee's branch is
-// deleted once its work is proven merged, so the bead can be spawned again; kept says
-// why a branch was left in place with its work ("" when deleted or absent).
-func (f Fleet) End(ctx context.Context, name string) (kept string, err error) {
+// which workspace to remove. Ending an ended bee is a no-op. The bee's branch is always
+// kept, with its work: Prune deletes it once merged.
+func (f Fleet) End(ctx context.Context, name string) error {
 	sp, ok, err := f.LB.LatestSpawn(ctx, name)
 	if err != nil {
-		return "", err
+		return err
 	}
 	if !ok {
-		return "", fmt.Errorf("%s: %w", name, ErrNotSpawned)
+		return fmt.Errorf("%s: %w", name, ErrNotSpawned)
 	}
 	if sp.Ended {
-		return "", nil
+		return nil
 	}
 	if err := f.H.RemoveWorktree(ctx, sp.Workspace); err != nil {
-		return "", err
+		return err
 	}
-	repo := cmp.Or(sp.Repo, f.P.Repo)
-	if exec.CommandContext(ctx, "git", "-C", repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+sp.Branch).Run() == nil {
-		kept = dropBranch(ctx, f.G, repo, sp.Branch)
+	return f.LB.RecordEnd(ctx, f.Me, sp.ID)
+}
+
+// Pruned is what Prune found for one ended bee's branch.
+type Pruned struct {
+	Branch, Repo string
+	Merge        Merge
+	Why          string // how the work was proven merged, or why the branch was kept
+	Deleted      bool
+	DeleteErr    error // proven merged, but git branch -D failed
+}
+
+// Prune deletes the branch of each ended bee once its work is proven merged; dry only
+// reports. It looks only at branches the logbook recorded (never guessed from git),
+// skips branches already gone, and never touches a remote.
+func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error) {
+	ended, err := f.LB.EndedSpawns(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return kept, f.LB.RecordEnd(ctx, f.Me, sp.ID)
+	var out []Pruned
+	for _, sp := range ended {
+		repo := cmp.Or(sp.Repo, f.P.Repo)
+		if gitRun(ctx, repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+sp.Branch) != nil {
+			continue
+		}
+		p := Pruned{Branch: sp.Branch, Repo: repo}
+		p.Merge, p.Why = merged(ctx, f.G, repo, sp.Branch)
+		if p.Merge == Merged && !dry {
+			p.DeleteErr = gitRun(ctx, repo, "branch", "-D", sp.Branch)
+			p.Deleted = p.DeleteErr == nil
+		}
+		out = append(out, p)
+	}
+	return out, nil
 }
 
 func brief(b Bead) string {

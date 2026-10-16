@@ -190,7 +190,8 @@ type Started struct {
 }
 
 func (f Fleet) Spawn(ctx context.Context, bead string) (Started, error)              // ErrRunning, ErrWrongRepo, ErrOrphan
-func (f Fleet) End(ctx context.Context, name string) (branchKept bool, err error) // ErrNotSpawned; already ended → nil
+func (f Fleet) End(ctx context.Context, name string) error                       // ErrNotSpawned; already ended → nil
+func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error)           // one Pruned per ended bee's branch still present
 ```
 
 `Spawn(bead)`:
@@ -209,7 +210,9 @@ func (f Fleet) End(ctx context.Context, name string) (branchKept bool, err error
    - `agent_not_ready`: Claude is blocked at a prompt → started with `Waiting`; bs tells the captain to answer it in the worker's pane;
    - `timeout` → `ErrUnconfirmed`. herdr waits for an idle prompt, and a worker busy with its doorbell is never idle in time, so this is the usual outcome for a healthy worker; Claude may also have exited. `Sessions.Alive(name, 20s)` decides: live → started; not → an error naming `herdr pane read <pane>`. Before spawning, `bs spawn` warns if `~/.claude.json` shows the repo isn't trusted yet (read only; trust is keyed by the main checkout, so its worktrees share it). No settings file is written (Claude reads `settings.local.json` from the main checkout in a worktree), and no `BS_*` variables are needed.
 
-`End(name)`: read `LatestSpawn`; none → `ErrNotSpawned` (never ask herdr). Otherwise `herdr worktree remove --workspace <recorded id> --force`, then `git -C <recorded repo> branch -d <name>` (kept, and reported, if not fully merged), then `RecordEnd`.
+`End(name)`: read `LatestSpawn`; none → `ErrNotSpawned` (never ask herdr). Otherwise `herdr worktree remove --workspace <recorded id> --force`, then `RecordEnd`. The branch is always kept: `bs end` prints `branch <name> kept; bs prune deletes it once merged`.
+
+`Prune(dry)`: for each bee whose latest spawn has ended (`EndedSpawns`; only branches the logbook recorded, never guessed from git) and whose branch still exists in the recorded repo, decide `Merged` / `NotMerged` / `Unknown`, in order: the branch is an ancestor of the default branch; GitHub (`GitHub.MergedHeads`, `gh pr list --head <b> --state merged`, bounded at 15 s) has a merged PR whose head is the branch tip (gh missing, offline or no remote → skipped and noted, never "merged"); every path the branch changed since its merge-base is identical on the default branch (only those paths: main may have moved on; a branch that changed no paths isn't proven). The default branch is `origin/HEAD`'s target and its local twin, else `main`. A probe error is `Unknown`. `Merged` → `git branch -D` unless `dry`. Remote branches are never touched.
 
 ## Commands
 
@@ -217,7 +220,8 @@ func (f Fleet) End(ctx context.Context, name string) (branchKept bool, err error
 bs init                       create the logbook file and table if missing (optional)
 bs queen                      start the queen: claude --name queen-<project> --append-system-prompt-file <project>-queen.md in the repo (no BS_* set)
 bs spawn --label L <bead> [--repo P]  start a bee for the bead in its own herdr workspace labelled L (--label only on a first spawn)
-bs end <bee>                 remove the bee's recorded workspace
+bs end <bee>                 remove the bee's recorded workspace; keep its branch
+bs prune [--dry-run]          delete ended bees' branches once merged; exit 3 if one is kept unmerged, 4 if one couldn't be checked or deleted
 bs epic <title>               create the project's next epic, <project>-<n>
 bs bead ls [--all] [<expr>]   bd query 'id="<project>-*"', not closed unless --all; <expr> is ANDed
 bs bead new --parent <project>-N [--description D] [--type T] [--priority P] <title>

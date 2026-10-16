@@ -262,7 +262,7 @@ func TestEndedHalfStartedBeeRespawnsWithOneBrief(t *testing.T) {
 	r := newRig(t)
 	r.h.failStart = errors.New("herdr agent: agent arguments cannot be encoded safely")
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
-	if _, err := r.fleet.End(ctx, "bees-8"); err != nil {
+	if err := r.fleet.End(ctx, "bees-8"); err != nil {
 		t.Fatal(err)
 	}
 	r.h.failStart = nil
@@ -475,14 +475,14 @@ func TestBeadMustBelongToTheProject(t *testing.T) {
 func TestEndRemovesOnlyTheRecordedWorkspace(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	if _, err := r.fleet.End(ctx, "bees-8"); !errors.Is(err, bee.ErrNotSpawned) {
+	if err := r.fleet.End(ctx, "bees-8"); !errors.Is(err, bee.ErrNotSpawned) {
 		t.Fatalf("never spawned: err = %v, want ErrNotSpawned", err)
 	}
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	recorded := r.h.workspaces[0].ID
 	r.h.workspaces = append(r.h.workspaces, bee.Workspace{ID: "w-other", Label: "bees-8"}) // a decoy
 	for range 2 {
-		if _, err := r.fleet.End(ctx, "bees-8"); err != nil {
+		if err := r.fleet.End(ctx, "bees-8"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -527,7 +527,7 @@ func gitTip(t *testing.T, dir, ref string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func TestEndDeletesTheBranchOnlyIfMerged(t *testing.T) {
+func TestPruneDeletesTheBranchOnlyIfMerged(t *testing.T) {
 	// Each case starts from main with a.txt and b.txt, and bee bees-8 spawned. work
 	// builds branch bees-8 (and lands it, or not) and leaves main checked out.
 	branch := func(t *testing.T, repo string) {
@@ -537,10 +537,11 @@ func TestEndDeletesTheBranchOnlyIfMerged(t *testing.T) {
 		gitRun(t, repo, "checkout", "-q", "main")
 	}
 	cases := []struct {
-		name string
-		gh   func(tip string) bee.GitHub // nil: no GitHub
-		work func(t *testing.T, repo string)
-		kept string // substring of the reason; "" means deleted
+		name    string
+		gh      func(tip string) bee.GitHub // nil: no GitHub
+		work    func(t *testing.T, repo string)
+		kept    string // substring of the reason; "" means deleted
+		unknown bool   // kept because a probe failed, not because it is unmerged
 	}{
 		{name: "no commits of its own", work: func(t *testing.T, repo string) { gitRun(t, repo, "branch", "bees-8") }},
 		{name: "merge commit", work: func(t *testing.T, repo string) {
@@ -589,7 +590,7 @@ func TestEndDeletesTheBranchOnlyIfMerged(t *testing.T) {
 		}},
 		{name: "GitHub unreachable, unmerged", kept: "not on main (GitHub not checked: offline)", work: branch,
 			gh: offline},
-		{name: "no default branch", kept: "could not check whether it is merged: no default branch", work: func(t *testing.T, repo string) {
+		{name: "no default branch", kept: "no default branch", unknown: true, work: func(t *testing.T, repo string) {
 			branch(t, repo)
 			gitRun(t, repo, "checkout", "-q", "bees-8")
 			gitRun(t, repo, "branch", "-q", "-m", "main", "trunk")
@@ -607,18 +608,101 @@ func TestEndDeletesTheBranchOnlyIfMerged(t *testing.T) {
 			if c.gh != nil {
 				r.fleet.G = c.gh(gitTip(t, r.repo, "bees-8"))
 			}
-			kept, err := r.fleet.End(ctx, "bees-8")
-			if err != nil {
+			if err := r.fleet.End(ctx, "bees-8"); err != nil {
 				t.Fatal(err)
 			}
-			exists := exec.Command("git", "-C", r.repo, "rev-parse", "--verify", "--quiet", "refs/heads/bees-8").Run() == nil
-			if c.kept == "" && (kept != "" || exists) {
-				t.Fatalf("want deleted: kept=%q, branch exists=%v", kept, exists)
+			pruned, err := r.fleet.Prune(ctx, false)
+			if err != nil || len(pruned) != 1 {
+				t.Fatalf("prune: %+v, %v", pruned, err)
 			}
-			if c.kept != "" && (!strings.Contains(kept, c.kept) || !exists) {
-				t.Fatalf("want kept with %q: kept=%q, branch exists=%v", c.kept, kept, exists)
+			p := pruned[0]
+			exists := branchExists(r.repo, "bees-8")
+			if c.kept == "" && (p.Merge != bee.Merged || !p.Deleted || exists) {
+				t.Fatalf("want deleted: %+v, branch exists=%v", p, exists)
+			}
+			want := bee.NotMerged
+			if c.unknown {
+				want = bee.Unknown
+			}
+			if c.kept != "" && (p.Merge != want || !strings.Contains(p.Why, c.kept) || p.Deleted || !exists) {
+				t.Fatalf("want kept (%v) with %q: %+v, branch exists=%v", want, c.kept, p, exists)
 			}
 		})
+	}
+}
+
+func branchExists(repo, branch string) bool {
+	return exec.Command("git", "-C", repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch).Run() == nil
+}
+
+// squashMerged gives r a repo whose branch bees-8 is squash-merged into main.
+func squashMerged(t *testing.T, r rig) {
+	t.Helper()
+	gitRun(t, "", "init", "-q", "-b", "main", r.repo)
+	gitCommit(t, r.repo, "init", map[string]string{"a.txt": "A"})
+	gitRun(t, r.repo, "checkout", "-q", "-b", "bees-8")
+	gitCommit(t, r.repo, "work", map[string]string{"a.txt": "A1"})
+	gitRun(t, r.repo, "checkout", "-q", "main")
+	gitRun(t, r.repo, "merge", "-q", "--squash", "bees-8")
+	gitCommit(t, r.repo, "squash", nil)
+}
+
+func TestEndKeepsTheBranch(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	squashMerged(t, r)
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	if err := r.fleet.End(ctx, "bees-8"); err != nil {
+		t.Fatal(err)
+	}
+	if !branchExists(r.repo, "bees-8") {
+		t.Fatal("bs end deleted a branch; only prune may")
+	}
+}
+
+func TestPruneDryRunDeletesNothing(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	squashMerged(t, r)
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	_ = r.fleet.End(ctx, "bees-8")
+	pruned, err := r.fleet.Prune(ctx, true)
+	if err != nil || len(pruned) != 1 || pruned[0].Merge != bee.Merged || pruned[0].Deleted {
+		t.Fatalf("dry run: %+v, %v", pruned, err)
+	}
+	if !branchExists(r.repo, "bees-8") {
+		t.Fatal("dry run deleted the branch")
+	}
+}
+
+func TestPruneTouchesOnlyEndedBeesRecordedBranches(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	squashMerged(t, r)
+	gitRun(t, r.repo, "branch", "bees-9") // merged, but bs never spawned bees-9
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	if pruned, err := r.fleet.Prune(ctx, false); err != nil || len(pruned) != 0 {
+		t.Fatalf("live bee: %+v, %v", pruned, err)
+	}
+	_ = r.fleet.End(ctx, "bees-8")
+	r.h.exit("bees-8")
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil { // live once more
+		t.Fatal(err)
+	}
+	if pruned, err := r.fleet.Prune(ctx, false); err != nil || len(pruned) != 0 {
+		t.Fatalf("respawned bee: %+v, %v", pruned, err)
+	}
+	_ = r.fleet.End(ctx, "bees-8")
+	for range 2 { // the second prune finds the branch gone
+		if _, err := r.fleet.Prune(ctx, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if branchExists(r.repo, "bees-8") || !branchExists(r.repo, "bees-9") {
+		t.Fatalf("bees-8 exists=%v (want deleted), bees-9 exists=%v (want kept)", branchExists(r.repo, "bees-8"), branchExists(r.repo, "bees-9"))
+	}
+	if pruned, err := r.fleet.Prune(ctx, false); err != nil || len(pruned) != 0 {
+		t.Fatalf("after pruning: %+v, %v", pruned, err)
 	}
 }
 

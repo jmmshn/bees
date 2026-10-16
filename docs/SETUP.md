@@ -30,7 +30,8 @@ bs spawn --label "ring on send" <project>-2.1   # bee <project>-2-1 in its own h
 bs send <project>-2-1 "…"      # store, then ring it awake; --now interrupts its current turn
 bs inbox                       # your unread messages; --peek leaves them unread
 bs status                      # every session the logbook knows: running or not, unread
-bs end <project>-2-1           # remove its workspace; its branch is deleted if merged
+bs end <project>-2-1           # remove its workspace; its branch is kept
+bs prune                       # delete ended bees' branches once merged; --dry-run reports only
 ```
 
 A first spawn needs `--label`: 1–4 lowercase words naming the work, shown as the herdr workspace name (the queen writes it from the bead). `bs spawn` on a bee whose Claude has exited keeps its recorded label (leave `--label` off) and resumes it in the same workspace with `claude --continue`, or starts it fresh there if it never read its brief (its first start failed). `bs spawn` takes about 10 s: herdr gives up waiting for an idle prompt while the worker gets on with its doorbell, and bs then confirms the worker from Claude's session registry.

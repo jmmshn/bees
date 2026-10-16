@@ -17,18 +17,23 @@ type GitHub interface {
 	MergedHeads(ctx context.Context, repo, branch string) ([]string, error)
 }
 
-// dropBranch deletes branch once its work is proven to be on the default branch and
-// otherwise returns why it kept it. A rebase or squash merge rewrites the commits, so
-// git branch -d (ancestry) is only the first proof; then a merged PR whose head is the
-// branch tip; then the branch's changed files being identical on the default branch.
-// A probe that fails keeps the branch and says it could not check.
-func dropBranch(ctx context.Context, gh GitHub, repo, branch string) (kept string) {
-	if gitRun(ctx, repo, "branch", "-d", branch) == nil {
-		return ""
-	}
+// Merge is whether a branch's work is on the default branch.
+type Merge int
+
+const (
+	NotMerged Merge = iota
+	Merged
+	Unknown // a probe failed, so whether the work landed is unknown
+)
+
+// merged decides whether branch's work is on the default branch, and says how it
+// knows or why not. A rebase or squash merge rewrites the commits, so ancestry is only
+// the first proof; then a merged PR whose head is the branch tip; then every path the
+// branch changed being identical on the default branch.
+func merged(ctx context.Context, gh GitHub, repo, branch string) (Merge, string) {
 	tip, err := gitOut(ctx, repo, "rev-parse", "--verify", "refs/heads/"+branch)
 	if err != nil {
-		return fmt.Sprintf("could not check whether it is merged: %v", err)
+		return Unknown, err.Error()
 	}
 	var ghNote string
 	if gh != nil {
@@ -37,30 +42,41 @@ func dropBranch(ctx context.Context, gh GitHub, repo, branch string) (kept strin
 		case err != nil:
 			ghNote = fmt.Sprintf(" (GitHub not checked: %v)", err)
 		case slices.Contains(heads, strings.TrimSpace(tip)):
-			return forceDelete(ctx, repo, branch)
+			return Merged, "a merged pull request has its tip as head"
 		}
 	}
 	mains, err := defaultBranches(ctx, repo)
 	if err != nil {
-		return fmt.Sprintf("could not check whether it is merged: %v%s", err, ghNote)
+		return Unknown, err.Error() + ghNote
 	}
 	for _, m := range mains {
+		if in, err := ancestor(ctx, repo, branch, m); err != nil {
+			return Unknown, err.Error() + ghNote
+		} else if in {
+			return Merged, "its commits are on " + m
+		}
 		same, err := sameContent(ctx, repo, m, branch)
 		if err != nil {
-			return fmt.Sprintf("could not check whether it is merged into %s: %v%s", m, err, ghNote)
+			return Unknown, fmt.Sprintf("comparing with %s: %v%s", m, err, ghNote)
 		}
 		if same {
-			return forceDelete(ctx, repo, branch)
+			return Merged, "the files it changed are identical on " + m
 		}
 	}
-	return fmt.Sprintf("it has work not on %s%s", strings.Join(mains, " or "), ghNote)
+	return NotMerged, fmt.Sprintf("it has work not on %s%s", strings.Join(mains, " or "), ghNote)
 }
 
-func forceDelete(ctx context.Context, repo, branch string) string {
-	if err := gitRun(ctx, repo, "branch", "-D", branch); err != nil {
-		return fmt.Sprintf("its work is merged, but deleting it failed: %v", err)
+// ancestor reports whether commit a is an ancestor of b.
+func ancestor(ctx context.Context, repo, a, b string) (bool, error) {
+	err := gitRun(ctx, repo, "merge-base", "--is-ancestor", a, b)
+	var ee *exec.ExitError
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.As(err, &ee) && ee.ExitCode() == 1:
+		return false, nil
 	}
-	return ""
+	return false, err
 }
 
 // defaultBranches is where merged work lands: origin's default branch (origin/HEAD)

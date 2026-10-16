@@ -12,8 +12,8 @@ import (
 func TestEachRoleNamesTheProjectAndItsJob(t *testing.T) {
 	shared := []string{"## Known pitfalls", "auto-mode permission denial", "control characters", "bs bead ls", "bs epic", "bs bead new --parent web2-N"}
 	for role, want := range map[prompt.Role][]string{
-		prompt.Queen:  {"queen-web2", "bs spawn --label", "--repo", "bs status", "bs end", "only after its PR is merged", "capture-pitfall", "never write \"captain approved\"", "bs end web2-2-1"},
-		prompt.Worker: {"bd show <bead>", "run: bs inbox", "bs send queen-web2", "done: <bead> PR #N", "Leave `bd close` to the queen", "refuse", "go build -o bin/bs"},
+		prompt.Queen:  {"queen-web2", "bs spawn --label", "--repo", "bs status", "bs end", "only after its PR is merged", "capture-pitfall", "never write \"captain approved\"", "a push to another branch", "bs end web2-2-1", "never edit, commit", "answer them yourself", "end your turn", "Never sleep-loop"},
+		prompt.Worker: {"bd show <bead>", "run: bs inbox", "bs send queen-web2", "done: <bead> PR #N", "Leave `bd close` to the queen", "Your branch is yours", "never force-push", "go build -o bin/bs"},
 	} {
 		got := prompt.Text(role, "web2")
 		for _, w := range append(shared, want...) {
@@ -52,5 +52,13 @@ func TestFileHoldsTheRolePromptInBsCache(t *testing.T) {
 				t.Fatalf("%s holds %q, %v; want Text(%s, web2)", path, b, err, role)
 			}
 		}
+	}
+}
+
+// A relayed answer from the queen is a plain answer; the worker prompt must not
+// tell workers to refuse it (bees-1.40).
+func TestWorkerDoesNotRefuseRelayedAnswers(t *testing.T) {
+	if got := prompt.Text(prompt.Worker, "web2"); strings.Contains(got, "captain approved") {
+		t.Errorf("worker prompt still tells workers to refuse relayed approvals:\n%s", got)
 	}
 }

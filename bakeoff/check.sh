@@ -7,7 +7,7 @@ repo=$(jq -r .repo <<<"$run") s=$(jq -r .script <<<"$run")
 show() { git -C "$repo" show "main:$1" 2>/dev/null; }
 same() { diff -q <(show "$1") "$g/$1" >/dev/null; }
 fails=()
-ok() { "$@" || fails+=("$*"); }
+ok() { "$@" >/dev/null || fails+=("$*"); }
 case $s in
 S0|S1) ok same poem.txt ;;  # S0 = dry run of S1
 S2) ok same fruits.txt; ok same todo.txt
@@ -26,7 +26,17 @@ S6) r=$dir/report.txt; ok test -s "$r"
 		jq -e --arg f "data/$f" '.files|index($f)' "$g/s6.json" >/dev/null || ! grep -qw "$b" <<<"$listed" || fails+=("false positive $b"); done
 	ok grep -qw "$(jq .total_lines "$g/s6.json")" "$r"
 	ok test -z "$(git -C "$repo" branch --format='%(refname:short)' | grep -vx main)" ;;
-S7) ok same count.txt; ok test "$(git -C "$repo" log --oneline main -- count.txt | wc -l)" -ge 5 ;;
+S7|S10|S11) ok same count.txt; ok test "$(git -C "$repo" log --oneline main -- count.txt | wc -l)" -ge 5 ;;
+S12) ok diff -q <(show count.txt) "$g/count500-end.txt" ;;
+S13|S13b) ok test "$(show slow.txt | tr -d '[:space:]')" = done ;;
+S14|S14r) ok diff -q <(show count.txt) "$g/count300.txt" ;;
+S15) ok same fruits.txt; ok same todo.txt; ok diff -q <(show count.txt) "$g/count200.txt" ;;
+S16) ok diff -q <(show count.txt) "$g/count400.txt" ;;
+S17) ok same fruits.txt; ok same todo.txt
+	ok test -f "$repo-WT/captain-wip/notes.txt"; ok git -C "$repo" rev-parse -q --verify captain-wip
+	# herdr leaves .worktree empty for a workspace made with --cwd: find its pane by cwd instead.
+	ok test -n "$(herdr pane list | jq -r --arg p "$repo-WT/captain-wip" '.result.panes[] | select(.cwd==$p) | .pane_id')" ;;
+S9) ok diff -q <(show count.txt) "$g/count600.txt"; ok test "$(git -C "$repo" log --oneline main -- count.txt | wc -l)" -ge 6 ;;
 S8) ok test -z "$(show acrostic.txt)" ;;
 esac
 jq -n --arg s "$s" --argjson pass "$([ ${#fails[@]} -eq 0 ] && echo true || echo false)" \

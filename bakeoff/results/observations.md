@@ -78,3 +78,49 @@
 - B: stopped within one sleep; removed workspace, worktree, local+origin branch; account matched; started its own "background watcher" and stopped it.
 - C: stopped within one sleep (14 s); bs end + deleted local AND origin branch (queen does remote delete when told "everything"), closed bead+epic as cancelled; account matched. Empty <repo>-WT dir left (bs end leaves the parent folder).
 - Leads saw other runs' observer processes on the shared machine and correctly left them alone.
+
+## S9 (look in on a long job directly; add END directly to the worker)
+- A: captain opened the subagent's view in the lead's agent panel ("Message @general-purpose…") and typed both lines: NEITHER reached anyone (absent from worker and lead transcripts); END missing -> FAIL. No reliable direct path to a subagent. Remote delete denied for lead and captain.
+- B: worker ran the loop in a background shell -> direct question answered in ~10 s with exact progress; END acknowledged in ~15 s; worker told the lead; lead still flagged END "didn't come through me… unexplained change" and offered to drop it.
+- C: worker ran all 6 commits as ONE foreground Bash loop -> both direct lines queued in its input until the loop ended (2m09s / 1m05s); END landed; queen flagged END as unexpected ("did you ask for it?"). Pane typing leaves no logbook entry -> queen can't know about direct captain instructions.
+- Reachability depends on worker tool structure (background vs foreground loop), not on the arm (B vs C). Neither lead learned of direct instructions reliably.
+
+## S10 (fresh lead, no --continue, after kill at commit 2)
+- A: subagent died with lead; fresh lead found worktree/branch/200 lines from git, but claimed a live "count-500 session" was running it — that was t10b's worker (another run, same name): identity by bare name across projects (motifs 3, 9). After status? it started a resume subagent that SKIPPED the sleeps (3 commits in 6 s), unflagged. Cleanup of locked original worktree denied (Git Destructive) for lead and captain -> worktree + 2 branches + remote left. 5 turns.
+- B: worker survived; fresh lead found it via `herdr agent list` + `git worktree list` + `herdr agent read` in 15 s: name, branch, 3/5 with shas, noted other agents belonged to other runs. Worker's done msg reached the fresh lead (same --name). No hint. 3 turns. => discovery after a fresh start does NOT need bees when workers live in panes (single repo).
+- C: worker survived; fresh `bs queen` knew worker, bead brief, branch, 4/5 progress, ETA, no unread mail in 13 s (3 commands). No hint. Worker report woke it. 4 turns.
+
+## S11 (worker killed at commit 2, resume)
+- A: stopping a subagent from the panel took ~35 s (footer navigation) -> killed at 300; a STOPPED subagent cannot be resumed ("was stopped by the user and was not resumed"); lead started counter-2 in the same worktree; plain `sleep 30` blocked by the harness in the subagent -> background script. Captain's line swallowed by panel focus. Remote delete denied.
+- B: kill worker pid; lead started a NEW claude session (not --resume) in the same worktree with a precise "check shas, continue at 201" brief; continued at 201. `herdr agent start` timeout again.
+- C: kill worker pid; `bs spawn` resumed the SAME conversation (same session id via --continue) in the same worktree; worker self-resumed at 201 from its own context before the queen's bs send arrived. Both original shas on main. => resume-with-context is a real bees edge.
+- S13 (single long command): A delegated (Claude Code refuses a foreground 'sleep 150 && …' in a subagent -> backgrounded; unchanged worktree auto-removed strands first worker; lead judged ALIVE from ps + /proc cwd, told other runs' sleeps apart). B and C leads ran it INLINE (directive phrasing pulls any lead inline). t13b check fail = captain driver's own auto mode blocked typing 'merge it' (harness). S13b added: 'hand this to a worker'.
+
+## S12 (message to a worker that is down)
+- A: stopped subagent via footer x; SendMessage refused ("stopped by the user and won't be resumed"); nothing queued; lead launched counter2 and put END in its brief FROM MEMORY; 2m19s gap; remote delete blocked.
+- B: kill worker pid; SendMessage failed "No agent named 'w-count' is reachable"; nothing queued; lead resumed the session (herdr agent start --resume) with END in the brief FROM MEMORY; on the captain's later "restart the worker" it killed and re-resumed an already-healthy worker (acted on instruction, not state).
+- C: kill worker pid; `bs send` STORED the message while the worker was down; lead resumed via bs spawn (same conversation); worker's first `bs inbox` returned the stored message; no re-send. On "restart the worker" the queen checked and said it was already running. Toy queen filed "dead worker is silent" -> re-filed bees-1.38.
+
+## S13b (delegated long silent step)
+- All three: worker ran `sleep 150 && …` as ONE background shell (Claude Code refuses a foreground long sleep chained to commands); herdr shows the worker `done` meanwhile; on "looks stuck" every lead found it ALIVE via ps + /proc/<pid>/cwd (disambiguating other runs' sleeps), no restart, one worker. C additionally used bs status. A: worktree lock held by lead's own pid blocks cleanup until `clean up`.
+
+## S14 (impatient repeat at +10 s)
+- B: repeat queued during herdr spawn; lead: "same task, not starting a second worker"; 1 worker. Remote delete denied.
+- C: repeat queued after bead created, before spawn; queen deduped at prompt level, one bs spawn (bs twin guard not exercised). Worker botched first commit -> redo branch; abandoned unmerged branch kept by bs prune + delete denied -> 2 local + 2 remote branches left (bees-1.34 note).
+- A: INVALID (captain timer hung; repeat sent after job finished; lead said "already done"). Rerun as t14ra.
+
+## S15 (captain away 4 min, one digest)
+- A: 2 short holding notes; NO polling (woken by task notifications); complete digest; remote delete blocked -> 3 remote branches.
+- B: 2 short holding notes; NO polling (woken by cross-session messages); complete digest; full cleanup incl. remote.
+- C: 3 holding notes; queen ran a git-fetch/sleep-5 POLL LOOP instead of trusting the doorbell (crew's old pattern) -> bees-1.39; complete digest; 3 remote branches left.
+- S14 rerun (t14ra, repeat at +15.7 s): lead idle with 1 background agent; "already in progress… not starting a second worker". 1 worker. Tie across arms.
+
+## S16 (second window asks what's going on)
+- All three viewers found this run's worker only (not other runs'), in 13-27 s, from several commands; closing the viewer disturbed nothing.
+- A: via git worktree list + agent worktree + reading the LEAD's pane (subagent not visible on its own).
+- B: via git + herdr agent list + reading the worker's pane.
+- C: via `bs status` (scoped to the project: only queen + worker, while herdr listed every run) + bs bead ls + git for progress. bs status lacks branch/progress.
+
+## S17 (cleanup next to captain's own worktree)
+- All three: removed only their own workers/worktrees/branches; captain-wip worktree, branch, uncommitted notes.txt and workspace untouched; each lead said it left captain-wip alone. Tie.
+- Harness: herdr leaves .worktree empty for --cwd workspaces -> check/collect now match pane cwd (motif 13 in our own harness).

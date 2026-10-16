@@ -44,14 +44,15 @@ vocabulary: [GLOSSARY.md](GLOSSARY.md)
 ## How bs compares
 
 Subagents end with their task and report once; agent graphs make you code the routing;
-queues make agents poll; copy-paste makes you the bus. In bs each agent is a full Claude
-Code session tied to one bead: it outlives the queen that spawned it and wakes when a message arrives.
+queues make agents poll; copy-paste makes you the bus. In bs each bee is a full Claude
+Code session tied to one bead: it outlives the queen that spawned it and wakes when a
+message arrives.
 
 What bs costs you: Linux, Claude Code sessions only, one machine. The doorbell rides on
 Claude's own cross-session socket, which keeps nothing after a session exits and drops
 identical repeats ([ADR-0001](docs/adr/0001-logbook-is-the-only-truth.md)).
-So bs uses it only to say "you have messages" and keeps every message in the logbook: a lost
-ring only delays a message, and a doubled one can't deliver it twice.
+So bs uses it only to say "you have messages" and keeps every message in the logbook:
+a lost ring only delays a message, and a doubled one can't deliver it twice.
 
 ### When a session dies mid-job
 
@@ -66,8 +67,8 @@ The bee (or subagent) is down when the keeper sends it a change:
 
 ![Left: SendMessage to the stopped subagent fails and nothing is kept. Right: bs send prints queued; bs spawn resumes the bee, whose bs inbox returns the stored message](docs/img/worker-down.gif)
 
-Every line is copied from the runs' transcripts and drawn as a terminal (`…` marks a cut); only the `#` setup
-lines and the ✗/✓ verdicts are commentary. The scripts are S10 and S12 in
+Every line is copied from the runs' transcripts and drawn as a terminal (`…` marks a
+cut); only the `#` setup lines and the ✗/✓ verdicts are commentary. The scripts are S10 and S12 in
 [bakeoff/cards](bakeoff/cards/); rebuild the GIFs with `uv run docs/img/src/gifs.py`.
 
 ### Without bs: you are the message bus

@@ -1,0 +1,10 @@
+2026-10-16T12:45:00.263Z captain[intervention]: setup: git worktree add /home/lik/.cache/bees-bakeoff/runs/t17c/t17c-WT/captain-wip -b captain-wip; wrote uncommitted notes.txt ('notes, do not delete'); herdr workspace create --cwd /home/lik/.cache/bees-bakeoff/runs/t17c/t17c-WT/captain-wip --label "captain wip" --no-focus
+2026-10-16T12:45:05.442Z event: setup done: captain-wip worktree+branch at fa54192, notes.txt uncommitted, workspace w9Q (pane w9Q:p1) labelled 'captain wip' (w9N/w9P are other runs' captain-wip workspaces)
+2026-10-16T12:45:05.350Z captain: two jobs in parallel: sort fruits.txt, and remove duplicate lines from todo.txt
+2026-10-16T12:45:57.860Z event: lead delegated (2 workers: t17c-1-1 pane w9W:p1, t17c-1-2 pane w9Z:p1)
+2026-10-16T12:45:57.894Z event: lead reports ready (both branches committed: t17c-1-1=1394335, t17c-1-2=d4c265b)
+2026-10-16T12:45:57.395Z captain: merge both, then clean up everything you created
+2026-10-16T12:46:29.301Z event: lead reports done: merged both to main (6783900), closed beads, ended both workers + workspaces, deleted worker branches local+origin; says it left captain-wip branch and worktree alone since it didn't create them
+2026-10-16T12:46:29.608Z captain: end
+2026-10-16T12:46:42.217Z event: check (read-only): captain-wip worktree present at fa54192; branch captain-wip present; notes.txt present, untracked, content intact; workspace w9Q 'captain wip' (pane w9Q:p1) present. Lead's worker branches/worktrees/workspaces gone; main=6783900 with both merges.
+2026-10-16T12:46:42.546Z end

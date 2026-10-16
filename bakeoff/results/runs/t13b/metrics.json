@@ -1,0 +1,39 @@
+{
+  "id": "t13b",
+  "arm": "b",
+  "script": "S13",
+  "repo": "/home/lik/.cache/bees-bakeoff/runs/t13b/t13b",
+  "pane": "w8P:p1",
+  "lead": "lead-t13b",
+  "workspace": "w8P",
+  "created": "2026-10-16T12:29:10.451Z",
+  "wall_s": 277,
+  "captain_turns": 2,
+  "interventions": 0,
+  "check": {
+    "script": "S13",
+    "pass": false,
+    "failures": [
+      "test  = done"
+    ]
+  },
+  "tokens": {
+    "sessions": 1,
+    "subagents": 0,
+    "input": 8,
+    "output": 1030,
+    "cache_read": 163026,
+    "cache_write": 21869
+  },
+  "leftovers": {
+    "worktrees": 0,
+    "branches": [
+      "slow-txt"
+    ],
+    "remote_branches": [
+      "slow-txt"
+    ],
+    "sessions": [],
+    "workspaces": []
+  }
+}

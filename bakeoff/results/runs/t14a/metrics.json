@@ -1,0 +1,33 @@
+{
+  "id": "t14a",
+  "arm": "a",
+  "script": "S14",
+  "repo": "/home/lik/.cache/bees-bakeoff/runs/t14a/t14a",
+  "pane": "w8W:p1",
+  "lead": "lead-t14a",
+  "workspace": "w8W",
+  "created": "2026-10-16T12:36:13.689Z",
+  "wall_s": 216,
+  "captain_turns": 4,
+  "interventions": 0,
+  "check": {
+    "script": "S14",
+    "pass": true,
+    "failures": []
+  },
+  "tokens": {
+    "sessions": 1,
+    "subagents": 1,
+    "input": 64,
+    "output": 3570,
+    "cache_read": 1149064,
+    "cache_write": 47983
+  },
+  "leftovers": {
+    "worktrees": 0,
+    "branches": [],
+    "remote_branches": [],
+    "sessions": [],
+    "workspaces": []
+  }
+}

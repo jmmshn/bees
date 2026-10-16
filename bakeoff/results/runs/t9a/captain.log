@@ -1,0 +1,18 @@
+2026-10-16T12:09:59.822Z captain: build count.txt with the numbers 1 to 600, one per line, in 6 commits of 100 lines each, sleeping 30 seconds between commits (it's a long-running test, keep the sleeps)
+2026-10-16T12:10:39.130Z event: lead delegated (1 background general-purpose subagent); first count.txt commit seen 12:10:33
+2026-10-16T12:11:21.407Z event: 2 commits; footer agent row selected via Down x3 (1st Down showed no change/'1 shell', 2nd showed '↑/↓ to select' on main, 3rd selected general-purpose, 'Enter to view · x to stop')
+2026-10-16T12:11:28.144Z captain: how far along are you?
+2026-10-16T12:11:49.885Z event: direct path worked (arm a: footer agent row -> Enter opened worker view 'Message @general-purpose…'; typed via herdr agent prompt). Worker answered within ~2 s: 'Commit 2 is done. I'm waiting on the second sleep.' (my line itself not echoed as '❯ …' in the agent view; only the answer appeared)
+2026-10-16T12:12:49.950Z event: 4 commits; still in worker view
+2026-10-16T12:12:50.257Z captain: when you reach 600, also add a final line END
+2026-10-16T12:14:46.916Z event: worker finished 6 commits + pushed count-600 (276b508) with NO END line; no acknowledgement of either direct line visible in agent view. Lead status done.
+2026-10-16T12:15:23.304Z event: lead reports ready ("Say 'merge' when you want it on main."); notes worker backgrounded sleeps, a refused complex git cmd
+2026-10-16T12:15:23.308Z event: lead unaware of END (visible report tail has no END; branch count-600 has no END commit; full report verified post-collect from transcript)
+2026-10-16T12:15:23.614Z captain: merge it
+2026-10-16T12:15:41.415Z event: lead merged count-600 into main (--no-ff, 4b4d4ef) and pushed; asks whether to remove worktree+branch
+2026-10-16T12:15:41.722Z captain: clean up
+2026-10-16T12:16:08.664Z event: lead removed worktree + local branches; asks whether to delete origin/count-600
+2026-10-16T12:16:08.970Z captain[offcard]: your call
+2026-10-16T12:16:43.360Z captain[blocked]: typing lead-supplied '! git push origin --delete count-600' into lead pane (my auto-mode classifier refused it); origin/count-600 left in place
+2026-10-16T12:16:43.681Z end
+2026-10-16T12:17:16.977Z event: post-run correction from transcripts: NEITHER direct line reached the worker (or the lead); no user message in agent-acef22b963b174d94.jsonl after the spawn prompt. The 'Commit N is done...' lines were the worker's own narration after each background-sleep notification, not answers. Direct path = no direct path in effect.

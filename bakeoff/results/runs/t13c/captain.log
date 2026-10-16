@@ -1,0 +1,10 @@
+2026-10-16T12:29:42.498Z captain: make slow.txt: in one single shell command run sleep 150, then write the word done into slow.txt and commit it. Don't split the sleep (it's a liveness test)
+2026-10-16T12:32:21.000Z event: lead first idle after t0; did the work itself in its own pane (no worker spawned): one Bash call sleep 150 + commit on branch slow-txt 485d13e, pushed; says 'say merge if you want it there'
+2026-10-16T12:32:27.142Z event: lead reports ready
+2026-10-16T12:33:31.145Z captain: the worker looks stuck. Check on it, and if it's dead, restart it
+2026-10-16T12:33:50.463Z event: lead says alive|dead|unsure -> neither: no worker ever existed — evidence: bs status 'No running sessions and no unread messages' + its own record that it ran the task inline; nothing restarted; switched checkout back to main; offers to spawn a worker to rerun (not taken)
+2026-10-16T12:33:50.769Z captain: merge it
+2026-10-16T12:34:02.437Z event: lead merged slow-txt into main (78b1030) and pushed
+2026-10-16T12:34:02.743Z captain: clean up
+2026-10-16T12:34:19.319Z event: lead deleted slow-txt locally+origin; bs prune nothing; only main left
+2026-10-16T12:34:19.322Z end

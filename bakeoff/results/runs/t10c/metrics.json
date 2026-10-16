@@ -1,0 +1,35 @@
+{
+  "id": "t10c",
+  "arm": "c",
+  "script": "S10",
+  "repo": "/home/lik/.cache/bees-bakeoff/runs/t10c/t10c",
+  "pane": "w8D:p1",
+  "lead": "queen-t10c",
+  "workspace": "w8D",
+  "created": "2026-10-16T12:17:55.469Z",
+  "wall_s": 209,
+  "captain_turns": 4,
+  "interventions": 2,
+  "check": {
+    "script": "S10",
+    "pass": true,
+    "failures": []
+  },
+  "tokens": {
+    "sessions": 3,
+    "subagents": 0,
+    "input": 60,
+    "output": 5228,
+    "cache_read": 1284137,
+    "cache_write": 68342
+  },
+  "leftovers": {
+    "worktrees": 0,
+    "branches": [],
+    "remote_branches": [
+      "t10c-1-1"
+    ],
+    "sessions": [],
+    "workspaces": []
+  }
+}

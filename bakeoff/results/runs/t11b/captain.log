@@ -1,0 +1,10 @@
+2026-10-16T12:18:32.835Z captain: build count.txt with the numbers 1 to 500, one per line, in 5 commits of 100 lines each, sleeping 30 seconds between commits (it's a durability test, keep the sleeps)
+2026-10-16T12:19:38.196Z captain[intervention]: kill 531368 (worker w-count claude, session 67bd141d)
+2026-10-16T12:19:38.199Z event: worker killed after 2 commits: 5f198a5 (lines 1-100), c561373 (lines 101-200)
+2026-10-16T12:19:45.961Z event: worker pane w8F:p1 back at shell prompt; worktree clean? 0 dirty files, count.txt 200 lines
+2026-10-16T12:19:46.274Z captain: the worker died at 200 lines. Resume it from where it stopped, don't start over
+2026-10-16T12:20:58.312Z event: lead respawned w-count in same worktree/branch as a NEW conversation (session 8e36c25c, not --resume of 67bd141d) with a resume-from-201 prompt; worker committed c80f9dc lines 201-300
+2026-10-16T12:21:48.610Z event: lead reports ready (5 commits 5f198a5 c561373 c80f9dc dae9306 9651033)
+2026-10-16T12:21:48.916Z captain: merge it
+2026-10-16T12:22:10.746Z event: merged (903d9f4) and pushed; lead already tore down worker workspace, worktree and local branch, so no 'clean up' needed. Original commits 5f198a5 and c561373 are ancestors of main; count.txt on main == seq 1 500
+2026-10-16T12:22:10.750Z end

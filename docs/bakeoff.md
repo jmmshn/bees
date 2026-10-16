@@ -31,6 +31,13 @@ The headline findings:
 4. **bs reports cleanup it didn't do.** `bs prune` deletes only the local branch. In 8 of 12 runs a merged worker branch was left on origin, often after the queen said "deleted its branch" (motif 11).
 5. **`bs spawn` is serial.** Three spawns in one turn started about 10 s apart, so in a three-way fan-out the first worker finished before the third started (S2).
 
+A second round of long-running and crew-derived cards (S9–S17, [below](#long-running-work-and-crews-incidents-s9s17)) narrows what bees is for:
+
+- **Where only bees did the optimal thing**: a message sent to a stopped worker was kept and delivered (S12), and a dead worker resumed in its own conversation (S11).
+- **Where the baselines also succeeded**:
+  - **Rediscovery after a fresh start**: a plain-Claude lead with workers in herdr panes found them too (S10). Only subagents lose them.
+  - **Liveness, repeated requests, outside viewers and teardown**: every arm handled these.
+
 ## Method
 
 ### The captain
@@ -259,6 +266,77 @@ Practical rule for any lead: do the gated step only after the captain asks for i
 | 12 Teardown beyond ownership | none: every lead left other runs' processes alone | all arms |
 | 14 Wrong environment | an ancestor CLAUDE.md leaking into nested toy repos | harness |
 
+## Long-running work and crew's incidents (S9–S17)
+
+A second round tests the case bees exists for: workers that run for minutes, that the captain wants to reach directly, and that must survive things going wrong. Six of the cards come from incidents in crew, the tool bees replaces. Each was mined from its commit history, docs and vault notes. Every card paces its worker (100 lines per commit, then a 30–60 s sleep) so that there is something running to interrupt.
+
+| # | Script | Source | Captain card, short |
+|---|---|---|---|
+| S9 | Look in directly | captain question | at commit 2, ask **the worker** "how far along?"; at commit 4, tell it to add END |
+| S10 | Fresh lead | captain question | kill the lead at commit 2; start a **fresh** one (no `--continue`); "what's running?" |
+| S11 | Worker dies | captain question | kill the worker at commit 2; "resume it, don't start over" |
+| S12 | Mail to a worker that is down | crew c623649, ad02498 | kill the worker; "tell it to add END"; then "restart it" |
+| S13 / S13b | Long silent step | crew 780c5bf, 2583b6c | one `sleep 150` command; at +60 s "the worker looks stuck, restart it if dead" |
+| S14 | Impatient repeat | crew 7e86643; bees-1.24 | the same request typed twice, 10 s apart |
+| S15 | Captain steps away | crew 4e3bf6a, c2d1ab7 | three jobs, "don't report each, summarise when I'm back"; silent for 4 min |
+| S16 | Second window | crew ce88a15, a10e73c | a separate viewer session asks what's in progress, then is killed |
+| S17 | Cleanup next to captain's work | crew 4f65cd8 (".64 near-miss") | the captain's own worktree, uncommitted file and workspace sit beside the job; "clean up everything you created" |
+
+Numbers are in the same format as before: turns · ready s · leftovers. S9's direct lines to the worker don't count as lead turns. ❌ marks a failed check.
+
+| Script | A: turns · ready s · left | B: turns · ready s · left | C: turns · ready s · left |
+|---|---|---|---|
+| S9 | ❌ 4 · 267 · 1 | 2 · 202 · 1 | 2 · 205 · 1 |
+| S10 | 6 · 522 · 4 ⚑2 | 3 · 157 · 1 ⚑2 | 4 · 167 · 1 ⚑2 |
+| S11 | 5 · 284 · 1 ⚑2 | 3 · 191 · 1 ⚑1 | 4 · 219 · 1 ⚑1 |
+| S12 | 5 · 284 · 1 ⚑1 | 5 · 257 · 0 ⚑1 | 5 · 239 · 1 ⚑1 |
+| S13 | 4 · 214 · 0 | ❌ 2 · 162 · 2 (inline) | 4 · 239 · 0 (inline) |
+| S13b | 4 · 183 · 1 | 3 · 211 · 1 | 3 · 214 · 1 |
+| S14 | 3 · 90 · 0 (rerun) | 3 · 101 · 1 | 3 · 113 · 4 |
+| S15 | 4 · 273 · 3 | 3 · 269 · 0 | 3 · 249 · 3 |
+| S16 | 3 · 155 · 1 ⚑2 | 3 · 125 · 1 ⚑2 | 3 · 128 · 1 ⚑4 |
+| S17 | 2 · 35 · 0 ⚑1 | 2 · 60 · 0 ⚑1 | 3 · 46 · 0 ⚑1 |
+
+The flagged interventions (⚑) are the scripted kills, relaunches and setup. Two of the failures are not the arms' fault:
+
+- **t13b**: the captain agent's own permission check refused to type "merge it".
+- **t14a**: the captain agent's timer hung, so S14 arm A was rerun as t14ra.
+
+### What separated the arms
+
+| Need | A subagents | B peers | C bees |
+|---|---|---|---|
+| **Reach the worker directly (S9)** | ❌ the captain's lines typed into the subagent's view in the lead's panel reached no transcript; END never landed | ✅ the worker answered in ~10 s with exact progress (its loop ran in a background shell) | ⚠️ the worker ran all 6 commits as one foreground loop, so both lines queued for 1–2 min |
+| **Lead knows what the captain told the worker (S9)** | n/a | ❌ flagged END as "an unexplained change" even though the worker told it | ❌ flagged END as unexpected; typing in a pane leaves no logbook entry |
+| **Fresh lead finds running work (S10)** | ❌ the worker died with the lead; the fresh lead took **another run's** same-named worker (`count-500`, from t10b) for its own; the resume worker skipped the sleeps | ✅ found it via `herdr agent list` + `git worktree list` + reading the pane, 15 s | ✅ `bs status` + bead brief + git, 13 s |
+| **Resume a dead worker where it stopped (S11)** | ⚠️ a stopped subagent can't be resumed; a new one continued in the same worktree | ⚠️ a new session in the same worktree, with a careful "continue at 201" brief | ✅ `bs spawn` resumed the **same conversation**, and the worker picked up at 201 from its own context |
+| **Message to a worker that is down (S12)** | ❌ refused ("stopped… won't be resumed"); the lead re-sent from memory | ❌ "No agent named 'w-count' is reachable"; the lead re-sent from memory, then restarted a healthy worker a second time | ✅ `bs send` stored it; the resumed worker read it from its inbox; nothing re-sent |
+| **A long silent step is not death (S13b)** | ✅ `ps` + `/proc/<pid>/cwd` | ✅ same | ✅ same, plus `bs status` |
+| **Same request twice (S14)** | ✅ one worker | ✅ one worker | ✅ one worker (deduped before `bs spawn`, so the twin fence never ran) |
+| **Captain away, one digest (S15)** | ✅ no polling, 2 holding notes | ✅ no polling, 2 notes | ⚠️ the queen ran a `git fetch; sleep 5` poll loop (bees-1.39), 3 notes |
+| **Outside viewer (S16)** | ✅ via git worktrees + reading the lead's pane | ✅ via herdr + git | ✅ via `bs status` (scoped to the project) + git |
+| **Leave the captain's work alone (S17)** | ✅ | ✅ | ✅ |
+
+What this round shows:
+
+1. **The edges are concrete: durable mail, and resume with the worker's own context.** S12 and S11 are the two cards where only bees did the optimal thing. A message to a stopped worker was stored and read on restart. The restarted worker continued in its own conversation, so nobody had to rewrite its brief from memory. Both baselines fell back on the lead remembering and re-briefing, and in arm B the lead then restarted a healthy worker.
+2. **Rediscovery after a fresh start is not unique to bees.** Workers in their own panes plus `herdr agent list` and `git worktree list` let a fresh plain-Claude lead find everything in arm B (S10).
+   - bees' advantage there is scoping: `bs status` lists only this project, while herdr lists every run on the machine.
+   - Arm A shows what happens without scoping. With no record of its own, the fresh lead matched a bare name and claimed another run's worker as its own: motif 3, one name shared across projects.
+3. **Subagents are the wrong tool for long-running work you want to touch.**
+   - They die with the lead (S7, S10).
+   - Once stopped, they can't be resumed (S11, S12).
+   - Inside them, Claude Code refuses foreground sleeps (S11, S13).
+   - Their unchanged worktrees get auto-removed (S5b, S13).
+   - The captain had no reliable direct line to them (S9).
+4. **Talking to a worker directly bypasses every lead's picture.** In both B and C the lead treated the captain's direct instruction as an anomaly. In bees the fix is cheap: a worker that takes an instruction from the captain in its pane reports it to the queen with `bs send`. Whether a worker can be reached at all mid-job depends on how it runs its commands (one foreground loop is unreachable), and that is the same in B and C.
+5. **Liveness, repeats, the outside viewer and teardown ownership were ties.** Current models check the live process (`ps`, `/proc/<pid>/cwd`), deduplicate a repeated request, and leave the captain's work alone without help. crew needed code for each of these classes; today they don't separate the arms.
+6. **New bees findings:**
+   - bees-1.38: a worker that dies is silent to the queen.
+   - bees-1.39: the queen polls instead of trusting the doorbell.
+   - More evidence on bees-1.34: abandoned attempt branches can't be pruned.
+   - More evidence on bees-1.37: role drift. Imperative "run X in one command" phrasing also pulled arm B's lead inline (S13), so that part is not bees-specific.
+
 ## Where bees wins, where it loses
 
 ### Wins
@@ -291,6 +369,9 @@ Practical rule for any lead: do the gated step only after the captain asks for i
 | `bs epic` and `bs bead new` print only the id on stdout, hints on stderr | t4bc `E=$(bs epic …)` | bees-1.36 |
 | `bs status` shows each worker's last message or branch head, so a fresh queen knows progress, not just liveness | S7: the new queen knew who but not how far | (new) |
 | `bs end` removes an empty `<repo>-WT/`; the queen closes an epic when its last bead closes | t8c; off-card "close the epic?" in 4 runs | (new) |
+| A worker that dies writes an entry and rings the queen | S11, S12: the queen learns only when someone checks | bees-1.38 |
+| QUEEN.md: after spawning, end the turn and wait for the doorbell; never poll git, panes or `bs status` in a loop | S15 poll loop | bees-1.39 |
+| WORKER.md: an instruction the captain types in your pane goes to the queen with `bs send` | S9: every lead treated the captain's direct instruction as an anomaly | (new) |
 | Allow read-only work without a branch: a spawn mode with no worktree, or a queen rule to answer simple discovery questions itself | S6 ceremony | (new) |
 
 ## Reproduce

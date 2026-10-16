@@ -1,0 +1,37 @@
+{
+  "id": "t9a",
+  "arm": "a",
+  "script": "S9",
+  "repo": "/home/lik/.cache/bees-bakeoff/runs/t9a/t9a",
+  "pane": "w84:p1",
+  "lead": "lead-t9a",
+  "workspace": "w84",
+  "created": "2026-10-16T12:09:24.839Z",
+  "wall_s": 403,
+  "captain_turns": 5,
+  "interventions": 0,
+  "check": {
+    "script": "S9",
+    "pass": false,
+    "failures": [
+      "diff -q /dev/fd/63 /home/lik/repos/jmmshn/bees/bakeoff/fixtures/golden/count600.txt"
+    ]
+  },
+  "tokens": {
+    "sessions": 1,
+    "subagents": 1,
+    "input": 116,
+    "output": 4005,
+    "cache_read": 2041815,
+    "cache_write": 55962
+  },
+  "leftovers": {
+    "worktrees": 0,
+    "branches": [],
+    "remote_branches": [
+      "count-600"
+    ],
+    "sessions": [],
+    "workspaces": []
+  }
+}

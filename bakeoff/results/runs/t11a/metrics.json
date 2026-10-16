@@ -1,0 +1,35 @@
+{
+  "id": "t11a",
+  "arm": "a",
+  "script": "S11",
+  "repo": "/home/lik/.cache/bees-bakeoff/runs/t11a/t11a",
+  "pane": "w8A:p1",
+  "lead": "lead-t11a",
+  "workspace": "w8A",
+  "created": "2026-10-16T12:17:49.146Z",
+  "wall_s": 355,
+  "captain_turns": 5,
+  "interventions": 2,
+  "check": {
+    "script": "S11",
+    "pass": true,
+    "failures": []
+  },
+  "tokens": {
+    "sessions": 1,
+    "subagents": 2,
+    "input": 108,
+    "output": 7404,
+    "cache_read": 2021526,
+    "cache_write": 81449
+  },
+  "leftovers": {
+    "worktrees": 0,
+    "branches": [],
+    "remote_branches": [
+      "count-500"
+    ],
+    "sessions": [],
+    "workspaces": []
+  }
+}

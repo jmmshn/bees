@@ -1,0 +1,35 @@
+{
+  "id": "t16a",
+  "arm": "a",
+  "script": "S16",
+  "repo": "/home/lik/.cache/bees-bakeoff/runs/t16a/t16a",
+  "pane": "w9F:p1",
+  "lead": "lead-t16a",
+  "workspace": "w9F",
+  "created": "2026-10-16T12:44:12.118Z",
+  "wall_s": 187,
+  "captain_turns": 3,
+  "interventions": 2,
+  "check": {
+    "script": "S16",
+    "pass": true,
+    "failures": []
+  },
+  "tokens": {
+    "sessions": 2,
+    "subagents": 1,
+    "input": 46,
+    "output": 3886,
+    "cache_read": 876524,
+    "cache_write": 67864
+  },
+  "leftovers": {
+    "worktrees": 0,
+    "branches": [],
+    "remote_branches": [
+      "count-400"
+    ],
+    "sessions": [],
+    "workspaces": []
+  }
+}

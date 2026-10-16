@@ -1,0 +1,15 @@
+2026-10-16T12:18:43.121Z captain: build count.txt with the numbers 1 to 500, one per line, in 5 commits of 100 lines each, sleeping 30 seconds between commits (it's a durability test, keep the sleeps)
+2026-10-16T12:20:26.912Z captain[intervention]: lead footer: down, down to select worker row 'general-purpose', pressed x to stop it
+2026-10-16T12:20:32.443Z event: worker killed (stopped via lead footer x, 'x to clear' shown); 2 commits: bf91e44 count: lines 1-100, 1862299 count: lines 101-200 on branch count-500
+2026-10-16T12:20:42.245Z event: late kill: 3rd commit 54dddfd (lines 201-300) landed 12:20:21Z, 5s before the x at 12:20:26Z (footer navigation took ~35s after the 2-commit trigger at 12:19:48Z); worker stopped at 300 lines, no further shells running
+2026-10-16T12:20:42.551Z captain: the worker died at 200 lines. Resume it from where it stopped, don't start over
+2026-10-16T12:21:18.702Z captain[intervention]: first send of the resume line was swallowed (footer row still focused: Enter opened the worker view, text discarded); up/enter/up back to the lead input, resending
+2026-10-16T12:22:30.626Z event: lead tried SendMessage to stopped worker -> 'was stopped by the user and was not resumed'; spawned new subagent counter-2 in the SAME worktree/branch count-500, resuming at 301 (lead saw 3 commits); counter-2 hit sleep-30 block, lead allowed run_in_background
+2026-10-16T12:23:32.348Z event: lead reports ready (count-500, 5 commits bf91e44 1862299 54dddfd db01662 7cc43c0)
+2026-10-16T12:23:32.654Z captain: merge it
+2026-10-16T12:23:43.364Z event: lead merged count-500 into main and pushed (merge a3600c0); asks whether to remove worktree+branch
+2026-10-16T12:23:43.670Z captain: clean up
+2026-10-16T12:24:29.470Z captain[blocked]: typing lead's '! git push origin --delete count-500' into the lead pane (my auto-mode check denied it as Auto-Mode Bypass); remote branch count-500 left on origin
+2026-10-16T12:24:29.775Z captain: end
+2026-10-16T12:24:38.319Z event: original commits bf91e44 and 1862299 (and 54dddfd) are ancestors of main (merge a3600c0, --no-ff); main:count.txt == 1..500
+2026-10-16T12:24:38.321Z end

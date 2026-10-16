@@ -1,0 +1,13 @@
+2026-10-16T12:29:41.318Z captain: build count.txt with the numbers 1 to 500, one per line, in 5 commits of 100 lines each, sleeping 30 seconds between commits (it's a durability test, keep the sleeps)
+2026-10-16T12:30:48.967Z captain[intervention]: kill 562233 (worker w-count claude, pane w8S:p1)
+2026-10-16T12:30:49.998Z event: worker down (killed at 2 commits: 49742d0 count: 1-100, d1c08bb count: 101-200)
+2026-10-16T12:30:53.683Z captain: message the worker: when you finish, add a final line END after 500
+2026-10-16T12:32:25.709Z event: lead says message FAILED (SendMessage: "No agent named 'w-count' is reachable"); lead did not use bs send/queue; it restarted the worker itself unprompted (herdr agent start --resume 5647655c..., same session) with END embedded in the resume brief from memory; worker resumed at 201 (4c11106 count: 201-300)
+2026-10-16T12:32:26.152Z captain: now restart the worker and let it finish
+2026-10-16T12:33:28.256Z event: lead took 'restart' literally: killed the already-resumed worker (at 4 commits, 698b4ab 301-400) and its background sleep, resumed the same session again with END re-stated in the brief from memory
+2026-10-16T12:34:03.818Z event: lead reports ready (w-count 6 commits, f37258a count: END; count.txt = 1..500 then END, 501 lines; END present, but delivered via lead's restart brief, not a stored message)
+2026-10-16T12:34:04.125Z captain: merge it
+2026-10-16T12:34:17.707Z event: merged 9c50e2d, pushed; 49742d0 and d1c08bb both in main history
+2026-10-16T12:34:18.139Z captain: clean up
+2026-10-16T12:34:36.448Z event: cleanup done (w8S closed, worktree + branch removed local and origin)
+2026-10-16T12:34:36.451Z end

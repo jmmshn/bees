@@ -1,0 +1,33 @@
+{
+  "id": "t17b",
+  "arm": "b",
+  "script": "S17",
+  "repo": "/home/lik/.cache/bees-bakeoff/runs/t17b/t17b",
+  "pane": "w9J:p1",
+  "lead": "lead-t17b",
+  "workspace": "w9J",
+  "created": "2026-10-16T12:44:18.445Z",
+  "wall_s": 107,
+  "captain_turns": 2,
+  "interventions": 1,
+  "check": {
+    "script": "S17",
+    "pass": true,
+    "failures": []
+  },
+  "tokens": {
+    "sessions": 3,
+    "subagents": 0,
+    "input": 34,
+    "output": 3600,
+    "cache_read": 746741,
+    "cache_write": 67792
+  },
+  "leftovers": {
+    "worktrees": 0,
+    "branches": [],
+    "remote_branches": [],
+    "sessions": [],
+    "workspaces": []
+  }
+}

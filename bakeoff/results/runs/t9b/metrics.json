@@ -1,0 +1,35 @@
+{
+  "id": "t9b",
+  "arm": "b",
+  "script": "S9",
+  "repo": "/home/lik/.cache/bees-bakeoff/runs/t9b/t9b",
+  "pane": "w85:p1",
+  "lead": "lead-t9b",
+  "workspace": "w85",
+  "created": "2026-10-16T12:09:26.116Z",
+  "wall_s": 317,
+  "captain_turns": 4,
+  "interventions": 0,
+  "check": {
+    "script": "S9",
+    "pass": true,
+    "failures": []
+  },
+  "tokens": {
+    "sessions": 2,
+    "subagents": 0,
+    "input": 42,
+    "output": 4857,
+    "cache_read": 863607,
+    "cache_write": 48011
+  },
+  "leftovers": {
+    "worktrees": 0,
+    "branches": [],
+    "remote_branches": [
+      "t9b-count"
+    ],
+    "sessions": [],
+    "workspaces": []
+  }
+}

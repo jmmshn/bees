@@ -1,0 +1,35 @@
+{
+  "id": "t12c",
+  "arm": "c",
+  "script": "S12",
+  "repo": "/home/lik/.cache/bees-bakeoff/runs/t12c/t12c",
+  "pane": "w8Q:p1",
+  "lead": "queen-t12c",
+  "workspace": "w8Q",
+  "created": "2026-10-16T12:29:12.560Z",
+  "wall_s": 304,
+  "captain_turns": 4,
+  "interventions": 1,
+  "check": {
+    "script": "S12",
+    "pass": true,
+    "failures": []
+  },
+  "tokens": {
+    "sessions": 2,
+    "subagents": 0,
+    "input": 72,
+    "output": 7740,
+    "cache_read": 1775872,
+    "cache_write": 61917
+  },
+  "leftovers": {
+    "worktrees": 0,
+    "branches": [],
+    "remote_branches": [
+      "t12c-1-1"
+    ],
+    "sessions": [],
+    "workspaces": []
+  }
+}

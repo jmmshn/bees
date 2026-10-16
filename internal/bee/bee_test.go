@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jmmshn/bees/internal/bee"
 	"github.com/jmmshn/bees/internal/logbook"
@@ -18,14 +19,17 @@ import (
 	"github.com/jmmshn/bees/internal/prompt"
 )
 
-// fakeHerdr keeps workspaces and live agents in memory, and records removals.
+// fakeHerdr keeps workspaces and live Claude sessions in memory, and records removals.
+// It is also the fake Claude registry (bee.Sessions), so a start shows up there.
 type fakeHerdr struct {
 	next       int
 	workspaces []bee.Workspace
-	agents     map[string]string // name → pane
+	agents     map[string]string // live Claude sessions: name → pane
 	started    [][]string        // pane, name, args...
 	removed    []string
 	failStart  error
+	liveAnyway bool  // with failStart: Claude came up all the same, as after herdr's timeout
+	aliveErr   error // the registry can't be read
 }
 
 func (h *fakeHerdr) CreateWorktree(ctx context.Context, repo, branch, path, label string) (bee.Workspace, error) {
@@ -39,15 +43,19 @@ func (h *fakeHerdr) CreateWorktree(ctx context.Context, repo, branch, path, labe
 }
 
 func (h *fakeHerdr) StartClaude(ctx context.Context, pane, name string, args ...string) error {
-	if h.failStart != nil {
-		return h.failStart
-	}
 	if err := bee.CheckAgentArgs(args); err != nil { // herdr's own rule, held to real herdr
 		return err
 	}
-	h.started = append(h.started, append([]string{pane, name}, args...))
-	h.agents[name] = pane
-	return nil
+	if h.failStart == nil || h.liveAnyway {
+		h.started = append(h.started, append([]string{pane, name}, args...))
+		h.agents[name] = pane
+	}
+	return h.failStart
+}
+
+func (h *fakeHerdr) Alive(ctx context.Context, name string, wait time.Duration) (bool, error) {
+	_, ok := h.agents[name]
+	return ok, h.aliveErr
 }
 
 func (h *fakeHerdr) RemoveWorktree(ctx context.Context, workspace string) error {
@@ -56,19 +64,11 @@ func (h *fakeHerdr) RemoveWorktree(ctx context.Context, workspace string) error 
 	return nil
 }
 
-func (h *fakeHerdr) Agent(ctx context.Context, name string) (bee.Agent, error) {
-	pane, ok := h.agents[name]
-	if !ok {
-		return bee.Agent{}, bee.ErrNoAgent
-	}
-	return bee.Agent{Name: name, Pane: pane}, nil
-}
-
 func (h *fakeHerdr) Workspaces(ctx context.Context) ([]bee.Workspace, error) {
 	return h.workspaces, nil
 }
 
-// exit simulates the bee's Claude process ending: herdr clears its name.
+// exit simulates the bee's Claude process ending.
 func (h *fakeHerdr) exit(name string) { delete(h.agents, name) }
 
 type fakeBeads map[string]bee.Bead
@@ -106,7 +106,7 @@ func newRig(t *testing.T) rig {
 	}
 	repo := filepath.Join(dir, "bees")
 	p := project.Project{Name: "bees", Repo: repo, Logbook: filepath.Join(dir, "bees.db")}
-	return rig{fleet: bee.Fleet{P: p, LB: lb, H: h, B: beads, Me: "queen-bees"}, h: h, lb: lb, repo: repo}
+	return rig{fleet: bee.Fleet{P: p, LB: lb, H: h, S: h, B: beads, Me: "queen-bees"}, h: h, lb: lb, repo: repo}
 }
 
 func TestName(t *testing.T) {
@@ -276,6 +276,41 @@ func TestBeeWaitingAtAPromptCountsAsStarted(t *testing.T) {
 	st, err := r.fleet.Spawn(ctx, "bees-8")
 	if err != nil || !st.Waiting || st.Name != "bees-8" {
 		t.Fatalf("started = %+v, err = %v; want waiting, no error", st, err)
+	}
+}
+
+func TestHerdrTimeoutWithClaudeRunningCountsAsStarted(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	// herdr stops waiting while Claude is busy with its first prompt (bees-1.14).
+	r.h.failStart, r.h.liveAnyway = fmt.Errorf("herdr agent: timed out waiting for agent startup: %w", bee.ErrUnconfirmed), true
+	st, err := r.fleet.Spawn(ctx, "bees-8")
+	if err != nil || st.Name != "bees-8" || st.Waiting {
+		t.Fatalf("started = %+v, err = %v; want started", st, err)
+	}
+	if _, err := r.fleet.Spawn(ctx, "bees-8"); !errors.Is(err, bee.ErrRunning) {
+		t.Fatalf("second spawn: err = %v, want ErrRunning (herdr never named it, but Claude runs)", err)
+	}
+}
+
+func TestHerdrTimeoutWithNoClaudeIsAFailure(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	r.h.failStart = fmt.Errorf("herdr agent: timed out waiting for agent startup: %w", bee.ErrUnconfirmed)
+	_, err := r.fleet.Spawn(ctx, "bees-8")
+	if !errors.Is(err, bee.ErrUnconfirmed) || !strings.Contains(err.Error(), "herdr pane read w1:p1") {
+		t.Fatalf("err = %v, want ErrUnconfirmed pointing at the pane", err)
+	}
+}
+
+func TestUnreadableRegistryRefusesToRestart(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	r.fleet.Spawn(ctx, "bees-8")
+	r.h.exit("bees-8")
+	r.h.aliveErr = errors.New("registry unreadable")
+	if _, err := r.fleet.Spawn(ctx, "bees-8"); err == nil || len(r.h.started) != 1 {
+		t.Fatalf("err = %v, starts = %d; a failed liveness probe must not start a second Claude", err, len(r.h.started))
 	}
 }
 

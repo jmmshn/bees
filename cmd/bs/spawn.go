@@ -13,7 +13,7 @@ import (
 
 // newFleet builds the Fleet for a command. Tests swap in fakes.
 var newFleet = func(f bee.Fleet) bee.Fleet {
-	f.H, f.B = bee.HerdrCLI{}, bee.BeadsCLI{}
+	f.H, f.S, f.B = bee.HerdrCLI{}, bee.ClaudeSessions{}, bee.BeadsCLI{}
 	return f
 }
 

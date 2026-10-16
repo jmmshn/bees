@@ -237,3 +237,35 @@ func (BeadsCLI) CreateEpic(ctx context.Context, id, title string) error {
 	}
 	return nil
 }
+
+// GitHubCLI asks GitHub through the gh command line.
+type GitHubCLI struct{}
+
+// ghTimeout bounds a gh call: bs end must not hang on a slow or offline network.
+const ghTimeout = 15 * time.Second
+
+func (GitHubCLI) MergedHeads(ctx context.Context, repo, branch string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, ghTimeout)
+	defer cancel()
+	var stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, "gh", "pr", "list", "--head", branch, "--state", "merged", "--json", "headRefOid", "--limit", "100")
+	cmd.Dir, cmd.Stderr, cmd.WaitDelay = repo, &stderr, time.Second
+	out, err := cmd.Output()
+	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return nil, fmt.Errorf("gh pr list: %w: %s", err, msg)
+		}
+		return nil, fmt.Errorf("gh pr list: %w", err)
+	}
+	var prs []struct {
+		Head string `json:"headRefOid"`
+	}
+	if err := json.Unmarshal(out, &prs); err != nil {
+		return nil, fmt.Errorf("gh pr list: %w", err)
+	}
+	heads := make([]string, len(prs))
+	for i, p := range prs {
+		heads[i] = p.Head
+	}
+	return heads, nil
+}

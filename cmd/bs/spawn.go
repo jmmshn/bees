@@ -13,7 +13,7 @@ import (
 
 // newFleet builds the Fleet for a command. Tests swap in fakes.
 var newFleet = func(f bee.Fleet) bee.Fleet {
-	f.H, f.S, f.B = bee.HerdrCLI{}, bee.ClaudeSessions{}, bee.BeadsCLI{}
+	f.H, f.S, f.B, f.G = bee.HerdrCLI{}, bee.ClaudeSessions{}, bee.BeadsCLI{}, bee.GitHubCLI{}
 	return f
 }
 
@@ -100,8 +100,8 @@ func cmdEnd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 		return err
 	}
 	fmt.Fprintf(stdout, "ended %s\n", pos[0])
-	if kept {
-		fmt.Fprintf(stdout, "kept branch %s: it has work not merged yet\n", pos[0])
+	if kept != "" {
+		fmt.Fprintf(stdout, "kept branch %s: %s\n", pos[0], kept)
 	}
 	return nil
 }

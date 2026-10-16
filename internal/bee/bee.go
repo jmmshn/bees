@@ -66,6 +66,7 @@ type Fleet struct {
 	H           Herdr
 	S           Sessions
 	B           Beads
+	G           GitHub // nil: End proves a merge from git alone
 	Me          string // the queen doing the spawning
 	ForeignRepo bool   // skip the check that the bead belongs to P (--repo)
 }
@@ -214,27 +215,27 @@ const confirmWait = 20 * time.Second
 
 // End removes the bee's recorded workspace and records the end. It never asks herdr
 // which workspace to remove. Ending an ended bee is a no-op. The bee's branch is
-// deleted if fully merged, so the bead can be spawned again; branchKept reports an
-// unmerged branch left in place with its work.
-func (f Fleet) End(ctx context.Context, name string) (branchKept bool, err error) {
+// deleted once its work is proven merged, so the bead can be spawned again; kept says
+// why a branch was left in place with its work ("" when deleted or absent).
+func (f Fleet) End(ctx context.Context, name string) (kept string, err error) {
 	sp, ok, err := f.LB.LatestSpawn(ctx, name)
 	if err != nil {
-		return false, err
+		return "", err
 	}
 	if !ok {
-		return false, fmt.Errorf("%s: %w", name, ErrNotSpawned)
+		return "", fmt.Errorf("%s: %w", name, ErrNotSpawned)
 	}
 	if sp.Ended {
-		return false, nil
+		return "", nil
 	}
 	if err := f.H.RemoveWorktree(ctx, sp.Workspace); err != nil {
-		return false, err
+		return "", err
 	}
 	repo := cmp.Or(sp.Repo, f.P.Repo)
 	if exec.CommandContext(ctx, "git", "-C", repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+sp.Branch).Run() == nil {
-		branchKept = exec.CommandContext(ctx, "git", "-C", repo, "branch", "-d", sp.Branch).Run() != nil
+		kept = dropBranch(ctx, f.G, repo, sp.Branch)
 	}
-	return branchKept, f.LB.RecordEnd(ctx, f.Me, sp.ID)
+	return kept, f.LB.RecordEnd(ctx, f.Me, sp.ID)
 }
 
 func brief(b Bead) string {

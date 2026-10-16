@@ -76,6 +76,9 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if err != nil {
 		return err
 	}
+	if err := startWatcher(f.P, st.Name, st.Spawn, f.Me); err != nil {
+		fmt.Fprintf(stderr, "bs spawn: no watcher on %s, so nothing will say if it stops without reporting: %v\n", st.Name, err)
+	}
 	switch {
 	case st.Continued:
 		fmt.Fprintf(stdout, "resumed %s (%s) in workspace %s\n", st.Name, st.Label, st.Workspace)

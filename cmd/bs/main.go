@@ -25,6 +25,7 @@ commands:
   inbox     print your unread messages and record receipts
   status    list running sessions and unread counts (--json for scripts)
   version   print the commit bs was built from
+  watch     (started by spawn) tell the spawner if the bee stops without saying done
 `
 
 // commands maps each implemented subcommand to its handler.
@@ -40,6 +41,7 @@ var commands = map[string]func(ctx context.Context, args []string, stdin io.Read
 	"bead":    cmdBead,
 	"status":  cmdStatus,
 	"version": cmdVersion,
+	"watch":   cmdWatch,
 }
 
 // exitCode is an error that only sets bs's exit status; the command has printed why.

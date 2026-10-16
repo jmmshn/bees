@@ -70,6 +70,17 @@ type Sessions interface {
 	// Alive reports whether a session called name is live, waiting up to wait for one
 	// to appear.
 	Alive(ctx context.Context, name string, wait time.Duration) (bool, error)
+	// Proc returns the live Claude process called name; ok is false when there is none.
+	Proc(ctx context.Context, name string) (p Proc, ok bool, err error)
+	// Exited reports whether p has exited: its pid is gone or now another process's.
+	Exited(p Proc) (bool, error)
+}
+
+// Proc is one Claude process, pinned by pid and start time.
+type Proc struct {
+	Name  string
+	PID   int
+	Start string
 }
 
 // Beads reads beads.
@@ -126,9 +137,10 @@ func NextEpic(project string, ids []string) string {
 // Started describes a bee Spawn started.
 type Started struct {
 	Name, Label, Workspace string
-	Resumed                bool // restarted in its recorded workspace
-	Continued              bool // resumed with its last conversation (claude --continue)
-	Waiting                bool // Claude is waiting at a prompt (e.g. folder trust) in its pane
+	Spawn                  logbook.ID // the spawn record it started under
+	Resumed                bool       // restarted in its recorded workspace
+	Continued              bool       // resumed with its last conversation (claude --continue)
+	Waiting                bool       // Claude is waiting at a prompt (e.g. folder trust) in its pane
 }
 
 // Spawn starts a bee for bead with label as its herdr workspace label, or restarts it
@@ -208,7 +220,7 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 	// repo's project: a system prompt naming P would mislead it, and its receipts go to
 	// that project's logbook, so sp.Read can't tell and a restart always continues.
 	foreign := f.ForeignRepo || cmp.Or(sp.Repo, f.P.Repo) != f.P.Repo
-	st := Started{Name: sp.Name, Label: sp.Label, Workspace: sp.Workspace, Resumed: resume, Continued: resume && (sp.Read || foreign)}
+	st := Started{Name: sp.Name, Label: sp.Label, Workspace: sp.Workspace, Spawn: sp.ID, Resumed: resume, Continued: resume && (sp.Read || foreign)}
 	doorbell := fmt.Sprintf("[bs] you are %s, working on %s — run: bs inbox   (reply with: bs send %s \"...\")", sp.Name, sp.Bead, f.Me)
 	args := []string{"--name", sp.Name, "--settings", beeSettings}
 	if !foreign {

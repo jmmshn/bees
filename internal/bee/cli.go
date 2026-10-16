@@ -166,6 +166,19 @@ func (ClaudeSessions) Alive(ctx context.Context, name string, wait time.Duration
 	}
 }
 
+func (ClaudeSessions) Proc(ctx context.Context, name string) (Proc, bool, error) {
+	s, err := claude.Find(name)
+	if errors.Is(err, claude.ErrNotRunning) {
+		return Proc{}, false, nil
+	}
+	if err != nil {
+		return Proc{}, false, err
+	}
+	return Proc{Name: s.Name, PID: s.PID, Start: s.ProcStart}, true, nil
+}
+
+func (ClaudeSessions) Exited(p Proc) (bool, error) { return claude.Exited(p.PID, p.Start) }
+
 // BeadsCLI reads beads with the bd command line.
 type BeadsCLI struct{}
 

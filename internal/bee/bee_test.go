@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 // (TestHerdrKeepsLabelsVerbatim), so CheckLabel is bs's rule, not herdr's.
 // It is also the fake Claude registry (bee.Sessions), so a start shows up there.
 type fakeHerdr struct {
+	mu         sync.Mutex // agents, between a watcher and the test
 	next       int
 	workspaces []bee.Workspace
 	agents     map[string]string // live Claude sessions: name → pane
@@ -50,14 +52,33 @@ func (h *fakeHerdr) StartClaude(ctx context.Context, pane, name string, args ...
 	}
 	if h.failStart == nil || h.liveAnyway {
 		h.started = append(h.started, append([]string{pane, name}, args...))
+		h.mu.Lock()
 		h.agents[name] = pane
+		h.mu.Unlock()
 	}
 	return h.failStart
 }
 
 func (h *fakeHerdr) Alive(ctx context.Context, name string, wait time.Duration) (bool, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	_, ok := h.agents[name]
 	return ok, h.aliveErr
+}
+
+// Proc and Exited use the pane as the process's identity: a restart is a new start.
+func (h *fakeHerdr) Proc(ctx context.Context, name string) (bee.Proc, bool, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	pane, ok := h.agents[name]
+	return bee.Proc{Name: name, PID: len(h.started), Start: pane}, ok, h.aliveErr
+}
+
+func (h *fakeHerdr) Exited(p bee.Proc) (bool, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	_, ok := h.agents[p.Name]
+	return !ok, nil
 }
 
 func (h *fakeHerdr) RemoveWorktree(ctx context.Context, workspace string) error {
@@ -71,7 +92,11 @@ func (h *fakeHerdr) Workspaces(ctx context.Context) ([]bee.Workspace, error) {
 }
 
 // exit simulates the bee's Claude process ending.
-func (h *fakeHerdr) exit(name string) { delete(h.agents, name) }
+func (h *fakeHerdr) exit(name string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.agents, name)
+}
 
 type fakeBeads map[string]bee.Bead
 

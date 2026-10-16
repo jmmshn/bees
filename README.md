@@ -32,9 +32,9 @@ Full setup: [docs/SETUP.md](docs/SETUP.md). For a guided setup, open Claude Code
 repo and run the [`/setup-bees`](.claude/skills/setup-bees/SKILL.md) skill; it installs
 and checks each piece in turn.
 
-![Lindsay: "Beads." Gob: "BEES?" Lindsay: "BEADS!" Gob: "BEADS?!?"](docs/img/bees-beads.gif)
+![Beads. BEES? BEADS! BEADS?!?](docs/img/bees-beads.gif)
 
-![beads (bd, the tracker), misheard as bees (the fleet), shortened to bs (the CLI)](docs/img/beads-bees-bs.svg)
+![beads → bees → bs](docs/img/beads-bees-bs.svg)
 
 Details: [docs/SPEC.md](docs/SPEC.md) · decisions: [docs/adr/](docs/adr/) ·
 vocabulary: [GLOSSARY.md](GLOSSARY.md)

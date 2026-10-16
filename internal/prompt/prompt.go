@@ -17,12 +17,32 @@ func System(project string) string {
 	return strings.ReplaceAll(system, "{{project}}", project)
 }
 
-// WriteFile writes System(project) to <dir>/<project>-system.md and returns its path,
-// for --append-system-prompt-file: herdr refuses agent arguments containing newlines.
-func WriteFile(dir, project string) (string, error) {
-	path := filepath.Join(dir, project+"-system.md")
+// File writes System(project) to <user cache dir>/bees/<project>-system.md and returns
+// its path, for claude --append-system-prompt-file. Queen and bees both launch with the
+// file, because herdr refuses agent arguments containing newlines (bee.CheckAgentArgs).
+// It is rewritten at every launch, through a rename so a concurrent launch never reads
+// half a file, and Claude reads it only at startup.
+func File(project string) (string, error) {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(cache, "bees")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	return path, os.WriteFile(path, []byte(System(project)), 0o644)
+	tmp, err := os.CreateTemp(dir, project+"-system-*.md")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(tmp.Name()) // a no-op once renamed
+	if _, err := tmp.WriteString(System(project)); err != nil {
+		tmp.Close()
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, project+"-system.md")
+	return path, os.Rename(tmp.Name(), path)
 }

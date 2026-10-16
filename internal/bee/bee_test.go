@@ -15,6 +15,7 @@ import (
 	"github.com/jmmshn/bees/internal/bee"
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/project"
+	"github.com/jmmshn/bees/internal/prompt"
 )
 
 // fakeHerdr keeps workspaces and live agents in memory, and records removals.
@@ -91,6 +92,7 @@ func newRig(t *testing.T) rig {
 	t.Helper()
 	ctx := context.Background()
 	dir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache"))
 	lb, err := logbook.Open(ctx, filepath.Join(dir, "bees.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -246,7 +248,7 @@ func TestBeesStartWithTheProjectsSystemPrompt(t *testing.T) {
 		if i < 0 {
 			t.Fatalf("start = %q, want internal/prompt/system.md appended to the system prompt", start)
 		}
-		if b, err := os.ReadFile(start[i+1]); err != nil || !strings.Contains(string(b), "bs bead new --parent bees-N") {
+		if b, err := os.ReadFile(start[i+1]); err != nil || string(b) != prompt.System("bees") {
 			t.Fatalf("prompt file %s: %v\n%s", start[i+1], err, b)
 		}
 	}

@@ -1,2 +1,2 @@
-- An auto-mode permission denial → the captain declined → stop and hand the captain the exact command as a `! <cmd>` line; never retry, reword, or route it through another session.
+- An auto-mode permission denial → the keeper declined → stop and hand the keeper the exact command as a `! <cmd>` line; never retry, reword, or route it through another session.
 - Calling herdr directly → herdr refuses agent arguments containing control characters (newlines) → put text in a file and pass its path.

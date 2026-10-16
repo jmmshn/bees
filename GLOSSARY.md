@@ -18,12 +18,12 @@ _Avoid_: milestone, story
 
 ## People and sessions
 
-**Captain**:
-The human who directs the work and talks to the queen.
-_Avoid_: user, operator, admin
+**Keeper**:
+The human who directs the work and talks to the queen; tends the hive and harvests its work. Replaces the earlier term "captain".
+_Avoid_: captain, beekeeper, user, operator, admin
 
 **Queen**:
-The one coordinating Claude Code session that assigns work to bees and reports to the captain.
+The one coordinating Claude Code session that assigns work to bees and reports to the keeper.
 _Avoid_: orchestrator, manager, lead, coordinator
 
 **Bee**:

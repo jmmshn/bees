@@ -29,7 +29,7 @@ jq -n --arg id "$id" --arg arm "$arm" --arg s "S$s" --arg repo "$repo" --arg pan
 	'{id:$id,arm:$arm,script:$s,repo:$repo,pane:$pane,lead:$name,workspace:$ws,created:$t0}' > "$dir/run.json"
 herdr pane run "$pane" "$cmd" >/dev/null
 cat "$dir/run.json"
-# The captain trusts the new folder once (Claude keys trust by repo root), as a human would.
+# The keeper trusts the new folder once (Claude keys trust by repo root), as a human would.
 for _ in $(seq 30); do
 	herdr pane read "$pane" 2>/dev/null | grep -q "Yes, I trust this folder" && { herdr pane send-keys "$pane" down enter >/dev/null; break; }
 	sleep 1

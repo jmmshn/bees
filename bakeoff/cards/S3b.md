@@ -7,4 +7,4 @@ S3 with a worker slow enough to steer: in S3 every arm's worker finished in abou
 3. Log `event:` when the steer reaches the worker: the first commit or worker message that shows it (the lead says it relayed it; the story stops growing past 6 lines; the rhyme shows up).
 4. Lead reports ready → `merge it` → merged → `clean up` unless already done → `end`.
 
-Optimal: the steer reaches the same running worker within one sleep (≤ 25 s), the story stops at 6 lines, rhyming AABB, one branch, no second worker. Captain turns: 3.
+Optimal: the steer reaches the same running worker within one sleep (≤ 25 s), the story stops at 6 lines, rhyming AABB, one branch, no second worker. Keeper turns: 3.

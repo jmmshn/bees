@@ -10,10 +10,10 @@ Status: **accepted**, **superseded** (replaced by a later decision), or **open**
 |---|---|---|---|
 | — | Build bees now. Claude Code's own tools don't cover: messages that survive a session exiting, bees in herdr panes, binding a session to a bead and worktree, and omp. v0 alone is thin; the real value is v1. Re-check Claude Code's native features before starting v1. | accepted | bees-1 notes |
 | S1 | The spec lives in the repo: `docs/SPEC.md`, `GLOSSARY.md`, `docs/adr/`. | accepted | this file |
-| S3 | Desk only; no phone path in v1 (that stays with dotfiles-4). Things that need the captain show up in `bs status`. | accepted | SPEC v1 outline |
+| S3 | Desk only; no phone path in v1 (that stays with dotfiles-4). Things that need the keeper show up in `bs status`. | accepted | SPEC v1 outline |
 | S4 | Claude Code only for v0/v1, behind a harness interface (`Launch`, `Ring`, `Alive`). omp comes in v1.1 through an in-process extension. | accepted | SPEC v1 outline |
 | R5 | Linux only. | accepted | SPEC |
-| R7 | Vocabulary: captain, queen, bee, session, logbook, entry, message, receipt, unread, inbox, doorbell, ring. | accepted | GLOSSARY |
+| R7 | Vocabulary: keeper, queen, bee, session, logbook, entry, message, receipt, unread, inbox, doorbell, ring. | accepted | GLOSSARY |
 
 ## Messaging model
 
@@ -24,7 +24,7 @@ Status: **accepted**, **superseded** (replaced by a later decision), or **open**
 | — | Claude Code's 50-message socket queue is not a limit for bees, because one doorbell covers all of a session's unread messages. | accepted | ADR-0001 |
 | R1 | One append-only `entries` table. Unread = messages to me with no receipt from me, computed every time. No cursor, no time window, no mutable inbox. | accepted | ADR-0002 |
 | R12 | A receipt's id is derived from the message and the session (`rcv:<msg>:<session>`) and written with `INSERT OR IGNORE`, so a duplicate is a no-op. | accepted | ADR-0002, SPEC |
-| R13 | "Needs the captain" is a message addressed to `captain`, not a separate field. | open (v1) | SPEC v1 outline |
+| R13 | "Needs the keeper" is a message addressed to `keeper`, not a separate field. | open (v1) | SPEC v1 outline |
 
 ## Storage
 
@@ -102,6 +102,7 @@ Status: **accepted**, **superseded** (replaced by a later decision), or **open**
 | R41 | Herdr workspace labels are natural language (bees-1.20): `bs spawn --label "<words>"`, required on a first spawn, 1–4 lowercase words of `[a-z0-9]`, ≤ 32 characters, refused (never rewritten) when bad; the queen writes it from the bead (QUEEN.md gives the rules and examples). A restart reuses the recorded label and refuses another. The label is recorded in the spawn entry and shown by `bs status`. Identity never rides on it: an orphan is found by its worktree path `<repo>-WT/<name>`. Amends ADR-0006. | accepted | SPEC |
 | R42 | `bs end` keeps the branch; `bs prune [--dry-run]` deletes branches (bees-1.17). `git branch -d` proves a merge by ancestry only, so after a rebase or squash merge `bs end` kept the branch and claimed unmerged work. Now `end` only removes the workspace and records `ended`, and prints `branch <b> kept; bs prune deletes it once merged`. `prune` looks only at branches of bees whose latest spawn has ended, as the logbook recorded them, and proves a merge by ancestry, a merged GitHub PR whose head is the branch tip, or every changed path identical on the default branch. It deletes with `git branch -D` and never touches remotes; kept branches say "not merged" (exit 3) or "could not check" (exit 4). Amends ADR-0006. | accepted | SPEC, ADR-0006 |
 | R43 | `bs spawn` takes many beads (bees-1.35): `bs spawn --label L1 b1 --label L2 b2`, each `--label` going with the bead after it. Every bead is checked first (label rules, a first spawn needs a label, a bee named twice); any such refusal starts nothing and exits 2. Then each bee's worktree and spawn record are made one at a time, and the Claude starts (herdr waits ~10 s for each) run in parallel, so a fan-out costs one start, not one per bee. One line per bead; past the checks a failure doesn't stop the others, and any failure exits 1. `--repo` comes before the first bead and applies to all: one repo per call. | accepted | SPEC |
+| R44 | The human's role is the keeper, not the captain (bees-1.46): it fits the hive (queen, bees; the keeper tends the hive and harvests the work). Renamed across GLOSSARY, docs, role prompts, skills and bakeoff cards and scripts (`keeper.log`, `keeper_turns`, `keeper-wip`). bakeoff/HISTORY.md rows and bakeoff/results/ keep "captain". Amends R7. | accepted | GLOSSARY |
 | R19, R22, R18′ | Roster table, reserve-first spawn, label-only project. | superseded by R18″/R23 | ADR-0006 |
 
 ## Prior art for handoff (bees-1.1)
@@ -110,10 +111,10 @@ Ideas from desk↔phone and agent↔agent handoff tools (research 2026-10-10, pr
 
 | Id | Decision | Status | Recorded in |
 |---|---|---|---|
-| R33 | Transport is Claude Code's cross-session socket, for doorbells only (already R8b, ADR-0001). Kept from the prior art: it delivers between tool calls when busy and starts a turn when idle, so bees need no Stop-hook queue; it never lets a peer answer a permission prompt, so a bee blocked on one needs the captain, not the queen. No herdr-prompt or tmux send-keys injection: no receipt, and text/Enter races. The one exception is a spawned bee's first prompt, passed as a `herdr agent start` argument. | accepted | SPEC |
+| R33 | Transport is Claude Code's cross-session socket, for doorbells only (already R8b, ADR-0001). Kept from the prior art: it delivers between tool calls when busy and starts a turn when idle, so bees need no Stop-hook queue; it never lets a peer answer a permission prompt, so a bee blocked on one needs the keeper, not the queen. No herdr-prompt or tmux send-keys injection: no receipt, and text/Enter races. The one exception is a spawned bee's first prompt, passed as a `herdr agent start` argument. | accepted | SPEC |
 | R34 | Receipts are the acks (MCP Agent Mail's `acked_at`, already R1/R12): a message with no receipt is the unacked set, re-rung by R9. A receipt means "shown", not "done"; the answer is a reply message. | accepted | ADR-0002 |
 | R35 | A message's `data` may carry `bead` (the thread: the bead id, as Agent Mail threads by task) and `needs`: `none` (default; report or FYI), `answer` (a question) or `approval` (a yes/no that blocks the sender). These are LangChain Agent Inbox's notify/question/review tiers, and A2A's `input-required` is `needs ≠ none`. No `kind`/`severity` envelope: who it's to and `needs` already say how loud it is. `bs send --needs answer\|approval`, `--bead` (default: the sender's own bead). | open (v1) | SPEC v1 outline |
 | R36 | An answer is a message whose `ref` is the question's id (`bs send --re <id>`). A question is open while no message refers to it; the first answer wins and later ones are shown but change nothing (Claude Code Channels' "yes abcde" relay, without a second id: the entry id is the tag, and `bs inbox` prints its short suffix). `bs status` counts open questions per session alongside unread. | open (v1) | SPEC v1 outline |
-| R37 | Escalation is addressing, not a push channel: `needs: approval` or `answer` to `captain` (R13) is what `bs status` lists first. `none` to the captain is a digest line, never listed first. No phone push and no presence gate (Remote Control's presence file), per S3. | open (v1) | SPEC v1 outline |
+| R37 | Escalation is addressing, not a push channel: `needs: approval` or `answer` to `keeper` (R13) is what `bs status` lists first. `none` to the keeper is a digest line, never listed first. No phone push and no presence gate (Remote Control's presence file), per S3. | open (v1) | SPEC v1 outline |
 | R38 | A session's attention state comes from events, never from scraping its screen: Claude hooks (`bs hook`) and herdr's agent status (idle / working / blocked at a prompt) are facts for `Plan` (Kanban Code, herdr `pane.agent_status_changed`). A bee going idle with no open question and no reply since its last receipt can be flagged to the queen; bs never writes a "done" for it. | open (v1) | SPEC v1 outline |
 | — | Considered and rejected: mirroring the whole session to the phone (Happy, Omnara), the opposite of a low-context queen; ACP or A2A as the transport (a server per session, too heavy on one machine); a presence-gated phone push (S3). | rejected | this file |

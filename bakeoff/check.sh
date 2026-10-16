@@ -33,9 +33,9 @@ S14|S14r) ok diff -q <(show count.txt) "$g/count300.txt" ;;
 S15) ok same fruits.txt; ok same todo.txt; ok diff -q <(show count.txt) "$g/count200.txt" ;;
 S16) ok diff -q <(show count.txt) "$g/count400.txt" ;;
 S17) ok same fruits.txt; ok same todo.txt
-	ok test -f "$repo-WT/captain-wip/notes.txt"; ok git -C "$repo" rev-parse -q --verify captain-wip
+	ok test -f "$repo-WT/keeper-wip/notes.txt"; ok git -C "$repo" rev-parse -q --verify keeper-wip
 	# herdr leaves .worktree empty for a workspace made with --cwd: find its pane by cwd instead.
-	ok test -n "$(herdr pane list | jq -r --arg p "$repo-WT/captain-wip" '.result.panes[] | select(.cwd==$p) | .pane_id')" ;;
+	ok test -n "$(herdr pane list | jq -r --arg p "$repo-WT/keeper-wip" '.result.panes[] | select(.cwd==$p) | .pane_id')" ;;
 S9) ok diff -q <(show count.txt) "$g/count600.txt"; ok test "$(git -C "$repo" log --oneline main -- count.txt | wc -l)" -ge 6 ;;
 S8) ok test -z "$(show acrostic.txt)" ;;
 esac

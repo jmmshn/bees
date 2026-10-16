@@ -27,7 +27,7 @@ An earlier tool in this space solved each of these classes, many of them more th
 
 ### Lifecycle
 
-5. **Dead-end states.** A stuck session with no exit, an id that can't be reused, a record that can't be amended. Every live state has an abort; "worker says done" stays separate from "captain closes".
+5. **Dead-end states.** A stuck session with no exit, an id that can't be reused, a record that can't be amended. Every live state has an abort; "worker says done" stays separate from "keeper closes".
 6. **Side effects moving state.** A heartbeat or progress event undoing a delivery. Liveness touches liveness only.
 7. **Twins and zombies.** A failed probe read as "nothing running" spawns a second copy; a superseded spawn attaches late. Fail closed on probe errors; fence each spawn.
 8. **Half-built spawns.** A launch that fails after recording leaves a record, a worktree, or a resume path for a conversation that never started. Make spawn all-or-nothing, or make a second spawn heal it.

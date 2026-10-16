@@ -18,6 +18,6 @@ Your branch is yours: push to it whenever the work needs it, including new commi
 
 Each line: what you see → what it means → what to do. A tagged line goes when its bead closes.
 
-- You need the captain (an approval, a permission, a decision) → asking only in your pane leaves nothing in the logbook (bees-1.25) → also `bs send queen-{{project}} "..."` before you stop.
+- You need the keeper (an approval, a permission, a decision) → asking only in your pane leaves nothing in the logbook (bees-1.25) → also `bs send queen-{{project}} "..."` before you stop.
 - A shared tool (bs, a linter) to rebuild → `go install` from your branch replaces everyone's copy (bees-1.26) → build into your worktree (e.g. `go build -o bin/bs ./cmd/bs`) and run that; change nothing outside your worktree.
 - A live check needs a throwaway bead or spawn → it pollutes the real project (bees-1.28) → `bs end` it, `bd close` the bead, and list both in your done message.

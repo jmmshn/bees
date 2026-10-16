@@ -73,7 +73,7 @@ can never lose a message.
 
 ```mermaid
 flowchart LR
-    subgraph captain["Captain (you)"]
+    subgraph keeper["Keeper (you)"]
         H[talks only to the queen]
     end
     subgraph queen["claude --name queen-bees"]
@@ -210,4 +210,4 @@ instead of acting on them.
 
 v0 on Linux: every "Done when" item in [SPEC](docs/SPEC.md#done-when) passes (`go test ./...`
 and `scripts/e2e.sh <throwaway bead>`). The [v1 outline](docs/SPEC.md#v1-outline) adds
-re-ringing, hooks, a captain inbox and an omp adapter.
+re-ringing, hooks, a keeper inbox and an omp adapter.

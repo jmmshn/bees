@@ -2,7 +2,7 @@
 
 Scripted interaction runs that compare bees against Claude Code alone on toy problems (bees-1.33). The results are written up in [docs/bakeoff.md](../docs/bakeoff.md).
 
-Each **script** (`cards/S*.md`, S1–S17) is a captain's card: the exact lines a human types to a lead session, what triggers each line, and the optimal play. Each script is played by three **arms**:
+Each **script** (`cards/S*.md`, S1–S17) is a keeper's card: the exact lines a human types to a lead session, what triggers each line, and the optimal play. Each script is played by three **arms**:
 
 | Arm | Lead | Workers |
 |---|---|---|
@@ -14,9 +14,9 @@ Each **script** (`cards/S*.md`, S1–S17) is a captain's card: the exact lines a
 
 ```sh
 bakeoff/mkrun.sh c 3                       # fresh toy repo + bare origin + lead in a herdr workspace -> runs/t3c
-# play cards/S3.md by hand, or tell a captain agent: "read cards/DRIVER.md, then play cards/S3.md against <run dir>"
+# play cards/S3.md by hand, or tell a keeper agent: "read cards/DRIVER.md, then play cards/S3.md against <run dir>"
 bakeoff/observe.sh ~/.cache/bees-bakeoff/runs/t3c   # snapshot: lead, worker panes, branches
-bakeoff/collect.sh ~/.cache/bees-bakeoff/runs/t3c   # metrics.json: wall time, captain turns, interventions, tokens, leftovers, check
+bakeoff/collect.sh ~/.cache/bees-bakeoff/runs/t3c   # metrics.json: wall time, keeper turns, interventions, tokens, leftovers, check
 ```
 
 - **Location of runs.** Runs live in `$BAKEOFF_RUNS`, which defaults to `~/.cache/bees-bakeoff/runs`. That directory is outside any repo on purpose: Claude walks up parent directories for `CLAUDE.md`, so a toy repo placed inside bees would load bees' dogfood rules into every lead.
@@ -25,6 +25,6 @@ bakeoff/collect.sh ~/.cache/bees-bakeoff/runs/t3c   # metrics.json: wall time, c
   - `fixtures/toy/` is the starting tree. It includes an `AGENTS.md` that says to push the branch and report the sha instead of opening a PR, and a `.claude/settings.json` that sets auto mode and accepts cross-session messages.
   - `fixtures/golden/` holds the expected results.
   - `check.sh` grades a run against them.
-- **Setup steps the harness does for the captain.**
+- **Setup steps the harness does for the keeper.**
   - Each new toy repo gets `commit.gpgsign false`.
   - `mkrun.sh` answers Claude's folder-trust prompt once.

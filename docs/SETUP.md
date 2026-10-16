@@ -59,7 +59,7 @@ go test ./...                      # includes a writer killed mid-send losing no
 scripts/e2e.sh <throwaway bead>    # real queen + bee in herdr: wake ≤ 2 s, round trip, queued mail
 ```
 
-`scripts/e2e.sh` writes to the project's logbook (as `e2e-queen`, `e2e-captain` and the bee) and cleans up its workspaces.
+`scripts/e2e.sh` writes to the project's logbook (as `e2e-queen`, `e2e-keeper` and the bee) and cleans up its workspaces.
 
 ## CI
 

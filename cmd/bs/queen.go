@@ -50,7 +50,7 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
 		return strings.HasPrefix(kv, "BS_SESSION=") || strings.HasPrefix(kv, "BS_PROJECT=")
 	})
-	file, err := prompt.File(p.Name)
+	file, err := prompt.File(prompt.Queen, p.Name)
 	if err != nil {
 		return err
 	}

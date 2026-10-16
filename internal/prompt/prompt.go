@@ -1,5 +1,6 @@
-// Package prompt holds the system prompt bs appends to every queen and bee it
-// launches. The text lives in system.md, tracked in the repo (R32).
+// Package prompt holds the role prompts bs appends to the sessions it launches:
+// QUEEN.md for the queen, WORKER.md for workers, each followed by BEADS.md, the bead
+// rules both share. The text is tracked in the repo (R32, R40).
 package prompt
 
 import (
@@ -9,20 +10,38 @@ import (
 	"strings"
 )
 
-//go:embed system.md
-var system string
+// Role picks a role prompt; its value names the cache file.
+type Role string
 
-// System is system.md with {{project}} filled in.
-func System(project string) string {
-	return strings.ReplaceAll(system, "{{project}}", project)
+const (
+	Queen  Role = "queen"
+	Worker Role = "worker"
+)
+
+var (
+	//go:embed QUEEN.md
+	queen string
+	//go:embed WORKER.md
+	worker string
+	//go:embed BEADS.md
+	beads string
+)
+
+// Text is r's prompt followed by BEADS.md, with {{project}} filled in.
+func Text(r Role, project string) string {
+	role := worker
+	if r == Queen {
+		role = queen
+	}
+	return strings.ReplaceAll(role+beads, "{{project}}", project)
 }
 
-// File writes System(project) to <user cache dir>/bees/<project>-system.md and returns
-// its path, for claude --append-system-prompt-file. Queen and bees both launch with the
+// File writes Text(r, project) to <user cache dir>/bees/<project>-<role>.md and returns
+// its path, for claude --append-system-prompt-file. Queen and workers both launch with a
 // file, because herdr refuses agent arguments containing newlines (bee.CheckAgentArgs).
 // It is rewritten at every launch, through a rename so a concurrent launch never reads
 // half a file, and Claude reads it only at startup.
-func File(project string) (string, error) {
+func File(r Role, project string) (string, error) {
 	cache, err := os.UserCacheDir()
 	if err != nil {
 		return "", err
@@ -31,18 +50,19 @@ func File(project string) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	tmp, err := os.CreateTemp(dir, project+"-system-*.md")
+	name := project + "-" + string(r)
+	tmp, err := os.CreateTemp(dir, name+"-*.md")
 	if err != nil {
 		return "", err
 	}
 	defer os.Remove(tmp.Name()) // a no-op once renamed
-	if _, err := tmp.WriteString(System(project)); err != nil {
+	if _, err := tmp.WriteString(Text(r, project)); err != nil {
 		tmp.Close()
 		return "", err
 	}
 	if err := tmp.Close(); err != nil {
 		return "", err
 	}
-	path := filepath.Join(dir, project+"-system.md")
+	path := filepath.Join(dir, name+".md")
 	return path, os.Rename(tmp.Name(), path)
 }

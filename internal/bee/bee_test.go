@@ -311,9 +311,9 @@ func TestBeesStartWithTheProjectsSystemPrompt(t *testing.T) {
 	for _, start := range r.h.started {
 		i := slices.Index(start, "--append-system-prompt-file")
 		if i < 0 {
-			t.Fatalf("start = %q, want internal/prompt/system.md appended to the system prompt", start)
+			t.Fatalf("start = %q, want internal/prompt/WORKER.md appended to the system prompt", start)
 		}
-		if b, err := os.ReadFile(start[i+1]); err != nil || string(b) != prompt.System("bees") {
+		if b, err := os.ReadFile(start[i+1]); err != nil || string(b) != prompt.Text(prompt.Worker, "bees") {
 			t.Fatalf("prompt file %s: %v\n%s", start[i+1], err, b)
 		}
 	}

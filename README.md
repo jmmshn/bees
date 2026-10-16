@@ -1,36 +1,74 @@
 # bees
 
-> Private. A small Go CLI, `bs`, that lets several Claude Code sessions on one codebase
-> hand each other work and **wake each other up**, with nobody typing in either window.
+> `bs` is a small Go CLI that runs one Claude Code session per bead on a codebase,
+> and lets those sessions hand each other work and **wake each other up**, with nobody typing.
 
-A **queen** session splits work into beads and spawns a **bee** for each one, in its own
-git worktree. They talk through `bs send` and `bs inbox`. Each message is stored in a
-SQLite **logbook** first, and then a **doorbell** prompt is pushed into the recipient's
-Claude session so it acts even when it was sitting idle.
+**Every piece of work is a bead.** A **queen** session files work as
+[beads](https://github.com/steveyegge/beads) (`bd`) and spawns a **bee** per bead: a
+Claude Code session in its own git worktree. The bead is the bee's brief, its name
+(`bees-2.1` → session, branch and worktree `bees-2-1`) and its exit: the work is done
+only when its PR merges and the queen runs `bd close`. Nothing runs that isn't tracked.
+
+Queen and bees talk with `bs send` and `bs inbox`. Each message lands in a SQLite
+**logbook** first; then a **doorbell** prompt goes into the recipient's Claude session,
+so an idle session acts on it without anyone typing.
+
+## Install
+
+Private repo, Linux only. Needs [Go](https://go.dev/dl/), [Claude Code](https://code.claude.com)
+2.1.296 or later (cross-session messaging), [herdr](https://herdr.dev) to run bees,
+and [`bd`](https://github.com/steveyegge/beads) for beads.
 
 ```sh
-go build -o bin/bs ./cmd/bs
-go test ./...
+git clone git@github.com:jmmshn/bees.git && cd bees
+go install ./cmd/bs
+bs version
 ```
+
+Then start `herdr`, `cd` into your project, give it a beads store (`bd init`, or one shared
+store via `BEADS_DIR`), and run `bs queen`.
+
+Full setup: [docs/SETUP.md](docs/SETUP.md). For a guided setup, open Claude Code in this
+repo and run the [`/setup-bees`](.claude/skills/setup-bees/SKILL.md) skill; it installs
+and checks each piece in turn.
 
 ![Lindsay: "Beads." Gob: "BEES?" Lindsay: "BEADS!" Gob: "BEADS?!?"](docs/img/bees-beads.gif)
 
-> **Lindsay:** Beads. **Gob:** BEES? **Lindsay:** BEADS. **Gob:** BEADS?
-> **Michael:** Gob's not on board.
->
-> *Arrested Development*, S1E22 "Let 'Em Eat Cake". The work is tracked in beads (`bd`).
-> GIF via [Tenor](https://tenor.com/search/arrested-development-bees-gifs).
+![beads (bd, the tracker), misheard as bees (the fleet), shortened to bs (the CLI)](docs/img/beads-bees-bs.svg)
 
-Setup: [docs/SETUP.md](docs/SETUP.md) · details: [docs/SPEC.md](docs/SPEC.md) ·
-decisions: [docs/adr/](docs/adr/) · vocabulary: [GLOSSARY.md](GLOSSARY.md)
+Details: [docs/SPEC.md](docs/SPEC.md) · decisions: [docs/adr/](docs/adr/) ·
+vocabulary: [GLOSSARY.md](GLOSSARY.md)
 
 ---
 
-## Why not just Claude Code?
+## How bs compares
 
-Claude Code is good at running *one* agent on a task, and **subagents** fan out *inside* that
-session and report back to it. Neither lets two long-running sessions, each with its own
-context and conversation, coordinate without a human relaying between them.
+The usual ways to put several agents on one job, and what each gives you:
+
+- **Subagent fan-out** (Claude Code's Task tool, orchestrator–worker): the parent starts
+  workers inside its own session; each returns one final result and ends with its task.
+- **Agent-graph frameworks** (LangGraph, CrewAI, AutoGen): you code the agents and the
+  edges between them; one program runs the graph and hands each agent its turn.
+- **Shared queue or blackboard**: agents post to and poll a common store.
+- **Human as the bus**: separate chat sessions; you copy the brief across and the answer back.
+- **tmux + send-keys**: separate sessions in panes; a script types into the other pane.
+
+| | Subagents | Agent graph | Queue / blackboard | Human as bus | tmux send-keys | **bs** |
+|---|---|---|---|---|---|---|
+| Each agent is a full Claude Code session in its own worktree | no, a task inside the parent (worktree optional) | no, agents you code | depends on the agents | yes, if you make one | yes, if you make one | **yes**, `bs spawn` |
+| Agents outlive their lead | no | resumable from a checkpointer | yes | yes | yes | **yes** |
+| An agent messages its lead mid-task | final result only; the lead can message it | when the graph routes to it | yes | you relay | keystrokes | **yes**, `bs send` |
+| An idle agent acts on a message | n/a | n/a | only if it polls | you type | if the keys land | **yes**, doorbell |
+| Message kept while the recipient is down | n/a | in the checkpoint | yes | only if you saved it | no | **yes**, logbook |
+| Record of who said what | parent transcript | framework traces | the store | scrollback | scrollback | **yes**, append-only |
+| Work tied to a tracked issue | no | no | no | by discipline | by discipline | **yes**, one bead each |
+| Watch or steer an agent live | watch only | pause and edit state at interrupts | post to the store | yes | yes | **yes**, the bee's herdr pane |
+
+What bs costs you: Linux, Claude Code sessions only, one machine. The doorbell rides on
+Claude's own cross-session socket, which keeps nothing after a session exits and drops
+identical repeats ([ADR-0001](docs/adr/0001-logbook-is-the-only-truth.md)).
+So bs uses it only to say "you have mail" and keeps every message in the logbook: a lost
+ring only delays a message, and a doubled one can't deliver it twice.
 
 ### Without bs: you are the message bus
 
@@ -44,26 +82,29 @@ context and conversation, coordinate without a human relaying between them.
 
 ![bs send to a stopped session prints "queued"; the messages show up in bs inbox when it restarts](docs/img/queued.svg)
 
-The first two images are illustrations of the Claude Code UI. Every `bs` line in them,
-and the whole third image, is real v0 output.
+The first two images illustrate the Claude Code UI. Every `bs` line in them, and the
+whole third image, is real v0 output.
 
-### What each option gives you
+---
 
-| Need | Plain sessions | Subagents (Task tool) | Claude's peer socket alone | **bs** |
-|---|---|---|---|---|
-| Own worktree and long-lived conversation per worker | yes | worktree optional; ends with its task | yes | **yes**, `bs spawn` |
-| Worker outlives the parent session | yes | no | yes | **yes** |
-| Worker → coordinator, unprompted | human relays | only its final result | yes, if you find the socket | **yes** |
-| Wake an idle session | human types | n/a | yes | **yes**, doorbell |
-| Message kept if the recipient is down | no | n/a | no, nothing kept after exit | **yes**, logbook |
-| No silent drops | n/a | n/a | no: at most 50 queued, identical repeats dropped | **yes** |
-| Audit trail of who said what | scrollback | parent transcript | none | **yes**, append-only table |
-| Address by name, not pid and socket | no | n/a | no | **yes** |
+## Commands
 
-The socket limits in the fourth column come from
-[ADR-0001](docs/adr/0001-logbook-is-the-only-truth.md). bs uses that socket only to say
-"you have mail" and keeps every message body in the logbook, so a lost or duplicated ring
-can never lose a message.
+```text
+bs queen                      start claude --name queen-<project> in the repo
+bs epic <title>               create the project's next epic, <project>-<n>
+bs bead ls | new …            list the project's beads, or file one under an epic
+bs spawn --label L <bead> …   start a bee per bead, in parallel, each in its own herdr workspace
+bs send [--now] <to> <body|-> store a message, then ring <to>
+bs inbox [--peek]             print unread; without --peek, record receipts
+bs status [--json]            sessions, running or not, and unread counts
+bs end <bee>                  remove the bee's recorded workspace; keep its branch
+bs prune [--dry-run]          delete ended bees' local branches once merged
+bs version                    print the commit bs was built from
+bs init                       create the logbook (optional; any command does)
+```
+
+Every command takes `--project`; `send`, `inbox`, `spawn` and `end` take `--as <session>`
+for use outside a named Claude session; `spawn --repo <path>` puts bees in another repo.
 
 ---
 
@@ -83,7 +124,7 @@ flowchart LR
         P1["bees-2-1<br/>worktree bees-WT/bees-2-1"]
         P2["bees-2-2<br/>worktree bees-WT/bees-2-2"]
     end
-    LB[("logbook<br/>~/.local/share/bees/bees.db<br/>SQLite WAL, append-only")]
+    LB[("logbook<br/>~/.local/share/bees/&lt;project&gt;.db<br/>SQLite WAL, append-only")]
     REG[["~/.claude/sessions/&lt;pid&gt;.json<br/>Claude's session registry"]]
     HD[herdr<br/>worktrees + panes]
     BD[bd<br/>beads]
@@ -164,8 +205,8 @@ flowchart LR
 ```
 
 `bs end bees-2-1` removes only the workspace recorded in that `spawned` entry and writes
-`ended`; it keeps the branch. `bs prune` later deletes ended bees' local branches once their
-work is on main, including after a rebase or squash merge.
+`ended`; it keeps the branch. `bs prune` later deletes ended bees' local branches once
+their work is on main, including after a rebase or squash merge.
 
 ### The logbook is the only truth
 
@@ -177,34 +218,8 @@ unread(s) = messages to s with no 'received' entry from s, in insertion order
 ```
 
 Nothing records whether a session is alive
-([ADR-0004](docs/adr/0004-liveness-is-derived-not-stored.md)). That is worked out each
+([ADR-0004](docs/adr/0004-liveness-is-derived-not-stored.md)); that is worked out each
 time from Claude's registry and `/proc`. A dead session needs no cleanup: its mail waits.
-
----
-
-## Commands
-
-```text
-bs queen                      start claude --name queen-<project> in the repo
-bs epic <title>               create the project's next epic, <project>-<n>
-bs bead ls | new …            list the project's beads, or file one under an epic
-bs spawn --label L <bead> …   start a bee per bead in parallel, each in its own herdr workspace, labelled L
-bs send <to> [--now] <body|-> store a message, then ring <to>
-bs inbox [--peek]             print unread; without --peek, record receipts
-bs end <bee>                 remove the bee's recorded workspace; keep its branch
-bs prune [--dry-run]          delete ended bees' local branches once merged
-bs status [--json]            running sessions and unread counts
-bs init                       create the logbook (optional)
-```
-
-To run a bee by hand, without herdr:
-
-```sh
-claude --name bee-a --settings '{"crossSessionInbound":"accept"}'
-```
-
-Without `crossSessionInbound: accept`, a session in bypass mode holds peer messages
-instead of acting on them.
 
 ## Status
 

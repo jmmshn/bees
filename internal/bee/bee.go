@@ -15,6 +15,7 @@ import (
 
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/project"
+	"github.com/jmmshn/bees/internal/prompt"
 )
 
 var (
@@ -159,9 +160,9 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 	doorbell := fmt.Sprintf("[bs] you are %s, working on %s. Run: bs inbox   (reply with: bs send %s \"...\")", sp.Name, sp.Bead, f.Me)
 	args := []string{"--name", sp.Name, "--settings", beeSettings}
 	// In another repo (--repo, now or when first spawned) the bee's own bs resolves that
-	// repo's project, so a guide naming P would mislead it.
+	// repo's project, so a system prompt naming P would mislead it.
 	if !f.ForeignRepo && cmp.Or(sp.Repo, f.P.Repo) == f.P.Repo {
-		args = append(args, "--append-system-prompt", f.P.BeadsGuide())
+		args = append(args, "--append-system-prompt", prompt.System(f.P.Name))
 	}
 	args = append(args, doorbell)
 	if resume {

@@ -200,10 +200,11 @@ func (f Fleet) End(ctx context.Context, name string) (branchKept bool, err error
    - Claude's registry has a live session called name → `ErrRunning`; a registry that can't be read is an error, never "not running" (no twins);
    - otherwise → restart at step 7 in the recorded workspace. If the worker has read a message since this spawn (`Spawn.Read`), or runs in another project's repo (its receipts are in that project's logbook), add `--continue` so it keeps its conversation; if not, its first start never got going, and `claude --continue` would exit with "No conversation found to continue", so it starts fresh with the doorbell.
 3. The bead id must be `<project>-<n>[.<m>…]` (`Belongs`), unless `--repo` → else `ErrWrongRepo`.
-4. A herdr workspace labelled with the bead but no `spawned` entry → `ErrOrphan`, with the command to remove it by hand (`herdr worktree remove --workspace <id> --force`). It is never removed automatically.
-5. `herdr worktree create --cwd <repo> --branch <name> --path <repo>-WT/<name> --label <bead> --no-focus` (herdr prints JSON).
-6. `RecordSpawn` immediately, in one transaction with the brief (`bd show` title and description) as a message from the queen: subject = name; data = bead, workspace, pane, worktree, branch, repo.
-7. `herdr agent start <name> --kind claude --pane <pane> --timeout 10000 -- --name <name> --settings '{"crossSessionInbound":"accept"}' --append-system-prompt-file ~/.cache/bees/<project>-worker.md "<doorbell>"` (no system prompt when the bee runs in another project's repo). Every argument passes `CheckAgentArgs` first. The doorbell is Claude's first prompt, so spawn doesn't depend on ringing. herdr's outcomes ([ADR-0007](adr/0007-claudes-registry-confirms-a-launch.md)):
+4. A first spawn (no live `spawned` entry) needs a label (`ErrNoLabel`); a restart reuses the recorded one and refuses another (`ErrLabelChange`). A label is 1–4 words of `[a-z0-9]`, single spaces, ≤ 32 characters (`CheckLabel`, else `ErrBadLabel`; never rewritten). The queen writes it from the bead; herdr itself stores any label verbatim (`TestHerdrKeepsLabelsVerbatim`).
+5. A herdr workspace whose worktree `checkout_path` is `<repo>-WT/<name>` but no `spawned` entry → `ErrOrphan`. Found by path, never by label: the label is free text, the path is built forward from the name, with the command to remove it by hand (`herdr worktree remove --workspace <id> --force`). It is never removed automatically.
+6. `herdr worktree create --cwd <repo> --branch <name> --path <repo>-WT/<name> --label <label> --no-focus` (herdr prints JSON).
+7. `RecordSpawn` immediately, in one transaction with the brief (`bd show` title and description) as a message from the queen: subject = name; data = bead, label, workspace, pane, worktree, branch, repo.
+8. `herdr agent start <name> --kind claude --pane <pane> --timeout 10000 -- --name <name> --settings '{"crossSessionInbound":"accept"}' --append-system-prompt-file ~/.cache/bees/<project>-worker.md "<doorbell>"` (no system prompt when the bee runs in another project's repo). Every argument passes `CheckAgentArgs` first. The doorbell is Claude's first prompt, so spawn doesn't depend on ringing. herdr's outcomes ([ADR-0007](adr/0007-claudes-registry-confirms-a-launch.md)):
    - success → started;
    - `agent_not_ready`: Claude is blocked at a prompt → started with `Waiting`; bs tells the captain to answer it in the worker's pane;
    - `timeout` → `ErrUnconfirmed`. herdr waits for an idle prompt, and a worker busy with its doorbell is never idle in time, so this is the usual outcome for a healthy worker; Claude may also have exited. `Sessions.Alive(name, 20s)` decides: live → started; not → an error naming `herdr pane read <pane>`. Before spawning, `bs spawn` warns if `~/.claude.json` shows the repo isn't trusted yet (read only; trust is keyed by the main checkout, so its worktrees share it). No settings file is written (Claude reads `settings.local.json` from the main checkout in a worktree), and no `BS_*` variables are needed.
@@ -215,7 +216,7 @@ func (f Fleet) End(ctx context.Context, name string) (branchKept bool, err error
 ```text
 bs init                       create the logbook file and table if missing (optional)
 bs queen                      start the queen: claude --name queen-<project> --append-system-prompt-file <project>-queen.md in the repo (no BS_* set)
-bs spawn <bead> [--repo P]    start a bee for the bead in its own herdr workspace
+bs spawn --label L <bead> [--repo P]  start a bee for the bead in its own herdr workspace labelled L (--label only on a first spawn)
 bs end <bee>                 remove the bee's recorded workspace
 bs epic <title>               create the project's next epic, <project>-<n>
 bs bead ls [--all] [<expr>]   bd query 'id="<project>-*"', not closed unless --all; <expr> is ANDed
@@ -272,7 +273,7 @@ Full guide: [SETUP.md](SETUP.md).
 ```sh
 bs queen                 # queen-<project>, in $BS_REPOS/<project>
 bs epic "ringing"        # → bees-2; then bs bead new --parent bees-2 "…"
-bs spawn bees-2.1       # inside the queen: bees-2-1 in bees-WT/bees-2-1
+bs spawn --label "ring on send" bees-2.1   # inside the queen: bees-2-1 in bees-WT/bees-2-1
 ```
 
 Manual bee (no herdr): `claude --name bee-a --settings '{"crossSessionInbound":"accept"}'` in its worktree.
@@ -287,7 +288,8 @@ Manual bee (no herdr): `claude --name bee-a --settings '{"crossSessionInbound":"
 | `TestUnreadIsSet` | reading a newer message leaves older ones unread |
 | `TestRecordReceiptsIdempotent` | recording the same receipt twice is a no-op |
 | `project` tests | resolution order; a linked worktree resolves to its main repo's project |
-| `bee` tests (fake Herdr and Beads) | spawn → settings + entry + brief + start args; second spawn `ErrRunning`; dead agent resumes in the same workspace with `--continue` only if it read its inbox since the spawn; `agent_not_ready` counts as started; herdr `timeout` counts as started only with a live registry session; an unreadable registry starts nothing; an ended spawn's brief is retired; orphan `ErrOrphan` with the cleanup command and nothing removed; end removes exactly the recorded id; wrong repo label refused |
+| `bee` tests (fake Herdr and Beads) | spawn → settings + entry + brief + start args; second spawn `ErrRunning`; dead agent resumes in the same workspace with `--continue` only if it read its inbox since the spawn; `agent_not_ready` counts as started; herdr `timeout` counts as started only with a live registry session; an unreadable registry starts nothing; an ended spawn's brief is retired; first spawn without a label or with a bad one refused before herdr; a restart keeps its label and refuses another; orphan (by worktree path, not label) `ErrOrphan` with the cleanup command and nothing removed; end removes exactly the recorded id; wrong repo label refused |
+| `TestHerdrKeepsLabelsVerbatim` | herdr stores any workspace label as given (empty, newlines, 200 characters, unicode), so fakeHerdr does too and `CheckLabel` is bs's rule; opens and closes a throwaway workspace per label; skipped without a running herdr |
 | `TestCheckAgentArgsMatchesRealHerdr` | the probed table of agent arguments against the installed herdr (unknown pane, so nothing starts); skipped without a running herdr. Every constraint fakeHerdr enforces comes from `CheckAgentArgs`, so this holds the fake to the real tool |
 | `claude` tests (`claudetest.FakeRegistry`) | a fake unix listener sees the auth line only when a key exists, then the user line with its priority, then EOF; a `procStart` mismatch or another `peerProtocol` gives `ErrNotRunning` |
 | `cmd/bs` status tests | running with 0 and N unread, not running with N unread, stopped with none left out; `--json`; status records no receipts |

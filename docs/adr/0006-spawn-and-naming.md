@@ -10,7 +10,7 @@ That one string is used for everything:
 - the worktree directory `<repo>-WT/<name>`;
 - the message address.
 
-The herdr workspace label is the full bead id. A name too long for herdr (32 characters) is refused rather than hashed. In v1 there is one bee per bead.
+The herdr workspace label is 1–4 words the queen writes from the bead (R41, bees-1.20); it was the bead id before. Nothing finds a bee by its label. A name too long for herdr (32 characters) is refused rather than hashed. In v1 there is one bee per bead.
 
 **Project is the scope, as in crew's `--project`.** It is resolved from `--project`, then `BS_PROJECT`, then the basename of git's common directory. Using the common directory means a worktree resolves to its main repo. Each project gets:
 
@@ -40,5 +40,5 @@ Any failure after step 2 is healed by running spawn again, which resumes in the 
 
 ## Consequences
 
-- **Orphans:** a workspace labelled with a bead but with no `spawned` entry (a crash between steps 1 and 2) is reported and never removed automatically.
+- **Orphans:** a workspace open on the bee's worktree `<repo>-WT/<name>` but with no `spawned` entry (a crash between steps 1 and 2) is reported and never removed automatically.
 - **Code:** two packages, `internal/project` (resolution and identity) and `internal/bee` (`Fleet.Spawn`, `Fleet.End`, the ports and their CLI adapters).

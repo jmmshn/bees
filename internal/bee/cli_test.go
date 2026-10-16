@@ -105,3 +105,40 @@ func TestCheckAgentArgsMatchesRealHerdr(t *testing.T) {
 		}
 	}
 }
+
+// TestHerdrKeepsLabelsVerbatim holds fakeHerdr to the installed herdr: a workspace
+// label is stored as given, whatever its length or characters, so a bad label is
+// bs's to refuse (CheckLabel). Opens and closes a throwaway workspace per label;
+// skipped without a running herdr.
+func TestHerdrKeepsLabelsVerbatim(t *testing.T) {
+	if exec.Command("herdr", "workspace", "list").Run() != nil {
+		t.Skip("no running herdr")
+	}
+	for _, label := range []string{"role prompts", "", "new\nline", strings.Repeat("a", 200), `é—🐝 "quoted".`} {
+		out, err := exec.Command("herdr", "workspace", "create", "--cwd", t.TempDir(), "--label", label, "--no-focus").Output()
+		var created struct {
+			Result struct {
+				Workspace struct {
+					ID string `json:"workspace_id"`
+				} `json:"workspace"`
+			} `json:"result"`
+		}
+		if err != nil || json.Unmarshal(out, &created) != nil || created.Result.Workspace.ID == "" {
+			t.Fatalf("herdr workspace create --label %q: %v: %s", label, err, out)
+		}
+		id := created.Result.Workspace.ID
+		out, err = exec.Command("herdr", "workspace", "get", id).Output()
+		_ = exec.Command("herdr", "workspace", "close", id).Run()
+		var got struct {
+			Result struct {
+				Workspace struct{ Label string } `json:"workspace"`
+			} `json:"result"`
+		}
+		if err != nil || json.Unmarshal(out, &got) != nil {
+			t.Fatalf("herdr workspace get %s: %v: %s", id, err, out)
+		}
+		if got.Result.Workspace.Label != label {
+			t.Errorf("herdr stored label %q as %q", label, got.Result.Workspace.Label)
+		}
+	}
+}

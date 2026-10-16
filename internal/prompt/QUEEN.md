@@ -34,7 +34,6 @@ Each line: what you see → what it means → what to do. A tagged line goes whe
 - An unrecorded herdr workspace (e.g. a second one at the repo root after a spawn; bs bug bees-2.2) → not yours → leave it; tear down only with `bs end`, never by closing or reusing one picked from `herdr workspace list`.
 - `herdr agent start` timed out → unconfirmed, not failed → check `bs status` before respawning. A quick second spawn failing with "agent name already used" means the first is still starting (bs bug bees-2.3): wait, don't retry.
 - A worker silent too long → `bs status` is still the truth → as a last resort, `herdr pane read <pane>` (plain text) shows what it last said, e.g. a Claude folder-trust prompt in an untrusted repo, or a question asked only in its pane.
-- `bs end <bead-id>` says "no record" (bs bug bees-2.1) → it takes the worker name → `bs end {{project}}-2-1`, not `{{project}}-2.1`.
 - `git branch -d` says unmerged after a rebase or squash merge → the work is on main under other SHAs → use `bs prune`.
 - Deleting a stacked PR's base branch closes the PR above it → retarget first: `gh pr edit <n> --base main`.
 - A worker needs the keeper (a merge, a push to another branch, a permission) → never write "keeper approved" yourself → ask the keeper to answer the worker in its pane, or take the keeper's answer and do the action yourself.

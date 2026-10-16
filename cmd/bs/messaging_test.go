@@ -184,3 +184,30 @@ func TestSpawnAndEndUsage(t *testing.T) {
 		t.Errorf("end of never-spawned worker: exit %d, stderr %q", code, stderr)
 	}
 }
+
+// A bead id is the worker's other spelling: end and send map it forward to the worker's
+// name, and refuse it when that worker was never spawned (bees-6.1).
+func TestEndAndSendTakeABeadID(t *testing.T) {
+	useTempLogbook(t)
+	endedWorker(t, "test-3-1", t.TempDir())
+	out, stderr, code := bs(t, "end", "--as", "queen-test", "test-3.1")
+	if code != 0 || !strings.Contains(out, "ended test-3-1\n") {
+		t.Errorf("end test-3.1: exit %d, stdout %q, stderr %q", code, out, stderr)
+	}
+	out, stderr, code = bs(t, "send", "--as", "queen-test", "test-3.1", "hi")
+	if code != 0 || !strings.Contains(out, " to test-3-1\n") || stderr != "" {
+		t.Errorf("send test-3.1: exit %d, stdout %q, stderr %q", code, out, stderr)
+	}
+	if out, _, _ := bs(t, "inbox", "--as", "test-3-1"); !strings.Contains(out, "hi") {
+		t.Errorf("test-3-1 inbox = %q, want the message", out)
+	}
+	for _, args := range [][]string{{"end", "test-3.2"}, {"send", "test-3.2", "hi"}} {
+		_, stderr, code := bs(t, append([]string{args[0], "--as", "queen-test"}, args[1:]...)...)
+		if code != 1 || !strings.Contains(stderr, "test-3.2 is a bead id, whose worker is test-3-2: bs has no record of spawning") {
+			t.Errorf("%s test-3.2: exit %d, stderr %q", args[0], code, stderr)
+		}
+	}
+	if out, _, _ := bs(t, "inbox", "--as", "test-3.2"); out != "no unread messages\n" {
+		t.Errorf("phantom inbox test-3.2 = %q, want nothing queued", out)
+	}
+}

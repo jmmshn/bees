@@ -160,7 +160,7 @@ func cmdEnd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 		return err
 	}
 	if len(pos) != 1 {
-		fmt.Fprintln(stderr, "usage: bs end <worker>")
+		fmt.Fprintln(stderr, "usage: bs end <worker | bead>")
 		return errUsage
 	}
 	f, err := fleet(ctx, *proj, *as, "")
@@ -168,10 +168,14 @@ func cmdEnd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 		return err
 	}
 	defer f.LB.Close()
-	if err := f.End(ctx, pos[0]); err != nil {
+	name, err := worker.Address(ctx, f.LB, f.P.Name, pos[0])
+	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "ended %s\nbranch %s kept; bs prune deletes it once merged\n", pos[0], pos[0])
+	if err := f.End(ctx, name); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "ended %s\nbranch %s kept; bs prune deletes it once merged\n", name, name)
 	return nil
 }
 

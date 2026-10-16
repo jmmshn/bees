@@ -12,6 +12,7 @@ import (
 	"github.com/jmmshn/bees/internal/harness/claude"
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/project"
+	"github.com/jmmshn/bees/internal/worker"
 )
 
 // errUsage means the arguments were wrong; the message has already been printed.
@@ -106,6 +107,9 @@ func cmdSend(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		return err
 	}
 	defer lb.Close()
+	if to, err = worker.Address(ctx, lb, p.Name, to); err != nil {
+		return err
+	}
 	id, err := lb.Send(ctx, from, to, body)
 	if err != nil {
 		return err

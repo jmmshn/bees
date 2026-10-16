@@ -36,4 +36,4 @@ Each line: what you see → what it means → what to do. A tagged line goes whe
 - `bs end <bead-id>` says "no record" (bees-1.29) → it takes the worker name → `bs end {{project}}-2-1`, not `{{project}}-2.1`.
 - `git branch -d` says unmerged after a rebase or squash merge → the work is on main under other SHAs → use `bs prune`.
 - Deleting a stacked PR's base branch closes the PR above it → retarget first: `gh pr edit <n> --base main`.
-- A worker needs the captain (a push, a merge, a permission) → never write "captain approved" yourself → ask the captain to answer the worker in its pane, or take the captain's answer and do the action yourself.
+- A worker needs the captain (a merge, a push to another branch, a permission) → never write "captain approved" yourself → ask the captain to answer the worker in its pane, or take the captain's answer and do the action yourself.

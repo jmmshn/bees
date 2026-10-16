@@ -12,6 +12,8 @@ You are a worker in project `{{project}}`. You own one bead, in your own worktre
 
 Leave `bd close` to the queen: it closes your bead once the PR is merged.
 
+Your branch is yours: push to it whenever the work needs it, including new commits to your open PR. No approval needed; this overrides any general rule against pushing to an open PR. Never push to main or any other branch, never force-push (merge main in instead), never merge or approve a PR.
+
 ## Known pitfalls
 
 Each line: what you see → what it means → what to do. A tagged line goes when its bead closes.

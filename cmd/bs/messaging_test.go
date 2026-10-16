@@ -68,6 +68,19 @@ func TestInboxPeekLeavesMessagesUnread(t *testing.T) {
 	}
 }
 
+// bees-1.54: a --repo worker's bs resolved the other repo's project and sent to queen-bees
+// in dotfiles.db; the queen, reading bees.db, never saw it.
+func TestSendWarnsWhenTheRecipientIsNotInThisProject(t *testing.T) {
+	useTempLogbook(t)
+	_, stderr, code := bs(t, "send", "--as", "test-1", "queen-bees", "done")
+	if code != 0 || !strings.Contains(stderr, "queen-bees is not queen-test or a worker spawned in project test") {
+		t.Fatalf("exit %d, stderr %q; want a warning naming the project", code, stderr)
+	}
+	if _, stderr, _ := bs(t, "send", "--as", "test-1", "queen-test", "done"); stderr != "" {
+		t.Fatalf("to the project's queen: stderr %q, want no warning", stderr)
+	}
+}
+
 func TestSendJoinsBodyWords(t *testing.T) {
 	useTempLogbook(t)
 	bs(t, "send", "--as", "queen", "worker-a", "rebase", "on", "main")

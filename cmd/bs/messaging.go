@@ -101,7 +101,7 @@ func cmdSend(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		}
 		body = strings.TrimRight(string(b), "\n")
 	}
-	_, lb, err := scope(ctx, *proj)
+	p, lb, err := scope(ctx, *proj)
 	if err != nil {
 		return err
 	}
@@ -111,7 +111,23 @@ func cmdSend(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		return err
 	}
 	fmt.Fprintf(stdout, "sent %s to %s\n", id, to)
+	if err := warnStranger(ctx, lb, p, to, stderr); err != nil {
+		return err
+	}
 	return ring(ctx, lb, from, to, *now, stdout, stderr)
+}
+
+// warnStranger warns when to is neither p's queen nor a worker spawned in p: it reads
+// another project's logbook, so the message may never be read (bees-1.54).
+func warnStranger(ctx context.Context, lb *logbook.Logbook, p project.Project, to string, stderr io.Writer) error {
+	if to == p.Queen() {
+		return nil
+	}
+	if _, ok, err := lb.LatestSpawn(ctx, to); err != nil || ok {
+		return err
+	}
+	fmt.Fprintf(stderr, "bs send: warning: %s is not %s or a worker spawned in project %s; it reads this logbook (%s) only if it runs in %s (set BS_PROJECT or pass --project)\n", to, p.Queen(), p.Name, p.Logbook, p.Name)
+	return nil
 }
 
 // ring rings to with its unread count. The message is already stored, so a failed ring

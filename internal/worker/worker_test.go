@@ -239,6 +239,9 @@ func TestSpawnStartsAWorkerInItsOwnWorkspace(t *testing.T) {
 			t.Errorf("autoMode.%s = %q, want $defaults and the worker's branch", k, l)
 		}
 	}
+	if p := bsProject(t, start); p != "bees" {
+		t.Errorf("env.BS_PROJECT = %q, want bees: the worker's bs must read the spawner's logbook", p)
+	}
 	if !strings.Contains(strings.Join(settings.AutoMode["environment"], " "), wt) {
 		t.Errorf("autoMode.environment = %q, want the worktree %s", settings.AutoMode["environment"], wt)
 	}
@@ -384,16 +387,20 @@ func TestEndedHalfStartedWorkerRespawnsWithOneBrief(t *testing.T) {
 	}
 }
 
-func TestRestartInAnotherProjectsRepoContinues(t *testing.T) {
+func TestRestartInAnotherProjectsRepoContinuesOnlyAfterItsInbox(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	r.fleet.ForeignRepo, r.fleet.P.Repo = true, filepath.Join(t.TempDir(), "dotfiles")
-	_, _ = r.fleet.Spawn(ctx, "dotfiles-3", "spawn and end")
-	r.h.exit("dotfiles-3")
-	// Its bs resolves the other project, so its receipts are in that logbook: this one
-	// can't tell whether it has a conversation, and keeps the old behaviour.
-	if st, err := r.fleet.Spawn(ctx, "dotfiles-3", "spawn and end"); err != nil || !st.Continued || !slices.Contains(r.h.started[1], "--continue") {
-		t.Fatalf("started = %+v, err = %v, args = %q; want --continue", st, err, r.h.started[1])
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	r.h.exit("bees-8")
+	// Its bs reads this logbook (BS_PROJECT), so its receipts say whether it has a conversation.
+	if st, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil || st.Continued || slices.Contains(r.h.started[1], "--continue") {
+		t.Fatalf("started = %+v, err = %v, args = %q; want a fresh start: it never read its inbox", st, err, r.h.started[1])
+	}
+	readInbox(t, r.lb, "bees-8")
+	r.h.exit("bees-8")
+	if st, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil || !st.Continued || !slices.Contains(r.h.started[2], "--continue") {
+		t.Fatalf("started = %+v, err = %v, args = %q; want --continue", st, err, r.h.started[2])
 	}
 }
 
@@ -431,19 +438,45 @@ func TestWorkersStartWithTheProjectsSystemPrompt(t *testing.T) {
 	}
 }
 
-func TestAWorkerForAnotherProjectsBeadGetsNoSystemPrompt(t *testing.T) {
+// bees-1.54: a --repo worker's bs resolved the worktree's repo (dotfiles), so its bs send
+// to queen-bees and its receipts landed in dotfiles.db while the queen read bees.db.
+func TestAWorkerInAnotherProjectsRepoStaysInTheSpawnersProject(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	own := r.fleet
 	r.fleet.ForeignRepo, r.fleet.P.Repo = true, filepath.Join(t.TempDir(), "dotfiles") // as --repo does
-	_, _ = r.fleet.Spawn(ctx, "dotfiles-3", "spawn and end")
-	r.h.exit("dotfiles-3")
-	_, _ = own.Spawn(ctx, "dotfiles-3", "spawn and end") // a resume doesn't repeat --repo
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	r.h.exit("bees-8")
+	_, _ = own.Spawn(ctx, "bees-8", "spawn and end") // a resume doesn't repeat --repo
+	if len(r.h.started) != 2 {
+		t.Fatalf("started = %q, want a start and a restart", r.h.started)
+	}
 	for _, start := range r.h.started {
-		if slices.Contains(start, "--append-system-prompt-file") {
-			t.Fatalf("start = %q: a system prompt naming bees would mislead it: the worker's bs resolves its own repo's project", start)
+		if bsProject(t, start) != "bees" {
+			t.Errorf("start = %q, want env.BS_PROJECT bees in --settings", start)
+		}
+		i := slices.Index(start, "--append-system-prompt-file")
+		if i < 0 {
+			t.Fatalf("start = %q, want the bees worker prompt", start)
+		}
+		if b, err := os.ReadFile(start[i+1]); err != nil || string(b) != prompt.Text(prompt.Worker, "bees") {
+			t.Fatalf("prompt file %s: %v\n%s", start[i+1], err, b)
 		}
 	}
+}
+
+// bsProject returns env.BS_PROJECT from a start's --settings.
+func bsProject(t *testing.T, start []string) string {
+	t.Helper()
+	i := slices.Index(start, "--settings")
+	if i < 0 {
+		t.Fatalf("start = %q, want --settings", start)
+	}
+	var settings struct{ Env map[string]string }
+	if err := json.Unmarshal([]byte(start[i+1]), &settings); err != nil {
+		t.Fatalf("--settings %q: %v", start[i+1], err)
+	}
+	return settings.Env["BS_PROJECT"]
 }
 
 func TestWorkerWaitingAtAPromptCountsAsStarted(t *testing.T) {

@@ -59,3 +59,22 @@ scripts/e2e.sh <throwaway bead>    # real queen + bee in herdr: wake ≤ 2 s, ro
 ```
 
 `scripts/e2e.sh` writes to the project's logbook (as `e2e-queen`, `e2e-captain` and the bee) and cleans up its workspaces.
+
+## CI
+
+`.github/workflows/ci.yml` runs two parallel jobs on every pull request and push to `main`. The same checks locally:
+
+```sh
+# lint
+test -z "$(gofmt -l .)"
+go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run   # default linters, .golangci.yml
+npx markdownlint-cli2@0.23.3                                                 # README, GLOSSARY, AGENTS, docs/
+# test
+go vet ./... && go test -race ./... && go build ./cmd/bs
+```
+
+Tests that need a real herdr skip when none is running; `scripts/e2e.sh` stays local-only.
+
+## Releases
+
+Tag by hand and push the tag (`git tag v0.1.0 && git push origin v0.1.0`). `.github/workflows/release.yml` runs GoReleaser (`.goreleaser.yaml`): `bs` for linux amd64 and arm64, `CGO_ENABLED=0`, a changelog from the commits since the last tag, and `SHA256SUMS`. `bs version` prints the commit from Go's VCS stamp (`-buildvcs=true` fails the build without one). Dry run: `goreleaser release --snapshot --clean`.

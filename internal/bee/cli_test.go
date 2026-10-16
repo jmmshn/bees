@@ -128,7 +128,7 @@ func TestHerdrKeepsLabelsVerbatim(t *testing.T) {
 		}
 		id := created.Result.Workspace.ID
 		out, err = exec.Command("herdr", "workspace", "get", id).Output()
-		exec.Command("herdr", "workspace", "close", id).Run()
+		_ = exec.Command("herdr", "workspace", "close", id).Run()
 		var got struct {
 			Result struct {
 				Workspace struct{ Label string } `json:"workspace"`

@@ -212,7 +212,7 @@ func TestSecondSpawnWhileLiveIsRefused(t *testing.T) {
 func TestSpawnResumesADeadBeeInItsRecordedWorkspace(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	r.h.exit("bees-8")
 	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil {
 		t.Fatal(err)
@@ -225,7 +225,7 @@ func TestSpawnResumesADeadBeeInItsRecordedWorkspace(t *testing.T) {
 func TestResumeContinuesTheBeesConversation(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	readInbox(t, r.lb, "bees-8")
 	r.h.exit("bees-8")
 	st, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end")
@@ -246,7 +246,7 @@ func TestRestartOfABeeThatNeverReadItsBriefStartsFresh(t *testing.T) {
 	// The start failed after spawn was recorded, so there is no conversation:
 	// claude --continue would exit with "No conversation found to continue".
 	r.h.failStart = errors.New("herdr agent: agent arguments cannot be encoded safely")
-	r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	r.h.failStart = nil
 	st, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	if err != nil || !st.Resumed {
@@ -261,7 +261,7 @@ func TestEndedHalfStartedBeeRespawnsWithOneBrief(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	r.h.failStart = errors.New("herdr agent: agent arguments cannot be encoded safely")
-	r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	if _, err := r.fleet.End(ctx, "bees-8"); err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +278,7 @@ func TestRestartInAnotherProjectsRepoContinues(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	r.fleet.ForeignRepo, r.fleet.P.Repo = true, filepath.Join(t.TempDir(), "dotfiles")
-	r.fleet.Spawn(ctx, "dotfiles-3", "spawn and end")
+	_, _ = r.fleet.Spawn(ctx, "dotfiles-3", "spawn and end")
 	r.h.exit("dotfiles-3")
 	// Its bs resolves the other project, so its receipts are in that logbook: this one
 	// can't tell whether it has a conversation, and keeps the old behaviour.
@@ -307,9 +307,9 @@ func readInbox(t *testing.T, lb *logbook.Logbook, name string) {
 func TestBeesStartWithTheProjectsSystemPrompt(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	r.h.exit("bees-8")
-	r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	for _, start := range r.h.started {
 		i := slices.Index(start, "--append-system-prompt-file")
 		if i < 0 {
@@ -326,9 +326,9 @@ func TestABeeForAnotherProjectsBeadGetsNoSystemPrompt(t *testing.T) {
 	r := newRig(t)
 	own := r.fleet
 	r.fleet.ForeignRepo, r.fleet.P.Repo = true, filepath.Join(t.TempDir(), "dotfiles") // as --repo does
-	r.fleet.Spawn(ctx, "dotfiles-3", "spawn and end")
+	_, _ = r.fleet.Spawn(ctx, "dotfiles-3", "spawn and end")
 	r.h.exit("dotfiles-3")
-	own.Spawn(ctx, "dotfiles-3", "spawn and end") // a resume doesn't repeat --repo
+	_, _ = own.Spawn(ctx, "dotfiles-3", "spawn and end") // a resume doesn't repeat --repo
 	for _, start := range r.h.started {
 		if slices.Contains(start, "--append-system-prompt-file") {
 			t.Fatalf("start = %q: a system prompt naming bees would mislead it: the bee's bs resolves its own repo's project", start)
@@ -373,7 +373,7 @@ func TestHerdrTimeoutWithNoClaudeIsAFailure(t *testing.T) {
 func TestUnreadableRegistryRefusesToRestart(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	r.h.exit("bees-8")
 	r.h.aliveErr = errors.New("registry unreadable")
 	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err == nil || len(r.h.started) != 1 {
@@ -431,7 +431,7 @@ func TestFirstSpawnNeedsALabel(t *testing.T) {
 func TestRespawnKeepsTheRecordedLabel(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	r.h.exit("bees-8")
 	if _, err := r.fleet.Spawn(ctx, "bees-8", "other words"); !errors.Is(err, bee.ErrLabelChange) || len(r.h.started) != 1 {
 		t.Fatalf("err = %v, starts = %d; want ErrLabelChange and no start", err, len(r.h.started))
@@ -478,7 +478,7 @@ func TestEndRemovesOnlyTheRecordedWorkspace(t *testing.T) {
 	if _, err := r.fleet.End(ctx, "bees-8"); !errors.Is(err, bee.ErrNotSpawned) {
 		t.Fatalf("never spawned: err = %v, want ErrNotSpawned", err)
 	}
-	r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	recorded := r.h.workspaces[0].ID
 	r.h.workspaces = append(r.h.workspaces, bee.Workspace{ID: "w-other", Label: "bees-8"}) // a decoy
 	for range 2 {
@@ -499,13 +499,13 @@ func TestEndDeletesTheBranchOnlyIfMerged(t *testing.T) {
 	r := newRig(t)
 	gitRun(t, "", "init", "-q", "-b", "main", r.repo)
 	gitRun(t, r.repo, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "init")
-	r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	gitRun(t, r.repo, "branch", "bees-8") // merged: no commits of its own
 	if kept, err := r.fleet.End(ctx, "bees-8"); err != nil || kept {
 		t.Fatalf("merged branch: kept=%v err=%v", kept, err)
 	}
 	r.h.exit("bees-8")
-	r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	gitRun(t, r.repo, "checkout", "-q", "-b", "bees-8")
 	gitRun(t, r.repo, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "work")
 	gitRun(t, r.repo, "checkout", "-q", "main")
@@ -518,7 +518,7 @@ func TestSpawnRecordsTheBriefWithTheSpawn(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	r.h.failStart = errors.New("crash after recording")
-	r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	unread, err := r.lb.Unread(ctx, "bees-8")
 	if err != nil || len(unread) != 1 {
 		t.Fatalf("brief after a failed start: %+v, %v", unread, err)

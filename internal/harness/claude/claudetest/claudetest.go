@@ -58,7 +58,7 @@ func (r Registry) Add(t *testing.T, name, token string) func() []map[string]any 
 		sc := bufio.NewScanner(c)
 		for sc.Scan() { // ends at EOF, i.e. the sender's half-close
 			var m map[string]any
-			json.Unmarshal(sc.Bytes(), &m)
+			_ = json.Unmarshal(sc.Bytes(), &m)
 			lines = append(lines, m)
 		}
 		got <- lines
@@ -99,7 +99,7 @@ func (r Registry) Edit(t *testing.T, f func(map[string]any)) {
 		t.Fatal(err)
 	}
 	var e map[string]any
-	json.Unmarshal(b, &e)
+	_ = json.Unmarshal(b, &e)
 	f(e)
 	r.write(t, name, e)
 }

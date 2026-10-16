@@ -9,8 +9,8 @@ bees is built with bees. Run this repo's own work through `bs`, and treat every 
 - Track work with `bs bead ls` / `bs bead new --parent bees-N` / `bs epic`.
 - Hand a bead to a worker with `bs spawn --label "<words>" <bead>`; talk with `bs send` / `bs inbox`; check the fleet with `bs status`; tear down with `bs end`.
 - When `bs`, herdr, Claude Code or git/gh fails, misleads, or needs a manual workaround: run the `capture-pitfall` skill (`.claude/skills/capture-pitfall/SKILL.md`) to file it with its evidence, then fix `bs` (or spawn a worker to). The workaround is evidence, not the fix.
-- One shared `bs` on PATH, installed only by the queen (or keeper) from `main`: `go install ./cmd/bs` after a bs change merges. A stale `bs` silently tests yesterday's code; a branch build makes everyone test unmerged code.
-- Workers never `go install`: build into the worktree (`go build -o bin/bs ./cmd/bs`) and dogfood with `./bin/bs`.
+- One shared `bs` on PATH, and only the queen (or keeper) installs it, from `main`: after a bs PR merges, or when bs warns it is stale, pull main in the main checkout and run `go install ./cmd/bs` there (the queen's one exception to "no builds"). A stale `bs` silently tests yesterday's code; a branch build makes everyone test unmerged code.
+- Workers never `go install`: build into the worktree (`go build -o bin/bs ./cmd/bs`) and dogfood with `./bin/bs`, or `PATH=$PWD/bin:$PATH` so commands your session starts use it too. Sessions `bs spawn` starts don't inherit that PATH: they get their prompt from your build but run the shared bs, so test spawns in a throwaway project and say which build ran what.
 - Lint runs on commit once `pre-commit install` is done (docs/SETUP.md); `pre-commit run --all-files` lints everything.
 - Verify with `go vet ./... && go test ./...`, then exercise the change live through `bs` (real herdr, real Claude sessions) before calling it done.
 - A change to the role prompts, spawn or messaging: replay the matching scripted cards in `bakeoff/` against the baseline arms ([docs/bakeoff.md](docs/bakeoff.md)), and append the round's row to `bakeoff/HISTORY.md`.

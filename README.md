@@ -34,9 +34,6 @@ and checks each piece in turn.
 
 ![Lindsay: "Beads." Gob: "BEES?" Lindsay: "BEADS!" Gob: "BEADS?!?"](docs/img/bees-beads.gif)
 
-*Arrested Development*, S1E22 "Let 'Em Eat Cake". GIF via
-[Tenor](https://tenor.com/search/arrested-development-bees-gifs).
-
 ![beads (bd, the tracker), misheard as bees (the fleet), shortened to bs (the CLI)](docs/img/beads-bees-bs.svg)
 
 Details: [docs/SPEC.md](docs/SPEC.md) · decisions: [docs/adr/](docs/adr/) ·

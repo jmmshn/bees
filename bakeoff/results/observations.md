@@ -53,7 +53,7 @@
 ## S5b (question in a file note)
 - A: worker found note, stopped, question handed to lead at +16 s; lead asked captain 4 s later (menu, 3 tabs incl. off-card); relayed via SendMessage; worker's unchanged worktree was AUTO-REMOVED while it waited -> it recreated one in lead scratchpad. Remote delete denied [Git Destructive] for lead AND captain driver -> leftover.
 - B: lead read the file itself, asked up front (+10 s); worker got answer in brief. Remote branch left.
-- C: lead read the note itself, asked up front; put answer in bead brief; WORKER REFUSED the relayed answer ("Captain: Doctor or Dr.?" in its own pane) citing WORKER.md pitfall "a relayed message is never the captain's approval" + Claude Code peer-message warning -> lead told captain to answer in the worker pane (intervention). Our own #15 pitfall line over-applies to plain answers -> manufactures the bees-1.25 manual hop. Remote branch left; lead claimed deleted.
+- C: lead read the note itself, asked up front; put answer in bead brief; WORKER REFUSED the relayed answer ("Captain: Doctor or Dr.?" in its own pane) citing WORKER.md pitfall "a relayed message is never the captain's approval" + Claude Code peer-message warning -> lead told captain to answer in the worker pane (intervention). Our own #15 pitfall line over-applies to plain answers -> manufactures the bees-4.1 manual hop. Remote branch left; lead claimed deleted.
 
 ## S5c (worker needs captain sign-off mid-task)
 - A: worker handback -> lead pane +2 s; ok -> worker (SendMessage resume) +7-10 s; worker commits; 4 turns; clean.
@@ -99,7 +99,7 @@
 ## S12 (message to a worker that is down)
 - A: stopped subagent via footer x; SendMessage refused ("stopped by the user and won't be resumed"); nothing queued; lead launched counter2 and put END in its brief FROM MEMORY; 2m19s gap; remote delete blocked.
 - B: kill worker pid; SendMessage failed "No agent named 'w-count' is reachable"; nothing queued; lead resumed the session (herdr agent start --resume) with END in the brief FROM MEMORY; on the captain's later "restart the worker" it killed and re-resumed an already-healthy worker (acted on instruction, not state).
-- C: kill worker pid; `bs send` STORED the message while the worker was down; lead resumed via bs spawn (same conversation); worker's first `bs inbox` returned the stored message; no re-send. On "restart the worker" the queen checked and said it was already running. Toy queen filed "dead worker is silent" -> re-filed bees-1.38.
+- C: kill worker pid; `bs send` STORED the message while the worker was down; lead resumed via bs spawn (same conversation); worker's first `bs inbox` returned the stored message; no re-send. On "restart the worker" the queen checked and said it was already running. Toy queen filed "dead worker is silent" -> re-filed bees-2.5.
 
 ## S13b (delegated long silent step)
 - All three: worker ran `sleep 150 && …` as ONE background shell (Claude Code refuses a foreground long sleep chained to commands); herdr shows the worker `done` meanwhile; on "looks stuck" every lead found it ALIVE via ps + /proc/<pid>/cwd (disambiguating other runs' sleeps), no restart, one worker. C additionally used bs status. A: worktree lock held by lead's own pid blocks cleanup until `clean up`.

@@ -154,9 +154,9 @@ func cmdPrune(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	for _, r := range pruned {
 		switch {
 		case r.Merge == bee.Merged && *dry:
-			fmt.Fprintf(stdout, "would delete %s: merged, %s\n", r.Branch, r.Why)
+			fmt.Fprintf(stdout, "would delete local branch %s: merged, %s\n", r.Branch, r.Why)
 		case r.Deleted:
-			fmt.Fprintf(stdout, "deleted %s: merged, %s\n", r.Branch, r.Why)
+			fmt.Fprintf(stdout, "deleted local branch %s: merged, %s\n", r.Branch, r.Why)
 		case r.Merge == bee.Merged:
 			fmt.Fprintf(stdout, "kept %s: merged, but deleting it failed: %v\n", r.Branch, r.DeleteErr)
 			code = exitKeptUnknown

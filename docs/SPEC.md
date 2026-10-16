@@ -221,7 +221,7 @@ bs init                       create the logbook file and table if missing (opti
 bs queen                      start the queen: claude --name queen-<project> --append-system-prompt-file <project>-queen.md in the repo (no BS_* set)
 bs spawn --label L <bead> [--repo P]  start a bee for the bead in its own herdr workspace labelled L (--label only on a first spawn)
 bs end <bee>                 remove the bee's recorded workspace; keep its branch
-bs prune [--dry-run]          delete ended bees' branches once merged; exit 3 if one is kept unmerged, 4 if one couldn't be checked or deleted
+bs prune [--dry-run]          delete ended bees' local branches once merged; exit 3 if one is kept unmerged, 4 if one couldn't be checked or deleted
 bs epic <title>               create the project's next epic, <project>-<n>
 bs bead ls [--all] [<expr>]   bd query 'id="<project>-*"', not closed unless --all; <expr> is ANDed
 bs bead new --parent <project>-N [--description D] [--type T] [--priority P] <title>

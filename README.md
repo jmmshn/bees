@@ -45,28 +45,40 @@ vocabulary: [GLOSSARY.md](GLOSSARY.md)
 
 Subagents end with their task and report once; agent graphs make you code the routing;
 queues make agents poll; copy-paste makes you the bus. In bs each agent is a full Claude
-Code session tied to one bead: it outlives its lead and wakes when a message arrives.
+Code session tied to one bead: it outlives the queen that spawned it and wakes when a message arrives.
 
 What bs costs you: Linux, Claude Code sessions only, one machine. The doorbell rides on
 Claude's own cross-session socket, which keeps nothing after a session exits and drops
 identical repeats ([ADR-0001](docs/adr/0001-logbook-is-the-only-truth.md)).
-So bs uses it only to say "you have mail" and keeps every message in the logbook: a lost
+So bs uses it only to say "you have messages" and keeps every message in the logbook: a lost
 ring only delays a message, and a doubled one can't deliver it twice.
+
+### When a session dies mid-job
+
+Two moments from the [bake-off](docs/bakeoff.md), the same keeper lines played against
+a Claude Code lead with subagents (left) and against bs (right).
+
+The lead is killed mid-job, and the keeper asks a fresh one what's running:
+
+![Left: a fresh Claude Code lead says no workers are running and credits another run's session; its subagent died with the old lead. Right: a fresh bs queen reads bs status and bs bead ls, finds the bee still working, and the bee's done message wakes it](docs/img/lead-restart.gif)
+
+The bee (or subagent) is down when the keeper sends it a change:
+
+![Left: SendMessage to the stopped subagent fails and nothing is kept. Right: bs send prints queued; bs spawn resumes the bee, whose bs inbox returns the stored message](docs/img/worker-down.gif)
+
+Every line is copied from the runs' transcripts and drawn as a terminal (`…` marks a cut); only the `#` setup
+lines and the ✗/✓ verdicts are commentary. The scripts are S10 and S12 in
+[bakeoff/cards](bakeoff/cards/); rebuild the GIFs with `uv run docs/img/src/gifs.py`.
 
 ### Without bs: you are the message bus
 
-![Two plain Claude Code sessions: the human copies the brief across and copies the answer back](docs/img/without-bs.svg)
+![Two plain Claude Code sessions: the keeper copies the brief across and copies the answer back](docs/img/without-bs.svg)
 
 ### With bs: the sessions ring each other
 
 ![Queen spawns a bee, sends it a note; the bee is woken by a doorbell, works, replies; the queen is woken in turn](docs/img/with-bs.svg)
 
-### Messages survive a session that is down
-
-![bs send to a stopped session prints "queued"; the messages show up in bs inbox when it restarts](docs/img/queued.svg)
-
-The first two images illustrate the Claude Code UI. Every `bs` line in them, and the
-whole third image, is real v0 output.
+These two images illustrate the Claude Code UI; every `bs` line in them is real v0 output.
 
 ---
 
@@ -202,7 +214,7 @@ unread(s) = messages to s with no 'received' entry from s, in insertion order
 
 Nothing records whether a session is alive
 ([ADR-0004](docs/adr/0004-liveness-is-derived-not-stored.md)); that is worked out each
-time from Claude's registry and `/proc`. A dead session needs no cleanup: its mail waits.
+time from Claude's registry and `/proc`. A dead session needs no cleanup: its messages wait.
 
 ## Status
 

@@ -149,7 +149,7 @@ QUEEN = [
     (0.0, "ws", ("queen t2c", "idle")),
 ]
 
-BEE = [
+WORKER = [
     (0.0, "ws", ("queen t2c", "working")),
     (0.0, "ws", ("sort fruits", "working")),
     (0.0, "ws", ("dedupe todo", "working")),
@@ -190,7 +190,7 @@ BEE = [
 
 SCENES = [
     ("queen", "queen t2c", "queen-t2c", QUEEN),
-    ("bee", "sort fruits", "t2c-1-1", BEE),
+    ("worker", "sort fruits", "t2c-1-1", WORKER),
 ]
 
 

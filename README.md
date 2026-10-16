@@ -2,24 +2,24 @@
 
 ![beads → bees → bs](docs/img/beads-bees-bs.svg)
 
-> You ask the queen. The bees do the work.
+> You ask the queen. The workers do the work.
 
-**One queen, many bees.** The **queen** is a taskmaster and never writes the code. It
+**One queen, many workers.** The **queen** is a taskmaster and never writes the code. It
 splits your request into [beads](https://github.com/steveyegge/beads) (`bd`), spawns a
-**bee** per bead in a labelled [herdr](https://herdr.dev) workspace, and reports back to
-you. Each bee works on its own, in its own git worktree, and tells the queen when it is
+**worker** per bead in a labelled [herdr](https://herdr.dev) workspace, and reports back to
+you. Each worker works on its own, in its own git worktree, and tells the queen when it is
 done. You talk only to the queen. `bs` is the small Go CLI that ties Claude Code, herdr
 and beads together.
 
-![The keeper asks the queen for three jobs in a Claude Code chat; the queen calls bs epic and bs bead new, bs spawn opens three labelled herdr workspaces, the bees report done in bs inbox, and after "merge all three" the queen calls bd close, bs end and bs prune](docs/img/queen.gif)
+![The keeper asks the queen for three jobs in a Claude Code chat; the queen calls bs epic and bs bead new, bs spawn opens three labelled herdr workspaces, the workers report done in bs inbox, and after "merge all three" the queen calls bd close, bs end and bs prune](docs/img/queen.gif)
 
-**Every piece of work is a bead.** The bead is the bee's brief, its name (`bees-2.1` →
+**Every piece of work is a bead.** The bead is the worker's brief, its name (`bees-2.1` →
 session, branch and worktree `bees-2-1`) and its exit: the work is done only when its PR
 merges and the queen runs `bd close`. Nothing runs that isn't tracked.
 
-![The bee's first prompt is a doorbell; bs inbox shows its brief from the bead, it does the work, pushes, and reports with bs send queen-t2c "done: …"](docs/img/bee.gif)
+![The worker's first prompt is a doorbell; bs inbox shows its brief from the bead, it does the work, pushes, and reports with bs send queen-t2c "done: …"](docs/img/worker.gif)
 
-Queen and bees talk with `bs send` and `bs inbox`. Each message lands in a SQLite
+Queen and workers talk with `bs send` and `bs inbox`. Each message lands in a SQLite
 **logbook** first; then a **doorbell** prompt goes into the recipient's Claude session,
 so an idle session acts on it without anyone typing.
 
@@ -32,7 +32,7 @@ with `uv run docs/img/src/gifs.py`.
 ## Install
 
 Private repo, Linux only. Needs [Go](https://go.dev/dl/), [Claude Code](https://code.claude.com)
-2.1.296 or later (cross-session messaging), [herdr](https://herdr.dev) to run bees,
+2.1.296 or later (cross-session messaging), [herdr](https://herdr.dev) to run workers,
 and [`bd`](https://github.com/steveyegge/beads) for beads.
 
 ```sh
@@ -55,7 +55,7 @@ vocabulary: [GLOSSARY.md](GLOSSARY.md)
 
 ## Trade-offs
 
-Unlike subagents, a bee is a full Claude Code session that outlives the queen that
+Unlike subagents, a worker is a full Claude Code session that outlives the queen that
 spawned it and wakes when a message arrives.
 
 The price: Linux, Claude Code sessions only, one machine. The doorbell rides on
@@ -72,18 +72,18 @@ a lost ring only delays a message, and a doubled one can't deliver it twice.
 bs queen                      start claude --name queen-<project> in the repo
 bs epic <title>               create the project's next epic, <project>-<n>
 bs bead ls | new …            list the project's beads, or file one under an epic
-bs spawn --label L <bead> …   start a bee per bead, in parallel, each in its own herdr workspace
+bs spawn --label L <bead> …   start a worker per bead, in parallel, each in its own herdr workspace
 bs send [--now] <to> <body|-> store a message, then ring <to>
 bs inbox [--peek]             print unread; without --peek, record receipts
 bs status [--json]            sessions, running or not, and unread counts
-bs end <bee>                  remove the bee's recorded workspace; keep its branch
-bs prune [--dry-run]          delete ended bees' local branches once merged
+bs end <worker>               remove the worker's recorded workspace; keep its branch
+bs prune [--dry-run]          delete ended workers' local branches once merged
 bs version                    print the commit bs was built from
 bs init                       create the logbook (optional; any command does)
 ```
 
 Every command takes `--project`; `send`, `inbox`, `spawn` and `end` take `--as <session>`
-for use outside a named Claude session; `spawn --repo <path>` puts bees in another repo.
+for use outside a named Claude session; `spawn --repo <path>` puts workers in another repo.
 
 ---
 
@@ -99,7 +99,7 @@ flowchart LR
     subgraph queen["claude --name queen-bees"]
         C[bs spawn / send / inbox]
     end
-    subgraph bees["bees, one per bead"]
+    subgraph workers["workers, one per bead"]
         P1["bees-2-1<br/>worktree bees-WT/bees-2-1"]
         P2["bees-2-2<br/>worktree bees-WT/bees-2-2"]
     end
@@ -121,7 +121,7 @@ flowchart LR
     HD -- "starts" --> P2
 ```
 
-### A round trip, queen → bee → queen
+### A round trip, queen → worker → queen
 
 ```mermaid
 sequenceDiagram
@@ -145,8 +145,8 @@ sequenceDiagram
     C->>L: bs inbox
 ```
 
-`scripts/e2e.sh` checks this with real sessions: the idle bee's doorbell lands about
-20 ms after `bs send`, and a full queen → bee → queen round trip needs nobody typing.
+`scripts/e2e.sh` checks this with real sessions: the idle worker's doorbell lands about
+20 ms after `bs send`, and a full queen → worker → queen round trip needs nobody typing.
 
 ### What one `bs send` does
 
@@ -166,7 +166,7 @@ flowchart TD
 The message is stored before anything can fail, so the worst case is a late message,
 never a lost one.
 
-### Spawning a bee
+### Spawning a worker
 
 ```mermaid
 flowchart LR
@@ -184,7 +184,7 @@ flowchart LR
 ```
 
 `bs end bees-2-1` removes only the workspace recorded in that `spawned` entry and writes
-`ended`; it keeps the branch. `bs prune` later deletes ended bees' local branches once
+`ended`; it keeps the branch. `bs prune` later deletes ended workers' local branches once
 their work is on main, including after a rebase or squash merge.
 
 ### The logbook is the only truth

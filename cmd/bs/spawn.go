@@ -71,7 +71,7 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	switch {
 	case st.Waiting:
 		fmt.Fprintf(stdout, "%s is waiting at a prompt (probably folder trust); answer it in its pane\n", st.Name)
-	case !trusted && !st.Resumed:
+	case !trusted && !st.Continued: // a fresh restart may meet the prompt its first start did
 		fmt.Fprintf(stderr, "bs spawn: Claude hasn't trusted %s yet; if %s asks, answer the trust prompt in its pane\n", f.P.Repo, st.Name)
 	}
 	return nil

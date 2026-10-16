@@ -33,7 +33,7 @@ bs status                      # every session the logbook knows: running or not
 bs end <project>-2-1           # remove its workspace; its branch is deleted if merged
 ```
 
-`bs spawn` on a bee whose Claude has exited resumes it in the same workspace with `claude --continue`, or starts it fresh there if it never read its brief (its first start failed). `bs spawn` takes about 10 s: herdr gives up waiting for an idle prompt while the bee works on its doorbell, and bs then confirms the bee from Claude's session registry.
+`bs spawn` on a bee whose Claude has exited resumes it in the same workspace with `claude --continue`, or starts it fresh there if it never read its brief (its first start failed). `bs spawn` takes about 10 s: herdr gives up waiting for an idle prompt while the worker gets on with its doorbell, and bs then confirms the worker from Claude's session registry.
 
 After merging changes to bs, rebuild it with `go install ./cmd/bs`. Inside this repo, bs warns when it was built from a commit behind `main`; `bs version` prints the commit it was built from.
 

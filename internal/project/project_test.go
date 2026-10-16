@@ -165,3 +165,18 @@ func TestGitDirNameIsNormalisedButRepoPathIsNot(t *testing.T) {
 		t.Fatalf("got %+v, %v", p, err)
 	}
 }
+
+func TestRepoPathFromNameFindsTheDirWhoseNormalisedNameMatches(t *testing.T) {
+	clearEnv(t)
+	repos := t.TempDir()
+	t.Setenv("BS_REPOS", repos)
+	want := filepath.Join(repos, "pymatgen-analysis-defects")
+	if err := os.Mkdir(want, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"pymatgen-analysis-defects", "pymatgenanalysisdefects", "Pymatgen_Analysis_Defects"} {
+		if p, err := project.Resolve(name); err != nil || p.Repo != want {
+			t.Errorf("Resolve(%q) = %+v, %v; want Repo %s", name, p, err, want)
+		}
+	}
+}

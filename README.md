@@ -1,17 +1,30 @@
 # bees
 
-> `bs` is a small Go CLI that runs one Claude Code session per bead on a codebase,
-> and lets those sessions hand each other work and **wake each other up**, with nobody typing.
+> You ask the queen. The bees do the work.
 
-**Every piece of work is a bead.** A **queen** session files work as
-[beads](https://github.com/steveyegge/beads) (`bd`) and spawns a **bee** per bead: a
-Claude Code session in its own git worktree. The bead is the bee's brief, its name
-(`bees-2.1` → session, branch and worktree `bees-2-1`) and its exit: the work is done
-only when its PR merges and the queen runs `bd close`. Nothing runs that isn't tracked.
+**One queen, many bees.** The **queen** is a taskmaster and never writes the code. It
+splits your request into [beads](https://github.com/steveyegge/beads) (`bd`), spawns a
+**bee** per bead in a labelled [herdr](https://herdr.dev) workspace, and reports back to
+you. Each bee works on its own, in its own git worktree, and tells the queen when it is
+done. You talk only to the queen. `bs` is the small Go CLI that ties Claude Code, herdr
+and beads together.
+
+![The keeper asks the queen for three jobs; the queen runs bs epic and bs bead new, bs spawn opens three labelled herdr workspaces, the bees report done in bs inbox, and after "merge all three" the queen runs bd close, bs end and bs prune](docs/img/queen.gif)
+
+**Every piece of work is a bead.** The bead is the bee's brief, its name (`bees-2.1` →
+session, branch and worktree `bees-2-1`) and its exit: the work is done only when its PR
+merges and the queen runs `bd close`. Nothing runs that isn't tracked.
+
+![The bee's first prompt is a doorbell; bs inbox shows its brief from the bead, it does the work, pushes, and reports with bs send queen-t2c "done: …"](docs/img/bee.gif)
 
 Queen and bees talk with `bs send` and `bs inbox`. Each message lands in a SQLite
 **logbook** first; then a **doorbell** prompt goes into the recipient's Claude session,
 so an idle session acts on it without anyone typing.
+
+Both GIFs replay bake-off run t2c ([bakeoff/cards/S2.md](bakeoff/cards/S2.md), a toy
+repo that pushes branches instead of opening PRs). Every line in the session pane is
+copied from the run's transcripts (`…` marks a cut); the herdr sidebar is an
+illustration. Rebuild them with `uv run docs/img/src/gifs.py`.
 
 ## Install
 
@@ -41,45 +54,16 @@ vocabulary: [GLOSSARY.md](GLOSSARY.md)
 
 ---
 
-## How bs compares
+## Trade-offs
 
-Subagents end with their task and report once; agent graphs make you code the routing;
-queues make agents poll; copy-paste makes you the bus. In bs each bee is a full Claude
-Code session tied to one bead: it outlives the queen that spawned it and wakes when a
-message arrives.
+Unlike subagents, a bee is a full Claude Code session that outlives the queen that
+spawned it and wakes when a message arrives.
 
-What bs costs you: Linux, Claude Code sessions only, one machine. The doorbell rides on
+The price: Linux, Claude Code sessions only, one machine. The doorbell rides on
 Claude's own cross-session socket, which keeps nothing after a session exits and drops
 identical repeats ([ADR-0001](docs/adr/0001-logbook-is-the-only-truth.md)).
 So bs uses it only to say "you have messages" and keeps every message in the logbook:
 a lost ring only delays a message, and a doubled one can't deliver it twice.
-
-### When a session dies mid-job
-
-Two moments from the [bake-off](docs/bakeoff.md), the same keeper lines played against
-a Claude Code lead with subagents (left) and against bs (right).
-
-The lead is killed mid-job, and the keeper asks a fresh one what's running:
-
-![Left: a fresh Claude Code lead says no workers are running and credits another run's session; its subagent died with the old lead. Right: a fresh bs queen reads bs status and bs bead ls, finds the bee still working, and the bee's done message wakes it](docs/img/lead-restart.gif)
-
-The bee (or subagent) is down when the keeper sends it a change:
-
-![Left: SendMessage to the stopped subagent fails and nothing is kept. Right: bs send prints queued; bs spawn resumes the bee, whose bs inbox returns the stored message](docs/img/worker-down.gif)
-
-Every line is copied from the runs' transcripts and drawn as a terminal (`…` marks a
-cut); only the `#` setup lines and the ✗/✓ verdicts are commentary. The scripts are S10 and S12 in
-[bakeoff/cards](bakeoff/cards/); rebuild the GIFs with `uv run docs/img/src/gifs.py`.
-
-### Without bs: you are the message bus
-
-![Two plain Claude Code sessions: the keeper copies the brief across and copies the answer back](docs/img/without-bs.svg)
-
-### With bs: the sessions ring each other
-
-![Queen spawns a bee, sends it a note; the bee is woken by a doorbell, works, replies; the queen is woken in turn](docs/img/with-bs.svg)
-
-These two images illustrate the Claude Code UI; every `bs` line in them is real v0 output.
 
 ---
 

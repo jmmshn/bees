@@ -19,7 +19,8 @@ git -C "$repo" remote set-head origin main
 case $arm in
 	a) cmd="claude --name lead-$id --append-system-prompt-file $here/arms/A-subagents.md" ;;
 	b) cmd="claude --name lead-$id --append-system-prompt-file $here/arms/B-peers.md" ;;
-	c) cmd="bs queen" ;;
+	c) cmd="bs queen" # BAKEOFF_BS=<path to a bs build> plays a branch build without installing it
+		[ -n "${BAKEOFF_BS:-}" ] && cmd="PATH=$(cd "$(dirname "$BAKEOFF_BS")" && pwd):\$PATH bs queen" ;;
 esac
 name=$([ "$arm" = c ] && echo "queen-$id" || echo "lead-$id")
 ws=$(herdr workspace create --cwd "$repo" --label "bakeoff $id" --no-focus)

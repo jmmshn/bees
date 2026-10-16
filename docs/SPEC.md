@@ -285,7 +285,8 @@ Manual bee (no herdr): `claude --name bee-a --settings '{"crossSessionInbound":"
   - `Plan(Facts, now) []Action`, run from send, hooks (5 s debounce), status, inbox and a 60 s watchdog;
   - one reconcile at a time, serialized by SQLite's write lock;
   - one doorbell in flight per session, re-ring at 60 s, flag the queen at 120 s.
-- **Hook:** `bs hook` on UserPromptSubmit writes a `rang`/landed entry for `[bs]` prompts.
+- **Hook:** `bs hook` on UserPromptSubmit writes a `rang`/landed entry for `[bs]` prompts; hooks and herdr agent status are the attention facts for `Plan`, never screen scraping (R38).
 - **Bee contract:** a fuller system prompt for spawned bees (R11).
-- **Captain:** a message to `captain` is something that needs the human; `bs status` lists them first.
+- **Questions and answers** (R35, R36): message `data` gains `bead` and `needs` (`none` | `answer` | `approval`); `bs send --needs … --bead … --re <id>`; an answer is a message whose `ref` is the question, and the first one wins; `bs status` counts open questions.
+- **Captain** (R13, R37): a message to `captain` with `needs` set is something that needs the human; `bs status` lists them first. Desk only, no push (S3).
 - **Harness seam:** `Harness{Launch, Ring, Alive}`, with an omp adapter in v1.1.

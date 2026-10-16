@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="300" viewBox="0 0 960 300" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13">
+  <title>beads, misheard as bees, shortened to bs</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+  <rect width="960" height="300" rx="10" fill="#0d1117"/>
+
+  <!-- beads -->
+  <rect x="24" y="24" width="250" height="196" rx="8" fill="#161b22" stroke="#30363d"/>
+  <path d="M52,92 Q149,40 246,92" fill="none" stroke="#6e7681" stroke-width="1.5"/>
+  <circle cx="62" cy="86" r="9" fill="#d2a8ff"/>
+  <circle cx="92" cy="72" r="9" fill="#79c0ff"/>
+  <circle cx="122" cy="64" r="9" fill="#7ee787"/>
+  <circle cx="152" cy="62" r="9" fill="#f0883e"/>
+  <circle cx="182" cy="65" r="9" fill="#d2a8ff"/>
+  <circle cx="212" cy="73" r="9" fill="#79c0ff"/>
+  <circle cx="238" cy="87" r="9" fill="#7ee787"/>
+  <text x="149" y="134" fill="#c9d1d9" font-size="26" font-weight="bold" text-anchor="middle">beads</text>
+  <text x="149" y="160" fill="#8b949e" text-anchor="middle">bd, the issue tracker</text>
+  <text x="149" y="196" fill="#6e7681" text-anchor="middle">Lindsay: "Beads."</text>
+
+  <!-- misheard -->
+  <line x1="282" y1="122" x2="346" y2="122" stroke="#8b949e" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="314" y="108" fill="#f0883e" text-anchor="middle">misheard</text>
+
+  <!-- bees -->
+  <rect x="355" y="24" width="250" height="196" rx="8" fill="#161b22" stroke="#30363d"/>
+  <g transform="translate(480,72)">
+    <ellipse cx="-12" cy="-18" rx="16" ry="10" fill="#c9d1d9" opacity="0.55" transform="rotate(-25,-12,-18)"/>
+    <ellipse cx="12" cy="-18" rx="16" ry="10" fill="#c9d1d9" opacity="0.55" transform="rotate(25,12,-18)"/>
+    <ellipse cx="0" cy="0" rx="30" ry="18" fill="#e3b341"/>
+    <rect x="-12" y="-17" width="7" height="34" fill="#0d1117"/>
+    <rect x="4" y="-17" width="7" height="34" fill="#0d1117"/>
+    <circle cx="27" cy="-3" r="2.5" fill="#0d1117"/>
+    <path d="M-30,0 l-9,0" stroke="#0d1117" stroke-width="3"/>
+  </g>
+  <text x="480" y="134" fill="#c9d1d9" font-size="26" font-weight="bold" text-anchor="middle">bees</text>
+  <text x="480" y="160" fill="#8b949e" text-anchor="middle">the fleet: a queen and her bees</text>
+  <text x="480" y="196" fill="#6e7681" text-anchor="middle">Gob: "BEES?"</text>
+
+  <!-- shortened -->
+  <line x1="613" y1="122" x2="677" y2="122" stroke="#8b949e" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="645" y="108" fill="#f0883e" text-anchor="middle">shortened</text>
+
+  <!-- bs -->
+  <rect x="686" y="24" width="250" height="196" rx="8" fill="#161b22" stroke="#30363d"/>
+  <rect x="736" y="46" width="150" height="52" rx="6" fill="#0d1117" stroke="#30363d"/>
+  <text x="752" y="78" font-size="16"><tspan fill="#7ee787">$ </tspan><tspan fill="#c9d1d9">bs inbox</tspan></text>
+  <text x="811" y="134" fill="#c9d1d9" font-size="26" font-weight="bold" text-anchor="middle">bs</text>
+  <text x="811" y="160" fill="#8b949e" text-anchor="middle">the CLI</text>
+  <text x="811" y="196" fill="#6e7681" font-size="12" text-anchor="middle">Michael: "Gob's not on board."</text>
+
+  <text x="480" y="262" fill="#c9d1d9" font-size="15" text-anchor="middle">bs: short for <tspan fill="#e3b341">bees</tspan>. Any other reading is unintended,</text>
+  <text x="480" y="284" fill="#c9d1d9" font-size="15" text-anchor="middle">and, the first time a bee says "done" before opening its PR, accurate.</text>
+</svg>

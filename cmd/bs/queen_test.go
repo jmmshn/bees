@@ -28,12 +28,12 @@ func TestQueenStartsClaudeNamedForTheProject(t *testing.T) {
 	if gotDir != "/src/bees" {
 		t.Errorf("dir = %q", gotDir)
 	}
-	// The same file as a bee's: herdr can't pass multi-line arguments, and queen and
-	// bees launch the same way.
+	// A file, as for a worker (herdr can't pass multi-line arguments), but the queen's
+	// own role prompt.
 	if len(gotArgs) != 4 || !slices.Equal(gotArgs[:3], []string{"--name", "queen-bees", "--append-system-prompt-file"}) {
 		t.Fatalf("args = %q", gotArgs)
 	}
-	if b, err := os.ReadFile(gotArgs[3]); err != nil || string(b) != prompt.System("bees") {
+	if b, err := os.ReadFile(gotArgs[3]); err != nil || string(b) != prompt.Text(prompt.Queen, "bees") {
 		t.Errorf("system prompt file %s: %v\n%s", gotArgs[3], err, b)
 	}
 	for _, kv := range gotEnv {

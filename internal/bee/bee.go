@@ -175,10 +175,10 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 	// that project's logbook, so sp.Read can't tell and a restart always continues.
 	foreign := f.ForeignRepo || cmp.Or(sp.Repo, f.P.Repo) != f.P.Repo
 	st := Started{Name: sp.Name, Workspace: sp.Workspace, Resumed: resume, Continued: resume && (sp.Read || foreign)}
-	doorbell := fmt.Sprintf("[bs] you are %s, working on %s. Run: bs inbox   (reply with: bs send %s \"...\")", sp.Name, sp.Bead, f.Me)
+	doorbell := fmt.Sprintf("[bs] you are %s, working on %s — run: bs inbox   (reply with: bs send %s \"...\")", sp.Name, sp.Bead, f.Me)
 	args := []string{"--name", sp.Name, "--settings", beeSettings}
 	if !foreign {
-		file, err := prompt.File(f.P.Name)
+		file, err := prompt.File(prompt.Worker, f.P.Name)
 		if err != nil {
 			return st, err
 		}

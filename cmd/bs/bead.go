@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os/exec"
 	"strings"
 
 	"github.com/jmmshn/bees/internal/bee"
@@ -52,18 +53,11 @@ func beadLs(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	if len(pos) > 0 {
 		expr += " AND (" + strings.Join(pos, " ") + ")"
 	}
-	beads, err := bee.BeadsCLI{}.Query(ctx, expr)
-	if err != nil {
-		return err
-	}
-	for _, b := range beads {
-		// bd's id wildcard is a SQL LIKE, where the _ in a project name matches any
-		// character, so recheck each id.
-		if bee.Belongs(p.Name, b.ID) {
-			fmt.Fprintf(stdout, "%s  P%d %s %s  %s\n", b.ID, b.Priority, b.Type, b.Status, b.Title)
-		}
-	}
-	return nil
+	// Project names are only letters and digits, so the id wildcard can't match another
+	// project's beads.
+	cmd := exec.CommandContext(ctx, "bd", "query", "--limit", "0", expr)
+	cmd.Stdout, cmd.Stderr = stdout, stderr
+	return cmd.Run()
 }
 
 func beadNew(ctx context.Context, args []string, stdout, stderr io.Writer) error {

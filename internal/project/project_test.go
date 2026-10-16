@@ -141,15 +141,15 @@ func TestMeResolutionOrder(t *testing.T) {
 func TestProjectNamesAreNormalisedAndValidated(t *testing.T) {
 	clearEnv(t)
 	for raw, want := range map[string]string{
-		"bees": "bees", "pymatgen-analysis-defects": "pymatgen_analysis_defects",
-		"web-2": "web_2", "Jobflow-Ray": "jobflow_ray", "obsidian_vault": "obsidian_vault",
+		"bees": "bees", "pymatgen-analysis-defects": "pymatgenanalysisdefects",
+		"web-2": "web2", "Jobflow-Ray": "jobflowray", "obsidian_vault": "obsidianvault",
 	} {
 		p, err := project.Resolve(raw)
 		if err != nil || p.Name != want {
 			t.Errorf("Resolve(%q) = %q, %v; want %q", raw, p.Name, err, want)
 		}
 	}
-	for _, bad := range []string{"2fa-app", "my.repo", "has space", "a-very-long-project-name-xyz"} {
+	for _, bad := range []string{"2fa-app", "my.repo", "has space", "a-very-long-project-name-that-overflows"} {
 		if _, err := project.Resolve(bad); !errors.Is(err, project.ErrBadProject) {
 			t.Errorf("Resolve(%q): err = %v, want ErrBadProject", bad, err)
 		}
@@ -161,7 +161,7 @@ func TestGitDirNameIsNormalisedButRepoPathIsNot(t *testing.T) {
 	repo := gitRepo(t, "jobflow-ray")
 	t.Chdir(repo)
 	p, err := project.Resolve("")
-	if err != nil || p.Name != "jobflow_ray" || p.Repo != repo {
+	if err != nil || p.Name != "jobflowray" || p.Repo != repo {
 		t.Fatalf("got %+v, %v", p, err)
 	}
 }

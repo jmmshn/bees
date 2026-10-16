@@ -21,7 +21,7 @@ func fakeBd(t *testing.T, out string) (log string) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("BS_PROJECT", "web_2")
+	t.Setenv("BS_PROJECT", "web2")
 	return log
 }
 
@@ -34,51 +34,41 @@ func calls(t *testing.T, log string) string {
 	return string(b)
 }
 
-// bd's id wildcard is a SQL LIKE, so "web_2-*" also matches another project, webx2.
-const queryOut = `[
- {"id":"web_2-1","title":"the epic","status":"open","priority":1,"issue_type":"epic"},
- {"id":"web_2-1.2","title":"a task","status":"in_progress","priority":2,"issue_type":"task"},
- {"id":"webx2-1","title":"another project","status":"open","priority":2,"issue_type":"epic"}
-]`
-
-func TestBeadLsListsOnlyTheProjectsOpenBeads(t *testing.T) {
-	log := fakeBd(t, queryOut)
+func TestBeadLsQueriesTheProjectsOpenBeads(t *testing.T) {
+	log := fakeBd(t, "web2-1 the epic\n")
 	out, stderr, code := bs(t, "bead", "ls")
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	if !strings.Contains(out, "web_2-1 ") || !strings.Contains(out, "web_2-1.2 ") || !strings.Contains(out, "a task") {
-		t.Errorf("out = %q, want both web_2 beads", out)
+	if out != "web2-1 the epic\n" {
+		t.Errorf("out = %q, want bd's output", out)
 	}
-	if strings.Contains(out, "webx2") {
-		t.Errorf("out = %q lists another project's bead", out)
-	}
-	if got := calls(t, log); !strings.Contains(got, `query --json --limit 0 id="web_2-*" AND status!=closed`) {
+	if got := calls(t, log); got != "query --limit 0 id=\"web2-*\" AND status!=closed\n" {
 		t.Errorf("bd calls = %q", got)
 	}
 }
 
 func TestBeadLsAllAndExtraFilters(t *testing.T) {
-	log := fakeBd(t, queryOut)
+	log := fakeBd(t, "")
 	if _, stderr, code := bs(t, "bead", "ls", "--all", "priority<=1", "OR", "type=bug"); code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	if got := calls(t, log); !strings.Contains(got, `id="web_2-*" AND (priority<=1 OR type=bug)`) || strings.Contains(got, "closed") {
+	if got := calls(t, log); !strings.Contains(got, `id="web2-*" AND (priority<=1 OR type=bug)`) || strings.Contains(got, "closed") {
 		t.Errorf("bd calls = %q, want closed beads kept and the filter ANDed in parentheses", got)
 	}
 }
 
 func TestBeadNewFilesUnderAProjectEpic(t *testing.T) {
-	log := fakeBd(t, "web_2-1.3\n")
-	out, stderr, code := bs(t, "bead", "new", "--parent", "web_2-1", "--priority", "1", "--type", "bug", "fix the parser")
+	log := fakeBd(t, "web2-1.3\n")
+	out, stderr, code := bs(t, "bead", "new", "--parent", "web2-1", "--priority", "1", "--type", "bug", "fix the parser")
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	if out != "web_2-1.3\n" {
+	if out != "web2-1.3\n" {
 		t.Errorf("out = %q, want the new id", out)
 	}
 	// --force: bd refuses ids that don't carry the store's own prefix.
-	if got := calls(t, log); got != "create --silent --force --parent web_2-1 --title fix the parser --type bug --priority 1\n" {
+	if got := calls(t, log); got != "create --silent --force --parent web2-1 --title fix the parser --type bug --priority 1\n" {
 		t.Errorf("bd calls = %q", got)
 	}
 }
@@ -109,7 +99,7 @@ func TestEpicPointsAtBeadNew(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	if !strings.HasPrefix(out, "web_2-1\n") || !strings.Contains(out, `bs bead new --parent web_2-1 "..."`) {
+	if !strings.HasPrefix(out, "web2-1\n") || !strings.Contains(out, `bs bead new --parent web2-1 "..."`) {
 		t.Errorf("out = %q", out)
 	}
 }

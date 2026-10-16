@@ -16,13 +16,13 @@ import (
 
 var (
 	ErrNoProject  = errors.New("can't tell which project; run inside its git repo, set BS_PROJECT or pass --project")
-	ErrBadProject = errors.New("project names must be a letter then up to 24 letters, digits or _ (after - → _); set BS_PROJECT")
+	ErrBadProject = errors.New("project names must be a letter then up to 24 letters or digits (after dropping - and _); set BS_PROJECT")
 	ErrNoSession  = errors.New("can't tell which session you are; run bs from inside a named Claude session, or pass --as")
 )
 
-// validName is what a project name must be once lowercased with - → _. With no "-" in
+// validName is what a project name must be once lowercased with - and _ dropped. With no "-" in
 // the project, the first "-" in a bead id or bee name always ends the project (R27).
-var validName = regexp.MustCompile(`^[a-z][a-z0-9_]{0,24}$`)
+var validName = regexp.MustCompile(`^[a-z][a-z0-9]{0,24}$`)
 
 // Project is the scope of one queen, its bees and its logbook.
 type Project struct {
@@ -55,7 +55,7 @@ func Resolve(flag string) (Project, error) {
 		}
 		name = filepath.Base(repo)
 	}
-	name = strings.ToLower(strings.ReplaceAll(name, "-", "_"))
+	name = strings.ToLower(strings.NewReplacer("-", "", "_", "").Replace(name))
 	if !validName.MatchString(name) {
 		return Project{}, fmt.Errorf("%q: %w", name, ErrBadProject)
 	}

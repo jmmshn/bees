@@ -105,7 +105,7 @@ func newRig(t *testing.T) rig {
 }
 
 func TestName(t *testing.T) {
-	for bead, want := range map[string]string{"bees-8": "bees-8", "bees-12.3": "bees-12-3", "pymatgen_analysis_defects-12.3": "pymatgen_analysis_defects-12-3"} {
+	for bead, want := range map[string]string{"bees-8": "bees-8", "bees-12.3": "bees-12-3", "pymatgenanalysisdefects-12.3": "pymatgenanalysisdefects-12-3"} {
 		if got, err := bee.Name(bead); err != nil || got != want {
 			t.Errorf("Name(%q) = %q, %v; want %q", bead, got, err, want)
 		}
@@ -124,7 +124,7 @@ func TestBelongs(t *testing.T) {
 	}{
 		{"bees", "bees-8", true}, {"bees", "bees-12.3.4", true},
 		{"bees", "bees-x", false}, {"bees", "bees-8.", false}, {"bees", "beads-995.8", false},
-		{"web", "web_2-3", false}, {"pymatgen", "pymatgen_analysis_defects-3", false},
+		{"web", "web2-3", false}, {"pymatgen", "pymatgenanalysisdefects-3", false},
 	} {
 		if got := bee.Belongs(c.project, c.bead); got != c.want {
 			t.Errorf("Belongs(%q, %q) = %v, want %v", c.project, c.bead, got, c.want)

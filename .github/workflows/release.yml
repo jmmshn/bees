@@ -1,0 +1,32 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: build
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          mkdir dist
+          for arch in amd64 arm64; do
+            # -buildvcs=true stamps the commit `bs version` prints, and fails the build if it can't.
+            GOOS=linux GOARCH=$arch go build -trimpath -buildvcs=true -o dist/bs-linux-$arch ./cmd/bs
+          done
+          (cd dist && sha256sum bs-linux-* > SHA256SUMS)
+      - name: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes dist/*

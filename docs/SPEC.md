@@ -145,7 +145,7 @@ func Me(flagAs string) (string, error)      // --as → parent-process walk → 
 
 - The name is lowercased with `-` and `_` dropped (`pymatgen-analysis-defects` → `pymatgenanalysisdefects`) and must match `^[a-z][a-z0-9]{0,24}$`, else `ErrBadProject` (set `BS_PROJECT`).
 - The project comes from git's *common* directory, so a shell inside `<repo>-WT/bees-2-1` resolves to the main repo's project.
-- `Repo` is the main checkout when the project comes from git, else `$BS_REPOS/<project>` (default `~/repos/jmmshn`); `Logbook` is `$BS_LOGBOOK`, else `~/.local/share/bees/<project>.db`.
+- `Repo` is the main checkout when the project comes from git, else the directory under `$BS_REPOS` (default `~/repos/jmmshn`) whose normalised name is the project, so `jobflowray` finds `jobflow-ray`; `Logbook` is `$BS_LOGBOOK`, else `~/.local/share/bees/<project>.db`.
 - `internal/prompt/system.md`, embedded in bs with `{{project}}` filled in by `prompt.System`, is passed to the queen as `--append-system-prompt` and to every bee whose repo is the project's as `--append-system-prompt-file <logbook dir>/<project>-system.md`, rewritten at each start (herdr refuses agent arguments containing newlines). It is the one place the instructions for queens and bees live; today it tells them to list and file beads with `bs bead`, which keeps them in the project (R32). Claude records it with the conversation until compaction, so restart a queen with `bs queen`, not a bare `claude --resume`.
 - `Me` walks `getppid()` upward to the first pid with `~/.claude/sessions/<pid>.json` and uses its `name`. The registry beats `BS_SESSION`, which a session can inherit stale; `BS_SESSION` is for use outside Claude. Otherwise it fails with `run bs from inside a named Claude session, or pass --as`.
 

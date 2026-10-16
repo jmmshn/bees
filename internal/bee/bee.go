@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/project"
@@ -19,19 +20,18 @@ import (
 )
 
 var (
-	ErrNoAgent    = errors.New("no live agent with that name")
-	ErrRunning    = errors.New("bee is already running")
-	ErrOrphan     = errors.New("a herdr workspace is labelled with this bead but bs has no record of it")
-	ErrWaiting    = errors.New("claude is waiting at a prompt") // started, but needs an answer in its pane
-	ErrWrongRepo  = errors.New("bead does not belong to this project")
-	ErrNotSpawned = errors.New("bs has no record of spawning this bee")
+	ErrRunning = errors.New("bee is already running")
+	ErrOrphan  = errors.New("a herdr workspace is labelled with this bead but bs has no record of it")
+	ErrWaiting = errors.New("claude is waiting at a prompt") // started, but needs an answer in its pane
+	// ErrUnconfirmed: herdr stopped waiting for Claude to be ready. Claude may be busy
+	// with its first prompt or may have exited; only Claude's registry can tell.
+	ErrUnconfirmed = errors.New("herdr could not confirm that claude started")
+	ErrWrongRepo   = errors.New("bead does not belong to this project")
+	ErrNotSpawned  = errors.New("bs has no record of spawning this bee")
 )
 
 // Workspace is a herdr workspace opened on a git worktree.
 type Workspace struct{ ID, Label, Pane, Path string }
-
-// Agent is a live agent in a herdr pane.
-type Agent struct{ Name, Pane string }
 
 // Bead is the part of a bead bs reads.
 type Bead struct{ ID, Title, Description string }
@@ -39,10 +39,19 @@ type Bead struct{ ID, Title, Description string }
 // Herdr is the slice of herdr bs drives.
 type Herdr interface {
 	CreateWorktree(ctx context.Context, repo, branch, path, label string) (Workspace, error)
-	StartClaude(ctx context.Context, pane, name string, args ...string) error // ErrWaiting when blocked at a prompt
-	RemoveWorktree(ctx context.Context, workspace string) error               // already gone → nil
-	Agent(ctx context.Context, name string) (Agent, error)                    // ErrNoAgent when not live
+	// StartClaude runs claude with args in pane. ErrWaiting: blocked at a startup prompt.
+	// ErrUnconfirmed: herdr gave up waiting. ErrUnsafeArg: an argument herdr can't pass.
+	StartClaude(ctx context.Context, pane, name string, args ...string) error
+	RemoveWorktree(ctx context.Context, workspace string) error // already gone → nil
 	Workspaces(ctx context.Context) ([]Workspace, error)
+}
+
+// Sessions tells whether a Claude session is running, from Claude's own registry
+// (ADR-0004), not from herdr: herdr leaves an agent unnamed when its start times out.
+type Sessions interface {
+	// Alive reports whether a session called name is live, waiting up to wait for one
+	// to appear.
+	Alive(ctx context.Context, name string, wait time.Duration) (bool, error)
 }
 
 // Beads reads beads.
@@ -55,6 +64,7 @@ type Fleet struct {
 	P           project.Project
 	LB          *logbook.Logbook
 	H           Herdr
+	S           Sessions
 	B           Beads
 	Me          string // the queen doing the spawning
 	ForeignRepo bool   // skip the check that the bead belongs to P (--repo)
@@ -113,10 +123,11 @@ func (f Fleet) Spawn(ctx context.Context, bead string) (Started, error) {
 		return Started{}, err
 	}
 	if ok && !sp.Ended {
-		if _, err := f.H.Agent(ctx, name); err == nil {
-			return Started{}, fmt.Errorf("%s: %w", name, ErrRunning)
-		} else if !errors.Is(err, ErrNoAgent) {
+		// Fail closed: an unreadable registry must not start a second Claude.
+		if alive, err := f.S.Alive(ctx, name, 0); err != nil {
 			return Started{}, err
+		} else if alive {
+			return Started{}, fmt.Errorf("%s: %w", name, ErrRunning)
 		}
 		return f.start(ctx, sp, true)
 	}
@@ -173,11 +184,28 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 		args = append([]string{"--continue"}, args...)
 	}
 	err := f.H.StartClaude(ctx, sp.Pane, sp.Name, args...)
-	if errors.Is(err, ErrWaiting) {
+	switch {
+	case errors.Is(err, ErrWaiting):
 		st.Waiting, err = true, nil
+	case errors.Is(err, ErrUnconfirmed):
+		// A bee goes straight to work on its doorbell, so herdr, which waits for an idle
+		// prompt, usually times out on a healthy bee. Ask Claude's registry instead.
+		alive, aerr := f.S.Alive(ctx, sp.Name, confirmWait)
+		switch {
+		case aerr != nil:
+			err = aerr
+		case alive:
+			err = nil
+		default:
+			err = fmt.Errorf("%w: no Claude session named %s appeared within %s; read its pane (herdr pane read %s), then spawn again", err, sp.Name, confirmWait, sp.Pane)
+		}
 	}
 	return st, err
 }
+
+// confirmWait is how long start waits for Claude's registry after herdr gives up.
+// Claude registers about 3 s after launch (herdr 0.9.3, bees-1.14).
+const confirmWait = 20 * time.Second
 
 // End removes the bee's recorded workspace and records the end. It never asks herdr
 // which workspace to remove. Ending an ended bee is a no-op. The bee's branch is

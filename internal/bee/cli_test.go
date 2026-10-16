@@ -9,8 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jmmshn/bees/internal/bee"
+	"github.com/jmmshn/bees/internal/harness/claude/claudetest"
 )
 
 // fakeHerdrBinary puts a herdr on PATH that prints herdr's JSON error envelope with
@@ -30,6 +32,24 @@ func TestHerdrAgentNotReadyMeansWaiting(t *testing.T) {
 	err := bee.HerdrCLI{}.StartClaude(context.Background(), "w1:p1", "bees-8")
 	if !errors.Is(err, bee.ErrWaiting) {
 		t.Fatalf("err = %v, want ErrWaiting", err)
+	}
+}
+
+func TestHerdrTimeoutIsUnconfirmed(t *testing.T) {
+	fakeHerdrBinary(t, "timeout")
+	err := bee.HerdrCLI{}.StartClaude(context.Background(), "w1:p1", "bees-8")
+	if !errors.Is(err, bee.ErrUnconfirmed) || errors.Is(err, bee.ErrWaiting) {
+		t.Fatalf("err = %v, want ErrUnconfirmed", err)
+	}
+}
+
+func TestClaudeSessionsAliveReadsClaudesRegistry(t *testing.T) {
+	reg := claudetest.FakeRegistry(t)
+	reg.Add(t, "bees-8", "")
+	for name, want := range map[string]bool{"bees-8": true, "bees-9": false} {
+		if got, err := (bee.ClaudeSessions{}).Alive(context.Background(), name, 300*time.Millisecond); err != nil || got != want {
+			t.Errorf("Alive(%s) = %v, %v; want %v", name, got, err, want)
+		}
 	}
 }
 

@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 	"unicode"
+
+	"github.com/jmmshn/bees/internal/harness/claude"
 )
 
 // HerdrCLI drives the herdr command line. Every herdr command prints JSON.
@@ -84,14 +87,24 @@ func (HerdrCLI) StartClaude(ctx context.Context, pane, name string, args ...stri
 	if err := CheckAgentArgs(args); err != nil {
 		return err
 	}
-	code, err := herdr(ctx, nil, append([]string{"agent", "start", name, "--kind", "claude", "--pane", pane, "--"}, args...)...)
-	// herdr exits non-zero with this code when the agent is blocked during startup, e.g.
-	// at Claude's folder-trust prompt (seen with herdr 0.9.3).
-	if code == "agent_not_ready" {
+	code, err := herdr(ctx, nil, append([]string{"agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", herdrStartTimeout, "--"}, args...)...)
+	// Codes seen with herdr 0.9.3 (bees-1.14). agent_not_ready: blocked during startup,
+	// e.g. at Claude's folder-trust prompt, reported about 3 s in. timeout: Claude never
+	// sat idle at its prompt in time, either busy with its first prompt or exited (as
+	// claude --continue does with no conversation); herdr then leaves the agent unnamed.
+	switch code {
+	case "agent_not_ready":
 		return fmt.Errorf("%w: %w", err, ErrWaiting)
+	case "timeout":
+		return fmt.Errorf("%w: %w", err, ErrUnconfirmed)
 	}
 	return err
 }
+
+// herdrStartTimeout bounds herdr's wait for an idle Claude: long enough for a cold
+// start (3-6 s) and the trust prompt (3.4 s), short of herdr's 30 s default, because a
+// bee busy with its doorbell is never idle in time.
+const herdrStartTimeout = "10000"
 
 func (HerdrCLI) RemoveWorktree(ctx context.Context, workspace string) error {
 	code, err := herdr(ctx, nil, "worktree", "remove", "--workspace", workspace, "--force")
@@ -99,25 +112,6 @@ func (HerdrCLI) RemoveWorktree(ctx context.Context, workspace string) error {
 		return nil
 	}
 	return err
-}
-
-func (HerdrCLI) Agent(ctx context.Context, name string) (Agent, error) {
-	var r struct {
-		Result struct {
-			Agent struct {
-				Name string `json:"name"`
-				Pane string `json:"pane_id"`
-			} `json:"agent"`
-		} `json:"result"`
-	}
-	code, err := herdr(ctx, &r, "agent", "get", name)
-	if code == "agent_not_found" {
-		return Agent{}, ErrNoAgent
-	}
-	if err != nil {
-		return Agent{}, err
-	}
-	return Agent{Name: r.Result.Agent.Name, Pane: r.Result.Agent.Pane}, nil
 }
 
 func (HerdrCLI) Workspaces(ctx context.Context) ([]Workspace, error) {
@@ -144,6 +138,30 @@ func (HerdrCLI) Workspaces(ctx context.Context) ([]Workspace, error) {
 		out = append(out, ws)
 	}
 	return out, nil
+}
+
+// ClaudeSessions finds sessions in Claude's registry.
+type ClaudeSessions struct{}
+
+func (ClaudeSessions) Alive(ctx context.Context, name string, wait time.Duration) (bool, error) {
+	deadline := time.Now().Add(wait)
+	for {
+		_, err := claude.Find(name)
+		if err == nil {
+			return true, nil
+		}
+		if !errors.Is(err, claude.ErrNotRunning) {
+			return false, err
+		}
+		if time.Now().After(deadline) {
+			return false, nil
+		}
+		select {
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
 }
 
 // BeadsCLI reads beads with the bd command line.

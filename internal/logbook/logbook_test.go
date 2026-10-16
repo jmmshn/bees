@@ -203,6 +203,45 @@ func TestSpawnRecordsTrackTheLatestSpawnAndItsEnd(t *testing.T) {
 	}
 }
 
+func TestEndingASpawnRetiresItsUnreadBrief(t *testing.T) {
+	ctx := context.Background()
+	lb := open(t)
+	// A spawn whose start failed: its brief was never read (bees-1.14).
+	id, _ := lb.RecordSpawn(ctx, "queen", logbook.Spawn{Name: "bee-a", Bead: "p-2", Workspace: "w1"}, "old brief")
+	lb.Send(ctx, "queen", "bee-a", "a message, not a brief")
+	if err := lb.RecordEnd(ctx, "queen", id); err != nil {
+		t.Fatal(err)
+	}
+	lb.RecordSpawn(ctx, "queen", logbook.Spawn{Name: "bee-a", Bead: "p-2", Workspace: "w2"}, "new brief")
+	unread, err := lb.Unread(ctx, "bee-a")
+	if err != nil || len(unread) != 2 || unread[0].Body != "a message, not a brief" || unread[1].Body != "new brief" {
+		t.Fatalf("unread = %+v, %v; want the message and the new brief only", unread, err)
+	}
+	if got, _ := lb.UnreadCounts(ctx); got["bee-a"] != 2 {
+		t.Fatalf("UnreadCounts = %v, want bee-a: 2", got)
+	}
+}
+
+func TestLatestSpawnKnowsWhetherTheBeeHasReadSinceIt(t *testing.T) {
+	ctx := context.Background()
+	lb := open(t)
+	sp := logbook.Spawn{Name: "bee-a", Bead: "p-2", Workspace: "w1"}
+	first, _ := lb.RecordSpawn(ctx, "queen", sp, "brief")
+	if got, _, _ := lb.LatestSpawn(ctx, "bee-a"); got.Read {
+		t.Fatalf("before any inbox: %+v, want not Read", got)
+	}
+	unread, _ := lb.Unread(ctx, "bee-a")
+	lb.RecordReceipts(ctx, "bee-a", []logbook.ID{unread[0].ID})
+	if got, _, _ := lb.LatestSpawn(ctx, "bee-a"); !got.Read {
+		t.Fatalf("after its inbox: %+v, want Read", got)
+	}
+	lb.RecordEnd(ctx, "queen", first)
+	lb.RecordSpawn(ctx, "queen", sp, "brief")
+	if got, _, _ := lb.LatestSpawn(ctx, "bee-a"); got.Read {
+		t.Fatalf("respawned: %+v, want not Read (an earlier spawn's reads don't count)", got)
+	}
+}
+
 func TestUnreadCountsNamesEverySessionWithItsUnread(t *testing.T) {
 	ctx := context.Background()
 	lb := open(t)

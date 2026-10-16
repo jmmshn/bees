@@ -107,7 +107,8 @@ func NextEpic(project string, ids []string) string {
 // Started describes a bee Spawn started.
 type Started struct {
 	Name, Workspace string
-	Resumed         bool // restarted in its recorded workspace, continuing its conversation
+	Resumed         bool // restarted in its recorded workspace
+	Continued       bool // resumed with its last conversation (claude --continue)
 	Waiting         bool // Claude is waiting at a prompt (e.g. folder trust) in its pane
 }
 
@@ -165,9 +166,11 @@ const beeSettings = `{"crossSessionInbound":"accept"}`
 
 // start starts Claude with a doorbell as its first prompt, so the bee reads its unread
 // messages without needing a ring. A resumed bee continues its last conversation in
-// the worktree instead of starting its task over.
+// the worktree instead of starting its task over, if it has one: a bee that never read
+// its inbox since this spawn (its first start failed) starts fresh, since
+// claude --continue exits when there is no conversation.
 func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Started, error) {
-	st := Started{Name: sp.Name, Workspace: sp.Workspace, Resumed: resume}
+	st := Started{Name: sp.Name, Workspace: sp.Workspace, Resumed: resume, Continued: resume && sp.Read}
 	doorbell := fmt.Sprintf("[bs] you are %s, working on %s. Run: bs inbox   (reply with: bs send %s \"...\")", sp.Name, sp.Bead, f.Me)
 	args := []string{"--name", sp.Name, "--settings", beeSettings}
 	// In another repo (--repo, now or when first spawned) the bee's own bs resolves that
@@ -180,7 +183,7 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 		args = append(args, "--append-system-prompt-file", file)
 	}
 	args = append(args, doorbell)
-	if resume {
+	if st.Continued {
 		args = append([]string{"--continue"}, args...)
 	}
 	err := f.H.StartClaude(ctx, sp.Pane, sp.Name, args...)

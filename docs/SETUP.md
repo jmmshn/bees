@@ -44,6 +44,15 @@ After merging changes to bs, rebuild it from `main` with `go install ./cmd/bs`; 
 
 Claude asks whether to trust a repo the first time it opens one, and its worktrees share the answer. Open the repo in Claude once (`bs queen` does) before spawning. If a worker is spawned into an untrusted repo, `bs spawn` warns and the worker waits at the trust prompt in its herdr pane until you answer it.
 
+## Worker permissions
+
+`bs spawn` starts each worker with its own `--settings` JSON, the only per-session place Claude's auto mode classifier reads `autoMode` from (it ignores the project's `.claude/settings*.json`):
+
+- `autoMode.environment` and `autoMode.allow` name the worker's worktree and branch and let it run the repo's build/lint/test commands there, push its own branch and update its own PR, since the keeper merges every PR by hand. Each list keeps `"$defaults"`, so the built-in rules (force push, exfiltration) stay.
+- `permissions.deny` blocks, before the classifier: force-push, pushes naming `main` or `master`, `gh pr merge`, `gh pr review --approve`, and `gh api` merge calls. Bash rules match commands as written, so they cover `git push …` and `git -C <dir> push …`, not every spelling.
+
+No sandbox: the keeper chose not to run workers in Claude's bubblewrap sandbox (bees-1.51). To see what a worker's classifier uses, pass its settings back in: `claude --settings '<json from its spawn>' auto-mode config` (plain `claude auto-mode config` shows only your own settings).
+
 ## A worker without herdr
 
 Any Claude session can take part if it was started with a name and accepts cross-session messages:

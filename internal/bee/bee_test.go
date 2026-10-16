@@ -41,10 +41,8 @@ func (h *fakeHerdr) StartClaude(ctx context.Context, pane, name string, args ...
 	if h.failStart != nil {
 		return h.failStart
 	}
-	for _, a := range args {
-		if strings.ContainsAny(a, "\r\n") { // as herdr 0.9.3: invalid_agent_argument
-			return fmt.Errorf("herdr agent: agent arguments cannot be encoded safely for the target shell")
-		}
+	if err := bee.CheckAgentArgs(args); err != nil { // herdr's own rule, held to real herdr
+		return err
 	}
 	h.started = append(h.started, append([]string{pane, name}, args...))
 	h.agents[name] = pane

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strings"
+	"unicode"
 )
 
 // HerdrCLI drives the herdr command line. Every herdr command prints JSON.
@@ -62,7 +64,26 @@ func (HerdrCLI) CreateWorktree(ctx context.Context, repo, branch, path, label st
 	return Workspace{ID: r.Result.Workspace.ID, Label: label, Pane: r.Result.RootPane.ID, Path: r.Result.Worktree.Path}, nil
 }
 
+// ErrUnsafeArg is an agent argument herdr refuses to pass to the agent's shell.
+var ErrUnsafeArg = errors.New("herdr can't pass an agent argument containing a control character")
+
+// CheckAgentArgs applies herdr's rule for agent arguments: herdr agent start refuses
+// any argument containing a Unicode control character (newline, tab, ESC, DEL, C1) with
+// invalid_agent_argument (probed on herdr 0.9.3; TestCheckAgentArgsMatchesRealHerdr
+// re-checks the installed herdr). Text that may span lines goes in a file instead.
+func CheckAgentArgs(args []string) error {
+	for i, a := range args {
+		if strings.IndexFunc(a, unicode.IsControl) >= 0 {
+			return fmt.Errorf("agent argument %d (%.40q): %w", i, a, ErrUnsafeArg)
+		}
+	}
+	return nil
+}
+
 func (HerdrCLI) StartClaude(ctx context.Context, pane, name string, args ...string) error {
+	if err := CheckAgentArgs(args); err != nil {
+		return err
+	}
 	code, err := herdr(ctx, nil, append([]string{"agent", "start", name, "--kind", "claude", "--pane", pane, "--"}, args...)...)
 	// herdr exits non-zero with this code when the agent is blocked during startup, e.g.
 	// at Claude's folder-trust prompt (seen with herdr 0.9.3).

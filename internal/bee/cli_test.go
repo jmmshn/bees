@@ -2,9 +2,12 @@ package bee_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jmmshn/bees/internal/bee"
@@ -35,5 +38,50 @@ func TestHerdrOtherErrorsAreNotWaiting(t *testing.T) {
 	err := bee.HerdrCLI{}.StartClaude(context.Background(), "w1:p1", "bees-8")
 	if err == nil || errors.Is(err, bee.ErrWaiting) {
 		t.Fatalf("err = %v, want a plain error", err)
+	}
+}
+
+// agentArgCases are arguments herdr 0.9.3's agent start was probed with (bees-1.14):
+// it refuses any Unicode control character and passes everything else through.
+var agentArgCases = map[string]bool{
+	"plain": true, "": true, "-x": true, `'quotes" $dollar` + "`tick`": true, "é—🐝": true,
+	"line separator": true, `{"crossSessionInbound":"accept"}`: true,
+	"new\nline": false, "carriage\rreturn": false, "tab\there": false, "esc\x1b": false,
+	"del\x7f": false, "c1\u0085next": false, "c1\u009bcsi": false,
+}
+
+func TestCheckAgentArgs(t *testing.T) {
+	for arg, ok := range agentArgCases {
+		err := bee.CheckAgentArgs([]string{"--name", "bees-8", arg})
+		if (err == nil) != ok || (err != nil && !errors.Is(err, bee.ErrUnsafeArg)) {
+			t.Errorf("CheckAgentArgs(%q) = %v, want ok=%v", arg, err, ok)
+		}
+	}
+}
+
+func TestStartClaudeRefusesUnsafeArgsWithoutRunningHerdr(t *testing.T) {
+	fakeHerdrBinary(t, "herdr_was_run")
+	err := bee.HerdrCLI{}.StartClaude(context.Background(), "w1:p1", "bees-8", "a\nb")
+	if !errors.Is(err, bee.ErrUnsafeArg) || strings.Contains(err.Error(), "herdr_was_run") {
+		t.Fatalf("err = %v, want ErrUnsafeArg before herdr runs", err)
+	}
+}
+
+// TestCheckAgentArgsMatchesRealHerdr holds CheckAgentArgs, and so fakeHerdr, to the
+// installed herdr. herdr checks agent arguments before it looks up the pane, so a pane
+// that doesn't exist makes this side-effect free. Skipped without a running herdr.
+func TestCheckAgentArgsMatchesRealHerdr(t *testing.T) {
+	if exec.Command("herdr", "workspace", "list").Run() != nil {
+		t.Skip("no running herdr")
+	}
+	for arg, ok := range agentArgCases {
+		out, _ := exec.Command("herdr", "agent", "start", "bs-contract", "--kind", "claude", "--pane", "bs-contract-no-such-pane", "--", arg).CombinedOutput()
+		var he struct{ Error struct{ Code string } }
+		if json.Unmarshal(out, &he) != nil {
+			t.Fatalf("herdr output for %q: %s", arg, out)
+		}
+		if refused := he.Error.Code == "invalid_agent_argument"; refused == ok || (ok && he.Error.Code != "agent_pane_not_found") {
+			t.Errorf("herdr on %q: %s; CheckAgentArgs says ok=%v", arg, he.Error.Code, ok)
+		}
 	}
 }

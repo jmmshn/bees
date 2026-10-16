@@ -152,12 +152,15 @@ never a lost one.
 flowchart LR
     S["bs spawn bees-2.1"] --> N["name = bees-2-1<br/>(one string: session, herdr agent,<br/>branch, worktree dir, address)"]
     N --> X{open 'spawned'<br/>entry?}
-    X -- "yes, agent live" --> E1[ErrRunning]
-    X -- "yes, agent gone" --> RS["resume in the same workspace<br/>claude --continue"]
+    X -- "yes, session live<br/>(Claude's registry)" --> E1[ErrRunning]
+    X -- "yes, session gone" --> RS["restart in the same workspace<br/>claude --continue if it read its inbox"]
     RS --> ST
     X -- no --> WT["herdr worktree create<br/>bees-WT/bees-2-1"]
     WT --> REC["RecordSpawn + brief (bd show)<br/>in one transaction"]
     REC --> ST["herdr agent start … claude --name bees-2-1<br/>--settings crossSessionInbound=accept<br/>first prompt = doorbell"]
+    ST -- "herdr timeout" --> C{"session in<br/>Claude's registry?"}
+    C -- yes --> OK[started]
+    C -- no --> E2["error: read its pane"]
 ```
 
 `bs end bees-2-1` removes only the workspace recorded in that `spawned` entry, deletes

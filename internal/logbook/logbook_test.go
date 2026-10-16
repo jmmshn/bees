@@ -324,3 +324,56 @@ func writeForever(path string) {
 		fmt.Println(id)
 	}
 }
+
+func TestRecordExitNotifiesTheSpawnerOnceUnlessTheBeeSaidDone(t *testing.T) {
+	ctx := context.Background()
+	lb := open(t)
+	sp := logbook.Spawn{Name: "bee-a", Bead: "x-1", Workspace: "w1"}
+	id, err := lb.RecordSpawn(ctx, "queen", sp, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exit := func(proc string) bool {
+		t.Helper()
+		ok, err := lb.RecordExit(ctx, "queen", "bee-a", id, proc, "bee-a exited")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	if !exit("100") || exit("100") {
+		t.Fatal("want the first exit of a process recorded and a repeat ignored")
+	}
+	got, _ := lb.Unread(ctx, "queen")
+	if len(got) != 1 || got[0].From != "bs" || got[0].Body != "bee-a exited" {
+		t.Fatalf("queen's unread = %+v", got)
+	}
+	if !exit("200") { // a restart under the same spawn is a new process
+		t.Fatal("a restarted process's exit was not recorded")
+	}
+	if _, err := lb.Send(ctx, "bee-a", "queen", "done: x-1 PR #3"); err != nil {
+		t.Fatal(err)
+	}
+	if exit("300") {
+		t.Fatal("recorded an exit after the bee said done")
+	}
+}
+
+func TestRecordExitIgnoresAnEndedOrSupersededSpawn(t *testing.T) {
+	ctx := context.Background()
+	lb := open(t)
+	sp := logbook.Spawn{Name: "bee-a", Bead: "x-1", Workspace: "w1"}
+	first, _ := lb.RecordSpawn(ctx, "queen", sp, "")
+	if err := lb.RecordEnd(ctx, "queen", first); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := lb.RecordExit(ctx, "queen", "bee-a", first, "1", "x"); ok || err != nil {
+		t.Fatalf("ended spawn: recorded %v, %v", ok, err)
+	}
+	if _, err := lb.RecordSpawn(ctx, "queen", sp, ""); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := lb.RecordExit(ctx, "queen", "bee-a", first, "2", "x"); ok || err != nil {
+		t.Fatalf("superseded spawn: recorded %v, %v", ok, err)
+	}
+}

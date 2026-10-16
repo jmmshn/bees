@@ -159,6 +159,19 @@ func uuid() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
+// Exited reports whether the process pid that started at start (clock ticks, as in
+// Session.ProcStart) has exited: its pid is gone, or reused by a later process.
+func Exited(pid int, start string) (bool, error) {
+	got, err := procStart(pid)
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return got != start, nil
+}
+
 // procStart is field 22 of /proc/<pid>/stat, the process start time in clock ticks.
 // ponytail: Linux /proc only, like the rest of bs.
 func procStart(pid int) (string, error) {

@@ -107,3 +107,21 @@ func TestTrustedReadsClaudesFolderTrust(t *testing.T) {
 		t.Fatal("Trusted disagrees with ~/.claude.json")
 	}
 }
+
+func TestExitedPinsThePidByStartTime(t *testing.T) {
+	reg := claudetest.FakeRegistry(t)
+	reg.Add(t, "bee-a", "")
+	s, err := claude.Find("bee-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		pid   int
+		start string
+		want  bool
+	}{{s.PID, s.ProcStart, false}, {s.PID, "1", true}, {1 << 30, s.ProcStart, true}} {
+		if got, err := claude.Exited(c.pid, c.start); err != nil || got != c.want {
+			t.Errorf("Exited(%d, %q) = %v, %v; want %v", c.pid, c.start, got, err, c.want)
+		}
+	}
+}

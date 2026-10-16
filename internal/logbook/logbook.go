@@ -300,3 +300,39 @@ ORDER BY s.subject`)
 	}
 	return out, rows.Err()
 }
+
+// RecordExit tells to, from "bs", that the bee name's Claude process proc (its /proc
+// start time) exited under the given spawn, unless the spawn has ended or been
+// superseded, or the bee said "done: <bead>" since it. The fence and the write share one
+// transaction; repeating an exit of the same process is a no-op. It reports whether it
+// recorded the exit.
+// ponytail: "done" is matched by message text, which is inferred state (motif 1), until
+// messages carry a structured kind (R35).
+func (l *Logbook) RecordExit(ctx context.Context, to, name string, spawn ID, proc, body string) (bool, error) {
+	data, err := json.Marshal(map[string]string{"body": body})
+	if err != nil {
+		return false, err
+	}
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `
+INSERT OR IGNORE INTO entries (id, ts, kind, actor, subject, data)
+SELECT ?1, ?2, 'message', 'bs', ?3, ?4 FROM entries s
+WHERE s.id = ?5 AND s.kind = 'spawned' AND s.subject = ?6
+  AND s.rowid = (SELECT MAX(x.rowid) FROM entries x WHERE x.kind = 'spawned' AND x.subject = ?6)
+  AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = s.id)
+  AND NOT EXISTS (SELECT 1 FROM entries d WHERE d.kind = 'message' AND d.actor = ?6 AND d.rowid > s.rowid
+                  AND substr(json_extract(d.data, '$.body'), 1, 6) = 'done: ')`,
+		"exit:"+string(spawn)+":"+proc, time.Now().UTC().Format(tsLayout), to, string(data), string(spawn), name)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, tx.Commit()
+}

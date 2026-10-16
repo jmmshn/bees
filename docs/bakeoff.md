@@ -33,8 +33,8 @@ The headline findings:
 
 A second round of long-running and crew-derived cards (S9–S17, [below](#long-running-work-and-crews-incidents-s9s17)) narrows what bees is for:
 
-- **Where only bees did the optimal thing**: a message sent to a stopped worker was kept and delivered (S12), and a dead worker resumed in its own conversation (S11).
-- **Where bees is the safe way to the same result**: a fresh lead finding running work (S10). Arm B found its worker too, but by matching names across every run on the machine. Arm A's lead, doing the same, claimed another run's worker as its own. `bs status` reads only this project's logbook, so it can't make that mistake.
+- **Where bees did the optimal thing by design**: a message sent to a stopped worker was kept and delivered (S12; the queen also restated it in the bead from memory), and a dead worker resumed in its own conversation (S11). Arm B can resume a conversation too (`claude --resume`, which its lead used in S12) but didn't in S11; neither baseline can hold mail for a worker that is down.
+- **Where bees is the safe way to the same result**: a fresh lead finding running work (S10). Arm B found its worker too, but by matching names across every run on the machine. Arm A's lead, doing the same, took another run's live same-named worker to be running its own job (once, with three same-named workers running at the same time). `bs status` reads only this project's logbook, so it can't make that mistake.
 - **Where the baselines also succeeded**: liveness, repeated requests, outside viewers and teardown. Every arm handled these.
 
 ## Method
@@ -297,10 +297,12 @@ Numbers are in the same format as before: turns · ready s · leftovers. S9's di
 | S16 | 3 · 155 · 1 ⚑2 | 3 · 125 · 1 ⚑2 | 3 · 128 · 1 ⚑4 |
 | S17 | 2 · 35 · 0 ⚑1 | 2 · 60 · 0 ⚑1 | 3 · 46 · 0 ⚑1 |
 
-The flagged interventions (⚑) are the scripted kills, relaunches and setup. Two of the failures are not the arms' fault:
+The flagged interventions (⚑) are the scripted kills, relaunches and setup. About the ❌ marks and reruns:
 
-- **t13b**: the captain agent's own permission check refused to type "merge it".
-- **t14a**: the captain agent's timer hung, so S14 arm A was rerun as t14ra.
+- **t13b**: the captain agent's own permission check refused to type "merge it", so this failure is the harness's, not the arm's.
+- **t9a**: END never reached the subagent. The captain drove the lead's background-agent view by keystrokes, so part of this may be the harness.
+- **t14a**: the captain agent's timer hung, so S14 arm A was rerun as t14ra and only the rerun is counted. t14a's own check passed.
+- **S14 turns**: the deliberate repeat is folded into one turn by the duplicate-line rule, the same in every arm.
 
 ### What separated the arms
 
@@ -308,9 +310,9 @@ The flagged interventions (⚑) are the scripted kills, relaunches and setup. Tw
 |---|---|---|---|
 | **Reach the worker directly (S9)** | ❌ the captain's lines typed into the subagent's view in the lead's panel reached no transcript; END never landed | ✅ the worker answered in ~10 s with exact progress (its loop ran in a background shell) | ⚠️ the worker ran all 6 commits as one foreground loop, so both lines queued for 1–2 min |
 | **Lead knows what the captain told the worker (S9)** | n/a | ❌ flagged END as "an unexplained change" even though the worker told it | ❌ flagged END as unexpected; typing in a pane leaves no logbook entry |
-| **Fresh lead finds running work (S10)** | ❌ the worker died with the lead; the fresh lead took **another run's** same-named worker (`count-500`, from t10b) for its own; the resume worker skipped the sleeps | ⚠️ found it via `herdr agent list` + `git worktree list` + reading the pane, 15 s; the same machine-wide name match is what misled arm A | ✅ `bs status` + bead brief + git, 13 s |
-| **Resume a dead worker where it stopped (S11)** | ⚠️ a stopped subagent can't be resumed; a new one continued in the same worktree | ⚠️ a new session in the same worktree, with a careful "continue at 201" brief | ✅ `bs spawn` resumed the **same conversation**, and the worker picked up at 201 from its own context |
-| **Message to a worker that is down (S12)** | ❌ refused ("stopped… won't be resumed"); the lead re-sent from memory | ❌ "No agent named 'w-count' is reachable"; the lead re-sent from memory, then restarted a healthy worker a second time | ✅ `bs send` stored it; the resumed worker read it from its inbox; nothing re-sent |
+| **Fresh lead finds running work (S10)** | ❌ the worker died with the lead; the fresh lead took **another run's** live same-named worker (`count-500`, from t10b) to be running its own job; the resume worker skipped the sleeps | ⚠️ found it via `herdr agent list` + `git worktree list` + reading the pane, 15 s; the same machine-wide name match is what misled arm A | ✅ `bs status` + bead brief + git, 13 s |
+| **Resume a dead worker where it stopped (S11)** | ⚠️ a stopped subagent can't be resumed; a new one continued in the same worktree (the card stopped it from the UI, which tells the lead to treat it as cancelled) | ⚠️ a new session in the same worktree, with a careful "continue at 201" brief; B can resume the same conversation (it did in S12) but didn't here | ✅ `bs spawn` resumed the **same conversation**, and the worker picked up at 201 from its own context |
+| **Message to a worker that is down (S12)** | ❌ refused ("stopped… won't be resumed"); the lead re-sent from memory | ❌ "No agent named 'w-count' is reachable"; the lead resumed the same session (`--resume`) with the message restated from memory, then restarted a healthy worker a second time | ✅ `bs send` stored it; the resumed worker read it from its inbox (the queen also restated it in the bead, so the stored copy wasn't load-bearing this time) |
 | **A long silent step is not death (S13b)** | ✅ `ps` + `/proc/<pid>/cwd` | ✅ same | ✅ same, plus `bs status` |
 | **Same request twice (S14)** | ✅ one worker | ✅ one worker | ✅ one worker (deduped before `bs spawn`, so the twin fence never ran) |
 | **Captain away, one digest (S15)** | ✅ no polling, 2 holding notes | ✅ no polling, 2 notes | ⚠️ the queen ran a `git fetch; sleep 5` poll loop (bees-1.39), 3 notes |
@@ -319,13 +321,13 @@ The flagged interventions (⚑) are the scripted kills, relaunches and setup. Tw
 
 What this round shows:
 
-1. **The edges are concrete: durable mail, and resume with the worker's own context.** S12 and S11 are the two cards where only bees did the optimal thing. A message to a stopped worker was stored and read on restart. The restarted worker continued in its own conversation, so nobody had to rewrite its brief from memory. Both baselines fell back on the lead remembering and re-briefing, and in arm B the lead then restarted a healthy worker.
+1. **The edges are concrete: durable mail, and resume with the worker's own context.** In S12 and S11 bees did the optimal thing by design. A message to a stopped worker was stored and read on restart, and the restarted worker continued in its own conversation. The baselines depended on the lead: both re-sent the message from memory, and arm B resumed the same conversation in S12 but started a new one in S11. bees' queen also restated the message from memory in S12, so the stored copy proved the mechanism rather than saving the run.
 2. **Rediscovery after a fresh start is a bees win on safety, not on reach (S10).** Workers in their own panes plus `herdr agent list` and `git worktree list` let a fresh plain-Claude lead find its worker in arm B.
-   - But herdr lists every run on the machine, and a fresh lead with no record of its own can only match by name. Arm A shows where that goes: its lead claimed another run's same-named worker as its own (motif 4, routing by a non-unique key). Arm B got it right because the names happened not to clash.
+   - But herdr lists every run on the machine, and a fresh lead with no record of its own can only match by name. Arm A shows where that goes: its lead took another run's live same-named worker to be running its own job, and waited on it (motif 4, routing by a non-unique key). It happened once, because three runs used the same worker name at the same time; any two projects with the same names would meet the same trap. Arm B got it right because its lead matched on more than the name.
    - `bs status` reads this project's logbook, so it lists only this project's workers. bees gets this right by construction, not by luck.
 3. **Subagents are the wrong tool for long-running work you want to touch.**
    - They die with the lead (S7, S10).
-   - Once stopped, they can't be resumed (S11, S12).
+   - Once stopped, they can't be resumed (S11, S12). The card stopped them from the UI, which marks the work cancelled; a subagent can't be killed any other way without killing the lead.
    - Inside them, Claude Code refuses foreground sleeps (S11, S13).
    - Their unchanged worktrees get auto-removed (S5b, S13).
    - The captain had no reliable direct line to them (S9).
@@ -333,7 +335,7 @@ What this round shows:
 5. **Liveness, repeats, the outside viewer and teardown ownership were ties.** Current models check the live process (`ps`, `/proc/<pid>/cwd`), deduplicate a repeated request, and leave the captain's work alone without help. crew needed code for each of these classes; today they don't separate the arms.
 6. **New bees findings:**
    - bees-1.38: a worker that dies is silent to the queen.
-   - bees-1.39: the queen polls instead of trusting the doorbell.
+   - bees-1.39: the queen polls instead of trusting the doorbell: in S15, and also in t3c, t8c, t9c, t10c and t14c.
    - More evidence on bees-1.34: abandoned attempt branches can't be pruned.
    - More evidence on bees-1.37: role drift. Imperative "run X in one command" phrasing also pulled arm B's lead inline (S13), so that part is not bees-specific.
 

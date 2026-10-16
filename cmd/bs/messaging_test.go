@@ -159,6 +159,13 @@ func TestSpawnAndEndUsage(t *testing.T) {
 	if _, _, code := bs(t, "spawn", "--as", "queen-test"); code != 2 {
 		t.Errorf("spawn without bead: exit %d, want 2", code)
 	}
+	// No herdr, bd or Claude is reached: both are refused before anything is touched.
+	for _, args := range [][]string{{"test-3"}, {"--label", "Fix Bug!", "test-3"}} {
+		_, stderr, code := bs(t, append([]string{"spawn", "--as", "queen-test"}, args...)...)
+		if code != 2 || !strings.Contains(stderr, "usage: bs spawn --label") || !strings.Contains(stderr, "squash merge end") {
+			t.Errorf("spawn %q: exit %d, stderr %q; want usage with the label rules", args, code, stderr)
+		}
+	}
 	_, stderr, code := bs(t, "end", "--as", "queen-test", "bee-995-8")
 	if code != 1 || !strings.Contains(stderr, "no record of spawning") {
 		t.Errorf("end of never-spawned bee: exit %d, stderr %q", code, stderr)

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -21,14 +22,32 @@ import (
 
 var (
 	ErrRunning = errors.New("bee is already running")
-	ErrOrphan  = errors.New("a herdr workspace is labelled with this bead but bs has no record of it")
+	ErrOrphan  = errors.New("a herdr workspace is open on this bee's worktree but bs has no record of it")
 	ErrWaiting = errors.New("claude is waiting at a prompt") // started, but needs an answer in its pane
 	// ErrUnconfirmed: herdr stopped waiting for Claude to be ready. Claude may be busy
 	// with its first prompt or may have exited; only Claude's registry can tell.
 	ErrUnconfirmed = errors.New("herdr could not confirm that claude started")
 	ErrWrongRepo   = errors.New("bead does not belong to this project")
 	ErrNotSpawned  = errors.New("bs has no record of spawning this bee")
+	ErrNoLabel     = errors.New("a first spawn needs a label")
+	ErrBadLabel    = errors.New("not a valid label")
+	ErrLabelChange = errors.New("the bee is recorded with another label")
 )
+
+// LabelRules says what a bee's label must be. The queen writes the label; bs only checks it.
+const LabelRules = `a label names the work for the herdr sidebar: 1-4 lowercase words of a-z and 0-9, single spaces, no punctuation, at most 32 characters, specific to the bead.
+  good: "role prompts", "squash merge end", "natural workspace labels"
+  bad:  "fix bug", "update docs", "Role-Prompts."`
+
+var labelRule = regexp.MustCompile(`^[a-z0-9]+( [a-z0-9]+){0,3}$`)
+
+// CheckLabel refuses a label that breaks LabelRules; it never rewrites one.
+func CheckLabel(label string) error {
+	if len(label) > 32 || !labelRule.MatchString(label) {
+		return fmt.Errorf("%q: %w", label, ErrBadLabel)
+	}
+	return nil
+}
 
 // Workspace is a herdr workspace opened on a git worktree.
 type Workspace struct{ ID, Label, Pane, Path string }
@@ -106,24 +125,33 @@ func NextEpic(project string, ids []string) string {
 
 // Started describes a bee Spawn started.
 type Started struct {
-	Name, Workspace string
-	Resumed         bool // restarted in its recorded workspace
-	Continued       bool // resumed with its last conversation (claude --continue)
-	Waiting         bool // Claude is waiting at a prompt (e.g. folder trust) in its pane
+	Name, Label, Workspace string
+	Resumed                bool // restarted in its recorded workspace
+	Continued              bool // resumed with its last conversation (claude --continue)
+	Waiting                bool // Claude is waiting at a prompt (e.g. folder trust) in its pane
 }
 
-// Spawn starts a bee for bead, or restarts it in its recorded workspace if its
-// session has died.
-func (f Fleet) Spawn(ctx context.Context, bead string) (Started, error) {
+// Spawn starts a bee for bead with label as its herdr workspace label, or restarts it
+// in its recorded workspace if its session has died. A restart keeps the recorded
+// label: label may be empty, and any other label is refused.
+func (f Fleet) Spawn(ctx context.Context, bead, label string) (Started, error) {
 	name, err := Name(bead)
 	if err != nil {
 		return Started{}, err
+	}
+	if label != "" {
+		if err := CheckLabel(label); err != nil {
+			return Started{}, err
+		}
 	}
 	sp, ok, err := f.LB.LatestSpawn(ctx, name)
 	if err != nil {
 		return Started{}, err
 	}
 	if ok && !sp.Ended {
+		if label != "" && label != sp.Label {
+			return Started{}, fmt.Errorf("%s is labelled %q, not %q: %w; spawn it again without --label", name, sp.Label, label, ErrLabelChange)
+		}
 		// Fail closed: an unreadable registry must not start a second Claude.
 		if alive, err := f.S.Alive(ctx, name, 0); err != nil {
 			return Started{}, err
@@ -131,6 +159,9 @@ func (f Fleet) Spawn(ctx context.Context, bead string) (Started, error) {
 			return Started{}, fmt.Errorf("%s: %w", name, ErrRunning)
 		}
 		return f.start(ctx, sp, true)
+	}
+	if label == "" {
+		return Started{}, fmt.Errorf("%s: %w", name, ErrNoLabel)
 	}
 	if !f.ForeignRepo && !Belongs(f.P.Name, bead) {
 		return Started{}, fmt.Errorf("%s is not a %s bead (want %s-<n>[.<m>]): %w (or pass --repo)", bead, f.P.Name, f.P.Name, ErrWrongRepo)
@@ -143,16 +174,19 @@ func (f Fleet) Spawn(ctx context.Context, bead string) (Started, error) {
 	if err != nil {
 		return Started{}, err
 	}
-	if i := slices.IndexFunc(wss, func(w Workspace) bool { return w.Label == bead }); i >= 0 {
-		return Started{}, fmt.Errorf("%s: %w; check it, then remove it with: herdr worktree remove --workspace %s --force", bead, ErrOrphan, wss[i].ID)
+	// Find an orphan by its worktree, never its label: the path is built forward from
+	// the name, while a label is free text.
+	wt := filepath.Join(f.P.Repo+"-WT", name)
+	if i := slices.IndexFunc(wss, func(w Workspace) bool { return w.Path != "" && filepath.Clean(w.Path) == wt }); i >= 0 {
+		return Started{}, fmt.Errorf("%s: %w; check it, then remove it with: herdr worktree remove --workspace %s --force", name, ErrOrphan, wss[i].ID)
 	}
 
-	ws, err := f.H.CreateWorktree(ctx, f.P.Repo, name, f.P.Repo+"-WT/"+name, bead)
+	ws, err := f.H.CreateWorktree(ctx, f.P.Repo, name, wt, label)
 	if err != nil {
 		return Started{}, err
 	}
 	// Record straight away: any failure after this point is healed by spawning again.
-	sp = logbook.Spawn{Name: name, Bead: bead, Workspace: ws.ID, Pane: ws.Pane, Worktree: ws.Path, Branch: name, Repo: f.P.Repo}
+	sp = logbook.Spawn{Name: name, Bead: bead, Label: label, Workspace: ws.ID, Pane: ws.Pane, Worktree: ws.Path, Branch: name, Repo: f.P.Repo}
 	if sp.ID, err = f.LB.RecordSpawn(ctx, f.Me, sp, brief(b)); err != nil {
 		return Started{}, err
 	}
@@ -174,7 +208,7 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 	// repo's project: a system prompt naming P would mislead it, and its receipts go to
 	// that project's logbook, so sp.Read can't tell and a restart always continues.
 	foreign := f.ForeignRepo || cmp.Or(sp.Repo, f.P.Repo) != f.P.Repo
-	st := Started{Name: sp.Name, Workspace: sp.Workspace, Resumed: resume, Continued: resume && (sp.Read || foreign)}
+	st := Started{Name: sp.Name, Label: sp.Label, Workspace: sp.Workspace, Resumed: resume, Continued: resume && (sp.Read || foreign)}
 	doorbell := fmt.Sprintf("[bs] you are %s, working on %s — run: bs inbox   (reply with: bs send %s \"...\")", sp.Name, sp.Bead, f.Me)
 	args := []string{"--name", sp.Name, "--settings", beeSettings}
 	if !foreign {

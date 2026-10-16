@@ -20,6 +20,8 @@ import (
 )
 
 // fakeHerdr keeps workspaces and live Claude sessions in memory, and records removals.
+// Like herdr 0.9.3 it keeps any label verbatim, even empty or with newlines
+// (TestHerdrKeepsLabelsVerbatim), so CheckLabel is bs's rule, not herdr's.
 // It is also the fake Claude registry (bee.Sessions), so a start shows up there.
 type fakeHerdr struct {
 	next       int
@@ -150,11 +152,11 @@ func TestNextEpic(t *testing.T) {
 func TestSpawnStartsABeeInItsOwnWorkspace(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	st, err := r.fleet.Spawn(ctx, "bees-8")
+	st, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.Name != "bees-8" || st.Resumed || st.Waiting {
+	if st.Name != "bees-8" || st.Label != "spawn and end" || st.Resumed || st.Waiting {
 		t.Fatalf("started = %+v", st)
 	}
 	if slices.Contains(r.h.started[0], "--continue") {
@@ -162,14 +164,14 @@ func TestSpawnStartsABeeInItsOwnWorkspace(t *testing.T) {
 	}
 	wt := r.repo + "-WT/bees-8"
 	ws := r.h.workspaces[0]
-	if ws.Path != wt || ws.Label != "bees-8" {
+	if ws.Path != wt || ws.Label != "spawn and end" {
 		t.Fatalf("workspace = %+v", ws)
 	}
 	if _, err := os.Stat(filepath.Join(wt, ".claude")); !os.IsNotExist(err) {
 		t.Fatalf("spawn wrote into the worktree's .claude (Claude reads settings from the main checkout): %v", err)
 	}
 	sp, ok, _ := r.lb.LatestSpawn(ctx, "bees-8")
-	if !ok || sp.Workspace != ws.ID || sp.Bead != "bees-8" || sp.Ended {
+	if !ok || sp.Workspace != ws.ID || sp.Bead != "bees-8" || sp.Label != "spawn and end" || sp.Ended {
 		t.Fatalf("spawn record = %+v ok=%v", sp, ok)
 	}
 	unread, _ := r.lb.Unread(ctx, "bees-8")
@@ -196,10 +198,10 @@ func TestSpawnStartsABeeInItsOwnWorkspace(t *testing.T) {
 func TestSecondSpawnWhileLiveIsRefused(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	if _, err := r.fleet.Spawn(ctx, "bees-8"); err != nil {
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.fleet.Spawn(ctx, "bees-8"); !errors.Is(err, bee.ErrRunning) {
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); !errors.Is(err, bee.ErrRunning) {
 		t.Fatalf("err = %v, want ErrRunning", err)
 	}
 	if len(r.h.workspaces) != 1 {
@@ -210,9 +212,9 @@ func TestSecondSpawnWhileLiveIsRefused(t *testing.T) {
 func TestSpawnResumesADeadBeeInItsRecordedWorkspace(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	r.fleet.Spawn(ctx, "bees-8")
+	r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	r.h.exit("bees-8")
-	if _, err := r.fleet.Spawn(ctx, "bees-8"); err != nil {
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil {
 		t.Fatal(err)
 	}
 	if len(r.h.workspaces) != 1 || len(r.h.started) != 2 || r.h.started[1][0] != r.h.workspaces[0].Pane {
@@ -223,10 +225,10 @@ func TestSpawnResumesADeadBeeInItsRecordedWorkspace(t *testing.T) {
 func TestResumeContinuesTheBeesConversation(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	r.fleet.Spawn(ctx, "bees-8")
+	r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	readInbox(t, r.lb, "bees-8")
 	r.h.exit("bees-8")
-	st, err := r.fleet.Spawn(ctx, "bees-8")
+	st, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,9 +246,9 @@ func TestRestartOfABeeThatNeverReadItsBriefStartsFresh(t *testing.T) {
 	// The start failed after spawn was recorded, so there is no conversation:
 	// claude --continue would exit with "No conversation found to continue".
 	r.h.failStart = errors.New("herdr agent: agent arguments cannot be encoded safely")
-	r.fleet.Spawn(ctx, "bees-8")
+	r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	r.h.failStart = nil
-	st, err := r.fleet.Spawn(ctx, "bees-8")
+	st, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	if err != nil || !st.Resumed {
 		t.Fatalf("started = %+v, err = %v; want a restart in the recorded workspace", st, err)
 	}
@@ -259,12 +261,12 @@ func TestEndedHalfStartedBeeRespawnsWithOneBrief(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	r.h.failStart = errors.New("herdr agent: agent arguments cannot be encoded safely")
-	r.fleet.Spawn(ctx, "bees-8")
+	r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	if _, err := r.fleet.End(ctx, "bees-8"); err != nil {
 		t.Fatal(err)
 	}
 	r.h.failStart = nil
-	if _, err := r.fleet.Spawn(ctx, "bees-8"); err != nil {
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil {
 		t.Fatal(err)
 	}
 	if unread, _ := r.lb.Unread(ctx, "bees-8"); len(unread) != 1 {
@@ -276,11 +278,11 @@ func TestRestartInAnotherProjectsRepoContinues(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	r.fleet.ForeignRepo, r.fleet.P.Repo = true, filepath.Join(t.TempDir(), "dotfiles")
-	r.fleet.Spawn(ctx, "dotfiles-3")
+	r.fleet.Spawn(ctx, "dotfiles-3", "spawn and end")
 	r.h.exit("dotfiles-3")
 	// Its bs resolves the other project, so its receipts are in that logbook: this one
 	// can't tell whether it has a conversation, and keeps the old behaviour.
-	if st, err := r.fleet.Spawn(ctx, "dotfiles-3"); err != nil || !st.Continued || !slices.Contains(r.h.started[1], "--continue") {
+	if st, err := r.fleet.Spawn(ctx, "dotfiles-3", "spawn and end"); err != nil || !st.Continued || !slices.Contains(r.h.started[1], "--continue") {
 		t.Fatalf("started = %+v, err = %v, args = %q; want --continue", st, err, r.h.started[1])
 	}
 }
@@ -305,9 +307,9 @@ func readInbox(t *testing.T, lb *logbook.Logbook, name string) {
 func TestBeesStartWithTheProjectsSystemPrompt(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	r.fleet.Spawn(ctx, "bees-8")
+	r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	r.h.exit("bees-8")
-	r.fleet.Spawn(ctx, "bees-8")
+	r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	for _, start := range r.h.started {
 		i := slices.Index(start, "--append-system-prompt-file")
 		if i < 0 {
@@ -324,9 +326,9 @@ func TestABeeForAnotherProjectsBeadGetsNoSystemPrompt(t *testing.T) {
 	r := newRig(t)
 	own := r.fleet
 	r.fleet.ForeignRepo, r.fleet.P.Repo = true, filepath.Join(t.TempDir(), "dotfiles") // as --repo does
-	r.fleet.Spawn(ctx, "dotfiles-3")
+	r.fleet.Spawn(ctx, "dotfiles-3", "spawn and end")
 	r.h.exit("dotfiles-3")
-	own.Spawn(ctx, "dotfiles-3") // a resume doesn't repeat --repo
+	own.Spawn(ctx, "dotfiles-3", "spawn and end") // a resume doesn't repeat --repo
 	for _, start := range r.h.started {
 		if slices.Contains(start, "--append-system-prompt-file") {
 			t.Fatalf("start = %q: a system prompt naming bees would mislead it: the bee's bs resolves its own repo's project", start)
@@ -338,7 +340,7 @@ func TestBeeWaitingAtAPromptCountsAsStarted(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	r.h.failStart = fmt.Errorf("herdr agent start: blocked during startup: %w", bee.ErrWaiting)
-	st, err := r.fleet.Spawn(ctx, "bees-8")
+	st, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	if err != nil || !st.Waiting || st.Name != "bees-8" {
 		t.Fatalf("started = %+v, err = %v; want waiting, no error", st, err)
 	}
@@ -349,11 +351,11 @@ func TestHerdrTimeoutWithClaudeRunningCountsAsStarted(t *testing.T) {
 	r := newRig(t)
 	// herdr stops waiting while Claude is busy with its first prompt (bees-1.14).
 	r.h.failStart, r.h.liveAnyway = fmt.Errorf("herdr agent: timed out waiting for agent startup: %w", bee.ErrUnconfirmed), true
-	st, err := r.fleet.Spawn(ctx, "bees-8")
+	st, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	if err != nil || st.Name != "bees-8" || st.Waiting {
 		t.Fatalf("started = %+v, err = %v; want started", st, err)
 	}
-	if _, err := r.fleet.Spawn(ctx, "bees-8"); !errors.Is(err, bee.ErrRunning) {
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); !errors.Is(err, bee.ErrRunning) {
 		t.Fatalf("second spawn: err = %v, want ErrRunning (herdr never named it, but Claude runs)", err)
 	}
 }
@@ -362,7 +364,7 @@ func TestHerdrTimeoutWithNoClaudeIsAFailure(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	r.h.failStart = fmt.Errorf("herdr agent: timed out waiting for agent startup: %w", bee.ErrUnconfirmed)
-	_, err := r.fleet.Spawn(ctx, "bees-8")
+	_, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	if !errors.Is(err, bee.ErrUnconfirmed) || !strings.Contains(err.Error(), "herdr pane read w1:p1") {
 		t.Fatalf("err = %v, want ErrUnconfirmed pointing at the pane", err)
 	}
@@ -371,10 +373,10 @@ func TestHerdrTimeoutWithNoClaudeIsAFailure(t *testing.T) {
 func TestUnreadableRegistryRefusesToRestart(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	r.fleet.Spawn(ctx, "bees-8")
+	r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	r.h.exit("bees-8")
 	r.h.aliveErr = errors.New("registry unreadable")
-	if _, err := r.fleet.Spawn(ctx, "bees-8"); err == nil || len(r.h.started) != 1 {
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err == nil || len(r.h.started) != 1 {
 		t.Fatalf("err = %v, starts = %d; a failed liveness probe must not start a second Claude", err, len(r.h.started))
 	}
 }
@@ -383,11 +385,11 @@ func TestFailedStartIsHealedBySpawningAgain(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	r.h.failStart = errors.New("agent_not_ready")
-	if _, err := r.fleet.Spawn(ctx, "bees-8"); err == nil {
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err == nil {
 		t.Fatal("spawn succeeded, want the start error")
 	}
 	r.h.failStart = nil
-	if _, err := r.fleet.Spawn(ctx, "bees-8"); err != nil {
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil {
 		t.Fatal(err)
 	}
 	if len(r.h.workspaces) != 1 {
@@ -395,16 +397,64 @@ func TestFailedStartIsHealedBySpawningAgain(t *testing.T) {
 	}
 }
 
-func TestUnrecordedWorkspaceForTheBeadIsAnOrphan(t *testing.T) {
+func TestUnrecordedWorkspaceOnTheBeesWorktreeIsAnOrphan(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	r.h.workspaces = []bee.Workspace{{ID: "w42", Label: "bees-8"}}
-	_, err := r.fleet.Spawn(ctx, "bees-8")
+	// Found by its worktree whatever its label: a label is free text, not an identity.
+	r.h.workspaces = []bee.Workspace{{ID: "w41", Label: "bees-8", Path: r.repo + "-WT/bees-9"}, {ID: "w42", Label: "something else", Path: r.repo + "-WT/bees-8/"}}
+	_, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	if !errors.Is(err, bee.ErrOrphan) || !strings.Contains(err.Error(), "herdr worktree remove --workspace w42 --force") {
 		t.Fatalf("err = %v, want ErrOrphan with the cleanup command", err)
 	}
-	if len(r.h.removed) != 0 || len(r.h.workspaces) != 1 {
+	if len(r.h.removed) != 0 || len(r.h.workspaces) != 2 {
 		t.Fatalf("removed=%v workspaces=%v; orphans must be left alone", r.h.removed, r.h.workspaces)
+	}
+}
+
+func TestFirstSpawnNeedsALabel(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	if _, err := r.fleet.Spawn(ctx, "bees-8", ""); !errors.Is(err, bee.ErrNoLabel) {
+		t.Fatalf("err = %v, want ErrNoLabel", err)
+	}
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "Spawn-And-End."); !errors.Is(err, bee.ErrBadLabel) {
+		t.Fatalf("err = %v, want ErrBadLabel", err)
+	}
+	if len(r.h.workspaces) != 0 {
+		t.Fatalf("workspaces = %v; a refused spawn must not touch herdr", r.h.workspaces)
+	}
+	if _, ok, _ := r.lb.LatestSpawn(ctx, "bees-8"); ok {
+		t.Fatal("a refused spawn was recorded")
+	}
+}
+
+func TestRespawnKeepsTheRecordedLabel(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	r.h.exit("bees-8")
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "other words"); !errors.Is(err, bee.ErrLabelChange) || len(r.h.started) != 1 {
+		t.Fatalf("err = %v, starts = %d; want ErrLabelChange and no start", err, len(r.h.started))
+	}
+	st, err := r.fleet.Spawn(ctx, "bees-8", "")
+	if err != nil || !st.Resumed || st.Label != "spawn and end" {
+		t.Fatalf("started = %+v, err = %v; want a resume with the recorded label", st, err)
+	}
+	if _, err := r.fleet.Spawn(ctx, "bees-8", ""); !errors.Is(err, bee.ErrRunning) {
+		t.Fatalf("live bee: err = %v, want ErrRunning", err)
+	}
+}
+
+func TestCheckLabel(t *testing.T) {
+	for _, ok := range []string{"role prompts", "squash merge end", "r40", "a b c d", strings.Repeat("x", 32)} {
+		if err := bee.CheckLabel(ok); err != nil {
+			t.Errorf("CheckLabel(%q) = %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"", "a b c d e", strings.Repeat("x", 33), "Role prompts", "role  prompts", " role", "role prompts.", `"role"`, "role-prompts", "rôle", "role\tprompts"} {
+		if err := bee.CheckLabel(bad); !errors.Is(err, bee.ErrBadLabel) {
+			t.Errorf("CheckLabel(%q) = %v, want ErrBadLabel", bad, err)
+		}
 	}
 }
 
@@ -412,12 +462,12 @@ func TestBeadMustBelongToTheProject(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	for _, bead := range []string{"dotfiles-3", "beads-x7q"} {
-		if _, err := r.fleet.Spawn(ctx, bead); !errors.Is(err, bee.ErrWrongRepo) {
+		if _, err := r.fleet.Spawn(ctx, bead, "spawn and end"); !errors.Is(err, bee.ErrWrongRepo) {
 			t.Errorf("%s: err = %v, want ErrWrongRepo", bead, err)
 		}
 	}
 	r.fleet.ForeignRepo = true
-	if _, err := r.fleet.Spawn(ctx, "dotfiles-3"); err != nil {
+	if _, err := r.fleet.Spawn(ctx, "dotfiles-3", "spawn and end"); err != nil {
 		t.Fatalf("with ForeignRepo: %v", err)
 	}
 }
@@ -428,7 +478,7 @@ func TestEndRemovesOnlyTheRecordedWorkspace(t *testing.T) {
 	if _, err := r.fleet.End(ctx, "bees-8"); !errors.Is(err, bee.ErrNotSpawned) {
 		t.Fatalf("never spawned: err = %v, want ErrNotSpawned", err)
 	}
-	r.fleet.Spawn(ctx, "bees-8")
+	r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	recorded := r.h.workspaces[0].ID
 	r.h.workspaces = append(r.h.workspaces, bee.Workspace{ID: "w-other", Label: "bees-8"}) // a decoy
 	for range 2 {
@@ -449,13 +499,13 @@ func TestEndDeletesTheBranchOnlyIfMerged(t *testing.T) {
 	r := newRig(t)
 	gitRun(t, "", "init", "-q", "-b", "main", r.repo)
 	gitRun(t, r.repo, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "init")
-	r.fleet.Spawn(ctx, "bees-8")
+	r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	gitRun(t, r.repo, "branch", "bees-8") // merged: no commits of its own
 	if kept, err := r.fleet.End(ctx, "bees-8"); err != nil || kept {
 		t.Fatalf("merged branch: kept=%v err=%v", kept, err)
 	}
 	r.h.exit("bees-8")
-	r.fleet.Spawn(ctx, "bees-8")
+	r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	gitRun(t, r.repo, "checkout", "-q", "-b", "bees-8")
 	gitRun(t, r.repo, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "work")
 	gitRun(t, r.repo, "checkout", "-q", "main")
@@ -468,7 +518,7 @@ func TestSpawnRecordsTheBriefWithTheSpawn(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	r.h.failStart = errors.New("crash after recording")
-	r.fleet.Spawn(ctx, "bees-8")
+	r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	unread, err := r.lb.Unread(ctx, "bees-8")
 	if err != nil || len(unread) != 1 {
 		t.Fatalf("brief after a failed start: %+v, %v", unread, err)

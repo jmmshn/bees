@@ -57,7 +57,7 @@ ws=$(jq -r .result.root_pane.workspace_id <<<"$created")
 pane=$(jq -r .result.root_pane.pane_id <<<"$created")
 herdr agent start "$queen" --kind claude --pane "$pane" -- --name "$queen" --settings "$settings" \
 	"You are $queen, the queen in an automated bs test. Do only what bs messages ask, then stop and wait." >/dev/null
-bs spawn --as "$queen" "$bead"
+bs spawn --as "$queen" --label "e2e bee" "$bead"
 wait_until 180 "$queen to go idle" is_idle "$queen"
 wait_until 180 "$bee to go idle" is_idle "$bee"
 

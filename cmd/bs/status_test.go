@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/jmmshn/bees/internal/harness/claude/claudetest"
+	"github.com/jmmshn/bees/internal/logbook"
 )
 
 func TestStatusShowsRunningAndUnreadForEachSession(t *testing.T) {
@@ -18,11 +21,32 @@ func TestStatusShowsRunningAndUnreadForEachSession(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	want := "SESSION  STATE        UNREAD\n" + // queen: stopped with nothing unread, so left out
-		"bee-a    running      2\n" +
-		"bee-b    not running  1\n"
+	want := "SESSION  LABEL  STATE        UNREAD\n" + // queen: stopped with nothing unread, so left out
+		"bee-a    -      running      2\n" +
+		"bee-b    -      not running  1\n"
 	if out != want {
 		t.Fatalf("status =\n%s\nwant\n%s", out, want)
+	}
+}
+
+func TestStatusShowsABeesLabel(t *testing.T) {
+	useTempLogbook(t)
+	ctx := context.Background()
+	lb, err := logbook.Open(ctx, os.Getenv("BS_LOGBOOK"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = lb.RecordSpawn(ctx, "queen-test", logbook.Spawn{Name: "test-3", Bead: "test-3", Label: "role prompts"}, "brief")
+	lb.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _, _ := bs(t, "status")
+	if !strings.Contains(out, "test-3   role prompts  not running  1\n") {
+		t.Fatalf("status =\n%s", out)
+	}
+	if out, _, _ := bs(t, "status", "--json"); !strings.Contains(out, `"label":"role prompts"`) {
+		t.Fatalf("status --json = %s", out)
 	}
 }
 

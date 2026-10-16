@@ -190,6 +190,7 @@ type Spawn struct {
 	ID        ID     `json:"-"`
 	Name      string `json:"-"`
 	Bead      string `json:"bead"`
+	Label     string `json:"label,omitempty"` // its herdr workspace label; empty before bees-1.20
 	Workspace string `json:"workspace"`
 	Pane      string `json:"pane"`
 	Worktree  string `json:"worktree"`

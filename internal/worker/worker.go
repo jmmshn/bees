@@ -114,6 +114,23 @@ func Belongs(project, bead string) bool {
 	return ok && beadNumber.MatchString(rest)
 }
 
+// Address maps to, a worker's name or a bead id of project, forward to the worker's name:
+// bs end and send take either spelling (bees-6.1). A bead id whose worker was never spawned
+// is refused, so nothing queues for a session that can't exist.
+func Address(ctx context.Context, lb *logbook.Logbook, project, to string) (string, error) {
+	if !Belongs(project, to) || !strings.Contains(to, ".") {
+		return to, nil
+	}
+	name, err := Name(to)
+	if err != nil {
+		return "", err
+	}
+	if _, ok, err := lb.LatestSpawn(ctx, name); err != nil || ok {
+		return name, err
+	}
+	return "", fmt.Errorf("%s is a bead id, whose worker is %s: %w", to, name, ErrNotSpawned)
+}
+
 // NextEpic returns the next free top-level id for project among ids: <project>-<max+1>.
 func NextEpic(project string, ids []string) string {
 	top := 0

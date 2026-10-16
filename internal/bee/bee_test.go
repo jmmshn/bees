@@ -25,8 +25,9 @@ import (
 // (TestHerdrKeepsLabelsVerbatim), so CheckLabel is bs's rule, not herdr's.
 // It is also the fake Claude registry (bee.Sessions), so a start shows up there.
 type fakeHerdr struct {
-	mu         sync.Mutex    // SpawnAll starts bees concurrently
-	gate       chan struct{} // non-nil: StartClaude waits for it, as a slow herdr start
+	mu         sync.Mutex // SpawnAll starts bees concurrently
+	together   int        // >0: StartClaude waits until this many starts are in flight, else fails
+	inFlight   int
 	next       int
 	workspaces []bee.Workspace
 	agents     map[string]string // live Claude sessions: name → pane
@@ -51,8 +52,8 @@ func (h *fakeHerdr) StartClaude(ctx context.Context, pane, name string, args ...
 	if err := bee.CheckAgentArgs(args); err != nil { // herdr's own rule, held to real herdr
 		return err
 	}
-	if h.gate != nil {
-		<-h.gate
+	if err := h.waitTogether(); err != nil {
+		return err
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -61,6 +62,26 @@ func (h *fakeHerdr) StartClaude(ctx context.Context, pane, name string, args ...
 		h.agents[name] = pane
 	}
 	return h.failStart
+}
+
+// waitTogether holds a start until h.together starts are in flight: a serial spawn
+// never gets there and times out.
+func (h *fakeHerdr) waitTogether() error {
+	if h.together == 0 {
+		return nil
+	}
+	h.mu.Lock()
+	h.inFlight++
+	h.mu.Unlock()
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); time.Sleep(time.Millisecond) {
+		h.mu.Lock()
+		n := h.inFlight
+		h.mu.Unlock()
+		if n >= h.together {
+			return nil
+		}
+	}
+	return fmt.Errorf("only %d of %d starts in flight together", h.inFlight, h.together)
 }
 
 func (h *fakeHerdr) Alive(ctx context.Context, name string, wait time.Duration) (bool, error) {
@@ -209,21 +230,14 @@ func TestSpawnStartsABeeInItsOwnWorkspace(t *testing.T) {
 func TestSpawnAllStartsBeesConcurrently(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	r.h.gate = make(chan struct{})
-	done := make(chan []bee.Result)
-	go func() {
-		done <- r.fleet.SpawnAll(ctx, []bee.Request{{Bead: "bees-8", Label: "spawn and end"}, {Bead: "bees-9", Label: "second bee"}})
-	}()
-	// Both starts are in flight before either finishes: a serial spawn would hang here.
-	r.h.gate <- struct{}{}
-	r.h.gate <- struct{}{}
-	res := <-done
+	r.h.together = 2
+	res := r.fleet.SpawnAll(ctx, []bee.Request{{Bead: "bees-8", Label: "spawn and end"}, {Bead: "bees-9", Label: "second bee"}})
 	if len(res) != 2 || res[0].Bead != "bees-8" || res[1].Bead != "bees-9" {
 		t.Fatalf("results = %+v, want one per bead in order", res)
 	}
 	for _, x := range res {
 		if x.Err != nil || x.Started.Name == "" {
-			t.Fatalf("result = %+v", x)
+			t.Fatalf("result = %+v; want both starts in flight at once", x)
 		}
 		if _, ok, _ := r.lb.LatestSpawn(ctx, x.Started.Name); !ok {
 			t.Fatalf("%s not recorded", x.Started.Name)
@@ -231,23 +245,41 @@ func TestSpawnAllStartsBeesConcurrently(t *testing.T) {
 	}
 }
 
-func TestSpawnAllReportsEachFailureAndStartsTheRest(t *testing.T) {
+func TestSpawnAllStartsNothingIfAnyRequestIsRefused(t *testing.T) {
+	ctx := context.Background()
+	for _, reqs := range [][]bee.Request{
+		{{Bead: "bees-8", Label: "spawn and end"}, {Bead: "bees-9"}},                         // a first spawn without a label
+		{{Bead: "bees-8", Label: "spawn and end"}, {Bead: "bees-9", Label: "Bad!"}},          // a bad label
+		{{Bead: "bees-8", Label: "spawn and end"}, {Bead: "bees-8", Label: "spawn and end"}}, // named twice: never two Claudes
+	} {
+		r := newRig(t)
+		res := r.fleet.SpawnAll(ctx, reqs)
+		if !errors.Is(res[0].Err, bee.ErrNotStarted) || !bee.Refused(res[1].Err) {
+			t.Errorf("%+v: errs = %v, %v; want not started, refused", reqs, res[0].Err, res[1].Err)
+		}
+		if len(r.h.started) != 0 || len(r.h.workspaces) != 0 {
+			t.Errorf("%+v: starts = %d, workspaces = %d; want nothing touched", reqs, len(r.h.started), len(r.h.workspaces))
+		}
+	}
+}
+
+func TestSpawnAllStartsTheRestPastAFailure(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	res := r.fleet.SpawnAll(ctx, []bee.Request{
-		{Bead: "bees-8", Label: "spawn and end"},
-		{Bead: "bees-404", Label: "no such bead"},
-		{Bead: "bees-9"},                         // a first spawn without a label
-		{Bead: "bees-8", Label: "spawn and end"}, // named twice: never two Claudes
-	})
-	if res[0].Err != nil {
-		t.Fatalf("bees-8: %v", res[0].Err)
+	res := r.fleet.SpawnAll(ctx, []bee.Request{{Bead: "bees-404", Label: "no such bead"}, {Bead: "bees-8", Label: "spawn and end"}})
+	if res[0].Err == nil || bee.Refused(res[0].Err) || res[1].Err != nil {
+		t.Fatalf("errs = %v, %v; want bees-404 failed, bees-8 started", res[0].Err, res[1].Err)
 	}
-	if res[1].Err == nil || !errors.Is(res[2].Err, bee.ErrNoLabel) || !errors.Is(res[3].Err, bee.ErrTwice) {
-		t.Fatalf("errs = %v, %v, %v", res[1].Err, res[2].Err, res[3].Err)
+	if len(r.h.started) != 1 {
+		t.Fatalf("starts = %d, want 1", len(r.h.started))
 	}
-	if len(r.h.started) != 1 || len(r.h.workspaces) != 1 {
-		t.Fatalf("starts = %d, workspaces = %d; want only bees-8", len(r.h.started), len(r.h.workspaces))
+}
+
+func TestSpawnAllRepeatAfterARefusalIsNotTwice(t *testing.T) {
+	r := newRig(t)
+	res := r.fleet.SpawnAll(context.Background(), []bee.Request{{Bead: "bees-8", Label: "Bad!"}, {Bead: "bees-8", Label: "spawn and end"}})
+	if !errors.Is(res[0].Err, bee.ErrBadLabel) || !errors.Is(res[1].Err, bee.ErrNotStarted) {
+		t.Fatalf("errs = %v, %v; want the bad label alone blamed", res[0].Err, res[1].Err)
 	}
 }
 

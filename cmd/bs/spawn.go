@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -44,10 +45,20 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	fs.SetOutput(stderr)
 	proj := fs.String("project", "", "project (default: BS_PROJECT, else the current git repo)")
 	as := fs.String("as", "", "session doing the spawning (default: this Claude session)")
-	repo := fs.String("repo", "", "spawn in this repo even if the bead belongs to another project")
 	var reqs []bee.Request
+	repo := ""
+	fs.Func("repo", "spawn in this repo even if the beads belong to another project; before the first bead", func(s string) error {
+		if len(reqs) > 0 {
+			return errors.New("--repo goes before the first bead: one repo per call")
+		}
+		repo = s
+		return nil
+	})
 	label, labelled := "", false // the --label waiting for its bead
 	fs.Func("label", "the herdr workspace label of the bead after it: 1-4 lowercase words naming the work (required on a first spawn)", func(s string) error {
+		if labelled {
+			return fmt.Errorf("%q and %q are both waiting for one bead", label, s)
+		}
 		label, labelled = s, true
 		return nil
 	})
@@ -59,6 +70,14 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return errUsage
 	}
 	// Like parseFlags, but each --label goes with the bead after it.
+	var tail []string
+	if i := slices.Index(args, "--"); i >= 0 {
+		args, tail = args[:i], args[i+1:]
+	}
+	addBead := func(b string) {
+		reqs = append(reqs, bee.Request{Bead: b, Label: label})
+		label, labelled = "", false
+	}
 	for {
 		if err := fs.Parse(args); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
@@ -69,8 +88,11 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		if args = fs.Args(); len(args) == 0 {
 			break
 		}
-		reqs = append(reqs, bee.Request{Bead: args[0], Label: label})
-		label, labelled, args = "", false, args[1:]
+		addBead(args[0])
+		args = args[1:]
+	}
+	for _, b := range tail {
+		addBead(b)
 	}
 	if len(reqs) == 0 {
 		return spawnUsage(nil)
@@ -85,20 +107,19 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 			}
 		}
 	}
-	f, err := fleet(ctx, *proj, *as, *repo)
+	f, err := fleet(ctx, *proj, *as, repo)
 	if err != nil {
 		return err
 	}
 	defer f.LB.Close()
 	trusted := claude.Trusted(f.P.Repo) // before spawning: starting a bee can't change it
 	var untrusted []string
-	failed, labelErr := false, false
+	failed, refused := false, false
 	for _, r := range f.SpawnAll(ctx, reqs) {
 		st := r.Started
 		if r.Err != nil {
 			fmt.Fprintf(stderr, "bs spawn: %s: %v\n", r.Bead, r.Err)
-			failed = true
-			labelErr = labelErr || errors.Is(r.Err, bee.ErrNoLabel) || errors.Is(r.Err, bee.ErrLabelChange)
+			failed, refused = true, refused || bee.Refused(r.Err)
 			continue
 		}
 		took := r.Took.Round(100 * time.Millisecond).Seconds()
@@ -121,7 +142,7 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		fmt.Fprintf(stderr, "bs spawn: Claude hasn't trusted %s yet; if %s asks, answer the trust prompt in its pane\n", f.P.Repo, strings.Join(untrusted, " or "))
 	}
 	switch {
-	case labelErr:
+	case refused: // nothing started
 		return spawnUsage(nil)
 	case failed:
 		return exitCode(1)

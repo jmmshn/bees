@@ -38,6 +38,9 @@ func (h *fakeHive) StartClaude(ctx context.Context, pane, name string, args ...s
 func (h *fakeHive) RemoveWorktree(ctx context.Context, workspace string) error { return nil }
 func (h *fakeHive) Workspaces(ctx context.Context) ([]bee.Workspace, error)    { return nil, nil }
 func (h *fakeHive) Show(ctx context.Context, id string) (bee.Bead, error) {
+	if strings.HasSuffix(id, ".404") {
+		return bee.Bead{}, fmt.Errorf("no bead %s", id)
+	}
 	return bee.Bead{ID: id, Title: "t"}, nil
 }
 
@@ -79,21 +82,45 @@ func TestSpawnManyBeadsEachWithItsLabel(t *testing.T) {
 	}
 }
 
-func TestSpawnManyReportsEachFailureAndStartsTheRest(t *testing.T) {
+func TestSpawnManyRefusedStartsNothing(t *testing.T) {
+	useTempLogbook(t)
+	h := useFakeHive(t)
+	// test-1.2 has no label: the whole call is refused, with the label rules.
+	out, stderr, code := bs(t, "spawn", "--project", "test", "--as", "queen-test", "--label", "sort fruits", "test-1.1", "test-1.2")
+	if code != 2 || out != "" || len(h.labels) != 0 || !strings.Contains(stderr, "bs spawn: test-1.1: not started") ||
+		!strings.Contains(stderr, "bs spawn: test-1.2: test-1-2: a first spawn needs a label") || !strings.Contains(stderr, "squash merge end") {
+		t.Fatalf("exit %d, out %q, stderr %q, spawned %v", code, out, stderr, h.labels)
+	}
+}
+
+func TestSpawnManyStartsTheRestPastAFailure(t *testing.T) {
 	useTempLogbook(t)
 	useFakeHive(t)
-	// test-1.2 has no label: refused with the label rules, while test-1.1 still starts.
-	out, stderr, code := bs(t, "spawn", "--project", "test", "--as", "queen-test", "--label", "sort fruits", "test-1.1", "test-1.2")
-	if code != 2 || !strings.Contains(out, "spawned test-1-1") || !strings.Contains(stderr, "bs spawn: test-1.2: test-1-2: a first spawn needs a label") || !strings.Contains(stderr, "squash merge end") {
+	out, stderr, code := bs(t, "spawn", "--project", "test", "--as", "queen-test", "--label", "lost bead", "test-1.404", "--label", "sort fruits", "test-1.1")
+	if code != 1 || !strings.Contains(out, "spawned test-1-1") || !strings.Contains(stderr, "bs spawn: test-1.404: no bead test-1.404") {
 		t.Fatalf("exit %d, out %q, stderr %q", code, out, stderr)
 	}
 }
 
-func TestSpawnTrailingLabelIsUsage(t *testing.T) {
+func TestSpawnArgumentMistakesAreUsage(t *testing.T) {
 	useTempLogbook(t)
 	h := useFakeHive(t)
-	_, stderr, code := bs(t, "spawn", "--project", "test", "--as", "queen-test", "--label", "sort fruits", "test-1.1", "--label", "dedupe todo")
-	if code != 2 || !strings.Contains(stderr, "usage: bs spawn") || len(h.labels) != 0 {
-		t.Fatalf("exit %d, stderr %q, spawned %v; want usage and nothing spawned", code, stderr, h.labels)
+	for _, args := range [][]string{
+		{"--label", "sort fruits", "test-1.1", "--label", "dedupe todo"},                             // a label with no bead
+		{"--label", "sort fruits", "--label", "dedupe todo", "test-1.1"},                             // two labels for one bead
+		{"--label", "sort fruits", "test-1.1", "--repo", "/x", "--label", "dedupe todo", "test-1.2"}, // --repo after a bead
+	} {
+		_, stderr, code := bs(t, append([]string{"spawn", "--project", "test", "--as", "queen-test"}, args...)...)
+		if code != 2 || len(h.labels) != 0 {
+			t.Errorf("spawn %q: exit %d, stderr %q, spawned %v; want usage and nothing spawned", args, code, stderr, h.labels)
+		}
+	}
+}
+
+func TestSpawnBeadsAfterDoubleDash(t *testing.T) {
+	useTempLogbook(t)
+	h := useFakeHive(t)
+	if _, stderr, code := bs(t, "spawn", "--project", "test", "--as", "queen-test", "--label", "sort fruits", "--", "test-1.1"); code != 0 || h.labels["sort fruits"] != "test-1-1" {
+		t.Fatalf("exit %d, stderr %q, spawned %v", code, stderr, h.labels)
 	}
 }

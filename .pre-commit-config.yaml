@@ -1,0 +1,21 @@
+# Mirrors the CI lint job on commit; go vet/test stay CI-only. Versions match .github/workflows/ci.yml.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-merge-conflict
+  - repo: https://github.com/golangci/golangci-lint
+    rev: v2.14.0
+    hooks:
+      - id: golangci-lint-fmt
+      - id: golangci-lint # changed lines only (--new-from-rev HEAD); CI lints everything
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.23.3
+    hooks:
+      - id: markdownlint-cli2
+        # Lint the globs in .markdownlint-cli2.yaml, as CI does; filenames would be linted on top of them.
+        files: ^(README|GLOSSARY|AGENTS)\.md$|^docs/.*\.md$
+        pass_filenames: false

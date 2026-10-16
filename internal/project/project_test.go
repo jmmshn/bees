@@ -133,7 +133,7 @@ func TestMeResolutionOrder(t *testing.T) {
 	if me, _ := project.Me(""); me != "bee-995-8" {
 		t.Fatalf("registry vs env: %q", me)
 	}
-	if me, _ := project.Me("captain"); me != "captain" {
+	if me, _ := project.Me("keeper"); me != "keeper" {
 		t.Fatalf("flag: %q", me)
 	}
 }

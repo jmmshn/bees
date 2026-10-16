@@ -1,6 +1,6 @@
 """timeline.py <run dir> [--json]: one chronological list of what every session in a run did, from its copied transcripts.
 
-Rows: in (captain lines), peer (bs doorbells, cross-session, subagent hand-backs), notify (task notifications), assistant text, tool calls (Bash commands, Agent/SendMessage), per session.
+Rows: in (keeper lines), peer (bs doorbells, cross-session, subagent hand-backs), notify (task notifications), assistant text, tool calls (Bash commands, Agent/SendMessage), per session.
 """
 import json, pathlib, re, sys
 
@@ -8,7 +8,7 @@ run = pathlib.Path(sys.argv[1])
 
 
 def inkind(text, origin=None):
-    """in = typed by the captain; peer = another session (bs doorbell, cross-session, subagent hand-back); notify = task notification."""
+    """in = typed by the keeper; peer = another session (bs doorbell, cross-session, subagent hand-back); notify = task notification."""
     t = text.lstrip()
     if origin == "task-notification" or t.startswith("<task-notification>"):
         return "notify"
@@ -39,7 +39,7 @@ for f in sorted((run / "transcripts").rglob("*.jsonl")):
                 i = p.get("input", {})
                 arg = i.get("command") or i.get("prompt") or i.get("message") or i.get("description") or json.dumps(i)[:200]
                 rows.append((ts, where, "tool:" + p["name"], arg))
-# Committed timelines must not carry anyone's email (a worker once set its commit identity from the captain's).
+# Committed timelines must not carry anyone's email (a worker once set its commit identity from the keeper's).
 rows = sorted((a, b, c, re.sub(r"[\w.+-]+@[\w-]+\.[\w.]+", "<email>", str(d))) for a, b, c, d in rows)
 if "--json" in sys.argv:
     print(json.dumps([dict(ts=a, who=b, kind=c, text=d) for a, b, c, d in rows]))

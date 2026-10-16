@@ -14,7 +14,7 @@ v0 proves the core loop: the queen sends a message, an idle bee wakes, reads it 
 | `entries` table; writes `message`, `received`, `spawned`, `ended` | `rang` entries |
 | Claude adapter: find, ring; herdr and bd adapters | reconciler |
 | Ring every unread message on every send | `Plan` reconciler, coalescing, re-ring, flag the queen, watchdog |
-| `--now` | Captain inbox, disk warning, omp adapter |
+| `--now` | Keeper inbox, disk warning, omp adapter |
 
 Platform: Linux only.
 
@@ -222,7 +222,7 @@ func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error)           
 7. `RecordSpawn` immediately, in one transaction with the brief (`bd show` title and description) as a message from the queen: subject = name; data = bead, label, workspace, pane, worktree, branch, repo.
 8. `herdr agent start <name> --kind claude --pane <pane> --timeout 10000 -- --name <name> --settings '{"crossSessionInbound":"accept"}' --append-system-prompt-file ~/.cache/bees/<project>-worker.md "<doorbell>"` (no system prompt when the bee runs in another project's repo). Every argument passes `CheckAgentArgs` first. The doorbell is Claude's first prompt, so spawn doesn't depend on ringing. herdr's outcomes ([ADR-0007](adr/0007-claudes-registry-confirms-a-launch.md)):
    - success → started;
-   - `agent_not_ready`: Claude is blocked at a prompt → started with `Waiting`; bs tells the captain to answer it in the worker's pane;
+   - `agent_not_ready`: Claude is blocked at a prompt → started with `Waiting`; bs tells the keeper to answer it in the worker's pane;
    - `timeout` → `ErrUnconfirmed`. herdr waits for an idle prompt, and a worker busy with its doorbell is never idle in time, so this is the usual outcome for a healthy worker; Claude may also have exited. `Sessions.Alive(name, 20s)` decides: live → started; not → an error naming `herdr pane read <pane>`. Before spawning, `bs spawn` warns if `~/.claude.json` shows the repo isn't trusted yet (read only; trust is keyed by the main checkout, so its worktrees share it). No settings file is written (Claude reads `settings.local.json` from the main checkout in a worktree), and no `BS_*` variables are needed.
 
 `End(name)`: read `LatestSpawn`; none → `ErrNotSpawned` (never ask herdr). Otherwise `herdr worktree remove --workspace <recorded id> --force`, then `RecordEnd`. The branch is always kept: `bs end` prints `branch <name> kept; bs prune deletes it once merged`.
@@ -324,5 +324,5 @@ Manual bee (no herdr): `claude --name bee-a --settings '{"crossSessionInbound":"
   - one doorbell in flight per session, re-ring at 60 s, flag the queen at 120 s.
 - **Hook:** `bs hook` on UserPromptSubmit writes a `rang`/landed entry for `[bs]` prompts; hooks and herdr agent status are the attention facts for `Plan`, never screen scraping (R38).
 - **Questions and answers** (R35, R36): message `data` gains `bead` and `needs` (`none` | `answer` | `approval`); `bs send --needs … --bead … --re <id>`; an answer is a message whose `ref` is the question, and the first one wins; `bs status` counts open questions.
-- **Captain** (R13, R37): a message to `captain` with `needs` set is something that needs the human; `bs status` lists them first. Desk only, no push (S3).
+- **Keeper** (R13, R37): a message to `keeper` with `needs` set is something that needs the human; `bs status` lists them first. Desk only, no push (S3).
 - **Harness seam:** `Harness{Launch, Ring, Alive}`, with an omp adapter in v1.1.

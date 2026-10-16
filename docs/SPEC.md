@@ -149,7 +149,7 @@ func Me(flagAs string) (string, error)      // --as → parent-process walk → 
 - The name is lowercased with `-` and `_` dropped (`pymatgen-analysis-defects` → `pymatgenanalysisdefects`) and must match `^[a-z][a-z0-9]{0,24}$`, else `ErrBadProject` (set `BS_PROJECT`).
 - The project comes from git's *common* directory, so a shell inside `<repo>-WT/bees-2-1` resolves to the main repo's project.
 - `Repo` is the main checkout when the project comes from git, else the directory under `$BS_REPOS` (default `~/repos/jmmshn`) whose normalised name is the project, so `jobflowray` finds `jobflow-ray`; `Logbook` is `$BS_LOGBOOK`, else `~/.local/share/bees/<project>.db`.
-- `internal/prompt/system.md`, embedded in bs with `{{project}}` filled in by `prompt.System`, is written by `prompt.File` to `<user cache dir>/bees/<project>-system.md` (`~/.cache/bees/`, through a rename, at every launch) and passed as `--append-system-prompt-file` to the queen and to every worker whose repo is the project's. A file, not the text, because herdr refuses agent arguments containing control characters (R39). It is the one place the instructions for queens and bees live; today it tells them to list and file beads with `bs bead`, which keeps them in the project (R32). Claude records it with the conversation until compaction, so restart a queen with `bs queen`, not a bare `claude --resume`.
+- Role prompts (R40): `internal/prompt/QUEEN.md` for the queen and `WORKER.md` for workers, each followed by `BEADS.md` (the bead rules both share), embedded in bs with `{{project}}` filled in by `prompt.Text(role, project)`. `prompt.File` writes one to `<user cache dir>/bees/<project>-<role>.md` (`~/.cache/bees/<project>-queen.md`, `…-worker.md`; through a rename, at every launch), passed as `--append-system-prompt-file` to the queen and to every worker whose repo is the project's. A file, not the text, because herdr refuses agent arguments containing control characters (R39). They are the one place the standing instructions for each role live: the queen hands out beads, reads the fleet from `bs status`, and closes a bead only after its PR is merged; a worker reads its brief and inbox, asks the queen when blocked, and ends on a PR and `done: <bead> PR #N`; both list and file beads with `bs bead`, which keeps them in the project (R32). Claude records the prompt with the conversation until compaction, so restart a queen with `bs queen`, not a bare `claude --resume`.
 - `Me` walks `getppid()` upward to the first pid with `~/.claude/sessions/<pid>.json` and uses its `name`. The registry beats `BS_SESSION`, which a session can inherit stale; `BS_SESSION` is for use outside Claude. Otherwise it fails with `run bs from inside a named Claude session, or pass --as`.
 
 ## Spawn
@@ -203,7 +203,7 @@ func (f Fleet) End(ctx context.Context, name string) (branchKept bool, err error
 4. A herdr workspace labelled with the bead but no `spawned` entry → `ErrOrphan`, with the command to remove it by hand (`herdr worktree remove --workspace <id> --force`). It is never removed automatically.
 5. `herdr worktree create --cwd <repo> --branch <name> --path <repo>-WT/<name> --label <bead> --no-focus` (herdr prints JSON).
 6. `RecordSpawn` immediately, in one transaction with the brief (`bd show` title and description) as a message from the queen: subject = name; data = bead, workspace, pane, worktree, branch, repo.
-7. `herdr agent start <name> --kind claude --pane <pane> --timeout 10000 -- --name <name> --settings '{"crossSessionInbound":"accept"}' --append-system-prompt-file ~/.cache/bees/<project>-system.md "<doorbell>"` (no system prompt when the bee runs in another project's repo). Every argument passes `CheckAgentArgs` first. The doorbell is Claude's first prompt, so spawn doesn't depend on ringing. herdr's outcomes ([ADR-0007](adr/0007-claudes-registry-confirms-a-launch.md)):
+7. `herdr agent start <name> --kind claude --pane <pane> --timeout 10000 -- --name <name> --settings '{"crossSessionInbound":"accept"}' --append-system-prompt-file ~/.cache/bees/<project>-worker.md "<doorbell>"` (no system prompt when the bee runs in another project's repo). Every argument passes `CheckAgentArgs` first. The doorbell is Claude's first prompt, so spawn doesn't depend on ringing. herdr's outcomes ([ADR-0007](adr/0007-claudes-registry-confirms-a-launch.md)):
    - success → started;
    - `agent_not_ready`: Claude is blocked at a prompt → started with `Waiting`; bs tells the captain to answer it in the worker's pane;
    - `timeout` → `ErrUnconfirmed`. herdr waits for an idle prompt, and a worker busy with its doorbell is never idle in time, so this is the usual outcome for a healthy worker; Claude may also have exited. `Sessions.Alive(name, 20s)` decides: live → started; not → an error naming `herdr pane read <pane>`. Before spawning, `bs spawn` warns if `~/.claude.json` shows the repo isn't trusted yet (read only; trust is keyed by the main checkout, so its worktrees share it). No settings file is written (Claude reads `settings.local.json` from the main checkout in a worktree), and no `BS_*` variables are needed.
@@ -214,7 +214,7 @@ func (f Fleet) End(ctx context.Context, name string) (branchKept bool, err error
 
 ```text
 bs init                       create the logbook file and table if missing (optional)
-bs queen                      start the queen: claude --name queen-<project> --append-system-prompt-file <system.md> in the repo (no BS_* set)
+bs queen                      start the queen: claude --name queen-<project> --append-system-prompt-file <project>-queen.md in the repo (no BS_* set)
 bs spawn <bead> [--repo P]    start a bee for the bead in its own herdr workspace
 bs end <bee>                 remove the bee's recorded workspace
 bs epic <title>               create the project's next epic, <project>-<n>
@@ -302,7 +302,6 @@ Manual bee (no herdr): `claude --name bee-a --settings '{"crossSessionInbound":"
   - one reconcile at a time, serialized by SQLite's write lock;
   - one doorbell in flight per session, re-ring at 60 s, flag the queen at 120 s.
 - **Hook:** `bs hook` on UserPromptSubmit writes a `rang`/landed entry for `[bs]` prompts; hooks and herdr agent status are the attention facts for `Plan`, never screen scraping (R38).
-- **Bee contract:** a fuller system prompt for spawned bees (R11).
 - **Questions and answers** (R35, R36): message `data` gains `bead` and `needs` (`none` | `answer` | `approval`); `bs send --needs … --bead … --re <id>`; an answer is a message whose `ref` is the question, and the first one wins; `bs status` counts open questions.
 - **Captain** (R13, R37): a message to `captain` with `needs` set is something that needs the human; `bs status` lists them first. Desk only, no push (S3).
 - **Harness seam:** `Harness{Launch, Ring, Alive}`, with an omp adapter in v1.1.

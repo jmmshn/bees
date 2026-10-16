@@ -13,7 +13,7 @@ Status: **accepted**, **superseded** (replaced by a later decision), or **open**
 | S3 | Desk only; no phone path in v1 (that stays with dotfiles-4). Things that need the keeper show up in `bs status`. | accepted | SPEC v1 outline |
 | S4 | Claude Code only for v0/v1, behind a harness interface (`Launch`, `Ring`, `Alive`). omp comes in v1.1 through an in-process extension. | accepted | SPEC v1 outline |
 | R5 | Linux only. | accepted | SPEC |
-| R7 | Vocabulary: keeper, queen, bee, session, logbook, entry, message, receipt, unread, inbox, doorbell, ring. | accepted | GLOSSARY |
+| R7 | Vocabulary: keeper, queen, bee, session, logbook, entry, message, receipt, unread, inbox, doorbell, ring. | accepted, bee → worker by R45 | GLOSSARY |
 
 ## Messaging model
 
@@ -77,7 +77,7 @@ Status: **accepted**, **superseded** (replaced by a later decision), or **open**
 | M8 | The doorbell explains itself; no bee prompt file in v0. | accepted | SPEC |
 | M9 | Manual setup: `crossSessionInbound` in the worktree's settings, then `claude --name bee-a`. | accepted | SPEC |
 
-## Spawning bees
+## Spawning workers
 
 | Id | Decision | Status | Recorded in |
 |---|---|---|---|
@@ -85,7 +85,7 @@ Status: **accepted**, **superseded** (replaced by a later decision), or **open**
 | R20 | One bee per bead in v1; a role prefix only when a second bee per bead is needed. | accepted | ADR-0006 |
 | R21′ | One name everywhere: `bee-` + bead id without `beads-`, `.` → `-`. Session, herdr agent, branch, worktree dir (`<repo>-WT/<name>`) and address; herdr label is the bead id. Too long is refused, not hashed. | accepted | ADR-0006 |
 | R23 | Project is the scope (crew's `--project`): `--project` → `BS_PROJECT` → git common-dir basename. Per-project logbook `~/.local/share/bees/<project>.db`, repo `$BS_REPOS/<project>`, queen `queen-<project>`. The bead's repo label must equal the project unless `--repo`. | accepted | ADR-0006 |
-| R24 | Implementation: packages `project` and `bee`; typed `Herdr` and `Beads` ports with CLI adapters and stateful fakes; `spawned` written right after the worktree is created; first assignment delivered as Claude's first prompt; logbook gains `RecordSpawn`, `RecordEnd`, `LatestSpawn`. Spawn resumes a dead bee's recorded workspace and reports orphans. | accepted | ADR-0006 |
+| R24 | Implementation: packages `project` and `bee`; typed `Herdr` and `Beads` ports with CLI adapters and stateful fakes; `spawned` written right after the worktree is created; first assignment delivered as Claude's first prompt; logbook gains `RecordSpawn`, `RecordEnd`, `LatestSpawn`. Spawn resumes a dead bee's recorded workspace and reports orphans. | accepted, package renamed by R45 | ADR-0006 |
 | R25 | Worktrees stay at `<repo>-WT/<name>`. Per-bee Claude settings ride `--settings` (Claude reads `settings.local.json` from the main checkout in a worktree); no `BS_*` variables; `bs end` deletes the branch only if fully merged. | accepted | ADR-0006 |
 | R26 | Review fixes: the `spawned` entry and the brief are written in one transaction; the registry walk beats `BS_SESSION`, and `bs queen` sets no `BS_*`; the spawn records its repo so `bs end` deletes the branch there; the project label may be on the bead or any ancestor. | accepted | SPEC |
 | R27 | Named project epics, as in crew: the epic id is the repo name (`bd create --id bees --force`), beads are `bees.<n>`. A bee's name is the bead id with `.` → `-` (`bees-8`); the project check is the `<project>.` prefix, replacing the label walk. Supersedes R21′'s `bee-` prefix and R23's label check. | accepted | ADR-0006 |
@@ -103,6 +103,7 @@ Status: **accepted**, **superseded** (replaced by a later decision), or **open**
 | R42 | `bs end` keeps the branch; `bs prune [--dry-run]` deletes branches (bees-1.17). `git branch -d` proves a merge by ancestry only, so after a rebase or squash merge `bs end` kept the branch and claimed unmerged work. Now `end` only removes the workspace and records `ended`, and prints `branch <b> kept; bs prune deletes it once merged`. `prune` looks only at branches of bees whose latest spawn has ended, as the logbook recorded them, and proves a merge by ancestry, a merged GitHub PR whose head is the branch tip, or every changed path identical on the default branch. It deletes with `git branch -D` and never touches remotes; kept branches say "not merged" (exit 3) or "could not check" (exit 4). Amends ADR-0006. | accepted | SPEC, ADR-0006 |
 | R43 | `bs spawn` takes many beads (bees-1.35): `bs spawn --label L1 b1 --label L2 b2`, each `--label` going with the bead after it. Every bead is checked first (label rules, a first spawn needs a label, a bee named twice); any such refusal starts nothing and exits 2. Then each bee's worktree and spawn record are made one at a time, and the Claude starts (herdr waits ~10 s for each) run in parallel, so a fan-out costs one start, not one per bee. One line per bead; past the checks a failure doesn't stop the others, and any failure exits 1. `--repo` comes before the first bead and applies to all: one repo per call. | accepted | SPEC |
 | R44 | The human's role is the keeper, not the captain (bees-1.46): it fits the hive (queen, bees; the keeper tends the hive and harvests the work). Renamed across GLOSSARY, docs, role prompts, skills and bakeoff cards and scripts (`keeper.log`, `keeper_turns`, `keeper-wip`). bakeoff/HISTORY.md rows and bakeoff/results/ keep "captain". Amends R7. | accepted | GLOSSARY |
+| R45 | The sessions a queen spawns are workers, not bees (bees-1.15): "worker" says what the session does, and the mixed metaphor is intended (queen and worker bees). Renamed across GLOSSARY, SPEC, SETUP, the setup-bees skill, `scripts/e2e.sh`, CLI help and messages, and code: package `bee` → `worker` (`internal/worker`). The tool and project keep the name bees and `bs`; the queen, session names from bead ids (`bees-2-1`) and logbook kinds (`spawned`/`ended`) are unchanged. Earlier rows, ADRs, bakeoff/HISTORY.md and bakeoff/results/ keep "bee". Amends R7, R24. | accepted | GLOSSARY |
 | R19, R22, R18′ | Roster table, reserve-first spawn, label-only project. | superseded by R18″/R23 | ADR-0006 |
 
 ## Prior art for handoff (bees-1.1)

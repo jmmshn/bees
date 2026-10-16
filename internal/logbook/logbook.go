@@ -126,7 +126,7 @@ ORDER BY m.rowid`, session)
 	return out, rows.Err()
 }
 
-// UnreadCounts returns every session the logbook names (a writer, recipient or bee) with its
+// UnreadCounts returns every session the logbook names (a writer, recipient or worker) with its
 // unread count, which is 0 for sessions with nothing unread.
 func (l *Logbook) UnreadCounts(ctx context.Context) (map[string]int, error) {
 	rows, err := l.db.QueryContext(ctx, `
@@ -184,8 +184,8 @@ func newID(t time.Time) ID {
 	return ID(fmt.Sprintf("%013x%013x", t.UnixMilli(), binary.BigEndian.Uint64(b[:])>>12))
 }
 
-// Spawn records a bee bs started: its herdr workspace is the key bs end needs once
-// the agent is gone (ADR-0006). It says nothing about whether the bee is running.
+// Spawn records a worker bs started: its herdr workspace is the key bs end needs once
+// the agent is gone (ADR-0006). It says nothing about whether the worker is running.
 type Spawn struct {
 	ID        ID     `json:"-"`
 	Name      string `json:"-"`
@@ -197,11 +197,11 @@ type Spawn struct {
 	Branch    string `json:"branch"`
 	Repo      string `json:"repo"` // where the branch lives, for bs end
 	Ended     bool   `json:"-"`
-	Read      bool   `json:"-"` // the bee has read a message since this spawn, so it has a conversation
+	Read      bool   `json:"-"` // the worker has read a message since this spawn, so it has a conversation
 }
 
 // RecordSpawn records that by spawned s.Name and, in the same transaction, sends it
-// brief (if any), so a crash can't leave a recorded bee without its brief. The brief
+// brief (if any), so a crash can't leave a recorded worker without its brief. The brief
 // refers to the spawn: once the spawn has ended, an unread brief is no longer unread.
 func (l *Logbook) RecordSpawn(ctx context.Context, by string, s Spawn, brief string) (ID, error) {
 	now := time.Now().UTC()
@@ -250,8 +250,8 @@ SELECT 'end:' || id, ?, 'ended', ?, subject, id FROM entries WHERE id = ? AND ki
 	return tx.Commit()
 }
 
-// LatestSpawn returns the most recent spawn of the named bee, whether it has ended, and
-// whether the bee has read a message since. ok is false when the bee was never spawned.
+// LatestSpawn returns the most recent spawn of the named worker, whether it has ended, and
+// whether the worker has read a message since. ok is false when the worker was never spawned.
 func (l *Logbook) LatestSpawn(ctx context.Context, name string) (s Spawn, ok bool, err error) {
 	var data string
 	err = l.db.QueryRowContext(ctx, `
@@ -272,8 +272,8 @@ FROM entries s WHERE s.kind = 'spawned' AND s.subject = ? ORDER BY s.rowid DESC 
 	return s, true, nil
 }
 
-// EndedSpawns returns the latest spawn of each bee whose latest spawn has ended, by
-// name. A bee spawned again since it ended is live, so it is left out.
+// EndedSpawns returns the latest spawn of each worker whose latest spawn has ended, by
+// name. A worker spawned again since it ended is live, so it is left out.
 func (l *Logbook) EndedSpawns(ctx context.Context) ([]Spawn, error) {
 	rows, err := l.db.QueryContext(ctx, `
 SELECT s.id, s.subject, s.data FROM entries s

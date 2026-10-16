@@ -27,41 +27,41 @@ func open(t *testing.T) *logbook.Logbook {
 func TestSentMessageIsUnreadForRecipientOnly(t *testing.T) {
 	ctx := context.Background()
 	lb := open(t)
-	if _, err := lb.Send(ctx, "queen", "bee-a", "add tests for parser"); err != nil {
+	if _, err := lb.Send(ctx, "queen", "worker-a", "add tests for parser"); err != nil {
 		t.Fatal(err)
 	}
-	got, err := lb.Unread(ctx, "bee-a")
+	got, err := lb.Unread(ctx, "worker-a")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].From != "queen" || got[0].To != "bee-a" || got[0].Body != "add tests for parser" {
-		t.Fatalf("unread for bee-a = %+v", got)
+	if len(got) != 1 || got[0].From != "queen" || got[0].To != "worker-a" || got[0].Body != "add tests for parser" {
+		t.Fatalf("unread for worker-a = %+v", got)
 	}
-	other, err := lb.Unread(ctx, "bee-b")
+	other, err := lb.Unread(ctx, "worker-b")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(other) != 0 {
-		t.Fatalf("unread for bee-b = %+v, want none", other)
+		t.Fatalf("unread for worker-b = %+v, want none", other)
 	}
 }
 
 func TestRecordReceiptsRemovesFromUnreadAndIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	lb := open(t)
-	first, err := lb.Send(ctx, "queen", "bee-a", "one")
+	first, err := lb.Send(ctx, "queen", "worker-a", "one")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := lb.Send(ctx, "queen", "bee-a", "two"); err != nil {
+	if _, err := lb.Send(ctx, "queen", "worker-a", "two"); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
-		if err := lb.RecordReceipts(ctx, "bee-a", []logbook.ID{first}); err != nil {
+		if err := lb.RecordReceipts(ctx, "worker-a", []logbook.ID{first}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	got, err := lb.Unread(ctx, "bee-a")
+	got, err := lb.Unread(ctx, "worker-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,14 +73,14 @@ func TestRecordReceiptsRemovesFromUnreadAndIsIdempotent(t *testing.T) {
 func TestRecordReceiptsByAnotherSessionDoesNotCount(t *testing.T) {
 	ctx := context.Background()
 	lb := open(t)
-	id, err := lb.Send(ctx, "queen", "bee-a", "one")
+	id, err := lb.Send(ctx, "queen", "worker-a", "one")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := lb.RecordReceipts(ctx, "bee-b", []logbook.ID{id}); err != nil {
+	if err := lb.RecordReceipts(ctx, "worker-b", []logbook.ID{id}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := lb.Unread(ctx, "bee-a")
+	got, err := lb.Unread(ctx, "worker-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,17 +92,17 @@ func TestRecordReceiptsByAnotherSessionDoesNotCount(t *testing.T) {
 func TestReadingANewerMessageLeavesOlderOnesUnread(t *testing.T) {
 	ctx := context.Background()
 	lb := open(t)
-	if _, err := lb.Send(ctx, "queen", "bee-a", "older"); err != nil {
+	if _, err := lb.Send(ctx, "queen", "worker-a", "older"); err != nil {
 		t.Fatal(err)
 	}
-	newer, err := lb.Send(ctx, "bee-b", "bee-a", "newer")
+	newer, err := lb.Send(ctx, "worker-b", "worker-a", "newer")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := lb.RecordReceipts(ctx, "bee-a", []logbook.ID{newer}); err != nil {
+	if err := lb.RecordReceipts(ctx, "worker-a", []logbook.ID{newer}); err != nil {
 		t.Fatal(err)
 	}
-	got, err := lb.Unread(ctx, "bee-a")
+	got, err := lb.Unread(ctx, "worker-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,9 +130,9 @@ func TestConcurrentSendersFromSeparateProcessesLoseNothing(t *testing.T) {
 				return
 			}
 			defer lb.Close()
-			_, err = lb.Send(ctx, fmt.Sprintf("bee-%d", i), "queen", "done")
+			_, err = lb.Send(ctx, fmt.Sprintf("worker-%d", i), "queen", "done")
 			if err == nil {
-				err = lb.RecordReceipts(ctx, fmt.Sprintf("bee-%d", i), nil)
+				err = lb.RecordReceipts(ctx, fmt.Sprintf("worker-%d", i), nil)
 			}
 			errs <- err
 		}()
@@ -159,7 +159,7 @@ func TestOpenHandlesOddPathsAndCreatesSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer lb.Close()
-	if _, err := lb.Send(ctx, "queen", "bee-a", "hi"); err != nil {
+	if _, err := lb.Send(ctx, "queen", "worker-a", "hi"); err != nil {
 		t.Fatalf("send without init: %v", err)
 	}
 	if _, err := os.Stat(path); err != nil {
@@ -170,18 +170,18 @@ func TestOpenHandlesOddPathsAndCreatesSchema(t *testing.T) {
 func TestSpawnRecordsTrackTheLatestSpawnAndItsEnd(t *testing.T) {
 	ctx := context.Background()
 	lb := open(t)
-	if _, ok, err := lb.LatestSpawn(ctx, "bee-995-8"); err != nil || ok {
+	if _, ok, err := lb.LatestSpawn(ctx, "beads-995-8"); err != nil || ok {
 		t.Fatalf("before any spawn: ok=%v err=%v", ok, err)
 	}
-	first := logbook.Spawn{Name: "bee-995-8", Bead: "beads-995.8", Workspace: "w7", Pane: "w7:p1", Worktree: "/r-WT/bee-995-8", Branch: "bee-995-8"}
+	first := logbook.Spawn{Name: "beads-995-8", Bead: "beads-995.8", Workspace: "w7", Pane: "w7:p1", Worktree: "/r-WT/beads-995-8", Branch: "beads-995-8"}
 	id, err := lb.RecordSpawn(ctx, "queen-bees", first, "your brief")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if unread, _ := lb.Unread(ctx, "bee-995-8"); len(unread) != 1 || unread[0].Body != "your brief" {
+	if unread, _ := lb.Unread(ctx, "beads-995-8"); len(unread) != 1 || unread[0].Body != "your brief" {
 		t.Fatalf("brief = %+v", unread)
 	}
-	got, ok, err := lb.LatestSpawn(ctx, "bee-995-8")
+	got, ok, err := lb.LatestSpawn(ctx, "beads-995-8")
 	if err != nil || !ok || got.ID != id || got.Workspace != "w7" || got.Bead != "beads-995.8" || got.Ended {
 		t.Fatalf("latest = %+v ok=%v err=%v", got, ok, err)
 	}
@@ -190,7 +190,7 @@ func TestSpawnRecordsTrackTheLatestSpawnAndItsEnd(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got, _, _ = lb.LatestSpawn(ctx, "bee-995-8"); !got.Ended {
+	if got, _, _ = lb.LatestSpawn(ctx, "beads-995-8"); !got.Ended {
 		t.Fatalf("after end: %+v, want Ended", got)
 	}
 	second := first
@@ -198,7 +198,7 @@ func TestSpawnRecordsTrackTheLatestSpawnAndItsEnd(t *testing.T) {
 	if _, err := lb.RecordSpawn(ctx, "queen-bees", second, ""); err != nil {
 		t.Fatal(err)
 	}
-	if got, _, _ = lb.LatestSpawn(ctx, "bee-995-8"); got.Workspace != "w9" || got.Ended {
+	if got, _, _ = lb.LatestSpawn(ctx, "beads-995-8"); got.Workspace != "w9" || got.Ended {
 		t.Fatalf("respawn: %+v, want open spawn in w9", got)
 	}
 }
@@ -207,37 +207,37 @@ func TestEndingASpawnRetiresItsUnreadBrief(t *testing.T) {
 	ctx := context.Background()
 	lb := open(t)
 	// A spawn whose start failed: its brief was never read (bees-1.14).
-	id, _ := lb.RecordSpawn(ctx, "queen", logbook.Spawn{Name: "bee-a", Bead: "p-2", Workspace: "w1"}, "old brief")
-	_, _ = lb.Send(ctx, "queen", "bee-a", "a message, not a brief")
+	id, _ := lb.RecordSpawn(ctx, "queen", logbook.Spawn{Name: "worker-a", Bead: "p-2", Workspace: "w1"}, "old brief")
+	_, _ = lb.Send(ctx, "queen", "worker-a", "a message, not a brief")
 	if err := lb.RecordEnd(ctx, "queen", id); err != nil {
 		t.Fatal(err)
 	}
-	_, _ = lb.RecordSpawn(ctx, "queen", logbook.Spawn{Name: "bee-a", Bead: "p-2", Workspace: "w2"}, "new brief")
-	unread, err := lb.Unread(ctx, "bee-a")
+	_, _ = lb.RecordSpawn(ctx, "queen", logbook.Spawn{Name: "worker-a", Bead: "p-2", Workspace: "w2"}, "new brief")
+	unread, err := lb.Unread(ctx, "worker-a")
 	if err != nil || len(unread) != 2 || unread[0].Body != "a message, not a brief" || unread[1].Body != "new brief" {
 		t.Fatalf("unread = %+v, %v; want the message and the new brief only", unread, err)
 	}
-	if got, _ := lb.UnreadCounts(ctx); got["bee-a"] != 2 {
-		t.Fatalf("UnreadCounts = %v, want bee-a: 2", got)
+	if got, _ := lb.UnreadCounts(ctx); got["worker-a"] != 2 {
+		t.Fatalf("UnreadCounts = %v, want worker-a: 2", got)
 	}
 }
 
-func TestLatestSpawnKnowsWhetherTheBeeHasReadSinceIt(t *testing.T) {
+func TestLatestSpawnKnowsWhetherTheWorkerHasReadSinceIt(t *testing.T) {
 	ctx := context.Background()
 	lb := open(t)
-	sp := logbook.Spawn{Name: "bee-a", Bead: "p-2", Workspace: "w1"}
+	sp := logbook.Spawn{Name: "worker-a", Bead: "p-2", Workspace: "w1"}
 	first, _ := lb.RecordSpawn(ctx, "queen", sp, "brief")
-	if got, _, _ := lb.LatestSpawn(ctx, "bee-a"); got.Read {
+	if got, _, _ := lb.LatestSpawn(ctx, "worker-a"); got.Read {
 		t.Fatalf("before any inbox: %+v, want not Read", got)
 	}
-	unread, _ := lb.Unread(ctx, "bee-a")
-	_ = lb.RecordReceipts(ctx, "bee-a", []logbook.ID{unread[0].ID})
-	if got, _, _ := lb.LatestSpawn(ctx, "bee-a"); !got.Read {
+	unread, _ := lb.Unread(ctx, "worker-a")
+	_ = lb.RecordReceipts(ctx, "worker-a", []logbook.ID{unread[0].ID})
+	if got, _, _ := lb.LatestSpawn(ctx, "worker-a"); !got.Read {
 		t.Fatalf("after its inbox: %+v, want Read", got)
 	}
 	_ = lb.RecordEnd(ctx, "queen", first)
 	_, _ = lb.RecordSpawn(ctx, "queen", sp, "brief")
-	if got, _, _ := lb.LatestSpawn(ctx, "bee-a"); got.Read {
+	if got, _, _ := lb.LatestSpawn(ctx, "worker-a"); got.Read {
 		t.Fatalf("respawned: %+v, want not Read (an earlier spawn's reads don't count)", got)
 	}
 }
@@ -245,16 +245,16 @@ func TestLatestSpawnKnowsWhetherTheBeeHasReadSinceIt(t *testing.T) {
 func TestUnreadCountsNamesEverySessionWithItsUnread(t *testing.T) {
 	ctx := context.Background()
 	lb := open(t)
-	_, _ = lb.Send(ctx, "queen", "bee-a", "one")
-	_, _ = lb.Send(ctx, "queen", "bee-a", "two")
-	id, _ := lb.Send(ctx, "bee-a", "queen", "done")
+	_, _ = lb.Send(ctx, "queen", "worker-a", "one")
+	_, _ = lb.Send(ctx, "queen", "worker-a", "two")
+	id, _ := lb.Send(ctx, "worker-a", "queen", "done")
 	_ = lb.RecordReceipts(ctx, "queen", []logbook.ID{id})
-	_, _ = lb.RecordSpawn(ctx, "queen", logbook.Spawn{Name: "bee-b", Bead: "p-2", Workspace: "w1"}, "brief")
+	_, _ = lb.RecordSpawn(ctx, "queen", logbook.Spawn{Name: "worker-b", Bead: "p-2", Workspace: "w1"}, "brief")
 	got, err := lb.UnreadCounts(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]int{"queen": 0, "bee-a": 2, "bee-b": 1} // bee-b's brief is unread
+	want := map[string]int{"queen": 0, "worker-a": 2, "worker-b": 1} // worker-b's brief is unread
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("Counts = %v, want %v", got, want)
 	}
@@ -304,7 +304,7 @@ func TestKilledWriterLosesNoCommittedMessage(t *testing.T) {
 	if len(acked) != 0 {
 		t.Fatalf("%d acknowledged sends lost", len(acked))
 	}
-	if _, err := lb.Send(ctx, "bee-b", "queen", "after the crash"); err != nil {
+	if _, err := lb.Send(ctx, "worker-b", "queen", "after the crash"); err != nil {
 		t.Fatalf("send after the crash: %v", err)
 	}
 }
@@ -317,7 +317,7 @@ func writeForever(path string) {
 		os.Exit(1)
 	}
 	for {
-		id, err := lb.Send(ctx, "bee-a", "queen", "work")
+		id, err := lb.Send(ctx, "worker-a", "queen", "work")
 		if err != nil {
 			os.Exit(1)
 		}

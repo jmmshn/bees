@@ -8,12 +8,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jmmshn/bees/internal/bee"
 	"github.com/jmmshn/bees/internal/logbook"
+	"github.com/jmmshn/bees/internal/worker"
 )
 
-// endedBee records an ended spawn of name whose branch lives in repo.
-func endedBee(t *testing.T, name, repo string) {
+// endedWorker records an ended spawn of name whose branch lives in repo.
+func endedWorker(t *testing.T, name, repo string) {
 	t.Helper()
 	ctx := context.Background()
 	lb, err := logbook.Open(ctx, os.Getenv("BS_LOGBOOK"))
@@ -58,20 +58,20 @@ func TestPruneSaysWhatItKeptWithDistinctExitCodes(t *testing.T) {
 	useTempLogbook(t)
 	saved := newFleet
 	t.Cleanup(func() { newFleet = saved })
-	newFleet = func(f bee.Fleet) bee.Fleet { return f } // no gh
+	newFleet = func(f worker.Fleet) worker.Fleet { return f } // no gh
 
-	if out, _, code := bs(t, "prune"); code != 0 || out != "nothing to prune: no ended bee has a branch left\n" {
+	if out, _, code := bs(t, "prune"); code != 0 || out != "nothing to prune: no ended worker has a branch left\n" {
 		t.Fatalf("empty logbook: exit %d, %q", code, out)
 	}
 	if _, _, code := bs(t, "prune", "extra"); code != 2 {
 		t.Fatalf("prune extra: exit %d, want 2", code)
 	}
-	endedBee(t, "test-1", repoWithBranch(t, "main", "test-1"))
+	endedWorker(t, "test-1", repoWithBranch(t, "main", "test-1"))
 	out, _, code := bs(t, "prune")
 	if code != exitKeptUnmerged || out != "kept test-1: not merged: it has work not on main\n" {
 		t.Fatalf("unmerged: exit %d, %q", code, out)
 	}
-	endedBee(t, "test-2", repoWithBranch(t, "trunk", "test-2")) // no main: can't check
+	endedWorker(t, "test-2", repoWithBranch(t, "trunk", "test-2")) // no main: can't check
 	out, _, code = bs(t, "prune", "--dry-run")
 	if code != exitKeptUnknown || !strings.Contains(out, "kept test-2: could not check: no default branch") {
 		t.Fatalf("unknown: exit %d, %q", code, out)
@@ -84,7 +84,7 @@ func TestPruneSaysOnlyWhatItDidLocally(t *testing.T) {
 	useTempLogbook(t)
 	saved := newFleet
 	t.Cleanup(func() { newFleet = saved })
-	newFleet = func(f bee.Fleet) bee.Fleet { return f } // no gh
+	newFleet = func(f worker.Fleet) worker.Fleet { return f } // no gh
 
 	repo := repoWithBranch(t, "main", "pushed")
 	origin := t.TempDir()
@@ -100,8 +100,8 @@ func TestPruneSaysOnlyWhatItDidLocally(t *testing.T) {
 	git("push", "-q", "origin", "pushed")
 	git("merge", "-q", "--ff-only", "pushed")
 	git("branch", "local-only", "main")
-	endedBee(t, "pushed", repo)
-	endedBee(t, "local-only", repo)
+	endedWorker(t, "pushed", repo)
+	endedWorker(t, "local-only", repo)
 
 	out, _, code := bs(t, "prune", "--dry-run")
 	if code != 0 ||

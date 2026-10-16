@@ -8,14 +8,14 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/jmmshn/bees/internal/bee"
 	"github.com/jmmshn/bees/internal/project"
+	"github.com/jmmshn/bees/internal/worker"
 )
 
 const beadUsage = `usage: bs bead ls [--all] [<bd query expression>]
        bs bead new --parent <project>-N [--description <text>] [--type <type>] [--priority <0-4>] <title>`
 
-// cmdBead lists and creates the project's beads, so the queen and bees never step
+// cmdBead lists and creates the project's beads, so the queen and workers never step
 // outside the project (R32).
 func cmdBead(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
@@ -84,10 +84,10 @@ func beadNew(ctx context.Context, args []string, stdout, stderr io.Writer) error
 		fmt.Fprintf(stderr, "bs bead new: needs --parent %s-N; a project's top-level beads are epics: bs epic \"<title>\"\n", p.Name)
 		return errUsage
 	}
-	if !bee.Belongs(p.Name, *parent) {
+	if !worker.Belongs(p.Name, *parent) {
 		return fmt.Errorf("%s is not a %s bead (want %s-N[.M…])", *parent, p.Name, p.Name)
 	}
-	id, err := bee.BeadsCLI{}.Create(ctx, *parent, strings.Join(pos, " "), *desc, *typ, *prio)
+	id, err := worker.BeadsCLI{}.Create(ctx, *parent, strings.Join(pos, " "), *desc, *typ, *prio)
 	if err != nil {
 		return err
 	}

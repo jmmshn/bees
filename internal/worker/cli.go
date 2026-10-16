@@ -1,4 +1,4 @@
-package bee
+package worker
 
 import (
 	"bytes"
@@ -104,7 +104,7 @@ func (HerdrCLI) StartClaude(ctx context.Context, pane, name string, args ...stri
 
 // herdrStartTimeout bounds herdr's wait for an idle Claude: long enough for a cold
 // start (3-6 s) and the trust prompt (3.4 s), short of herdr's 30 s default, because a
-// bee busy with its doorbell is never idle in time.
+// worker busy with its doorbell is never idle in time.
 const herdrStartTimeout = 10 * time.Second
 
 func (HerdrCLI) RemoveWorktree(ctx context.Context, workspace string) error {

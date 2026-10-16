@@ -27,13 +27,13 @@ Needs at least the `go` version in [`go.mod`](../../../go.mod). Install from <ht
 
 Needs 2.1.296 or later: cross-session messaging, which the doorbell rides on. Update with `claude update`.
 
-Bees need nothing in Claude's settings files: `bs spawn` passes `--settings '{"crossSessionInbound":"accept"}'` to each bee. The queen, started by `bs queen`, gets no such flag; in bypass permission mode Claude holds incoming messages instead of acting on them. If the user runs the queen in bypass mode, offer to add `"crossSessionInbound": "accept"` to `~/.claude/settings.json`. bs needs no Claude plugin, hook or MCP server.
+Workers need nothing in Claude's settings files: `bs spawn` passes `--settings '{"crossSessionInbound":"accept"}'` to each worker. The queen, started by `bs queen`, gets no such flag; in bypass permission mode Claude holds incoming messages instead of acting on them. If the user runs the queen in bypass mode, offer to add `"crossSessionInbound": "accept"` to `~/.claude/settings.json`. bs needs no Claude plugin, hook or MCP server.
 
 **Check:** `claude --version` ≥ 2.1.296, and the user has answered the bypass-mode question.
 
 ## 4. herdr
 
-bs drives herdr to create each bee's worktree and pane and to start Claude in it. Install with `! curl -fsSL https://herdr.dev/install.sh | sh` (Homebrew, mise and Nix: <https://herdr.dev/docs/install/>). bs needs no herdr config and no herdr integration; the defaults work.
+bs drives herdr to create each worker's worktree and pane and to start Claude in it. Install with `! curl -fsSL https://herdr.dev/install.sh | sh` (Homebrew, mise and Nix: <https://herdr.dev/docs/install/>). bs needs no herdr config and no herdr integration; the defaults work.
 
 bs talks to a running herdr server, so the user starts one with `herdr` in a terminal and runs the queen inside it. If `HERDR_ENV=1` is set, this session already runs inside herdr; skip starting it and still run the check.
 
@@ -41,7 +41,7 @@ bs talks to a running herdr server, so the user starts one with `herdr` in a ter
 
 ## 5. bd (beads)
 
-bs files and reads work through `bd`: `bs epic` and `bs bead new` create beads, and `bs spawn` reads a bead as the bee's brief. Install from <https://github.com/steveyegge/beads>. Then `bd where` (run inside the project) must find a store: either `bd init` in the project, or one store shared by every repo with `BEADS_DIR=<dir>/.beads` exported from the shell profile.
+bs files and reads work through `bd`: `bs epic` and `bs bead new` create beads, and `bs spawn` reads a bead as the worker's brief. Install from <https://github.com/steveyegge/beads>. Then `bd where` (run inside the project) must find a store: either `bd init` in the project, or one store shared by every repo with `BEADS_DIR=<dir>/.beads` exported from the shell profile.
 
 **Check:** `bd where` in the project prints a store, and `bd list --limit 1` exits 0.
 
@@ -61,7 +61,7 @@ Rebuild the same way after pulling bees; inside the bees repo `bs` warns when it
 
 ## 7. Folder trust
 
-Claude asks once per repo whether to trust it, and the repo's worktrees share the answer. A bee spawned into an untrusted repo waits at that prompt in its pane. Have the user open the project in Claude once: `bs queen` from the project directory, inside herdr, does it. **Check:** the user answered the trust prompt (or saw none).
+Claude asks once per repo whether to trust it, and the repo's worktrees share the answer. A worker spawned into an untrusted repo waits at that prompt in its pane. Have the user open the project in Claude once: `bs queen` from the project directory, inside herdr, does it. **Check:** the user answered the trust prompt (or saw none).
 
 ## 8. pre-commit (contributors to bees only)
 
@@ -84,8 +84,8 @@ bs bead new --parent <project>-N "say hello and stop"    # → <project>-N.1
 bs spawn --label "setup check" <project>-N.1
 ```
 
-The bee starts in a new herdr workspace, reads its brief, and should reply; `bs send <bee> "reply to me with bs send: pong"` prompts it if it does not. The queen is woken by a `[bs] 1 unread` doorbell with nobody typing; `bs inbox` shows the reply. Then clean up: `bs end <bee>`, `bd close <project>-N.1 <project>-N`.
+The worker starts in a new herdr workspace, reads its brief, and should reply; `bs send <worker> "reply to me with bs send: pong"` prompts it if it does not. The queen is woken by a `[bs] 1 unread` doorbell with nobody typing; `bs inbox` shows the reply. Then clean up: `bs end <worker>`, `bd close <project>-N.1 <project>-N`.
 
 In the bees repo itself, `scripts/e2e.sh <throwaway bead>` runs the same check and measures the wake time; it needs `jq`.
 
-**Check:** the queen received the bee's reply via a doorbell, `herdr workspace list` no longer shows the bee's workspace, and both throwaway beads are closed. Tell the user setup is done and point them at the **Run a queen and bees** section of `docs/SETUP.md`.
+**Check:** the queen received the worker's reply via a doorbell, `herdr workspace list` no longer shows the worker's workspace, and both throwaway beads are closed. Tell the user setup is done and point them at the **Run a queen and workers** section of `docs/SETUP.md`.

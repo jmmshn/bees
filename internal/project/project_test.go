@@ -58,8 +58,8 @@ func TestProjectComesFromGitRepo(t *testing.T) {
 func TestLinkedWorktreeResolvesToMainRepo(t *testing.T) {
 	clearEnv(t)
 	repo := gitRepo(t, "bees")
-	wt := filepath.Join(filepath.Dir(repo), "bees-WT", "bee-995-8")
-	git(t, repo, "worktree", "add", "-q", "-b", "bee-995-8", wt)
+	wt := filepath.Join(filepath.Dir(repo), "bees-WT", "beads-995-8")
+	git(t, repo, "worktree", "add", "-q", "-b", "beads-995-8", wt)
 	t.Chdir(wt)
 	p, err := project.Resolve("")
 	if err != nil {
@@ -122,15 +122,15 @@ func TestMeResolutionOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The test binary's parent stands in for the Claude process that ran bs.
-	body := `{"name":"bee-995-8","pid":` + fmt.Sprint(os.Getppid()) + `}`
+	body := `{"name":"beads-995-8","pid":` + fmt.Sprint(os.Getppid()) + `}`
 	if err := os.WriteFile(filepath.Join(reg, fmt.Sprintf("%d.json", os.Getppid())), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if me, err := project.Me(""); err != nil || me != "bee-995-8" {
+	if me, err := project.Me(""); err != nil || me != "beads-995-8" {
 		t.Fatalf("ppid walk: %q, %v", me, err)
 	}
 	t.Setenv("BS_SESSION", "queen-bees") // a stale or inherited value must not beat the registry
-	if me, _ := project.Me(""); me != "bee-995-8" {
+	if me, _ := project.Me(""); me != "beads-995-8" {
 		t.Fatalf("registry vs env: %q", me)
 	}
 	if me, _ := project.Me("keeper"); me != "keeper" {

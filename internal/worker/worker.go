@@ -1,6 +1,6 @@
-// Package bee starts and ends bees: one Claude Code session per bead, each in its
+// Package worker starts and ends workers: one Claude Code session per bead, each in its
 // own herdr workspace and git worktree (ADR-0006).
-package bee
+package worker
 
 import (
 	"cmp"
@@ -21,22 +21,22 @@ import (
 )
 
 var (
-	ErrRunning = errors.New("bee is already running")
-	ErrOrphan  = errors.New("a herdr workspace is open on this bee's worktree but bs has no record of it")
+	ErrRunning = errors.New("worker is already running")
+	ErrOrphan  = errors.New("a herdr workspace is open on this worker's worktree but bs has no record of it")
 	ErrWaiting = errors.New("claude is waiting at a prompt") // started, but needs an answer in its pane
 	// ErrUnconfirmed: herdr stopped waiting for Claude to be ready. Claude may be busy
 	// with its first prompt or may have exited; only Claude's registry can tell.
 	ErrUnconfirmed = errors.New("herdr could not confirm that claude started")
 	ErrWrongRepo   = errors.New("bead does not belong to this project")
-	ErrNotSpawned  = errors.New("bs has no record of spawning this bee")
+	ErrNotSpawned  = errors.New("bs has no record of spawning this worker")
 	ErrNoLabel     = errors.New("a first spawn needs a label")
 	ErrBadLabel    = errors.New("not a valid label")
-	ErrLabelChange = errors.New("the bee is recorded with another label")
+	ErrLabelChange = errors.New("the worker is recorded with another label")
 	ErrTwice       = errors.New("named twice in one spawn")
-	ErrNotStarted  = errors.New("not started: another bee in this spawn was refused")
+	ErrNotStarted  = errors.New("not started: another worker in this spawn was refused")
 )
 
-// LabelRules says what a bee's label must be. The queen writes the label; bs only checks it.
+// LabelRules says what a worker's label must be. The queen writes the label; bs only checks it.
 const LabelRules = `a label names the work for the herdr sidebar: 1-4 lowercase words of a-z and 0-9, single spaces, no punctuation, at most 32 characters, specific to the bead.
   good: "role prompts", "squash merge end", "natural workspace labels"
   bad:  "fix bug", "update docs", "Role-Prompts."`
@@ -80,7 +80,7 @@ type Beads interface {
 	Show(ctx context.Context, id string) (Bead, error)
 }
 
-// Fleet spawns and ends the bees of one project.
+// Fleet spawns and ends the workers of one project.
 type Fleet struct {
 	P           project.Project
 	LB          *logbook.Logbook
@@ -94,13 +94,13 @@ type Fleet struct {
 
 var herdrName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 
-// Name is the bee's one name for a bead: session, herdr agent, branch, worktree dir
+// Name is the worker's one name for a bead: session, herdr agent, branch, worktree dir
 // and address. Bead ids are Jira-style, <project>-<n>[.<m>…] (R27), and project names
 // have no "-", so the name is the id with "." → "-": bees-12.3 → bees-12-3.
 func Name(bead string) (string, error) {
 	n := strings.ReplaceAll(bead, ".", "-")
 	if !herdrName.MatchString(n) {
-		return "", fmt.Errorf("%q can't be a bee name (lowercase, starting with a letter, at most 32 characters)", bead)
+		return "", fmt.Errorf("%q can't be a worker name (lowercase, starting with a letter, at most 32 characters)", bead)
 	}
 	return n, nil
 }
@@ -126,7 +126,7 @@ func NextEpic(project string, ids []string) string {
 	return fmt.Sprintf("%s-%d", project, top+1)
 }
 
-// Started describes a bee Spawn started.
+// Started describes a worker Spawn started.
 type Started struct {
 	Name, Label, Workspace string
 	Resumed                bool // restarted in its recorded workspace
@@ -134,7 +134,7 @@ type Started struct {
 	Waiting                bool // Claude is waiting at a prompt (e.g. folder trust) in its pane
 }
 
-// Spawn starts a bee for bead with label as its herdr workspace label, or restarts it
+// Spawn starts a worker for bead with label as its herdr workspace label, or restarts it
 // in its recorded workspace if its session has died. A restart keeps the recorded
 // label: label may be empty, and any other label is refused.
 func (f Fleet) Spawn(ctx context.Context, bead, label string) (Started, error) {
@@ -149,7 +149,7 @@ func (f Fleet) Spawn(ctx context.Context, bead, label string) (Started, error) {
 	return f.start(ctx, sp, p.resume)
 }
 
-// Request asks SpawnAll for one bee.
+// Request asks SpawnAll for one worker.
 type Request struct{ Bead, Label string }
 
 // Result is what SpawnAll did for one Request.
@@ -161,18 +161,18 @@ type Result struct {
 }
 
 // Refused reports whether err is a mistake in the spawn request itself (a bad,
-// missing or changed label, a bee named twice): fix the command and run it again.
+// missing or changed label, a worker named twice): fix the command and run it again.
 func Refused(err error) bool {
 	return errors.Is(err, ErrBadLabel) || errors.Is(err, ErrNoLabel) || errors.Is(err, ErrLabelChange) || errors.Is(err, ErrTwice)
 }
 
-// SpawnAll spawns a bee for each request, as Spawn does, and returns one Result per
+// SpawnAll spawns a worker for each request, as Spawn does, and returns one Result per
 // request in order. It checks every request before touching anything: if any is
-// Refused, none starts, and the others fail with ErrNotStarted. Then each bee's
-// worktree and spawn record are made one bee at a time (git and herdr state stay
+// Refused, none starts, and the others fail with ErrNotStarted. Then each worker's
+// worktree and spawn record are made one worker at a time (git and herdr state stay
 // simple), and the slow part, waiting for each Claude to start, runs concurrently.
-// Past the checks, one failure doesn't stop the others. A bee named twice is refused
-// the second time: two starts of one bee would race into two Claudes.
+// Past the checks, one failure doesn't stop the others. A worker named twice is refused
+// the second time: two starts of one worker would race into two Claudes.
 func (f Fleet) SpawnAll(ctx context.Context, reqs []Request) []Result {
 	out := make([]Result, len(reqs))
 	plans := make([]plan, len(reqs))
@@ -224,7 +224,7 @@ func (f Fleet) SpawnAll(ctx context.Context, reqs []Request) []Result {
 type plan struct {
 	name, bead, label string
 	sp                logbook.Spawn // resume: the recorded spawn
-	resume            bool          // the bee is recorded and its session has died
+	resume            bool          // the worker is recorded and its session has died
 	b                 Bead          // a first spawn's bead, for its brief
 }
 
@@ -296,24 +296,24 @@ func (f Fleet) open(ctx context.Context, p plan) (logbook.Spawn, error) {
 	return sp, err
 }
 
-// beeSettings is passed with --settings: Claude reads settings.local.json from the main
-// checkout even in a worktree, so per-bee settings can't live in a file. The bee's bs
+// workerSettings is passed with --settings: Claude reads settings.local.json from the main
+// checkout even in a worktree, so per-worker settings can't live in a file. The worker's bs
 // finds its name from its Claude process and its project from the worktree's git dir.
-const beeSettings = `{"crossSessionInbound":"accept"}`
+const workerSettings = `{"crossSessionInbound":"accept"}`
 
-// start starts Claude with a doorbell as its first prompt, so the bee reads its unread
-// messages without needing a ring. A resumed bee continues its last conversation in
-// the worktree instead of starting its task over, if it has one: a bee that never read
+// start starts Claude with a doorbell as its first prompt, so the worker reads its unread
+// messages without needing a ring. A resumed worker continues its last conversation in
+// the worktree instead of starting its task over, if it has one: a worker that never read
 // its inbox since this spawn (its first start failed) starts fresh, since
 // claude --continue exits when there is no conversation.
 func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Started, error) {
-	// In another repo (--repo, now or when first spawned) the bee's own bs resolves that
+	// In another repo (--repo, now or when first spawned) the worker's own bs resolves that
 	// repo's project: a system prompt naming P would mislead it, and its receipts go to
 	// that project's logbook, so sp.Read can't tell and a restart always continues.
 	foreign := f.ForeignRepo || cmp.Or(sp.Repo, f.P.Repo) != f.P.Repo
 	st := Started{Name: sp.Name, Label: sp.Label, Workspace: sp.Workspace, Resumed: resume, Continued: resume && (sp.Read || foreign)}
 	doorbell := fmt.Sprintf("[bs] you are %s, working on %s — run: bs inbox   (reply with: bs send %s \"...\")", sp.Name, sp.Bead, f.Me)
-	args := []string{"--name", sp.Name, "--settings", beeSettings}
+	args := []string{"--name", sp.Name, "--settings", workerSettings}
 	if !foreign {
 		file, err := prompt.File(prompt.Worker, f.P.Name)
 		if err != nil {
@@ -330,8 +330,8 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 	case errors.Is(err, ErrWaiting):
 		st.Waiting, err = true, nil
 	case errors.Is(err, ErrUnconfirmed):
-		// A bee goes straight to work on its doorbell, so herdr, which waits for an idle
-		// prompt, usually times out on a healthy bee. Ask Claude's registry instead.
+		// A worker goes straight to work on its doorbell, so herdr, which waits for an idle
+		// prompt, usually times out on a healthy worker. Ask Claude's registry instead.
 		alive, aerr := f.S.Alive(ctx, sp.Name, confirmWait)
 		switch {
 		case aerr != nil:
@@ -349,8 +349,8 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 // Claude registers about 3 s after launch (herdr 0.9.3, bees-1.14).
 const confirmWait = 20 * time.Second
 
-// End removes the bee's recorded workspace and records the end. It never asks herdr
-// which workspace to remove. Ending an ended bee is a no-op. The bee's branch is always
+// End removes the worker's recorded workspace and records the end. It never asks herdr
+// which workspace to remove. Ending an ended worker is a no-op. The worker's branch is always
 // kept, with its work: Prune deletes it once merged.
 func (f Fleet) End(ctx context.Context, name string) error {
 	sp, ok, err := f.LB.LatestSpawn(ctx, name)
@@ -369,7 +369,7 @@ func (f Fleet) End(ctx context.Context, name string) error {
 	return f.LB.RecordEnd(ctx, f.Me, sp.ID)
 }
 
-// Pruned is what Prune found for one ended bee's branch.
+// Pruned is what Prune found for one ended worker's branch.
 type Pruned struct {
 	Branch, Repo string
 	Merge        Merge
@@ -378,7 +378,7 @@ type Pruned struct {
 	DeleteErr    error // proven merged, but git branch -D failed
 }
 
-// Prune deletes the branch of each ended bee once its work is proven merged; dry only
+// Prune deletes the branch of each ended worker once its work is proven merged; dry only
 // reports. It looks only at branches the logbook recorded (never guessed from git),
 // skips branches already gone, and never touches a remote.
 func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error) {

@@ -1,4 +1,4 @@
-package bee_test
+package worker_test
 
 import (
 	"context"
@@ -14,22 +14,22 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jmmshn/bees/internal/bee"
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/project"
 	"github.com/jmmshn/bees/internal/prompt"
+	"github.com/jmmshn/bees/internal/worker"
 )
 
 // fakeHerdr keeps workspaces and live Claude sessions in memory, and records removals.
 // Like herdr 0.9.3 it keeps any label verbatim, even empty or with newlines
 // (TestHerdrKeepsLabelsVerbatim), so CheckLabel is bs's rule, not herdr's.
-// It is also the fake Claude registry (bee.Sessions), so a start shows up there.
+// It is also the fake Claude registry (worker.Sessions), so a start shows up there.
 type fakeHerdr struct {
-	mu         sync.Mutex // SpawnAll starts bees concurrently
+	mu         sync.Mutex // SpawnAll starts workers concurrently
 	together   int        // >0: StartClaude waits until this many starts are in flight, else fails
 	inFlight   int
 	next       int
-	workspaces []bee.Workspace
+	workspaces []worker.Workspace
 	agents     map[string]string // live Claude sessions: name → pane
 	started    [][]string        // pane, name, args...
 	removed    []string
@@ -38,18 +38,18 @@ type fakeHerdr struct {
 	aliveErr   error // the registry can't be read
 }
 
-func (h *fakeHerdr) CreateWorktree(ctx context.Context, repo, branch, path, label string) (bee.Workspace, error) {
+func (h *fakeHerdr) CreateWorktree(ctx context.Context, repo, branch, path, label string) (worker.Workspace, error) {
 	if err := os.MkdirAll(path, 0o755); err != nil {
-		return bee.Workspace{}, err
+		return worker.Workspace{}, err
 	}
 	h.next++
-	ws := bee.Workspace{ID: fmt.Sprintf("w%d", h.next), Label: label, Pane: fmt.Sprintf("w%d:p1", h.next), Path: path}
+	ws := worker.Workspace{ID: fmt.Sprintf("w%d", h.next), Label: label, Pane: fmt.Sprintf("w%d:p1", h.next), Path: path}
 	h.workspaces = append(h.workspaces, ws)
 	return ws, nil
 }
 
 func (h *fakeHerdr) StartClaude(ctx context.Context, pane, name string, args ...string) error {
-	if err := bee.CheckAgentArgs(args); err != nil { // herdr's own rule, held to real herdr
+	if err := worker.CheckAgentArgs(args); err != nil { // herdr's own rule, held to real herdr
 		return err
 	}
 	if err := h.waitTogether(); err != nil {
@@ -93,29 +93,29 @@ func (h *fakeHerdr) Alive(ctx context.Context, name string, wait time.Duration) 
 
 func (h *fakeHerdr) RemoveWorktree(ctx context.Context, workspace string) error {
 	h.removed = append(h.removed, workspace)
-	h.workspaces = slices.DeleteFunc(h.workspaces, func(w bee.Workspace) bool { return w.ID == workspace })
+	h.workspaces = slices.DeleteFunc(h.workspaces, func(w worker.Workspace) bool { return w.ID == workspace })
 	return nil
 }
 
-func (h *fakeHerdr) Workspaces(ctx context.Context) ([]bee.Workspace, error) {
+func (h *fakeHerdr) Workspaces(ctx context.Context) ([]worker.Workspace, error) {
 	return h.workspaces, nil
 }
 
-// exit simulates the bee's Claude process ending.
+// exit simulates the worker's Claude process ending.
 func (h *fakeHerdr) exit(name string) { delete(h.agents, name) }
 
-type fakeBeads map[string]bee.Bead
+type fakeBeads map[string]worker.Bead
 
-func (b fakeBeads) Show(ctx context.Context, id string) (bee.Bead, error) {
+func (b fakeBeads) Show(ctx context.Context, id string) (worker.Bead, error) {
 	bead, ok := b[id]
 	if !ok {
-		return bee.Bead{}, fmt.Errorf("no bead %s", id)
+		return worker.Bead{}, fmt.Errorf("no bead %s", id)
 	}
 	return bead, nil
 }
 
 type rig struct {
-	fleet bee.Fleet
+	fleet worker.Fleet
 	h     *fakeHerdr
 	lb    *logbook.Logbook
 	repo  string
@@ -134,23 +134,23 @@ func newRig(t *testing.T) rig {
 	h := &fakeHerdr{agents: map[string]string{}}
 	beads := fakeBeads{
 		"bees-8":     {ID: "bees-8", Title: "spawn and end bees", Description: "Build bs spawn."},
-		"bees-9":     {ID: "bees-9", Title: "second bee"},
+		"bees-9":     {ID: "bees-9", Title: "second worker"},
 		"dotfiles-3": {ID: "dotfiles-3", Title: "dotfiles thing"},
 		"beads-x7q":  {ID: "beads-x7q", Title: "flat id"},
 	}
 	repo := filepath.Join(dir, "bees")
 	p := project.Project{Name: "bees", Repo: repo, Logbook: filepath.Join(dir, "bees.db")}
-	return rig{fleet: bee.Fleet{P: p, LB: lb, H: h, S: h, B: beads, Me: "queen-bees"}, h: h, lb: lb, repo: repo}
+	return rig{fleet: worker.Fleet{P: p, LB: lb, H: h, S: h, B: beads, Me: "queen-bees"}, h: h, lb: lb, repo: repo}
 }
 
 func TestName(t *testing.T) {
 	for bead, want := range map[string]string{"bees-8": "bees-8", "bees-12.3": "bees-12-3", "pymatgenanalysisdefects-12.3": "pymatgenanalysisdefects-12-3"} {
-		if got, err := bee.Name(bead); err != nil || got != want {
+		if got, err := worker.Name(bead); err != nil || got != want {
 			t.Errorf("Name(%q) = %q, %v; want %q", bead, got, err, want)
 		}
 	}
 	for _, bad := range []string{"bees-1" + strings.Repeat(".1", 14), "", "Bees-1"} {
-		if _, err := bee.Name(bad); err == nil {
+		if _, err := worker.Name(bad); err == nil {
 			t.Errorf("Name(%q) succeeded, want error", bad)
 		}
 	}
@@ -165,7 +165,7 @@ func TestBelongs(t *testing.T) {
 		{"bees", "bees-x", false}, {"bees", "bees-8.", false}, {"bees", "beads-995.8", false},
 		{"web", "web2-3", false}, {"pymatgen", "pymatgenanalysisdefects-3", false},
 	} {
-		if got := bee.Belongs(c.project, c.bead); got != c.want {
+		if got := worker.Belongs(c.project, c.bead); got != c.want {
 			t.Errorf("Belongs(%q, %q) = %v, want %v", c.project, c.bead, got, c.want)
 		}
 	}
@@ -173,15 +173,15 @@ func TestBelongs(t *testing.T) {
 
 func TestNextEpic(t *testing.T) {
 	ids := []string{"bees-1", "bees-1.4", "bees-9", "bees-10.2", "dotfiles-40", "beads-995"}
-	if got := bee.NextEpic("bees", ids); got != "bees-11" {
+	if got := worker.NextEpic("bees", ids); got != "bees-11" {
 		t.Fatalf("NextEpic = %q, want bees-11", got)
 	}
-	if got := bee.NextEpic("crew", ids); got != "crew-1" {
+	if got := worker.NextEpic("crew", ids); got != "crew-1" {
 		t.Fatalf("NextEpic(empty project) = %q, want crew-1", got)
 	}
 }
 
-func TestSpawnStartsABeeInItsOwnWorkspace(t *testing.T) {
+func TestSpawnStartsAWorkerInItsOwnWorkspace(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	st, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end")
@@ -227,11 +227,11 @@ func TestSpawnStartsABeeInItsOwnWorkspace(t *testing.T) {
 	}
 }
 
-func TestSpawnAllStartsBeesConcurrently(t *testing.T) {
+func TestSpawnAllStartsWorkersConcurrently(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	r.h.together = 2
-	res := r.fleet.SpawnAll(ctx, []bee.Request{{Bead: "bees-8", Label: "spawn and end"}, {Bead: "bees-9", Label: "second bee"}})
+	res := r.fleet.SpawnAll(ctx, []worker.Request{{Bead: "bees-8", Label: "spawn and end"}, {Bead: "bees-9", Label: "second worker"}})
 	if len(res) != 2 || res[0].Bead != "bees-8" || res[1].Bead != "bees-9" {
 		t.Fatalf("results = %+v, want one per bead in order", res)
 	}
@@ -247,14 +247,14 @@ func TestSpawnAllStartsBeesConcurrently(t *testing.T) {
 
 func TestSpawnAllStartsNothingIfAnyRequestIsRefused(t *testing.T) {
 	ctx := context.Background()
-	for _, reqs := range [][]bee.Request{
+	for _, reqs := range [][]worker.Request{
 		{{Bead: "bees-8", Label: "spawn and end"}, {Bead: "bees-9"}},                         // a first spawn without a label
 		{{Bead: "bees-8", Label: "spawn and end"}, {Bead: "bees-9", Label: "Bad!"}},          // a bad label
 		{{Bead: "bees-8", Label: "spawn and end"}, {Bead: "bees-8", Label: "spawn and end"}}, // named twice: never two Claudes
 	} {
 		r := newRig(t)
 		res := r.fleet.SpawnAll(ctx, reqs)
-		if !errors.Is(res[0].Err, bee.ErrNotStarted) || !bee.Refused(res[1].Err) {
+		if !errors.Is(res[0].Err, worker.ErrNotStarted) || !worker.Refused(res[1].Err) {
 			t.Errorf("%+v: errs = %v, %v; want not started, refused", reqs, res[0].Err, res[1].Err)
 		}
 		if len(r.h.started) != 0 || len(r.h.workspaces) != 0 {
@@ -266,8 +266,8 @@ func TestSpawnAllStartsNothingIfAnyRequestIsRefused(t *testing.T) {
 func TestSpawnAllStartsTheRestPastAFailure(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	res := r.fleet.SpawnAll(ctx, []bee.Request{{Bead: "bees-404", Label: "no such bead"}, {Bead: "bees-8", Label: "spawn and end"}})
-	if res[0].Err == nil || bee.Refused(res[0].Err) || res[1].Err != nil {
+	res := r.fleet.SpawnAll(ctx, []worker.Request{{Bead: "bees-404", Label: "no such bead"}, {Bead: "bees-8", Label: "spawn and end"}})
+	if res[0].Err == nil || worker.Refused(res[0].Err) || res[1].Err != nil {
 		t.Fatalf("errs = %v, %v; want bees-404 failed, bees-8 started", res[0].Err, res[1].Err)
 	}
 	if len(r.h.started) != 1 {
@@ -277,8 +277,8 @@ func TestSpawnAllStartsTheRestPastAFailure(t *testing.T) {
 
 func TestSpawnAllRepeatAfterARefusalIsNotTwice(t *testing.T) {
 	r := newRig(t)
-	res := r.fleet.SpawnAll(context.Background(), []bee.Request{{Bead: "bees-8", Label: "Bad!"}, {Bead: "bees-8", Label: "spawn and end"}})
-	if !errors.Is(res[0].Err, bee.ErrBadLabel) || !errors.Is(res[1].Err, bee.ErrNotStarted) {
+	res := r.fleet.SpawnAll(context.Background(), []worker.Request{{Bead: "bees-8", Label: "Bad!"}, {Bead: "bees-8", Label: "spawn and end"}})
+	if !errors.Is(res[0].Err, worker.ErrBadLabel) || !errors.Is(res[1].Err, worker.ErrNotStarted) {
 		t.Fatalf("errs = %v, %v; want the bad label alone blamed", res[0].Err, res[1].Err)
 	}
 }
@@ -289,7 +289,7 @@ func TestSecondSpawnWhileLiveIsRefused(t *testing.T) {
 	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); !errors.Is(err, bee.ErrRunning) {
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); !errors.Is(err, worker.ErrRunning) {
 		t.Fatalf("err = %v, want ErrRunning", err)
 	}
 	if len(r.h.workspaces) != 1 {
@@ -297,7 +297,7 @@ func TestSecondSpawnWhileLiveIsRefused(t *testing.T) {
 	}
 }
 
-func TestSpawnResumesADeadBeeInItsRecordedWorkspace(t *testing.T) {
+func TestSpawnResumesADeadWorkerInItsRecordedWorkspace(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
@@ -310,7 +310,7 @@ func TestSpawnResumesADeadBeeInItsRecordedWorkspace(t *testing.T) {
 	}
 }
 
-func TestResumeContinuesTheBeesConversation(t *testing.T) {
+func TestResumeContinuesTheWorkersConversation(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
@@ -328,7 +328,7 @@ func TestResumeContinuesTheBeesConversation(t *testing.T) {
 	}
 }
 
-func TestRestartOfABeeThatNeverReadItsBriefStartsFresh(t *testing.T) {
+func TestRestartOfAWorkerThatNeverReadItsBriefStartsFresh(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	// The start failed after spawn was recorded, so there is no conversation:
@@ -345,7 +345,7 @@ func TestRestartOfABeeThatNeverReadItsBriefStartsFresh(t *testing.T) {
 	}
 }
 
-func TestEndedHalfStartedBeeRespawnsWithOneBrief(t *testing.T) {
+func TestEndedHalfStartedWorkerRespawnsWithOneBrief(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	r.h.failStart = errors.New("herdr agent: agent arguments cannot be encoded safely")
@@ -375,7 +375,7 @@ func TestRestartInAnotherProjectsRepoContinues(t *testing.T) {
 	}
 }
 
-// readInbox does what the bee's bs inbox does: records receipts for its unread messages.
+// readInbox does what the worker's bs inbox does: records receipts for its unread messages.
 func readInbox(t *testing.T, lb *logbook.Logbook, name string) {
 	t.Helper()
 	ctx := context.Background()
@@ -392,7 +392,7 @@ func readInbox(t *testing.T, lb *logbook.Logbook, name string) {
 	}
 }
 
-func TestBeesStartWithTheProjectsSystemPrompt(t *testing.T) {
+func TestWorkersStartWithTheProjectsSystemPrompt(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
@@ -409,7 +409,7 @@ func TestBeesStartWithTheProjectsSystemPrompt(t *testing.T) {
 	}
 }
 
-func TestABeeForAnotherProjectsBeadGetsNoSystemPrompt(t *testing.T) {
+func TestAWorkerForAnotherProjectsBeadGetsNoSystemPrompt(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	own := r.fleet
@@ -419,15 +419,15 @@ func TestABeeForAnotherProjectsBeadGetsNoSystemPrompt(t *testing.T) {
 	_, _ = own.Spawn(ctx, "dotfiles-3", "spawn and end") // a resume doesn't repeat --repo
 	for _, start := range r.h.started {
 		if slices.Contains(start, "--append-system-prompt-file") {
-			t.Fatalf("start = %q: a system prompt naming bees would mislead it: the bee's bs resolves its own repo's project", start)
+			t.Fatalf("start = %q: a system prompt naming bees would mislead it: the worker's bs resolves its own repo's project", start)
 		}
 	}
 }
 
-func TestBeeWaitingAtAPromptCountsAsStarted(t *testing.T) {
+func TestWorkerWaitingAtAPromptCountsAsStarted(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	r.h.failStart = fmt.Errorf("herdr agent start: blocked during startup: %w", bee.ErrWaiting)
+	r.h.failStart = fmt.Errorf("herdr agent start: blocked during startup: %w", worker.ErrWaiting)
 	st, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	if err != nil || !st.Waiting || st.Name != "bees-8" {
 		t.Fatalf("started = %+v, err = %v; want waiting, no error", st, err)
@@ -438,12 +438,12 @@ func TestHerdrTimeoutWithClaudeRunningCountsAsStarted(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	// herdr stops waiting while Claude is busy with its first prompt (bees-1.14).
-	r.h.failStart, r.h.liveAnyway = fmt.Errorf("herdr agent: timed out waiting for agent startup: %w", bee.ErrUnconfirmed), true
+	r.h.failStart, r.h.liveAnyway = fmt.Errorf("herdr agent: timed out waiting for agent startup: %w", worker.ErrUnconfirmed), true
 	st, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	if err != nil || st.Name != "bees-8" || st.Waiting {
 		t.Fatalf("started = %+v, err = %v; want started", st, err)
 	}
-	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); !errors.Is(err, bee.ErrRunning) {
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); !errors.Is(err, worker.ErrRunning) {
 		t.Fatalf("second spawn: err = %v, want ErrRunning (herdr never named it, but Claude runs)", err)
 	}
 }
@@ -451,9 +451,9 @@ func TestHerdrTimeoutWithClaudeRunningCountsAsStarted(t *testing.T) {
 func TestHerdrTimeoutWithNoClaudeIsAFailure(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	r.h.failStart = fmt.Errorf("herdr agent: timed out waiting for agent startup: %w", bee.ErrUnconfirmed)
+	r.h.failStart = fmt.Errorf("herdr agent: timed out waiting for agent startup: %w", worker.ErrUnconfirmed)
 	_, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end")
-	if !errors.Is(err, bee.ErrUnconfirmed) || !strings.Contains(err.Error(), "herdr pane read w1:p1") {
+	if !errors.Is(err, worker.ErrUnconfirmed) || !strings.Contains(err.Error(), "herdr pane read w1:p1") {
 		t.Fatalf("err = %v, want ErrUnconfirmed pointing at the pane", err)
 	}
 }
@@ -485,13 +485,13 @@ func TestFailedStartIsHealedBySpawningAgain(t *testing.T) {
 	}
 }
 
-func TestUnrecordedWorkspaceOnTheBeesWorktreeIsAnOrphan(t *testing.T) {
+func TestUnrecordedWorkspaceOnTheWorkersWorktreeIsAnOrphan(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	// Found by its worktree whatever its label: a label is free text, not an identity.
-	r.h.workspaces = []bee.Workspace{{ID: "w41", Label: "bees-8", Path: r.repo + "-WT/bees-9"}, {ID: "w42", Label: "something else", Path: r.repo + "-WT/bees-8/"}}
+	r.h.workspaces = []worker.Workspace{{ID: "w41", Label: "bees-8", Path: r.repo + "-WT/bees-9"}, {ID: "w42", Label: "something else", Path: r.repo + "-WT/bees-8/"}}
 	_, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end")
-	if !errors.Is(err, bee.ErrOrphan) || !strings.Contains(err.Error(), "herdr worktree remove --workspace w42 --force") {
+	if !errors.Is(err, worker.ErrOrphan) || !strings.Contains(err.Error(), "herdr worktree remove --workspace w42 --force") {
 		t.Fatalf("err = %v, want ErrOrphan with the cleanup command", err)
 	}
 	if len(r.h.removed) != 0 || len(r.h.workspaces) != 2 {
@@ -502,10 +502,10 @@ func TestUnrecordedWorkspaceOnTheBeesWorktreeIsAnOrphan(t *testing.T) {
 func TestFirstSpawnNeedsALabel(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	if _, err := r.fleet.Spawn(ctx, "bees-8", ""); !errors.Is(err, bee.ErrNoLabel) {
+	if _, err := r.fleet.Spawn(ctx, "bees-8", ""); !errors.Is(err, worker.ErrNoLabel) {
 		t.Fatalf("err = %v, want ErrNoLabel", err)
 	}
-	if _, err := r.fleet.Spawn(ctx, "bees-8", "Spawn-And-End."); !errors.Is(err, bee.ErrBadLabel) {
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "Spawn-And-End."); !errors.Is(err, worker.ErrBadLabel) {
 		t.Fatalf("err = %v, want ErrBadLabel", err)
 	}
 	if len(r.h.workspaces) != 0 {
@@ -521,26 +521,26 @@ func TestRespawnKeepsTheRecordedLabel(t *testing.T) {
 	r := newRig(t)
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	r.h.exit("bees-8")
-	if _, err := r.fleet.Spawn(ctx, "bees-8", "other words"); !errors.Is(err, bee.ErrLabelChange) || len(r.h.started) != 1 {
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "other words"); !errors.Is(err, worker.ErrLabelChange) || len(r.h.started) != 1 {
 		t.Fatalf("err = %v, starts = %d; want ErrLabelChange and no start", err, len(r.h.started))
 	}
 	st, err := r.fleet.Spawn(ctx, "bees-8", "")
 	if err != nil || !st.Resumed || st.Label != "spawn and end" {
 		t.Fatalf("started = %+v, err = %v; want a resume with the recorded label", st, err)
 	}
-	if _, err := r.fleet.Spawn(ctx, "bees-8", ""); !errors.Is(err, bee.ErrRunning) {
-		t.Fatalf("live bee: err = %v, want ErrRunning", err)
+	if _, err := r.fleet.Spawn(ctx, "bees-8", ""); !errors.Is(err, worker.ErrRunning) {
+		t.Fatalf("live worker: err = %v, want ErrRunning", err)
 	}
 }
 
 func TestCheckLabel(t *testing.T) {
 	for _, ok := range []string{"role prompts", "squash merge end", "r40", "a b c d", strings.Repeat("x", 32)} {
-		if err := bee.CheckLabel(ok); err != nil {
+		if err := worker.CheckLabel(ok); err != nil {
 			t.Errorf("CheckLabel(%q) = %v", ok, err)
 		}
 	}
 	for _, bad := range []string{"", "a b c d e", strings.Repeat("x", 33), "Role prompts", "role  prompts", " role", "role prompts.", `"role"`, "role-prompts", "rôle", "role\tprompts"} {
-		if err := bee.CheckLabel(bad); !errors.Is(err, bee.ErrBadLabel) {
+		if err := worker.CheckLabel(bad); !errors.Is(err, worker.ErrBadLabel) {
 			t.Errorf("CheckLabel(%q) = %v, want ErrBadLabel", bad, err)
 		}
 	}
@@ -550,7 +550,7 @@ func TestBeadMustBelongToTheProject(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	for _, bead := range []string{"dotfiles-3", "beads-x7q"} {
-		if _, err := r.fleet.Spawn(ctx, bead, "spawn and end"); !errors.Is(err, bee.ErrWrongRepo) {
+		if _, err := r.fleet.Spawn(ctx, bead, "spawn and end"); !errors.Is(err, worker.ErrWrongRepo) {
 			t.Errorf("%s: err = %v, want ErrWrongRepo", bead, err)
 		}
 	}
@@ -563,12 +563,12 @@ func TestBeadMustBelongToTheProject(t *testing.T) {
 func TestEndRemovesOnlyTheRecordedWorkspace(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	if err := r.fleet.End(ctx, "bees-8"); !errors.Is(err, bee.ErrNotSpawned) {
+	if err := r.fleet.End(ctx, "bees-8"); !errors.Is(err, worker.ErrNotSpawned) {
 		t.Fatalf("never spawned: err = %v, want ErrNotSpawned", err)
 	}
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	recorded := r.h.workspaces[0].ID
-	r.h.workspaces = append(r.h.workspaces, bee.Workspace{ID: "w-other", Label: "bees-8"}) // a decoy
+	r.h.workspaces = append(r.h.workspaces, worker.Workspace{ID: "w-other", Label: "bees-8"}) // a decoy
 	for range 2 {
 		if err := r.fleet.End(ctx, "bees-8"); err != nil {
 			t.Fatal(err)
@@ -604,7 +604,7 @@ func gitCommit(t *testing.T, dir, msg string, files map[string]string) {
 	gitRun(t, dir, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", msg)
 }
 
-func offline(string) bee.GitHub { return fakeGitHub{err: errors.New("offline")} }
+func offline(string) worker.GitHub { return fakeGitHub{err: errors.New("offline")} }
 
 func gitTip(t *testing.T, dir, ref string) string {
 	t.Helper()
@@ -616,7 +616,7 @@ func gitTip(t *testing.T, dir, ref string) string {
 }
 
 func TestPruneDeletesTheBranchOnlyIfMerged(t *testing.T) {
-	// Each case starts from main with a.txt and b.txt, and bee bees-8 spawned. work
+	// Each case starts from main with a.txt and b.txt, and worker bees-8 spawned. work
 	// builds branch bees-8 (and lands it, or not) and leaves main checked out.
 	branch := func(t *testing.T, repo string) {
 		gitRun(t, repo, "checkout", "-q", "-b", "bees-8")
@@ -626,7 +626,7 @@ func TestPruneDeletesTheBranchOnlyIfMerged(t *testing.T) {
 	}
 	cases := []struct {
 		name    string
-		gh      func(tip string) bee.GitHub // nil: no GitHub
+		gh      func(tip string) worker.GitHub // nil: no GitHub
 		work    func(t *testing.T, repo string)
 		kept    string // substring of the reason; "" means deleted
 		unknown bool   // kept because a probe failed, not because it is unmerged
@@ -666,9 +666,9 @@ func TestPruneDeletesTheBranchOnlyIfMerged(t *testing.T) {
 		}},
 		{name: "GitHub merged a PR whose head is the tip", work: func(t *testing.T, repo string) {
 			branch(t, repo)
-		}, gh: func(tip string) bee.GitHub { return fakeGitHub{heads: []string{tip}} }},
+		}, gh: func(tip string) worker.GitHub { return fakeGitHub{heads: []string{tip}} }},
 		{name: "GitHub merged a PR from an older tip", kept: "not on main", work: branch,
-			gh: func(string) bee.GitHub {
+			gh: func(string) worker.GitHub {
 				return fakeGitHub{heads: []string{"0123456789abcdef0123456789abcdef01234567"}}
 			}},
 		{name: "GitHub unreachable, content merged", gh: offline, work: func(t *testing.T, repo string) {
@@ -705,12 +705,12 @@ func TestPruneDeletesTheBranchOnlyIfMerged(t *testing.T) {
 			}
 			p := pruned[0]
 			exists := branchExists(r.repo, "bees-8")
-			if c.kept == "" && (p.Merge != bee.Merged || !p.Deleted || exists) {
+			if c.kept == "" && (p.Merge != worker.Merged || !p.Deleted || exists) {
 				t.Fatalf("want deleted: %+v, branch exists=%v", p, exists)
 			}
-			want := bee.NotMerged
+			want := worker.NotMerged
 			if c.unknown {
-				want = bee.Unknown
+				want = worker.Unknown
 			}
 			if c.kept != "" && (p.Merge != want || !strings.Contains(p.Why, c.kept) || p.Deleted || !exists) {
 				t.Fatalf("want kept (%v) with %q: %+v, branch exists=%v", want, c.kept, p, exists)
@@ -755,7 +755,7 @@ func TestPruneDryRunDeletesNothing(t *testing.T) {
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	_ = r.fleet.End(ctx, "bees-8")
 	pruned, err := r.fleet.Prune(ctx, true)
-	if err != nil || len(pruned) != 1 || pruned[0].Merge != bee.Merged || pruned[0].Deleted {
+	if err != nil || len(pruned) != 1 || pruned[0].Merge != worker.Merged || pruned[0].Deleted {
 		t.Fatalf("dry run: %+v, %v", pruned, err)
 	}
 	if !branchExists(r.repo, "bees-8") {
@@ -763,14 +763,14 @@ func TestPruneDryRunDeletesNothing(t *testing.T) {
 	}
 }
 
-func TestPruneTouchesOnlyEndedBeesRecordedBranches(t *testing.T) {
+func TestPruneTouchesOnlyEndedWorkersRecordedBranches(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	squashMerged(t, r)
 	gitRun(t, r.repo, "branch", "bees-9") // merged, but bs never spawned bees-9
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	if pruned, err := r.fleet.Prune(ctx, false); err != nil || len(pruned) != 0 {
-		t.Fatalf("live bee: %+v, %v", pruned, err)
+		t.Fatalf("live worker: %+v, %v", pruned, err)
 	}
 	_ = r.fleet.End(ctx, "bees-8")
 	r.h.exit("bees-8")
@@ -778,7 +778,7 @@ func TestPruneTouchesOnlyEndedBeesRecordedBranches(t *testing.T) {
 		t.Fatal(err)
 	}
 	if pruned, err := r.fleet.Prune(ctx, false); err != nil || len(pruned) != 0 {
-		t.Fatalf("respawned bee: %+v, %v", pruned, err)
+		t.Fatalf("respawned worker: %+v, %v", pruned, err)
 	}
 	_ = r.fleet.End(ctx, "bees-8")
 	for range 2 { // the second prune finds the branch gone

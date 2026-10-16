@@ -13,6 +13,7 @@ bees is built with bees. Run this repo's own work through `bs`, and treat every 
 - Workers never `go install`: build into the worktree (`go build -o bin/bs ./cmd/bs`) and dogfood with `./bin/bs`, or `PATH=$PWD/bin:$PATH` so commands your session starts use it too. Sessions `bs spawn` starts don't inherit that PATH: they get their prompt from your build but run the shared bs, so test spawns in a throwaway project and say which build ran what.
 - Lint runs on commit once `pre-commit install` is done (docs/SETUP.md); `pre-commit run --all-files` lints everything.
 - Verify with `go vet ./... && go test ./...`, then exercise the change live through `bs` (real herdr, real Claude sessions) before calling it done.
+- A PR that fixes an issue shows the issue in its body: a short fenced block with the exact command and its wrong output or error before the fix, and what it prints after.
 - A change to the role prompts, spawn or messaging: replay the matching scripted cards in `bakeoff/` against the baseline arms ([docs/bakeoff.md](docs/bakeoff.md)), and append the round's row to `bakeoff/HISTORY.md`.
 
 ## Motifs to watch

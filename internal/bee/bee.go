@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -163,7 +162,7 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 	// In another repo (--repo, now or when first spawned) the bee's own bs resolves that
 	// repo's project, so a system prompt naming P would mislead it.
 	if !f.ForeignRepo && cmp.Or(sp.Repo, f.P.Repo) == f.P.Repo {
-		file, err := prompt.WriteFile(filepath.Dir(f.P.Logbook), f.P.Name)
+		file, err := prompt.File(f.P.Name)
 		if err != nil {
 			return st, err
 		}

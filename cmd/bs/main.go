@@ -17,7 +17,8 @@ commands:
   init      create the logbook file and table if missing
   queen     start this project's queen session
   spawn     start a bee for a bead in its own herdr workspace
-  end       remove a bee's workspace
+  end       remove a bee's workspace; its branch is kept
+  prune     delete ended bees' branches once their work is merged
   epic      create the project's next epic (<project>-<n>)
   bead      list the project's beads (ls) or add one under an epic (new)
   send      store a message for a session, then ring it
@@ -34,11 +35,17 @@ var commands = map[string]func(ctx context.Context, args []string, stdin io.Read
 	"queen":   cmdQueen,
 	"spawn":   cmdSpawn,
 	"end":     cmdEnd,
+	"prune":   cmdPrune,
 	"epic":    cmdEpic,
 	"bead":    cmdBead,
 	"status":  cmdStatus,
 	"version": cmdVersion,
 }
+
+// exitCode is an error that only sets bs's exit status; the command has printed why.
+type exitCode int
+
+func (c exitCode) Error() string { return fmt.Sprintf("exit status %d", int(c)) }
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
@@ -51,7 +58,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	if cmd, ok := commands[args[0]]; ok {
 		warnIfStale(context.Background(), stderr)
+		var code exitCode
 		switch err := cmd(context.Background(), args[1:], stdin, stdout, stderr); {
+		case errors.As(err, &code): // the command already said why
+			return int(code)
 		case errors.Is(err, errHelp):
 			return 0
 		case errors.Is(err, errUsage):

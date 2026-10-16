@@ -271,3 +271,32 @@ FROM entries s WHERE s.kind = 'spawned' AND s.subject = ? ORDER BY s.rowid DESC 
 	}
 	return s, true, nil
 }
+
+// EndedSpawns returns the latest spawn of each bee whose latest spawn has ended, by
+// name. A bee spawned again since it ended is live, so it is left out.
+func (l *Logbook) EndedSpawns(ctx context.Context) ([]Spawn, error) {
+	rows, err := l.db.QueryContext(ctx, `
+SELECT s.id, s.subject, s.data FROM entries s
+WHERE s.kind = 'spawned'
+  AND s.rowid = (SELECT MAX(x.rowid) FROM entries x WHERE x.kind = 'spawned' AND x.subject = s.subject)
+  AND EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = s.id)
+ORDER BY s.subject`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Spawn
+	for rows.Next() {
+		var s Spawn
+		var data string
+		if err := rows.Scan(&s.ID, &s.Name, &data); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(data), &s); err != nil {
+			return nil, fmt.Errorf("spawn record %s: %w", s.ID, err)
+		}
+		s.Ended = true
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}

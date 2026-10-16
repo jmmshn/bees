@@ -14,7 +14,7 @@ import (
 
 // newFleet builds the Fleet for a command. Tests swap in fakes.
 var newFleet = func(f bee.Fleet) bee.Fleet {
-	f.H, f.S, f.B = bee.HerdrCLI{}, bee.ClaudeSessions{}, bee.BeadsCLI{}
+	f.H, f.S, f.B, f.G = bee.HerdrCLI{}, bee.ClaudeSessions{}, bee.BeadsCLI{}, bee.GitHubCLI{}
 	return f
 }
 
@@ -111,13 +111,65 @@ func cmdEnd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 		return err
 	}
 	defer f.LB.Close()
-	kept, err := f.End(ctx, pos[0])
+	if err := f.End(ctx, pos[0]); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "ended %s\nbranch %s kept; bs prune deletes it once merged\n", pos[0], pos[0])
+	return nil
+}
+
+// Exit codes of bs prune when it keeps a branch.
+const (
+	exitKeptUnmerged = 3 // some branch has work not on the default branch
+	exitKeptUnknown  = 4 // some branch could not be checked, or not deleted
+)
+
+func cmdPrune(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	proj := fs.String("project", "", "project (default: BS_PROJECT, else the current git repo)")
+	dry := fs.Bool("dry-run", false, "report what would be deleted; delete nothing")
+	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "ended %s\n", pos[0])
-	if kept {
-		fmt.Fprintf(stdout, "kept branch %s: it has work not merged yet\n", pos[0])
+	if len(pos) != 0 {
+		fmt.Fprintln(stderr, "usage: bs prune [--dry-run]")
+		return errUsage
+	}
+	p, lb, err := scope(ctx, *proj)
+	if err != nil {
+		return err
+	}
+	defer lb.Close()
+	pruned, err := newFleet(bee.Fleet{P: p, LB: lb}).Prune(ctx, *dry)
+	if err != nil {
+		return err
+	}
+	if len(pruned) == 0 {
+		fmt.Fprintln(stdout, "nothing to prune: no ended bee has a branch left")
+		return nil
+	}
+	code := 0
+	for _, r := range pruned {
+		switch {
+		case r.Merge == bee.Merged && *dry:
+			fmt.Fprintf(stdout, "would delete %s: merged, %s\n", r.Branch, r.Why)
+		case r.Deleted:
+			fmt.Fprintf(stdout, "deleted %s: merged, %s\n", r.Branch, r.Why)
+		case r.Merge == bee.Merged:
+			fmt.Fprintf(stdout, "kept %s: merged, but deleting it failed: %v\n", r.Branch, r.DeleteErr)
+			code = exitKeptUnknown
+		case r.Merge == bee.NotMerged:
+			fmt.Fprintf(stdout, "kept %s: not merged: %s\n", r.Branch, r.Why)
+			code = max(code, exitKeptUnmerged)
+		default:
+			fmt.Fprintf(stdout, "kept %s: could not check: %s\n", r.Branch, r.Why)
+			code = exitKeptUnknown
+		}
+	}
+	if code != 0 {
+		return exitCode(code)
 	}
 	return nil
 }

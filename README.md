@@ -163,8 +163,9 @@ flowchart LR
     C -- no --> E2["error: read its pane"]
 ```
 
-`bs end bees-2-1` removes only the workspace recorded in that `spawned` entry, deletes
-the branch if it is merged, and writes `ended`.
+`bs end bees-2-1` removes only the workspace recorded in that `spawned` entry and writes
+`ended`; it keeps the branch. `bs prune` later deletes ended bees' branches once their
+work is on main, including after a rebase or squash merge.
 
 ### The logbook is the only truth
 
@@ -190,7 +191,8 @@ bs bead ls | new …            list the project's beads, or file one under an e
 bs spawn --label L <bead>     start a bee for the bead in its own herdr workspace, labelled L
 bs send <to> [--now] <body|-> store a message, then ring <to>
 bs inbox [--peek]             print unread; without --peek, record receipts
-bs end <bee>                 remove the bee's recorded workspace
+bs end <bee>                 remove the bee's recorded workspace; keep its branch
+bs prune [--dry-run]          delete ended bees' branches once merged
 bs status [--json]            running sessions and unread counts
 bs init                       create the logbook (optional)
 ```

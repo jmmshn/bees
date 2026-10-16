@@ -32,9 +32,9 @@ Full setup: [docs/SETUP.md](docs/SETUP.md). For a guided setup, open Claude Code
 repo and run the [`/setup-bees`](.claude/skills/setup-bees/SKILL.md) skill; it installs
 and checks each piece in turn.
 
-![Lindsay: "Beads." Gob: "BEES?" Lindsay: "BEADS!" Gob: "BEADS?!?"](docs/img/bees-beads.gif)
+![Beads. BEES? BEADS! BEADS?!?](docs/img/bees-beads.gif)
 
-![beads (bd, the tracker), misheard as bees (the fleet), shortened to bs (the CLI)](docs/img/beads-bees-bs.svg)
+![beads → bees → bs](docs/img/beads-bees-bs.svg)
 
 Details: [docs/SPEC.md](docs/SPEC.md) · decisions: [docs/adr/](docs/adr/) ·
 vocabulary: [GLOSSARY.md](GLOSSARY.md)
@@ -43,47 +43,43 @@ vocabulary: [GLOSSARY.md](GLOSSARY.md)
 
 ## How bs compares
 
-The usual ways to put several agents on one job, and what each gives you:
-
-- **Subagent fan-out** (Claude Code's Task tool, orchestrator–worker): the parent starts
-  workers inside its own session; each returns one final result and ends with its task.
-- **Agent-graph frameworks** (LangGraph, CrewAI, AutoGen): you code the agents and the
-  edges between them; one program runs the graph and hands each agent its turn.
-- **Shared queue or blackboard**: agents post to and poll a common store.
-- **Human as the bus**: separate chat sessions; you copy the brief across and the answer back.
-- **tmux + send-keys**: separate sessions in panes; a script types into the other pane.
-
-| | Subagents | Agent graph | Queue / blackboard | Human as bus | tmux send-keys | **bs** |
-|---|---|---|---|---|---|---|
-| Each agent is a full Claude Code session in its own worktree | no, a task inside the parent (worktree optional) | no, agents you code | depends on the agents | yes, if you make one | yes, if you make one | **yes**, `bs spawn` |
-| Agents outlive their lead | no | resumable from a checkpointer | yes | yes | yes | **yes** |
-| An agent messages its lead mid-task | final result only; the lead can message it | when the graph routes to it | yes | you relay | keystrokes | **yes**, `bs send` |
-| An idle agent acts on a message | n/a | n/a | only if it polls | you type | if the keys land | **yes**, doorbell |
-| Message kept while the recipient is down | n/a | in the checkpoint | yes | only if you saved it | no | **yes**, logbook |
-| Record of who said what | parent transcript | framework traces | the store | scrollback | scrollback | **yes**, append-only |
-| Work tied to a tracked issue | no | no | no | by discipline | by discipline | **yes**, one bead each |
-| Watch or steer an agent live | watch only | pause and edit state at interrupts | post to the store | yes | yes | **yes**, the bee's herdr pane |
+Subagents end with their task and report once; agent graphs make you code the routing;
+queues make agents poll; copy-paste makes you the bus. In bs each bee is a full Claude
+Code session tied to one bead: it outlives the queen that spawned it and wakes when a
+message arrives.
 
 What bs costs you: Linux, Claude Code sessions only, one machine. The doorbell rides on
 Claude's own cross-session socket, which keeps nothing after a session exits and drops
 identical repeats ([ADR-0001](docs/adr/0001-logbook-is-the-only-truth.md)).
-So bs uses it only to say "you have mail" and keeps every message in the logbook: a lost
-ring only delays a message, and a doubled one can't deliver it twice.
+So bs uses it only to say "you have messages" and keeps every message in the logbook:
+a lost ring only delays a message, and a doubled one can't deliver it twice.
+
+### When a session dies mid-job
+
+Two moments from the [bake-off](docs/bakeoff.md), the same keeper lines played against
+a Claude Code lead with subagents (left) and against bs (right).
+
+The lead is killed mid-job, and the keeper asks a fresh one what's running:
+
+![Left: a fresh Claude Code lead says no workers are running and credits another run's session; its subagent died with the old lead. Right: a fresh bs queen reads bs status and bs bead ls, finds the bee still working, and the bee's done message wakes it](docs/img/lead-restart.gif)
+
+The bee (or subagent) is down when the keeper sends it a change:
+
+![Left: SendMessage to the stopped subagent fails and nothing is kept. Right: bs send prints queued; bs spawn resumes the bee, whose bs inbox returns the stored message](docs/img/worker-down.gif)
+
+Every line is copied from the runs' transcripts and drawn as a terminal (`…` marks a
+cut); only the `#` setup lines and the ✗/✓ verdicts are commentary. The scripts are S10 and S12 in
+[bakeoff/cards](bakeoff/cards/); rebuild the GIFs with `uv run docs/img/src/gifs.py`.
 
 ### Without bs: you are the message bus
 
-![Two plain Claude Code sessions: the human copies the brief across and copies the answer back](docs/img/without-bs.svg)
+![Two plain Claude Code sessions: the keeper copies the brief across and copies the answer back](docs/img/without-bs.svg)
 
 ### With bs: the sessions ring each other
 
 ![Queen spawns a bee, sends it a note; the bee is woken by a doorbell, works, replies; the queen is woken in turn](docs/img/with-bs.svg)
 
-### Messages survive a session that is down
-
-![bs send to a stopped session prints "queued"; the messages show up in bs inbox when it restarts](docs/img/queued.svg)
-
-The first two images illustrate the Claude Code UI. Every `bs` line in them, and the
-whole third image, is real v0 output.
+These two images illustrate the Claude Code UI; every `bs` line in them is real v0 output.
 
 ---
 
@@ -219,7 +215,7 @@ unread(s) = messages to s with no 'received' entry from s, in insertion order
 
 Nothing records whether a session is alive
 ([ADR-0004](docs/adr/0004-liveness-is-derived-not-stored.md)); that is worked out each
-time from Claude's registry and `/proc`. A dead session needs no cleanup: its mail waits.
+time from Claude's registry and `/proc`. A dead session needs no cleanup: its messages wait.
 
 ## Status
 

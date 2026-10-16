@@ -35,6 +35,6 @@ func cmdEpic(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	if err := (bee.BeadsCLI{}).CreateEpic(ctx, id, strings.Join(pos, " ")); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "%s\nadd beads with: bd create --parent %s --title \"...\"\n", id, id)
+	fmt.Fprintf(stdout, "%s\nadd beads with: bs bead new --parent %s \"...\"\n", id, id)
 	return nil
 }

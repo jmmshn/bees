@@ -33,7 +33,11 @@ type Workspace struct{ ID, Label, Pane, Path string }
 type Agent struct{ Name, Pane string }
 
 // Bead is the part of a bead bs reads.
-type Bead struct{ ID, Title, Description string }
+type Bead struct {
+	ID, Title, Description string
+	Status, Type           string
+	Priority               int
+}
 
 // Herdr is the slice of herdr bs drives.
 type Herdr interface {

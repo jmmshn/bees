@@ -19,6 +19,7 @@ commands:
   spawn     start a bee for a bead in its own herdr workspace
   end       remove a bee's workspace
   epic      create the project's next epic (<project>-<n>)
+  bead      list the project's beads (ls) or add one under an epic (new)
   send      store a message for a session, then ring it
   inbox     print your unread messages and record receipts
   status    list running sessions and unread counts (--json for scripts)
@@ -33,6 +34,7 @@ var commands = map[string]func(ctx context.Context, args []string, stdin io.Read
 	"spawn":  cmdSpawn,
 	"end":    cmdEnd,
 	"epic":   cmdEpic,
+	"bead":   cmdBead,
 	"status": cmdStatus,
 }
 

@@ -148,6 +148,33 @@ func (BeadsCLI) Show(ctx context.Context, id string) (Bead, error) {
 	return Bead{ID: b.ID, Title: b.Title, Description: b.Description}, nil
 }
 
+// Query lists the beads matching a bd query expression.
+func (BeadsCLI) Query(ctx context.Context, expr string) ([]Bead, error) {
+	out, err := exec.CommandContext(ctx, "bd", "query", "--json", "--limit", "0", expr).Output()
+	if err != nil {
+		var e struct{ Error string } // with --json, bd prints its error as JSON on stdout
+		if json.Unmarshal(out, &e) == nil && e.Error != "" {
+			return nil, fmt.Errorf("bd query %s: %s", expr, e.Error)
+		}
+		return nil, fmt.Errorf("bd query %s: %w", expr, err)
+	}
+	var bs []struct {
+		ID       string `json:"id"`
+		Title    string `json:"title"`
+		Status   string `json:"status"`
+		Type     string `json:"issue_type"`
+		Priority int    `json:"priority"`
+	}
+	if err := json.Unmarshal(out, &bs); err != nil {
+		return nil, fmt.Errorf("bd query: %w", err)
+	}
+	beads := make([]Bead, len(bs))
+	for i, b := range bs {
+		beads[i] = Bead{ID: b.ID, Title: b.Title, Status: b.Status, Type: b.Type, Priority: b.Priority}
+	}
+	return beads, nil
+}
+
 // IDs lists every bead id in the store, open or closed.
 func (BeadsCLI) IDs(ctx context.Context) ([]string, error) {
 	out, err := exec.CommandContext(ctx, "bd", "list", "--all", "--limit", "0", "--json").Output()
@@ -165,6 +192,26 @@ func (BeadsCLI) IDs(ctx context.Context) ([]string, error) {
 		ids[i] = b.ID
 	}
 	return ids, nil
+}
+
+// Create files a bead under parent and returns its id; bd numbers it <parent>.<n>.
+// --force because Jira-style ids don't use the store's own prefix. Empty optional
+// fields keep bd's defaults.
+func (BeadsCLI) Create(ctx context.Context, parent, title, description, typ, priority string) (string, error) {
+	args := []string{"create", "--silent", "--force", "--parent", parent, "--title", title}
+	for _, f := range [][2]string{{"--description", description}, {"--type", typ}, {"--priority", priority}} {
+		if f[1] != "" {
+			args = append(args, f[0], f[1])
+		}
+	}
+	var stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, "bd", args...)
+	cmd.Stderr = &stderr // kept out of stdout, which is only the id
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("bd create under %s: %w: %s", parent, err, bytes.TrimSpace(append(out, stderr.Bytes()...)))
+	}
+	return string(bytes.TrimSpace(out)), nil
 }
 
 // CreateEpic creates an epic with an explicit id. --force because Jira-style ids don't

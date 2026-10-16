@@ -17,3 +17,17 @@ A worker reports `done: <bead> PR #N`; that means "ready for review", and the be
 ## Rough edges
 
 When bs fails, misleads, or needs a manual workaround, record the exact output, file a bead with `bs bead new` describing it, and hand it to a worker to fix bs. The workaround is evidence, not the fix.
+
+When a pitfall will bite again before its fix lands, add a line under Known pitfalls with the `capture-pitfall` skill, if this repo has it.
+
+## Known pitfalls
+
+Each line: what you see → what it means → what to do. A tagged line goes when its bead closes.
+
+- An unrecorded herdr workspace (e.g. a second one at the repo root after a spawn, bees-1.23) → not yours → leave it; tear down only with `bs end`, never by closing or reusing one picked from `herdr workspace list`.
+- `herdr agent start` timed out → unconfirmed, not failed → check `bs status` before respawning. A quick second spawn failing with "agent name already used" means the first is still starting (bees-1.24): wait, don't retry.
+- A worker silent too long → `bs status` is still the truth → as a last resort, `herdr pane read <pane>` (plain text) shows what it last said, e.g. a Claude folder-trust prompt in an untrusted repo, or a question asked only in its pane.
+- `bs end <bead-id>` says "no record" (bees-1.29) → it takes the worker name → `bs end {{project}}-2-1`, not `{{project}}-2.1`.
+- `git branch -d` says unmerged after a rebase or squash merge → the work is on main under other SHAs → use `bs prune`.
+- Deleting a stacked PR's base branch closes the PR above it → retarget first: `gh pr edit <n> --base main`.
+- A worker needs the captain (a push, a merge, a permission) → never write "captain approved" yourself → ask the captain to answer the worker in its pane, or take the captain's answer and do the action yourself.

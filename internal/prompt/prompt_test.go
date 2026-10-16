@@ -10,10 +10,10 @@ import (
 )
 
 func TestEachRoleNamesTheProjectAndItsJob(t *testing.T) {
-	shared := []string{"bs bead ls", "bs epic", "bs bead new --parent web2-N"}
+	shared := []string{"## Known pitfalls", "auto-mode permission denial", "control characters", "bs bead ls", "bs epic", "bs bead new --parent web2-N"}
 	for role, want := range map[prompt.Role][]string{
-		prompt.Queen:  {"queen-web2", "bs spawn --label", "--repo", "bs status", "bs end", "only after its PR is merged"},
-		prompt.Worker: {"bd show <bead>", "run: bs inbox", "bs send queen-web2", "done: <bead> PR #N", "Leave `bd close` to the queen"},
+		prompt.Queen:  {"queen-web2", "bs spawn --label", "--repo", "bs status", "bs end", "only after its PR is merged", "capture-pitfall", "never write \"captain approved\"", "bs end web2-2-1"},
+		prompt.Worker: {"bd show <bead>", "run: bs inbox", "bs send queen-web2", "done: <bead> PR #N", "Leave `bd close` to the queen", "refuse", "go build -o bin/bs"},
 	} {
 		got := prompt.Text(role, "web2")
 		for _, w := range append(shared, want...) {

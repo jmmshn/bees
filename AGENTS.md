@@ -8,7 +8,7 @@ bees is built with bees. Run this repo's own work through `bs`, and treat every 
 
 - Track work with `bs bead ls` / `bs bead new --parent bees-N` / `bs epic`.
 - Hand a bead to a worker with `bs spawn --label "<words>" <bead>`; talk with `bs send` / `bs inbox`; check the fleet with `bs status`; tear down with `bs end`.
-- When `bs` fails, misleads, or needs a manual workaround: write down the exact output, file a bead under the bees epic describing it, then fix `bs` (or spawn a worker to). The workaround is evidence, not the fix.
+- When `bs`, herdr, Claude Code or git/gh fails, misleads, or needs a manual workaround: run the `capture-pitfall` skill (`.claude/skills/capture-pitfall/SKILL.md`) to file it with its evidence, then fix `bs` (or spawn a worker to). The workaround is evidence, not the fix.
 - Rebuild before dogfooding: `go install ./cmd/bs`. A stale `bs` on PATH silently tests yesterday's code.
 - Lint runs on commit once `pre-commit install` is done (docs/SETUP.md); `pre-commit run --all-files` lints everything.
 - Verify with `go vet ./... && go test ./...`, then exercise the change live through `bs` (real herdr, real Claude sessions) before calling it done.

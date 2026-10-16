@@ -588,6 +588,32 @@ func TestRespawnKeepsTheRecordedLabel(t *testing.T) {
 	}
 }
 
+func TestRespawnAfterEndReusesTheRecordedLabel(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	if err := r.fleet.End(ctx, "bees-8"); err != nil {
+		t.Fatal(err)
+	}
+	st, err := r.fleet.Spawn(ctx, "bees-8", "")
+	if err != nil || st.Resumed || st.Label != "spawn and end" {
+		t.Fatalf("started = %+v, err = %v; want a fresh spawn with the recorded label", st, err)
+	}
+	if ws := r.h.workspaces[len(r.h.workspaces)-1]; ws.Label != "spawn and end" {
+		t.Fatalf("workspace label = %q, want the recorded one", ws.Label)
+	}
+	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); sp.Label != "spawn and end" {
+		t.Fatalf("recorded label = %q", sp.Label)
+	}
+	// An explicit label renames the work.
+	if err := r.fleet.End(ctx, "bees-8"); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := r.fleet.Spawn(ctx, "bees-8", "new words"); err != nil || st.Label != "new words" {
+		t.Fatalf("started = %+v, err = %v; want the new label", st, err)
+	}
+}
+
 func TestCheckLabel(t *testing.T) {
 	for _, ok := range []string{"role prompts", "squash merge end", "r40", "a b c d", strings.Repeat("x", 32)} {
 		if err := worker.CheckLabel(ok); err != nil {

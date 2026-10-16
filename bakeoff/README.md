@@ -2,7 +2,7 @@
 
 Scripted interaction runs that compare bees against Claude Code alone on toy problems (bees-1.33). The results are written up in [docs/bakeoff.md](../docs/bakeoff.md).
 
-Each **script** (`cards/S*.md`) is a captain's card: the exact lines a human types to a lead session, what triggers each line, and the optimal play. Each script is played by three **arms**:
+Each **script** (`cards/S*.md`, S1–S17) is a captain's card: the exact lines a human types to a lead session, what triggers each line, and the optimal play. Each script is played by three **arms**:
 
 | Arm | Lead | Workers |
 |---|---|---|
@@ -14,7 +14,7 @@ Each **script** (`cards/S*.md`) is a captain's card: the exact lines a human typ
 
 ```sh
 bakeoff/mkrun.sh c 3                       # fresh toy repo + bare origin + lead in a herdr workspace -> runs/t3c
-# play cards/S3.md by hand, or hand cards/PROTOCOL.md + the card + the run dir to a captain agent
+# play cards/S3.md by hand, or tell a captain agent: "read cards/DRIVER.md, then play cards/S3.md against <run dir>"
 bakeoff/observe.sh ~/.cache/bees-bakeoff/runs/t3c   # snapshot: lead, worker panes, branches
 bakeoff/collect.sh ~/.cache/bees-bakeoff/runs/t3c   # metrics.json: wall time, captain turns, interventions, tokens, leftovers, check
 ```

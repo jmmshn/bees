@@ -14,12 +14,14 @@ log=$dir/captain.log
 first=$(head -1 "$log" | cut -d' ' -f1) last=$(grep ' end' "$log" | tail -1 | cut -d' ' -f1)
 secs() { [ -n "$1" ] && date -d "$1" +%s.%N; }
 wall=$( [ -n "$first" ] && [ -n "$last" ] && echo "$(secs "$last") - $(secs "$first")" | bc )
-others() { grep -v -x "$1"; }
-wt=$(git -C "$repo" worktree list --porcelain | grep -c '^worktree ' ); wt=$((wt - 1))
+# The captain's own work (S17's captain-wip) is not a leftover.
+others() { grep -v -x -e "$1" -e captain-wip; }
+wt=$(git -C "$repo" worktree list --porcelain | grep '^worktree ' | grep -vc captain-wip); wt=$((wt - 1))
 branches=$(git -C "$repo" branch --format='%(refname:short)' | others main | paste -sd, -)
 remote=$(git -C "$repo" ls-remote --heads origin | awk '{print $2}' | sed 's|refs/heads/||' | others main | paste -sd, -)
 sessions=$(for f in ~/.claude/sessions/*.json; do jq -r --arg r "$repo" 'select(.cwd|startswith($r)) | .name // .sessionId' "$f" 2>/dev/null; done | others "$lead" | paste -sd, -)
-workspaces=$(herdr workspace list 2>/dev/null | jq -r --arg ws "$ws" --arg r "$repo" '.result.workspaces[] | select(.workspace_id != $ws) | select((.worktree.checkout_path // "") | startswith($r)) | .workspace_id' | paste -sd, -)
+# By pane cwd: herdr leaves .worktree empty for a workspace made with --cwd.
+workspaces=$(herdr pane list 2>/dev/null | jq -r --arg ws "$ws" --arg r "$repo" '[.result.panes[] | select(.workspace_id != $ws) | select((.cwd // "") | startswith($r)) | select((.cwd | test("captain-wip")) | not) | .workspace_id] | unique[]' | paste -sd, -)
 jq -n --argjson run "$run" --argjson tok "$tokens" --arg wall "${wall:-}" \
 	--argjson turns "$(grep -c ' captain: ' "$log")" --argjson inter "$(grep -c 'captain\[intervention\]' "$log")" \
 	--argjson wt "$wt" --arg br "$branches" --arg rb "$remote" --arg se "$sessions" --arg wsp "$workspaces" \

@@ -272,8 +272,7 @@ type Pruned struct {
 	Merge        Merge
 	Why          string // how the work was proven merged, or why the branch was kept
 	Deleted      bool
-	DeleteErr    error    // proven merged, but git branch -D failed
-	Remote       []string // remote copies Prune leaves alone, e.g. origin/<branch>
+	DeleteErr    error // proven merged, but git branch -D failed
 }
 
 // Prune deletes the branch of each ended bee once its work is proven merged; dry only
@@ -292,7 +291,6 @@ func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error) {
 		}
 		p := Pruned{Branch: sp.Branch, Repo: repo}
 		p.Merge, p.Why = merged(ctx, f.G, repo, sp.Branch)
-		p.Remote = remoteCopies(ctx, repo, sp.Branch)
 		if p.Merge == Merged && !dry {
 			p.DeleteErr = gitRun(ctx, repo, "branch", "-D", sp.Branch)
 			p.Deleted = p.DeleteErr == nil
@@ -300,16 +298,6 @@ func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error) {
 		out = append(out, p)
 	}
 	return out, nil
-}
-
-// remoteCopies lists the remote-tracking refs of branch (origin/<branch>, ...), as of
-// the last fetch or push. A failed lookup lists none.
-func remoteCopies(ctx context.Context, repo, branch string) []string {
-	out, err := gitOut(ctx, repo, "for-each-ref", "--format=%(refname:short)", "refs/remotes/*/"+branch)
-	if err != nil {
-		return nil
-	}
-	return strings.Fields(out)
 }
 
 func brief(b Bead) string {

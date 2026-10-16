@@ -224,6 +224,7 @@ func TestResumeContinuesTheBeesConversation(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	r.fleet.Spawn(ctx, "bees-8")
+	readInbox(t, r.lb, "bees-8")
 	r.h.exit("bees-8")
 	st, err := r.fleet.Spawn(ctx, "bees-8")
 	if err != nil {
@@ -234,6 +235,57 @@ func TestResumeContinuesTheBeesConversation(t *testing.T) {
 	}
 	if !slices.Contains(r.h.started[1], "--continue") {
 		t.Fatalf("resume args = %q, want --continue", r.h.started[1])
+	}
+}
+
+func TestRestartOfABeeThatNeverReadItsBriefStartsFresh(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	// The start failed after spawn was recorded, so there is no conversation:
+	// claude --continue would exit with "No conversation found to continue".
+	r.h.failStart = errors.New("herdr agent: agent arguments cannot be encoded safely")
+	r.fleet.Spawn(ctx, "bees-8")
+	r.h.failStart = nil
+	st, err := r.fleet.Spawn(ctx, "bees-8")
+	if err != nil || !st.Resumed {
+		t.Fatalf("started = %+v, err = %v; want a restart in the recorded workspace", st, err)
+	}
+	if start := r.h.started[0]; slices.Contains(start, "--continue") || !strings.HasPrefix(start[len(start)-1], "[bs]") {
+		t.Fatalf("restart args = %q, want a fresh start with the doorbell", start)
+	}
+}
+
+func TestEndedHalfStartedBeeRespawnsWithOneBrief(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	r.h.failStart = errors.New("herdr agent: agent arguments cannot be encoded safely")
+	r.fleet.Spawn(ctx, "bees-8")
+	if _, err := r.fleet.End(ctx, "bees-8"); err != nil {
+		t.Fatal(err)
+	}
+	r.h.failStart = nil
+	if _, err := r.fleet.Spawn(ctx, "bees-8"); err != nil {
+		t.Fatal(err)
+	}
+	if unread, _ := r.lb.Unread(ctx, "bees-8"); len(unread) != 1 {
+		t.Fatalf("unread = %+v, want only the new spawn's brief", unread)
+	}
+}
+
+// readInbox does what the bee's bs inbox does: records receipts for its unread messages.
+func readInbox(t *testing.T, lb *logbook.Logbook, name string) {
+	t.Helper()
+	ctx := context.Background()
+	unread, err := lb.Unread(ctx, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []logbook.ID
+	for _, m := range unread {
+		ids = append(ids, m.ID)
+	}
+	if err := lb.RecordReceipts(ctx, name, ids); err != nil {
+		t.Fatal(err)
 	}
 }
 

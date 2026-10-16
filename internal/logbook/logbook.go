@@ -97,13 +97,15 @@ func (l *Logbook) Send(ctx context.Context, from, to, body string) (ID, error) {
 	return id, tx.Commit()
 }
 
-// Unread returns the messages addressed to session that have no receipt from it, in the order they were stored.
+// Unread returns the messages addressed to session that have no receipt from it, in the
+// order they were stored, leaving out the briefs of ended spawns.
 func (l *Logbook) Unread(ctx context.Context, session string) ([]Message, error) {
 	rows, err := l.db.QueryContext(ctx, `
 SELECT m.id, m.ts, m.actor, m.subject, json_extract(m.data, '$.body') FROM entries m
 WHERE m.kind = 'message' AND m.subject = ?1
   AND NOT EXISTS (SELECT 1 FROM entries r
                   WHERE r.kind = 'received' AND r.ref = m.id AND r.actor = ?1)
+  AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = m.ref)
 ORDER BY m.rowid`, session)
 	if err != nil {
 		return nil, err
@@ -134,6 +136,7 @@ SELECT name, SUM(unread) FROM (
   UNION ALL SELECT m.subject, NOT EXISTS (SELECT 1 FROM entries r
                                          WHERE r.kind = 'received' AND r.ref = m.id AND r.actor = m.subject)
             FROM entries m WHERE m.kind = 'message'
+              AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = m.ref)
 ) GROUP BY name`)
 	if err != nil {
 		return nil, err
@@ -193,10 +196,12 @@ type Spawn struct {
 	Branch    string `json:"branch"`
 	Repo      string `json:"repo"` // where the branch lives, for bs end
 	Ended     bool   `json:"-"`
+	Read      bool   `json:"-"` // the bee has read a message since this spawn, so it has a conversation
 }
 
 // RecordSpawn records that by spawned s.Name and, in the same transaction, sends it
-// brief (if any), so a crash can't leave a recorded bee without its brief.
+// brief (if any), so a crash can't leave a recorded bee without its brief. The brief
+// refers to the spawn: once the spawn has ended, an unread brief is no longer unread.
 func (l *Logbook) RecordSpawn(ctx context.Context, by string, s Spawn, brief string) (ID, error) {
 	now := time.Now().UTC()
 	id := newID(now)
@@ -220,8 +225,8 @@ func (l *Logbook) RecordSpawn(ctx context.Context, by string, s Spawn, brief str
 			return "", err
 		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO entries (id, ts, kind, actor, subject, data) VALUES (?, ?, 'message', ?, ?, ?)`,
-			string(newID(now)), now.Format(tsLayout), by, s.Name, string(body)); err != nil {
+			`INSERT INTO entries (id, ts, kind, actor, subject, ref, data) VALUES (?, ?, 'message', ?, ?, ?, ?)`,
+			string(newID(now)), now.Format(tsLayout), by, s.Name, string(id), string(body)); err != nil {
 			return "", err
 		}
 	}
@@ -244,14 +249,15 @@ SELECT 'end:' || id, ?, 'ended', ?, subject, id FROM entries WHERE id = ? AND ki
 	return tx.Commit()
 }
 
-// LatestSpawn returns the most recent spawn of the named bee, and whether it has ended.
-// ok is false when the bee was never spawned.
+// LatestSpawn returns the most recent spawn of the named bee, whether it has ended, and
+// whether the bee has read a message since. ok is false when the bee was never spawned.
 func (l *Logbook) LatestSpawn(ctx context.Context, name string) (s Spawn, ok bool, err error) {
 	var data string
 	err = l.db.QueryRowContext(ctx, `
-SELECT s.id, s.data, EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = s.id)
+SELECT s.id, s.data, EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = s.id),
+       EXISTS (SELECT 1 FROM entries r WHERE r.kind = 'received' AND r.actor = s.subject AND r.rowid > s.rowid)
 FROM entries s WHERE s.kind = 'spawned' AND s.subject = ? ORDER BY s.rowid DESC LIMIT 1`, name,
-	).Scan(&s.ID, &data, &s.Ended)
+	).Scan(&s.ID, &data, &s.Ended, &s.Read)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Spawn{}, false, nil
 	}

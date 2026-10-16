@@ -60,9 +60,12 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if err != nil {
 		return err
 	}
-	if st.Resumed {
+	switch {
+	case st.Continued:
 		fmt.Fprintf(stdout, "resumed %s in workspace %s\n", st.Name, st.Workspace)
-	} else {
+	case st.Resumed:
+		fmt.Fprintf(stdout, "restarted %s in workspace %s with a new conversation: it never read its brief\n", st.Name, st.Workspace)
+	default:
 		fmt.Fprintf(stdout, "spawned %s for %s in workspace %s\n", st.Name, pos[0], st.Workspace)
 	}
 	switch {

@@ -2,6 +2,20 @@
 
 bees coordinates several Claude Code sessions working on one codebase: a queen hands out work to bees and they report back, all through a shared logbook.
 
+## Work
+
+**Project**:
+The codebase a queen and its bees work on, named in one word (`pymatgen-analysis-defects` → `pymatgen_analysis_defects`).
+_Avoid_: repo, rig, workspace
+
+**Bead**:
+One unit of work in the shared tracker, named `<project>-N[.M…]`.
+_Avoid_: issue, ticket, task
+
+**Epic**:
+A project's top-level bead, `<project>-N`; every other bead of the project sits under one.
+_Avoid_: milestone, story
+
 ## People and sessions
 
 **Captain**:

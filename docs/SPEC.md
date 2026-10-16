@@ -189,7 +189,22 @@ type Started struct {
 	Waiting         bool // herdr said agent_not_ready: Claude is blocked at a prompt (folder trust)
 }
 
-func (f Fleet) Spawn(ctx context.Context, bead string) (Started, error)              // ErrRunning, ErrWrongRepo, ErrOrphan
+func (f Fleet) Spawn(ctx context.Context, bead, label string) (Started, error)       // ErrRunning, ErrWrongRepo, ErrOrphan, ErrNoLabel, ErrBadLabel, ErrLabelChange
+
+type Request struct{ Bead, Label string }
+type Result struct {
+	Bead    string
+	Started Started
+	Err     error
+	Took    time.Duration
+}
+// SpawnAll: one Result per Request, in order. Every request is checked (steps 1–5) before
+// anything is touched; if any is Refused, nothing starts and the rest get ErrNotStarted.
+// Then steps 6–7 run one bee at a time and step 8 runs concurrently; past the checks, a
+// failure doesn't stop the others. A bee named twice is ErrTwice the second time (a
+// refused first occurrence doesn't count).
+func (f Fleet) SpawnAll(ctx context.Context, reqs []Request) []Result
+func Refused(err error) bool // ErrBadLabel, ErrNoLabel, ErrLabelChange, ErrTwice: fix the command
 func (f Fleet) End(ctx context.Context, name string) error                       // ErrNotSpawned; already ended → nil
 func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error)           // one Pruned per ended bee's branch still present
 ```
@@ -219,7 +234,7 @@ func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error)           
 ```text
 bs init                       create the logbook file and table if missing (optional)
 bs queen                      start the queen: claude --name queen-<project> --append-system-prompt-file <project>-queen.md in the repo (no BS_* set)
-bs spawn --label L <bead> [--repo P]  start a bee for the bead in its own herdr workspace labelled L (--label only on a first spawn)
+bs spawn [--repo P] --label L <bead> [--label L <bead> …]  start a bee per bead (SpawnAll), each in its own herdr workspace labelled by the --label before it (--label only on a first spawn; --repo before the first bead, for all); exit 2 if refused (nothing started), 1 if any start failed
 bs end <bee>                 remove the bee's recorded workspace; keep its branch
 bs prune [--dry-run]          delete ended bees' local branches once merged; exit 3 if one is kept unmerged, 4 if one couldn't be checked or deleted
 bs epic <title>               create the project's next epic, <project>-<n>

@@ -11,4 +11,3 @@ You are a worker in project `{{project}}`. You own one bead, in your own worktre
 5. Done: open a PR from your own branch (follow AGENTS.md's push rules), `bs send queen-{{project}} "done: <bead> PR #N"`, then stop.
 
 Leave `bd close` to the queen: it closes your bead once the PR is merged.
-

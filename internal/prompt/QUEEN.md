@@ -17,4 +17,3 @@ A worker reports `done: <bead> PR #N`; that means "ready for review", and the be
 ## Rough edges
 
 When bs fails, misleads, or needs a manual workaround, record the exact output, file a bead with `bs bead new` describing it, and hand it to a worker to fix bs. The workaround is evidence, not the fix.
-

@@ -1,6 +1,6 @@
 # S5b blocked on the keeper (question found by the worker)
 
-S5 with the question hidden where only the worker sees it: in S5 the lead asked up front, so the worker → lead → keeper hop (bees-1.25) never ran. `vet.txt` starts with a note telling the editor to ask the keeper "Dr." or "Doctor" before changing anything.
+S5 with the question hidden where only the worker sees it: in S5 the lead asked up front, so the worker → lead → keeper hop (bees-4.1) never ran. `vet.txt` starts with a note telling the editor to ask the keeper "Dr." or "Doctor" before changing anything.
 
 1. t0: `title-case the names in vet.txt`
 2. Do **not** volunteer anything. When the lead (in its own pane) asks you "Dr." or "Doctor" → `Doctor, and drop the note line` (keeper line); log `event: question surfaced` first.

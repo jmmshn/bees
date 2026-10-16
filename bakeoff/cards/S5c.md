@@ -1,6 +1,6 @@
 # S5c worker needs the keeper's sign-off
 
-The bees-1.25 shape: a worker that needs the keeper mid-task. In S5 and S5b the lead found the question itself and asked up front, so the worker → lead → keeper hop never ran; here it can't be front-loaded, because the thing to approve only exists once the worker has done the work.
+The bees-4.1 shape: a worker that needs the keeper mid-task. In S5 and S5b the lead found the question itself and asked up front, so the worker → lead → keeper hop never ran; here it can't be front-loaded, because the thing to approve only exists once the worker has done the work.
 
 1. t0: `title-case the names in pets.txt. Whoever does it: show me the final text and get my OK before you commit`
 2. When the final text reaches you **in the lead's pane** → log `event: sign-off request surfaced`, then `ok` (keeper line).

@@ -183,6 +183,7 @@ time from Claude's registry and `/proc`. A dead session needs no cleanup: its ma
 ```text
 bs queen                      start claude --name queen-<project> in the repo
 bs epic <title>               create the project's next epic, <project>-<n>
+bs bead ls | new …            list the project's beads, or file one under an epic
 bs spawn <bead> [--repo P]    start a bee for the bead in its own herdr workspace
 bs send <to> [--now] <body|-> store a message, then ring <to>
 bs inbox [--peek]             print unread; without --peek, record receipts

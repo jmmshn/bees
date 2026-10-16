@@ -13,7 +13,7 @@ bs init                 # optional: creates ~/.local/share/bees/<project>.db (an
 
 - **Project:** the basename of the git repo you are in (a worktree counts as its main repo), lowercased with `-` → `_`. It must be a letter and then up to 24 letters, digits or `_`. Otherwise set `BS_PROJECT` or pass `--project`.
 - **Queen:** `queen-<project>`.
-- **Bead ids:** `<project>-<n>` for epics (`bs epic "<title>"` makes the next one), `<project>-<n>.<m>` for their children (`bd create --parent <epic> --force …`).
+- **Bead ids:** `<project>-<n>` for epics (`bs epic "<title>"` makes the next one), `<project>-<n>.<m>` for their children (`bs bead new --parent <epic> "<title>"`). `bs bead ls` lists only this project's beads; the queen and bees are told to use these instead of `bd list`/`bd create`.
 - **Bee:** the bead id with `.` → `-` (`bees-2.1` → `bees-2-1`). That one name is its Claude session, herdr agent, git branch, worktree directory (`<repo>-WT/<name>`) and address for `bs send`.
 - Session names never contain `:`.
 
@@ -21,10 +21,11 @@ bs init                 # optional: creates ~/.local/share/bees/<project>.db (an
 
 ```sh
 cd ~/repos/<you>/<project>
-bs queen                       # execs claude --name queen-<project> in the repo
+bs queen                       # execs claude --name queen-<project> in the repo; restart it this way, not with a bare claude --resume
 # inside the queen:
 bs epic "ringing"              # → <project>-2
-bd create --parent <project>-2 --force --title "…" --description "…"   # → <project>-2.1
+bs bead new --parent <project>-2 --description "…" "…"   # → <project>-2.1
+bs bead ls                     # this project's beads that aren't closed
 bs spawn <project>-2.1         # bee <project>-2-1 in its own herdr workspace and worktree
 bs send <project>-2-1 "…"      # store, then ring it awake; --now interrupts its current turn
 bs inbox                       # your unread messages; --peek leaves them unread

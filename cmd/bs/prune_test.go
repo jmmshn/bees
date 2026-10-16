@@ -77,3 +77,45 @@ func TestPruneSaysWhatItKeptWithDistinctExitCodes(t *testing.T) {
 		t.Fatalf("unknown: exit %d, %q", code, out)
 	}
 }
+
+// Prune deletes only the local branch and says so; a remote copy is named as kept, and
+// never mentioned when there is none (bees-1.34).
+func TestPruneSaysRemoteCopiesStay(t *testing.T) {
+	useTempLogbook(t)
+	saved := newFleet
+	t.Cleanup(func() { newFleet = saved })
+	newFleet = func(f bee.Fleet) bee.Fleet { return f } // no gh
+
+	repo := repoWithBranch(t, "main", "pushed")
+	origin := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q", "--bare", origin)
+	git("remote", "add", "origin", origin)
+	git("push", "-q", "origin", "pushed")
+	git("merge", "-q", "--ff-only", "pushed")
+	git("branch", "local-only", "main")
+	endedBee(t, "pushed", repo)
+	endedBee(t, "local-only", repo)
+
+	out, _, code := bs(t, "prune", "--dry-run")
+	if code != 0 ||
+		!strings.Contains(out, "would delete local branch pushed: merged, its commits are on main; origin/pushed kept\n") ||
+		!strings.Contains(out, "would delete local branch local-only: merged, its commits are on main\n") {
+		t.Fatalf("dry run: exit %d, %q", code, out)
+	}
+	out, _, code = bs(t, "prune")
+	if code != 0 ||
+		!strings.Contains(out, "deleted local branch pushed: merged, its commits are on main; origin/pushed kept\n") ||
+		!strings.Contains(out, "deleted local branch local-only: merged, its commits are on main\n") {
+		t.Fatalf("prune: exit %d, %q", code, out)
+	}
+	if err := exec.Command("git", "-C", origin, "rev-parse", "--verify", "--quiet", "refs/heads/pushed").Run(); err != nil {
+		t.Fatalf("origin lost pushed: %v", err)
+	}
+}

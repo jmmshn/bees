@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/jmmshn/bees/internal/bee"
 	"github.com/jmmshn/bees/internal/harness/claude"
@@ -124,6 +125,15 @@ const (
 	exitKeptUnknown  = 4 // some branch could not be checked, or not deleted
 )
 
+// remoteKept says which remote copies of a deleted branch stay: bs prune never touches
+// a remote (bees-1.34), so the queen must not report the branch gone everywhere.
+func remoteKept(remote []string) string {
+	if len(remote) == 0 {
+		return ""
+	}
+	return "; " + strings.Join(remote, ", ") + " kept"
+}
+
 func cmdPrune(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -154,9 +164,9 @@ func cmdPrune(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	for _, r := range pruned {
 		switch {
 		case r.Merge == bee.Merged && *dry:
-			fmt.Fprintf(stdout, "would delete %s: merged, %s\n", r.Branch, r.Why)
+			fmt.Fprintf(stdout, "would delete local branch %s: merged, %s%s\n", r.Branch, r.Why, remoteKept(r.Remote))
 		case r.Deleted:
-			fmt.Fprintf(stdout, "deleted %s: merged, %s\n", r.Branch, r.Why)
+			fmt.Fprintf(stdout, "deleted local branch %s: merged, %s%s\n", r.Branch, r.Why, remoteKept(r.Remote))
 		case r.Merge == bee.Merged:
 			fmt.Fprintf(stdout, "kept %s: merged, but deleting it failed: %v\n", r.Branch, r.DeleteErr)
 			code = exitKeptUnknown

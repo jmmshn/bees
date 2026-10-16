@@ -19,10 +19,9 @@ git -C "$repo" remote set-head origin main
 case $arm in
 	a) cmd="claude --name lead-$id --append-system-prompt-file $here/arms/A-subagents.md" ;;
 	b) cmd="claude --name lead-$id --append-system-prompt-file $here/arms/B-peers.md" ;;
-	c) cmd="bs queen" ;;
+	c) cmd="bs queen" # BAKEOFF_BS=<path to a bs build> plays a branch build without installing it
+		[ -n "${BAKEOFF_BS:-}" ] && cmd="PATH=$(cd "$(dirname "$BAKEOFF_BS")" && pwd):\$PATH bs queen" ;;
 esac
-# BAKEOFF_BIN=<dir> puts a bs built there first on the lead's PATH, so a branch is tested without go install over the shared bs (bees-1.26).
-if [ "$arm" = c ] && [ -n "${BAKEOFF_BIN:-}" ]; then cmd="env PATH=$BAKEOFF_BIN:\$PATH $cmd"; fi
 name=$([ "$arm" = c ] && echo "queen-$id" || echo "lead-$id")
 ws=$(herdr workspace create --cwd "$repo" --label "bakeoff $id" --no-focus)
 pane=$(jq -r .result.root_pane.pane_id <<<"$ws")

@@ -38,7 +38,7 @@ bs prune                       # delete ended workers' branches once merged; --d
 
 A first spawn needs `--label`: 1–4 lowercase words naming the work, shown as the herdr workspace name (the queen writes it from the bead). `bs spawn` on a worker whose Claude has exited keeps its recorded label (leave `--label` off) and resumes it in the same workspace with `claude --continue`, or starts it fresh there if it never read its brief (its first start failed). Several beads go in one call, each after its own `--label`: `bs spawn --label "sort fruits" <project>-1.1 --label "dedupe todo" <project>-1.2` starts the workers in parallel and prints one line per bead. A mistake in the command (a bad or missing label, a bead named twice) starts nothing (exit 2); a worker that fails to start gets its own line while the rest start (exit 1). Each start takes about 10 s: herdr gives up waiting for an idle prompt while the worker gets on with its doorbell, and bs then confirms the worker from Claude's session registry.
 
-After merging changes to bs, rebuild it with `go install ./cmd/bs`. Inside this repo, bs warns when it was built from a commit behind `main`; `bs version` prints the commit it was built from.
+After merging changes to bs, rebuild it from `main` with `go install ./cmd/bs`; in a bees fleet that is the queen's job. Workers never install bs: they build into their worktree (`go build -o bin/bs ./cmd/bs`) and run `./bin/bs`. Inside this repo, bs warns when the shared bs was built from a commit behind `main` or not on it (a branch build), and when a worktree's `bin/bs` doesn't match its checkout; a worker is told to ask the queen rather than reinstall. `bs version` prints the commit it was built from.
 
 ## Folder trust
 

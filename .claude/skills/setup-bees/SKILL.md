@@ -69,7 +69,7 @@ From a clone of the bees repo:
 go install ./cmd/bs
 ```
 
-Rebuild the same way after pulling bees; inside the bees repo `bs` warns when it was built from a commit behind `main`. In the user's project, read the **Names** section of [`docs/SETUP.md`](../../../docs/SETUP.md) with them: the project name comes from the repo's directory, and an unusual name needs `BS_PROJECT`.
+Rebuild the same way after pulling bees, always from `main`; inside the bees repo `bs` warns when it was built from a commit behind `main` or not on it. Only the queen or the user installs bs; workers build into their worktree (`go build -o bin/bs ./cmd/bs`). In the user's project, read the **Names** section of [`docs/SETUP.md`](../../../docs/SETUP.md) with them: the project name comes from the repo's directory, and an unusual name needs `BS_PROJECT`.
 
 `bs prune` asks `gh` which branches merged; install and log in to [GitHub CLI](https://cli.github.com) (`! gh auth login`) if the user will prune.
 

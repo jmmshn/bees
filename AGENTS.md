@@ -12,6 +12,7 @@ bees is built with bees. Run this repo's own work through `bs`, and treat every 
 - Rebuild before dogfooding: `go install ./cmd/bs`. A stale `bs` on PATH silently tests yesterday's code.
 - Lint runs on commit once `pre-commit install` is done (docs/SETUP.md); `pre-commit run --all-files` lints everything.
 - Verify with `go vet ./... && go test ./...`, then exercise the change live through `bs` (real herdr, real Claude sessions) before calling it done.
+- A change to the role prompts, spawn or messaging: replay the matching scripted cards in `bakeoff/` against the baseline arms ([docs/bakeoff.md](docs/bakeoff.md)).
 
 ## Motifs to watch
 

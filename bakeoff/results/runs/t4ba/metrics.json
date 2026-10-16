@@ -1,0 +1,36 @@
+{
+  "id": "t4ba",
+  "arm": "a",
+  "script": "S4b",
+  "repo": "/home/lik/.cache/bees-bakeoff/runs/t4ba/t4ba",
+  "pane": "w6Y:p1",
+  "lead": "lead-t4ba",
+  "workspace": "w6Y",
+  "created": "2026-10-16T04:05:56.681Z",
+  "wall_s": 145,
+  "captain_turns": 4,
+  "interventions": 0,
+  "check": {
+    "script": "S4b",
+    "pass": true,
+    "failures": []
+  },
+  "tokens": {
+    "sessions": 1,
+    "subagents": 2,
+    "input": 52,
+    "output": 3961,
+    "cache_read": 1004009,
+    "cache_write": 61584
+  },
+  "leftovers": {
+    "worktrees": 0,
+    "branches": [],
+    "remote_branches": [
+      "add-tan",
+      "add-teal"
+    ],
+    "sessions": [],
+    "workspaces": []
+  }
+}

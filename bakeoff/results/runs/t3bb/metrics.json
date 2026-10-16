@@ -1,0 +1,35 @@
+{
+  "id": "t3bb",
+  "arm": "b",
+  "script": "S3b",
+  "repo": "/home/lik/.cache/bees-bakeoff/runs/t3bb/t3bb",
+  "pane": "w6M:p1",
+  "lead": "lead-t3bb",
+  "workspace": "w6M",
+  "created": "2026-10-16T03:58:46.212Z",
+  "wall_s": 192,
+  "captain_turns": 3,
+  "interventions": 0,
+  "check": {
+    "script": "S3b",
+    "pass": true,
+    "failures": []
+  },
+  "tokens": {
+    "sessions": 2,
+    "subagents": 0,
+    "input": 48,
+    "output": 5377,
+    "cache_read": 1029188,
+    "cache_write": 51385
+  },
+  "leftovers": {
+    "worktrees": 0,
+    "branches": [],
+    "remote_branches": [
+      "bee-story"
+    ],
+    "sessions": [],
+    "workspaces": []
+  }
+}

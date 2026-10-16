@@ -1,0 +1,33 @@
+{
+  "id": "t1b",
+  "arm": "b",
+  "script": "S1",
+  "repo": "/home/lik/.cache/bees-bakeoff/runs/t1b/t1b",
+  "pane": "w61:p1",
+  "lead": "lead-t1b",
+  "workspace": "w61",
+  "created": "2026-10-16T03:48:50.473Z",
+  "wall_s": 81,
+  "captain_turns": 3,
+  "interventions": 0,
+  "check": {
+    "script": "S1",
+    "pass": true,
+    "failures": []
+  },
+  "tokens": {
+    "sessions": 2,
+    "subagents": 0,
+    "input": 30,
+    "output": 3063,
+    "cache_read": 673431,
+    "cache_write": 46822
+  },
+  "leftovers": {
+    "worktrees": 0,
+    "branches": [],
+    "remote_branches": [],
+    "sessions": [],
+    "workspaces": []
+  }
+}

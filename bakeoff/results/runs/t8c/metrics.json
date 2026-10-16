@@ -1,0 +1,33 @@
+{
+  "id": "t8c",
+  "arm": "c",
+  "script": "S8",
+  "repo": "/home/lik/.cache/bees-bakeoff/runs/t8c/t8c",
+  "pane": "w81:p1",
+  "lead": "queen-t8c",
+  "workspace": "w81",
+  "created": "2026-10-16T04:35:30.645Z",
+  "wall_s": 287,
+  "captain_turns": 2,
+  "interventions": 0,
+  "check": {
+    "script": "S8",
+    "pass": true,
+    "failures": []
+  },
+  "tokens": {
+    "sessions": 2,
+    "subagents": 0,
+    "input": 28,
+    "output": 3100,
+    "cache_read": 640078,
+    "cache_write": 48401
+  },
+  "leftovers": {
+    "worktrees": 0,
+    "branches": [],
+    "remote_branches": [],
+    "sessions": [],
+    "workspaces": []
+  }
+}

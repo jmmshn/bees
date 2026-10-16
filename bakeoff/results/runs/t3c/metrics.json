@@ -1,0 +1,35 @@
+{
+  "id": "t3c",
+  "arm": "c",
+  "script": "S3",
+  "repo": "/home/lik/.cache/bees-bakeoff/runs/t3c/t3c",
+  "pane": "w6G:p1",
+  "lead": "queen-t3c",
+  "workspace": "w6G",
+  "created": "2026-10-16T03:55:35.432Z",
+  "wall_s": 133,
+  "captain_turns": 3,
+  "interventions": 0,
+  "check": {
+    "script": "S3",
+    "pass": true,
+    "failures": []
+  },
+  "tokens": {
+    "sessions": 2,
+    "subagents": 0,
+    "input": 56,
+    "output": 4678,
+    "cache_read": 1252506,
+    "cache_write": 50521
+  },
+  "leftovers": {
+    "worktrees": 0,
+    "branches": [],
+    "remote_branches": [
+      "t3c-1-1"
+    ],
+    "sessions": [],
+    "workspaces": []
+  }
+}

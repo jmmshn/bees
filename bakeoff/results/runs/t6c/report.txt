@@ -1,0 +1,14 @@
+Thirteen of the 40 files in `data/` contain a palindrome of 5 or more letters, and `data/` has **226 lines** in total.
+
+| File | Palindrome |
+|---|---|
+| f01, f03, f16, f23 | level |
+| f05, f11 | stats |
+| f07 | kayak |
+| f15, f32 | radar |
+| f20, f21 | civic |
+| f37, f39 | madam |
+
+- **Line count:** 114 lines in f01–f20 and 112 in f21–f40. Every file ends with a newline, so `wc -l` gives the true count.
+- **How it was split:** one worker took f01–f20 and the other took f21–f40. I ran my own check over all 40 files and got the same palindromes and the same total.
+- **Cleanup:** nothing in the repo was changed. I closed the research beads, t6c-1.1 (first half) and t6c-1.2 (second half), and ended both workers.

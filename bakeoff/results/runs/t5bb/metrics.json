@@ -1,0 +1,35 @@
+{
+  "id": "t5bb",
+  "arm": "b",
+  "script": "S5b",
+  "repo": "/home/lik/.cache/bees-bakeoff/runs/t5bb/t5bb",
+  "pane": "w7A:p1",
+  "lead": "lead-t5bb",
+  "workspace": "w7A",
+  "created": "2026-10-16T04:11:43.335Z",
+  "wall_s": 84,
+  "captain_turns": 3,
+  "interventions": 0,
+  "check": {
+    "script": "S5b",
+    "pass": true,
+    "failures": []
+  },
+  "tokens": {
+    "sessions": 2,
+    "subagents": 0,
+    "input": 26,
+    "output": 2887,
+    "cache_read": 574563,
+    "cache_write": 46232
+  },
+  "leftovers": {
+    "worktrees": 0,
+    "branches": [],
+    "remote_branches": [
+      "vet-titlecase"
+    ],
+    "sessions": [],
+    "workspaces": []
+  }
+}

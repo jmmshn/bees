@@ -1,0 +1,33 @@
+{
+  "id": "t7b",
+  "arm": "b",
+  "script": "S7",
+  "repo": "/home/lik/.cache/bees-bakeoff/runs/t7b/t7b",
+  "pane": "w7V:p1",
+  "lead": "lead-t7b",
+  "workspace": "w7V",
+  "created": "2026-10-16T04:24:28.455Z",
+  "wall_s": 300,
+  "captain_turns": 4,
+  "interventions": 1,
+  "check": {
+    "script": "S7",
+    "pass": true,
+    "failures": []
+  },
+  "tokens": {
+    "sessions": 2,
+    "subagents": 0,
+    "input": 40,
+    "output": 3869,
+    "cache_read": 823489,
+    "cache_write": 47474
+  },
+  "leftovers": {
+    "worktrees": 0,
+    "branches": [],
+    "remote_branches": [],
+    "sessions": [],
+    "workspaces": []
+  }
+}

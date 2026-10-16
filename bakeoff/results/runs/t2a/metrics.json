@@ -1,0 +1,33 @@
+{
+  "id": "t2a",
+  "arm": "a",
+  "script": "S2",
+  "repo": "/home/lik/.cache/bees-bakeoff/runs/t2a/t2a",
+  "pane": "w65:p1",
+  "lead": "lead-t2a",
+  "workspace": "w65",
+  "created": "2026-10-16T03:51:13.588Z",
+  "wall_s": 83,
+  "captain_turns": 3,
+  "interventions": 0,
+  "check": {
+    "script": "S2",
+    "pass": true,
+    "failures": []
+  },
+  "tokens": {
+    "sessions": 1,
+    "subagents": 3,
+    "input": 40,
+    "output": 3637,
+    "cache_read": 741602,
+    "cache_write": 77629
+  },
+  "leftovers": {
+    "worktrees": 0,
+    "branches": [],
+    "remote_branches": [],
+    "sessions": [],
+    "workspaces": []
+  }
+}

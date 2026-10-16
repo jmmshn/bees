@@ -1,0 +1,33 @@
+{
+  "id": "t6a",
+  "arm": "a",
+  "script": "S6",
+  "repo": "/home/lik/.cache/bees-bakeoff/runs/t6a/t6a",
+  "pane": "w7K:p1",
+  "lead": "lead-t6a",
+  "workspace": "w7K",
+  "created": "2026-10-16T04:22:10.675Z",
+  "wall_s": 45,
+  "captain_turns": 1,
+  "interventions": 0,
+  "check": {
+    "script": "S6",
+    "pass": true,
+    "failures": []
+  },
+  "tokens": {
+    "sessions": 1,
+    "subagents": 2,
+    "input": 24,
+    "output": 1621,
+    "cache_read": 361108,
+    "cache_write": 56505
+  },
+  "leftovers": {
+    "worktrees": 0,
+    "branches": [],
+    "remote_branches": [],
+    "sessions": [],
+    "workspaces": []
+  }
+}

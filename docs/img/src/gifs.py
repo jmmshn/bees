@@ -32,8 +32,9 @@ STYLE = {
     "claude": "#d2a8ff",  # ● the session's reply
     "ring": "#e3b341",  # [bs] doorbell, working
     "good": "#56d364",  # done
+    "idle": "#39c5bb",  # an idle session's dot
 }
-STATE = {"working": "ring", "done": "good", "idle": "note"}
+STATE = {"working": "ring", "done": "good", "idle": "idle"}  # done is drawn hollow
 
 
 def font():
@@ -55,7 +56,7 @@ def bash(dt, cmd, out, gap=0.4):
 
 
 QUEEN = [
-    (0.0, "ws", ("queen t2c", "idle")),
+    (0.0, "ws", ("t2c", "idle")),
     (
         0.0,
         "user",
@@ -65,7 +66,7 @@ QUEEN = [
             "  the top of haiku.txt",
         ],
     ),
-    (0.3, "ws", ("queen t2c", "working")),
+    (0.3, "ws", ("t2c", "working")),
     *bash(1.2, 'bs epic "toy file cleanups"', ["t2c-1", 'add beads with: bs bead new --parent t2c-1 "..."']),
     *bash(0.8, 'bs bead new --parent t2c-1 "Sort fruits.txt alphabetically" …', ["t2c-1.1", "t2c-1.2", "t2c-1.3"]),
     (0.8, "cmd", ['● Bash(bs spawn --label "sort fruits" t2c-1.1; bs spawn … ; bs status)']),
@@ -117,9 +118,9 @@ QUEEN = [
             "  then close the beads and end the workers.",
         ],
     ),
-    (0.0, "ws", ("queen t2c", "idle")),
+    (0.0, "ws", ("t2c", "idle")),
     (1.6, "user", ["❯ merge all three"]),
-    (0.0, "ws", ("queen t2c", "working")),
+    (0.0, "ws", ("t2c", "working")),
     *bash(0.8, "git merge --no-ff … && git push origin main …", ["…", "   6fd050d..727d871  main -> main"]),
     (0.6, "cmd", ["● Bash(bd close t2c-1.1 t2c-1.2 t2c-1.3; bs end t2c-1-1; … ; bs prune)"]),
     (
@@ -146,11 +147,11 @@ QUEEN = [
             "  three workers, and deleted their merged branches.",
         ],
     ),
-    (0.0, "ws", ("queen t2c", "idle")),
+    (0.0, "ws", ("t2c", "idle")),
 ]
 
 WORKER = [
-    (0.0, "ws", ("queen t2c", "working")),
+    (0.0, "ws", ("t2c", "working")),
     (0.0, "ws", ("sort fruits", "working")),
     (0.0, "ws", ("dedupe todo", "working")),
     (0.0, "ws", ("haiku title", "working")),
@@ -189,7 +190,7 @@ WORKER = [
 ]
 
 SCENES = [
-    ("queen", "queen t2c", "queen-t2c", QUEEN),
+    ("queen", "t2c", "queen-t2c", QUEEN),
     ("worker", "sort fruits", "t2c-1-1", WORKER),
 ]
 
@@ -227,15 +228,26 @@ def render(name, focus, session, script):
                 lines.append((kind, line))
         im = Image.new("RGB", (w, h + LINE + PAD), BG)
         d = ImageDraw.Draw(im)
-        # sidebar: herdr's workspace list (illustration)
+        # sidebar: herdr's spaces list (illustration): the repo's space with its branch,
+        # then each worker's worktree space nested under it
         d.rectangle([0, 0, sw, h], fill=BAR)
-        d.text((PAD, 5), "herdr", font=f, fill=STYLE["note"])
-        for i, (label, state) in enumerate(ws.items()):
-            y = bar + PAD + i * LINE * 1.5
+        d.text((PAD, 5), "spaces", font=f, fill=STYLE["note"])
+        items = list(ws.items())
+        rows = [(items[0], 0, None), (("main", None), 1, None)]
+        rows += [(it, 2, "└─" if k == len(items) - 2 else "├─") for k, it in enumerate(items[1:])]
+        for r, ((label, state), depth, branch) in enumerate(rows):
+            y = bar + PAD + r * LINE * 1.4
             if label == focus:
                 d.rectangle([0, y - 3, sw, y + LINE - 1], fill=RULE)
-            d.text((PAD, y), f"{i + 1} {label}", font=f, fill=STYLE["user"])
-            d.ellipse([sw - PAD - 8, y + 4, sw - PAD, y + 12], fill=STYLE[STATE[state]])
+            x = PAD + depth * 2 * cw
+            if branch:
+                d.text((PAD + 2 * cw, y), branch, font=f, fill=STYLE["note"])
+                x += cw
+            if state:
+                dot, fill = STYLE[STATE[state]], state != "done"
+                d.ellipse([x, y + 5, x + 8, y + 13], fill=dot if fill else None, outline=dot, width=2)
+                x += 2 * cw
+            d.text((x, y), label, font=f, fill=STYLE["user"] if state or depth else STYLE["out"])
         # session pane: the last ROWS lines
         d.rectangle([sw, 0, w, bar], fill=PANE)
         d.line([sw, bar, w, bar], fill=RULE)
@@ -250,6 +262,8 @@ def render(name, focus, session, script):
     sheet = Image.new("RGB", (w, frames[0].height * len(frames)))
     for i, fr in enumerate(frames):
         sheet.paste(fr, (0, i * fr.height))
+    for i, color in enumerate(STYLE.values()):  # keep small dots their true colour
+        sheet.paste(color, (i * 40, 0, i * 40 + 40, 400))
     pal = sheet.quantize(colors=64, method=Image.Quantize.MEDIANCUT)  # one palette for every frame
     frames = [fr.quantize(palette=pal, dither=Image.Dither.NONE) for fr in frames]
     path = OUT / f"{name}.gif"

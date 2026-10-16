@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -87,7 +88,7 @@ func (HerdrCLI) StartClaude(ctx context.Context, pane, name string, args ...stri
 	if err := CheckAgentArgs(args); err != nil {
 		return err
 	}
-	code, err := herdr(ctx, nil, append([]string{"agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", herdrStartTimeout, "--"}, args...)...)
+	code, err := herdr(ctx, nil, append([]string{"agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", strconv.FormatInt(herdrStartTimeout.Milliseconds(), 10), "--"}, args...)...)
 	// Codes seen with herdr 0.9.3 (bees-1.14). agent_not_ready: blocked during startup,
 	// e.g. at Claude's folder-trust prompt, reported about 3 s in. timeout: Claude never
 	// sat idle at its prompt in time, either busy with its first prompt or exited (as
@@ -104,7 +105,7 @@ func (HerdrCLI) StartClaude(ctx context.Context, pane, name string, args ...stri
 // herdrStartTimeout bounds herdr's wait for an idle Claude: long enough for a cold
 // start (3-6 s) and the trust prompt (3.4 s), short of herdr's 30 s default, because a
 // bee busy with its doorbell is never idle in time.
-const herdrStartTimeout = "10000"
+const herdrStartTimeout = 10 * time.Second
 
 func (HerdrCLI) RemoveWorktree(ctx context.Context, workspace string) error {
 	code, err := herdr(ctx, nil, "worktree", "remove", "--workspace", workspace, "--force")
@@ -144,7 +145,7 @@ func (HerdrCLI) Workspaces(ctx context.Context) ([]Workspace, error) {
 type ClaudeSessions struct{}
 
 func (ClaudeSessions) Alive(ctx context.Context, name string, wait time.Duration) (bool, error) {
-	deadline := time.Now().Add(wait)
+	deadline := time.Now().Add(wait) // wait 0: one look
 	for {
 		_, err := claude.Find(name)
 		if err == nil {
@@ -156,6 +157,7 @@ func (ClaudeSessions) Alive(ctx context.Context, name string, wait time.Duration
 		if time.Now().After(deadline) {
 			return false, nil
 		}
+		// ponytail: polls the registry; watching ~/.claude/sessions would wake sooner.
 		select {
 		case <-ctx.Done():
 			return false, ctx.Err()

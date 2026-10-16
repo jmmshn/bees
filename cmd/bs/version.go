@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"time"
 )
 
 // ownModule is bs's module: a directory whose go.mod declares it is bs's source.
@@ -41,7 +42,12 @@ func cmdVersion(ctx context.Context, args []string, stdin io.Reader, stdout, std
 // commit behind that repo's main: merged work not installed yet (AGENTS.md motif 14).
 // It stays quiet whenever it can't tell: no stamp, not bs's repo, or a build from a
 // commit main doesn't contain (a branch build).
+//
+// ponytail: compares with the local main (not origin/main), ignores vcs.modified, and
+// reads only go.mod's first line; enough to catch "merged but never installed".
 func warnIfStale(ctx context.Context, stderr io.Writer) {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second) // never hold up the command
+	defer cancel()
 	rev := buildRevision()
 	repo := sourceRepo()
 	if rev == "" || repo == "" {

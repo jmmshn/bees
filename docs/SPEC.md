@@ -6,7 +6,7 @@ This spec covers **v0**, the walking skeleton, plus **spawn**, which v0 grows in
 
 ## Scope
 
-v0 proves the core loop: the queen sends a message, an idle bee wakes, reads it and replies, and the queen wakes. Spawn then lets the queen start a bee per bead in its own herdr workspace ([ADR-0006](adr/0006-spawn-and-naming.md)).
+v0 proves the core loop: the queen sends a message, an idle worker wakes, reads it and replies, and the queen wakes. Spawn then lets the queen start a worker per bead in its own herdr workspace ([ADR-0006](adr/0006-spawn-and-naming.md)).
 
 | In v0 + spawn | Deferred to v1 |
 |---|---|
@@ -20,9 +20,9 @@ Platform: Linux only.
 
 ## Done when
 
-1. An idle bee wakes within 2 s of `bs send`.
-2. A queen → bee → queen round trip completes with nobody typing in either session.
-3. Messages sent while a bee is not running are delivered on the first send after it starts.
+1. An idle worker wakes within 2 s of `bs send`.
+2. A queen → worker → queen round trip completes with nobody typing in either session.
+3. Messages sent while a worker is not running are delivered on the first send after it starts.
 4. A bs process killed mid-write loses no committed message and leaves the logbook readable.
 
 ## Layout
@@ -31,7 +31,7 @@ Platform: Linux only.
 cmd/bs/                   subcommands, flags, output
 internal/logbook/          the entries table
 internal/project/          which project, logbook and repo; which session am I
-internal/bee/             Fleet.Spawn / Fleet.End; Herdr and Beads ports with CLI adapters
+internal/worker/           Fleet.Spawn / Fleet.End; Herdr and Beads ports with CLI adapters
 internal/harness/claude/   registry lookup, auth token, NDJSON ring
 ```
 
@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS entries (
   ts      TEXT NOT NULL,              -- RFC 3339, UTC, milliseconds
   kind    TEXT NOT NULL CHECK (kind IN ('message','received','rang','spawned','ended')),
   actor   TEXT NOT NULL,              -- session that wrote the entry
-  subject TEXT,                       -- message: recipient; spawned/ended: bee name
+  subject TEXT,                       -- message: recipient; spawned/ended: worker name
   ref     TEXT REFERENCES entries(id), -- received: the message; ended: the spawned entry; a brief: its spawned entry
   data    TEXT CHECK (data IS NULL OR json_valid(data)) -- message: {"body": "..."}
 ) STRICT;
@@ -155,7 +155,7 @@ func Me(flagAs string) (string, error)      // --as → parent-process walk → 
 ## Spawn
 
 ```go
-package bee
+package worker
 
 func Name(bead string) (string, error) // bees-12.3 → bees-12-3; refuses names herdr can't take
 func Belongs(project, bead string) bool // ^<project>-\d+(\.\d+)*$
@@ -200,13 +200,13 @@ type Result struct {
 }
 // SpawnAll: one Result per Request, in order. Every request is checked (steps 1–5) before
 // anything is touched; if any is Refused, nothing starts and the rest get ErrNotStarted.
-// Then steps 6–7 run one bee at a time and step 8 runs concurrently; past the checks, a
-// failure doesn't stop the others. A bee named twice is ErrTwice the second time (a
+// Then steps 6–7 run one worker at a time and step 8 runs concurrently; past the checks, a
+// failure doesn't stop the others. A worker named twice is ErrTwice the second time (a
 // refused first occurrence doesn't count).
 func (f Fleet) SpawnAll(ctx context.Context, reqs []Request) []Result
 func Refused(err error) bool // ErrBadLabel, ErrNoLabel, ErrLabelChange, ErrTwice: fix the command
 func (f Fleet) End(ctx context.Context, name string) error                       // ErrNotSpawned; already ended → nil
-func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error)           // one Pruned per ended bee's branch still present
+func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error)           // one Pruned per ended worker's branch still present
 ```
 
 `Spawn(bead)`:
@@ -220,23 +220,23 @@ func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error)           
 5. A herdr workspace whose worktree `checkout_path` is `<repo>-WT/<name>` but no `spawned` entry → `ErrOrphan`. Found by path, never by label: the label is free text, the path is built forward from the name, with the command to remove it by hand (`herdr worktree remove --workspace <id> --force`). It is never removed automatically.
 6. `herdr worktree create --cwd <repo> --branch <name> --path <repo>-WT/<name> --label <label> --no-focus` (herdr prints JSON).
 7. `RecordSpawn` immediately, in one transaction with the brief (`bd show` title and description) as a message from the queen: subject = name; data = bead, label, workspace, pane, worktree, branch, repo.
-8. `herdr agent start <name> --kind claude --pane <pane> --timeout 10000 -- --name <name> --settings '{"crossSessionInbound":"accept"}' --append-system-prompt-file ~/.cache/bees/<project>-worker.md "<doorbell>"` (no system prompt when the bee runs in another project's repo). Every argument passes `CheckAgentArgs` first. The doorbell is Claude's first prompt, so spawn doesn't depend on ringing. herdr's outcomes ([ADR-0007](adr/0007-claudes-registry-confirms-a-launch.md)):
+8. `herdr agent start <name> --kind claude --pane <pane> --timeout 10000 -- --name <name> --settings '{"crossSessionInbound":"accept"}' --append-system-prompt-file ~/.cache/bees/<project>-worker.md "<doorbell>"` (no system prompt when the worker runs in another project's repo). Every argument passes `CheckAgentArgs` first. The doorbell is Claude's first prompt, so spawn doesn't depend on ringing. herdr's outcomes ([ADR-0007](adr/0007-claudes-registry-confirms-a-launch.md)):
    - success → started;
    - `agent_not_ready`: Claude is blocked at a prompt → started with `Waiting`; bs tells the keeper to answer it in the worker's pane;
    - `timeout` → `ErrUnconfirmed`. herdr waits for an idle prompt, and a worker busy with its doorbell is never idle in time, so this is the usual outcome for a healthy worker; Claude may also have exited. `Sessions.Alive(name, 20s)` decides: live → started; not → an error naming `herdr pane read <pane>`. Before spawning, `bs spawn` warns if `~/.claude.json` shows the repo isn't trusted yet (read only; trust is keyed by the main checkout, so its worktrees share it). No settings file is written (Claude reads `settings.local.json` from the main checkout in a worktree), and no `BS_*` variables are needed.
 
 `End(name)`: read `LatestSpawn`; none → `ErrNotSpawned` (never ask herdr). Otherwise `herdr worktree remove --workspace <recorded id> --force`, then `RecordEnd`. The branch is always kept: `bs end` prints `branch <name> kept; bs prune deletes it once merged`.
 
-`Prune(dry)`: for each bee whose latest spawn has ended (`EndedSpawns`; only branches the logbook recorded, never guessed from git) and whose branch still exists in the recorded repo, decide `Merged` / `NotMerged` / `Unknown`, in order: the branch is an ancestor of the default branch; GitHub (`GitHub.MergedHeads`, `gh pr list --head <b> --state merged`, bounded at 15 s) has a merged PR whose head is the branch tip (gh missing, offline or no remote → skipped and noted, never "merged"); every path the branch changed since its merge-base is identical on the default branch (only those paths: main may have moved on; a branch that changed no paths isn't proven). The default branch is `origin/HEAD`'s target and its local twin, else `main`. A probe error is `Unknown`. `Merged` → `git branch -D` unless `dry`. Remote branches are never touched.
+`Prune(dry)`: for each worker whose latest spawn has ended (`EndedSpawns`; only branches the logbook recorded, never guessed from git) and whose branch still exists in the recorded repo, decide `Merged` / `NotMerged` / `Unknown`, in order: the branch is an ancestor of the default branch; GitHub (`GitHub.MergedHeads`, `gh pr list --head <b> --state merged`, bounded at 15 s) has a merged PR whose head is the branch tip (gh missing, offline or no remote → skipped and noted, never "merged"); every path the branch changed since its merge-base is identical on the default branch (only those paths: main may have moved on; a branch that changed no paths isn't proven). The default branch is `origin/HEAD`'s target and its local twin, else `main`. A probe error is `Unknown`. `Merged` → `git branch -D` unless `dry`. Remote branches are never touched.
 
 ## Commands
 
 ```text
 bs init                       create the logbook file and table if missing (optional)
 bs queen                      start the queen: claude --name queen-<project> --append-system-prompt-file <project>-queen.md in the repo (no BS_* set)
-bs spawn [--repo P] --label L <bead> [--label L <bead> …]  start a bee per bead (SpawnAll), each in its own herdr workspace labelled by the --label before it (--label only on a first spawn; --repo before the first bead, for all); exit 2 if refused (nothing started), 1 if any start failed
-bs end <bee>                 remove the bee's recorded workspace; keep its branch
-bs prune [--dry-run]          delete ended bees' local branches once merged; exit 3 if one is kept unmerged, 4 if one couldn't be checked or deleted
+bs spawn [--repo P] --label L <bead> [--label L <bead> …]  start a worker per bead (SpawnAll), each in its own herdr workspace labelled by the --label before it (--label only on a first spawn; --repo before the first bead, for all); exit 2 if refused (nothing started), 1 if any start failed
+bs end <worker>              remove the worker's recorded workspace; keep its branch
+bs prune [--dry-run]          delete ended workers' local branches once merged; exit 3 if one is kept unmerged, 4 if one couldn't be checked or deleted
 bs epic <title>               create the project's next epic, <project>-<n>
 bs bead ls [--all] [<expr>]   bd query 'id="<project>-*"', not closed unless --all; <expr> is ANDed
 bs bead new --parent <project>-N [--description D] [--type T] [--priority P] <title>
@@ -266,7 +266,7 @@ if err := claude.Ring(s, doorbell(unread, me), prio); err != nil {
 }
 ```
 
-The doorbell text explains itself, so bees need no setup prompt in v0:
+The doorbell text explains itself, so workers need no setup prompt in v0:
 
 ```text
 [bs] 2 unread (queen ×2) — run: bs inbox   (reply with: bs send queen "...")
@@ -275,7 +275,7 @@ The doorbell text explains itself, so bees need no setup prompt in v0:
 
 Senders are listed in order of their oldest unread message; "reply with" names whoever just sent.
 
-`bs status` combines `claude.List()` with `lb.UnreadCounts()`. It shows the sessions this project's logbook names (writers, recipients, bees) that are running or have unread messages, with their unread counts. A stopped session with nothing unread is history and is left out. Claude's registry is machine-wide, so a running session this project's logbook has never named (another project's, or one that hasn't used bs yet) is left out too (R30). It writes nothing.
+`bs status` combines `claude.List()` with `lb.UnreadCounts()`. It shows the sessions this project's logbook names (writers, recipients, workers) that are running or have unread messages, with their unread counts. A stopped session with nothing unread is history and is left out. Claude's registry is machine-wide, so a running session this project's logbook has never named (another project's, or one that hasn't used bs yet) is left out too (R30). It writes nothing.
 
 ```text
 SESSION      STATE        UNREAD
@@ -295,7 +295,7 @@ bs epic "ringing"        # → bees-2; then bs bead new --parent bees-2 "…"
 bs spawn --label "ring on send" bees-2.1   # inside the queen: bees-2-1 in bees-WT/bees-2-1
 ```
 
-Manual bee (no herdr): `claude --name bee-a --settings '{"crossSessionInbound":"accept"}'` in its worktree.
+Manual worker (no herdr): `claude --name worker-a --settings '{"crossSessionInbound":"accept"}'` in its worktree.
 
 ## Tests
 
@@ -307,14 +307,14 @@ Manual bee (no herdr): `claude --name bee-a --settings '{"crossSessionInbound":"
 | `TestUnreadIsSet` | reading a newer message leaves older ones unread |
 | `TestRecordReceiptsIdempotent` | recording the same receipt twice is a no-op |
 | `project` tests | resolution order; a linked worktree resolves to its main repo's project |
-| `bee` tests (fake Herdr and Beads) | spawn → settings + entry + brief + start args; second spawn `ErrRunning`; dead agent resumes in the same workspace with `--continue` only if it read its inbox since the spawn; `agent_not_ready` counts as started; herdr `timeout` counts as started only with a live registry session; an unreadable registry starts nothing; an ended spawn's brief is retired; first spawn without a label or with a bad one refused before herdr; a restart keeps its label and refuses another; orphan (by worktree path, not label) `ErrOrphan` with the cleanup command and nothing removed; end removes exactly the recorded id; wrong repo label refused |
+| `worker` tests (fake Herdr and Beads) | spawn → settings + entry + brief + start args; second spawn `ErrRunning`; dead agent resumes in the same workspace with `--continue` only if it read its inbox since the spawn; `agent_not_ready` counts as started; herdr `timeout` counts as started only with a live registry session; an unreadable registry starts nothing; an ended spawn's brief is retired; first spawn without a label or with a bad one refused before herdr; a restart keeps its label and refuses another; orphan (by worktree path, not label) `ErrOrphan` with the cleanup command and nothing removed; end removes exactly the recorded id; wrong repo label refused |
 | `TestHerdrKeepsLabelsVerbatim` | herdr stores any workspace label as given (empty, newlines, 200 characters, unicode), so fakeHerdr does too and `CheckLabel` is bs's rule; opens and closes a throwaway workspace per label; skipped without a running herdr |
 | `TestCheckAgentArgsMatchesRealHerdr` | the probed table of agent arguments against the installed herdr (unknown pane, so nothing starts); skipped without a running herdr. Every constraint fakeHerdr enforces comes from `CheckAgentArgs`, so this holds the fake to the real tool |
 | `claude` tests (`claudetest.FakeRegistry`) | a fake unix listener sees the auth line only when a key exists, then the user line with its priority, then EOF; a `procStart` mismatch or another `peerProtocol` gives `ErrNotRunning` |
 | `cmd/bs` status tests | running with 0 and N unread, not running with N unread, stopped with none left out; `--json`; status records no receipts |
 | `cmd/bs` ring tests | doorbell text and `--now`; not running → stored, "queued", exit 0; failed ring → warning, exit 0 |
 | `TestKilledWriterLosesNoCommittedMessage` | "Done when" 4: a separate process SIGKILLed mid-way through sends; every acknowledged send survives and the logbook still writes |
-| `scripts/e2e.sh <bead>` | "Done when" 1–3 with a real queen and bee in herdr: wake time from the bee's transcript, round trip, mail queued while stopped |
+| `scripts/e2e.sh <bead>` | "Done when" 1–3 with a real queen and worker in herdr: wake time from the worker's transcript, round trip, mail queued while stopped |
 
 ## v1 outline
 

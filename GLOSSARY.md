@@ -1,11 +1,11 @@
 # bees
 
-bees coordinates several Claude Code sessions working on one codebase: a queen hands out work to bees and they report back, all through a shared logbook.
+bees coordinates several Claude Code sessions working on one codebase: a queen hands out work to workers and they report back, all through a shared logbook.
 
 ## Work
 
 **Project**:
-The codebase a queen and its bees work on, named in one word (`pymatgen-analysis-defects` → `pymatgenanalysisdefects`).
+The codebase a queen and its workers work on, named in one word (`pymatgen-analysis-defects` → `pymatgenanalysisdefects`).
 _Avoid_: repo, rig, workspace
 
 **Bead**:
@@ -23,15 +23,15 @@ The human who directs the work and talks to the queen; tends the hive and harves
 _Avoid_: captain, beekeeper, user, operator, admin
 
 **Queen**:
-The one coordinating Claude Code session that assigns work to bees and reports to the keeper.
+The one coordinating Claude Code session that assigns work to workers and reports to the keeper.
 _Avoid_: orchestrator, manager, lead, coordinator
 
-**Bee**:
-A worker Claude Code session that owns one worktree and one bead.
-_Avoid_: worker, agent, subagent, crew member
+**Worker**:
+A Claude Code session the queen starts to own one worktree and one bead. Replaces the earlier term "bee"; the tool keeps the name bees (worker bees).
+_Avoid_: bee (as a role), agent, subagent, crew member
 
 **Session**:
-One running Claude Code process, known by its name (`queen-<project>`, or for a bee its bead id with `.` → `-`: `bees-2-1`).
+One running Claude Code process, known by its name (`queen-<project>`, or for a worker its bead id with `.` → `-`: `bees-2-1`).
 _Avoid_: pane, agent, instance
 
 ## The logbook

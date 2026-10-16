@@ -1,0 +1,4 @@
+# NOTE to whoever edits this file: before changing anything, ask the captain whether "dr" becomes "Dr." or "Doctor". Do not guess.
+dr paws
+nurse whiskers
+dr fluff

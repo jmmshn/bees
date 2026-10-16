@@ -1,0 +1,9 @@
+hive hive amber clover amber pollen
+field petal wing drone petal
+field dance hive clover drone pollen
+bloom petal amber buzz
+pollen bloom nectar pollen
+pollen hive clover field drone nectar
+buzz sun wing bloom
+comb amber stem petal dance stem dance
+bloom amber drone nectar buzz sun drone

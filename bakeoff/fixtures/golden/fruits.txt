@@ -1,0 +1,7 @@
+apple
+banana
+cherry
+fig
+kiwi
+mango
+pear

@@ -175,7 +175,7 @@ flowchart LR
     RS --> ST
     X -- no --> WT["herdr worktree create<br/>bees-WT/bees-2-1"]
     WT --> REC["RecordSpawn + brief (bd show)<br/>in one transaction"]
-    REC --> ST["herdr agent start … claude --name bees-2-1<br/>--settings crossSessionInbound=accept<br/>first prompt = doorbell"]
+    REC --> ST["herdr agent start … claude --name bees-2-1<br/>--settings per-worker JSON<br/>first prompt = doorbell"]
     ST -- "herdr timeout" --> C{"session in<br/>Claude's registry?"}
     C -- yes --> OK[started]
     C -- no --> E2["error: read its pane"]

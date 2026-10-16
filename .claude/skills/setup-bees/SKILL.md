@@ -27,7 +27,7 @@ Needs at least the `go` version in [`go.mod`](../../../go.mod). Install from <ht
 
 Needs 2.1.296 or later: cross-session messaging, which the doorbell rides on. Update with `claude update`.
 
-Workers need nothing in Claude's settings files: `bs spawn` passes `--settings '{"crossSessionInbound":"accept"}'` to each worker. The queen, started by `bs queen`, gets no such flag; in bypass permission mode Claude holds incoming messages instead of acting on them. If the user runs the queen in bypass mode, offer to add `"crossSessionInbound": "accept"` to `~/.claude/settings.json`. bs needs no Claude plugin, hook or MCP server.
+Workers need nothing in Claude's settings files: `bs spawn` passes each worker its own `--settings` JSON with `"crossSessionInbound": "accept"`, auto-mode `environment` and `allow` entries naming its worktree and branch (build, test and push its own branch; the keeper merges by hand), and `permissions.deny` rules against force-push, pushing to `main`/`master`, `gh pr merge` and approving PRs. The queen, started by `bs queen`, gets no such flag; in bypass permission mode Claude holds incoming messages instead of acting on them. If the user runs the queen in bypass mode, offer to add `"crossSessionInbound": "accept"` to `~/.claude/settings.json`. bs needs no Claude plugin, hook or MCP server.
 
 Workers start in the user's default permission mode, and a worker that hits a permission prompt waits in its herdr pane until someone answers it there. Ask which mode workers should run in; to change it, offer to set `"permissions": {"defaultMode": "<mode>"}` in `~/.claude/settings.json` (`auto` keeps workers moving with a safety check on each action).
 

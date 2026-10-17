@@ -90,6 +90,7 @@ func TestEnvBeatsGitAndFlagBeatsEnv(t *testing.T) {
 
 func TestLogbookOverride(t *testing.T) {
 	clearEnv(t)
+	t.Setenv("BS_REPOS", t.TempDir())
 	t.Setenv("BS_LOGBOOK", "/tmp/x.db")
 	p, err := project.Resolve("bees")
 	if err != nil {
@@ -105,6 +106,33 @@ func TestNoProjectOutsideGit(t *testing.T) {
 	t.Chdir(t.TempDir())
 	if _, err := project.Resolve(""); !errors.Is(err, project.ErrNoProject) {
 		t.Fatalf("err = %v, want ErrNoProject", err)
+	}
+}
+
+func TestNamedProjectNeedsReposOutsideItsGitRepo(t *testing.T) {
+	clearEnv(t)
+	t.Chdir(t.TempDir())
+	p, err := project.Resolve("bees")
+	if err != nil || p.Repo != "" {
+		t.Fatalf("outside git: got %+v, %v; want no repo and no error (messages need only the logbook)", p, err)
+	}
+	if err := p.NeedRepo(); !errors.Is(err, project.ErrNoRepos) {
+		t.Fatalf("outside git: NeedRepo = %v, want ErrNoRepos", err)
+	}
+	t.Chdir(gitRepo(t, "dotfiles"))
+	if p, _ := project.Resolve("bees"); !errors.Is(p.NeedRepo(), project.ErrNoRepos) {
+		t.Fatalf("in another project's repo: got %+v, want ErrNoRepos", p)
+	}
+}
+
+func TestNamedProjectUsesItsOwnGitRepo(t *testing.T) {
+	clearEnv(t)
+	repo := gitRepo(t, "jobflow-ray")
+	t.Chdir(repo)
+	t.Setenv("BS_PROJECT", "jobflowray") // as in every worker's settings
+	p, err := project.Resolve("")
+	if err != nil || p.Repo != repo {
+		t.Fatalf("got %+v, %v; want repo %s with no BS_REPOS", p, err, repo)
 	}
 }
 

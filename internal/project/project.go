@@ -17,6 +17,7 @@ import (
 var (
 	ErrNoProject  = errors.New("can't tell which project; run inside its git repo, set BS_PROJECT or pass --project")
 	ErrBadProject = errors.New("project names must be a letter then up to 24 letters or digits (after dropping - and _); set BS_PROJECT")
+	ErrNoRepos    = errors.New("can't find the project's repo; run bs inside it, or set BS_REPOS to the directory that holds your repos")
 	ErrNoSession  = errors.New("can't tell which session you are; run bs from inside a named Claude session, or pass --as")
 )
 
@@ -27,7 +28,7 @@ var validName = regexp.MustCompile(`^[a-z][a-z0-9]{0,24}$`)
 // Project is the scope of one queen, its workers and its logbook.
 type Project struct {
 	Name    string // e.g. "bees"
-	Repo    string // main checkout of the project's git repo
+	Repo    string // main checkout of the project's git repo; empty if unknown
 	Logbook string // path to this project's logbook file
 }
 
@@ -35,19 +36,28 @@ type Project struct {
 // herdr's session names are machine-wide.
 func (p Project) Queen() string { return "queen-" + p.Name }
 
+// NeedRepo fails with ErrNoRepos when the project's repo is unknown.
+func (p Project) NeedRepo() error {
+	if p.Repo == "" {
+		return fmt.Errorf("project %s: %w", p.Name, ErrNoRepos)
+	}
+	return nil
+}
+
 // Resolve finds the project from flag, then BS_PROJECT, then the git repo containing
-// the working directory. A linked worktree resolves to its main repo.
+// the working directory. A linked worktree resolves to its main repo. The repo is the
+// git repo when it is the project's, else the project's directory under BS_REPOS, else
+// empty: messages need only the logbook, and NeedRepo stops what would run in no repo.
 func Resolve(flag string) (Project, error) {
-	name, repo := flag, ""
+	name, git := flag, mainRepo()
 	if name == "" {
 		name = os.Getenv("BS_PROJECT")
 	}
 	if name == "" {
-		repo = mainRepo()
-		if repo == "" {
+		if git == "" {
 			return Project{}, ErrNoProject
 		}
-		name = filepath.Base(repo)
+		name = filepath.Base(git)
 	}
 	name = normalise(name)
 	if !validName.MatchString(name) {
@@ -57,11 +67,10 @@ func Resolve(flag string) (Project, error) {
 	if err != nil {
 		return Project{}, err
 	}
-	if repo == "" {
-		repos := os.Getenv("BS_REPOS")
-		if repos == "" {
-			repos = filepath.Join(home, "repos", "jmmshn") // ponytail: the author's layout; set BS_REPOS elsewhere
-		}
+	repo := ""
+	if git != "" && normalise(filepath.Base(git)) == name {
+		repo = git
+	} else if repos := os.Getenv("BS_REPOS"); repos != "" {
 		repo = repoDir(repos, name)
 	}
 	lb := os.Getenv("BS_LOGBOOK")

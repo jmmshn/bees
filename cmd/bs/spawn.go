@@ -112,6 +112,9 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return err
 	}
 	defer f.LB.Close()
+	if err := f.P.NeedRepo(); err != nil {
+		return err
+	}
 	trusted := claude.Trusted(f.P.Repo) // before spawning: starting a worker can't change it
 	var untrusted []string
 	failed, refused := false, false

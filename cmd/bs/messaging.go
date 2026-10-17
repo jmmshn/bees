@@ -110,28 +110,32 @@ func cmdSend(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	if to, err = worker.Address(ctx, lb, p.Name, to); err != nil {
 		return err
 	}
+	if err := project.CheckSession(to); err != nil {
+		return err
+	}
 	id, err := lb.Send(ctx, from, to, body)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "sent %s to %s\n", id, to)
-	if err := warnStranger(ctx, lb, p, to, stderr); err != nil {
+	if stranger, err := warnStranger(ctx, lb, p, to, stderr); err != nil || stranger {
 		return err
 	}
 	return ring(ctx, lb, from, to, *now, stdout, stderr)
 }
 
 // warnStranger warns when to is neither p's queen nor a worker spawned in p: it reads
-// another project's logbook, so the message may never be read (bees-1.54).
-func warnStranger(ctx context.Context, lb *logbook.Logbook, p project.Project, to string, stderr io.Writer) error {
+// another project's logbook, so the message may never be read (bees-1.54). A stranger is
+// never rung: a ring is a user turn, and bs rings only its own project's sessions (bees-7.4).
+func warnStranger(ctx context.Context, lb *logbook.Logbook, p project.Project, to string, stderr io.Writer) (bool, error) {
 	if to == p.Queen() {
-		return nil
+		return false, nil
 	}
 	if _, ok, err := lb.LatestSpawn(ctx, to); err != nil || ok {
-		return err
+		return false, err
 	}
-	fmt.Fprintf(stderr, "bs send: warning: %s is not %s or a worker spawned in project %s; it reads this logbook (%s) only if it runs in %s (set BS_PROJECT or pass --project)\n", to, p.Queen(), p.Name, p.Logbook, p.Name)
-	return nil
+	fmt.Fprintf(stderr, "bs send: warning: %s is not %s or a worker spawned in project %s, so bs stored the message without ringing it; %s reads this logbook (%s) only if it runs in %s (set BS_PROJECT or pass --project)\n", to, p.Queen(), p.Name, to, p.Logbook, p.Name)
+	return true, nil
 }
 
 // ring rings to with its unread count. The message is already stored, so a failed ring

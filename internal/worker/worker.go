@@ -93,7 +93,7 @@ type Fleet struct {
 	ForeignRepo bool   // skip the check that the bead belongs to P (--repo)
 }
 
-var herdrName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
+var herdrName = project.SessionName
 
 // Name is the worker's one name for a bead: session, herdr agent, branch, worktree dir
 // and address. Bead ids are Jira-style, <project>-<n>[.<m>…] (R27), and project names

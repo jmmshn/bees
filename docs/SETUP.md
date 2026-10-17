@@ -14,6 +14,7 @@ bs init                 # optional: creates ~/.local/share/bees/<project>.db (an
 ## Names
 
 - **Project:** the basename of the git repo you are in (a worktree counts as its main repo), lowercased with `-` and `_` dropped (`pymatgen-analysis-defects` → `pymatgenanalysisdefects`). It must be a letter and then up to 24 letters or digits. Otherwise set `BS_PROJECT` or pass `--project`.
+- **Repo:** the git repo you are in, when it is the project's. Naming another project (`BS_PROJECT`, `--project`) uses the directory under `BS_REPOS` whose normalised name is the project; `bs queen` and `bs spawn` refuse to start without one and say to set `BS_REPOS`.
 - **Queen:** `queen-<project>`.
 - **Bead ids:** `<project>-<n>` for epics (`bs epic "<title>"` makes the next one), `<project>-<n>.<m>` for their children (`bs bead new --parent <epic> "<title>"`). `bs bead ls` lists only this project's beads; the queen and workers are told to use these instead of `bd list`/`bd create`.
 - **Worker:** the bead id with `.` → `-` (`bees-2.1` → `bees-2-1`). That one name is its Claude session, herdr agent, git branch, worktree directory (`<repo>-WT/<name>`) and address for `bs send`.

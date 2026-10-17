@@ -69,3 +69,11 @@ _Avoid_: notification, ping, wake event
 **Ring**:
 To send a doorbell to a session.
 _Avoid_: notify, wake, poke
+
+## Outside names
+
+**crew**:
+The author's earlier, private multi-session tool that bees replaces. Docs cite its commits (`crew 4f65cd8`) as the incidents a design or bake-off card came from; the repo isn't public.
+
+**omp**:
+Another coding-agent harness the author uses; v1 plans a bs adapter for it beside Claude Code.

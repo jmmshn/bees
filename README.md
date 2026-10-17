@@ -29,12 +29,12 @@ with `uv run docs/img/src/gifs.py`.
 
 ## Install
 
-Private repo, Linux only. Needs [Go](https://go.dev/dl/), [Claude Code](https://code.claude.com)
+Linux only. Needs [Go](https://go.dev/dl/), [Claude Code](https://code.claude.com)
 2.1.296 or later (cross-session messaging), [herdr](https://herdr.dev) to run workers,
 and [`bd`](https://github.com/steveyegge/beads) for beads.
 
 ```sh
-git clone git@github.com:jmmshn/bees.git && cd bees
+git clone https://github.com/jmmshn/bees.git && cd bees
 go install ./cmd/bs
 bs version
 ```
@@ -202,4 +202,8 @@ time from Claude's registry and `/proc`. A dead session needs no cleanup: its me
 
 v0 on Linux: every "Done when" item in [SPEC](docs/SPEC.md#done-when) passes (`go test ./...`
 and `scripts/e2e.sh <throwaway bead>`). The [v1 outline](docs/SPEC.md#v1-outline) adds
-re-ringing, hooks, a keeper inbox and an omp adapter.
+re-ringing, hooks, a keeper inbox and an adapter for [omp](GLOSSARY.md#outside-names).
+
+## License
+
+[MIT](LICENSE).

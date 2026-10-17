@@ -8,7 +8,7 @@ Status: **accepted**, **superseded** (replaced by a later decision), or **open**
 
 | Id | Decision | Status | Recorded in |
 |---|---|---|---|
-| — | Build bees now. Claude Code's own tools don't cover: messages that survive a session exiting, bees in herdr panes, binding a session to a bead and worktree, and omp. v0 alone is thin; the real value is v1. Re-check Claude Code's native features before starting v1. | accepted | bees-1 notes |
+| — | Build bees now. Claude Code's own tools don't cover: messages that survive a session exiting, bees in herdr panes, binding a session to a bead and worktree, and [omp](../GLOSSARY.md#outside-names). v0 alone is thin; the real value is v1. Re-check Claude Code's native features before starting v1. | accepted | bees-1 notes |
 | S1 | The spec lives in the repo: `docs/SPEC.md`, `GLOSSARY.md`, `docs/adr/`. | accepted | this file |
 | S3 | Desk only; no phone path in v1 (that stays with dotfiles-4). Things that need the keeper show up in `bs status`. | accepted | SPEC v1 outline |
 | S4 | Claude Code only for v0/v1, behind a harness interface (`Launch`, `Ring`, `Alive`). omp comes in v1.1 through an in-process extension. | accepted | SPEC v1 outline |

@@ -27,6 +27,7 @@ func useTempLogbook(t *testing.T) {
 	t.Setenv("BS_LOGBOOK", filepath.Join(t.TempDir(), "logbook.db"))
 	t.Setenv("BS_SESSION", "")
 	t.Setenv("BS_PROJECT", "test")
+	t.Setenv("BS_REPOS", t.TempDir())
 	if _, stderr, code := bs(t, "init"); code != 0 {
 		t.Fatalf("init: exit %d: %s", code, stderr)
 	}

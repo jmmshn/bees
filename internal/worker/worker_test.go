@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -33,6 +34,7 @@ type fakeHerdr struct {
 	agents     map[string]string // live Claude sessions: name → pane
 	started    [][]string        // pane, name, args...
 	removed    []string
+	dirty      map[string]bool // worktree paths with modified or untracked files
 	failStart  error
 	liveAnyway bool  // with failStart: Claude came up all the same, as after herdr's timeout
 	aliveErr   error // the registry can't be read
@@ -91,7 +93,12 @@ func (h *fakeHerdr) Alive(ctx context.Context, name string, wait time.Duration) 
 	return ok, h.aliveErr
 }
 
-func (h *fakeHerdr) RemoveWorktree(ctx context.Context, workspace string) error {
+// RemoveWorktree refuses a dirty worktree without force, as herdr 0.9.3 does with
+// dirty_worktree_requires_force (TestHerdrDirtyWorktreeNeedsForce).
+func (h *fakeHerdr) RemoveWorktree(ctx context.Context, workspace string, force bool) error {
+	if i := slices.IndexFunc(h.workspaces, func(w worker.Workspace) bool { return w.ID == workspace }); i >= 0 && h.dirty[h.workspaces[i].Path] && !force {
+		return fmt.Errorf("herdr worktree: contains modified or untracked files, use --force: %w", worker.ErrDirty)
+	}
 	h.removed = append(h.removed, workspace)
 	h.workspaces = slices.DeleteFunc(h.workspaces, func(w worker.Workspace) bool { return w.ID == workspace })
 	return nil
@@ -245,9 +252,64 @@ func TestSpawnStartsAWorkerInItsOwnWorkspace(t *testing.T) {
 	if !strings.Contains(strings.Join(settings.AutoMode["environment"], " "), wt) {
 		t.Errorf("autoMode.environment = %q, want the worktree %s", settings.AutoMode["environment"], wt)
 	}
-	for _, rule := range []string{"Bash(git push --force*)", "Bash(git push * main*)", "Bash(git -C * push * --force*)", "Bash(gh pr merge*)", "Bash(gh pr review* --approve*)"} {
-		if !slices.Contains(settings.Permissions.Deny, rule) {
-			t.Errorf("permissions.deny = %q, want %s", settings.Permissions.Deny, rule)
+	if env := strings.Join(settings.AutoMode["environment"], " "); strings.Contains(env, "merge") {
+		t.Errorf("autoMode.environment = %q: without GitHub's word that main is protected, it must not claim the keeper merges", env)
+	}
+	denied := func(cmd string) bool {
+		return slices.ContainsFunc(settings.Permissions.Deny, func(rule string) bool { return claudeRuleMatches(rule, cmd) })
+	}
+	for _, cmd := range []string{
+		"git push --force origin bees-8", "git push origin main", "git push -u origin bees-8:main",
+		"git -C /wt push origin +bees-8", "git push origin HEAD:refs/heads/main", "git -c k=v push origin main",
+		"/usr/bin/git push origin main", "command git push origin master", "command /usr/bin/git -C /wt push -f",
+		"gh pr merge 41", "gh pr review 41 --approve",
+	} {
+		if !denied(cmd) {
+			t.Errorf("deny rules let through %q", cmd)
+		}
+	}
+	for _, cmd := range []string{
+		"git push -u origin bees-8", "git -C /wt push origin bees-8", "git push origin HEAD:refs/heads/bees-8",
+		"git commit -m 'deny git push to main'", "gh pr create --base main",
+	} {
+		if denied(cmd) {
+			t.Errorf("deny rules refuse the worker's own %q", cmd)
+		}
+	}
+}
+
+// claudeRuleMatches is Claude Code's Bash permission rule match: Bash(<pattern>) where *
+// matches any text, spaces and slashes too (probed on Claude Code 2.1.302 with
+// claude -p --settings: Bash(*/git push*) denied /usr/bin/git push origin main).
+func claudeRuleMatches(rule, cmd string) bool {
+	pat, ok := strings.CutPrefix(rule, "Bash(")
+	if !ok {
+		return false
+	}
+	parts := strings.Split(strings.TrimSuffix(pat, ")"), "*")
+	for i := range parts {
+		parts[i] = regexp.QuoteMeta(parts[i])
+	}
+	return regexp.MustCompile("^" + strings.Join(parts, ".*") + "$").MatchString(cmd)
+}
+
+// The environment tells the classifier the keeper merges by hand only when GitHub says
+// the default branch is protected (bees-7.4).
+func TestWorkerEnvironmentClaimsReviewOnlyOnAProtectedMain(t *testing.T) {
+	for i, gh := range []worker.GitHub{nil, fakeGitHub{protected: true, err: errors.New("offline")}, fakeGitHub{protected: true}} {
+		r := newRig(t)
+		r.fleet.G = gh
+		if _, err := r.fleet.Spawn(context.Background(), "bees-8", "spawn and end"); err != nil {
+			t.Fatal(err)
+		}
+		start := r.h.started[0]
+		var settings struct{ AutoMode map[string][]string }
+		if err := json.Unmarshal([]byte(start[slices.Index(start, "--settings")+1]), &settings); err != nil {
+			t.Fatal(err)
+		}
+		want := i == 2 // only GitHub answering "protected"
+		if got := strings.Contains(strings.Join(settings.AutoMode["environment"], " "), "the keeper merges"); got != want {
+			t.Errorf("GitHub %+v: environment = %q, claims keeper merges = %v, want %v", gh, settings.AutoMode["environment"], got, want)
 		}
 	}
 }
@@ -375,7 +437,7 @@ func TestEndedHalfStartedWorkerRespawnsWithOneBrief(t *testing.T) {
 	r := newRig(t)
 	r.h.failStart = errors.New("herdr agent: agent arguments cannot be encoded safely")
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
-	if err := r.fleet.End(ctx, "bees-8"); err != nil {
+	if err := r.fleet.End(ctx, "bees-8", false); err != nil {
 		t.Fatal(err)
 	}
 	r.h.failStart = nil
@@ -592,7 +654,7 @@ func TestRespawnAfterEndReusesTheRecordedLabel(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
-	if err := r.fleet.End(ctx, "bees-8"); err != nil {
+	if err := r.fleet.End(ctx, "bees-8", false); err != nil {
 		t.Fatal(err)
 	}
 	st, err := r.fleet.Spawn(ctx, "bees-8", "")
@@ -606,7 +668,7 @@ func TestRespawnAfterEndReusesTheRecordedLabel(t *testing.T) {
 		t.Fatalf("recorded label = %q", sp.Label)
 	}
 	// An explicit label renames the work.
-	if err := r.fleet.End(ctx, "bees-8"); err != nil {
+	if err := r.fleet.End(ctx, "bees-8", false); err != nil {
 		t.Fatal(err)
 	}
 	if st, err := r.fleet.Spawn(ctx, "bees-8", "new words"); err != nil || st.Label != "new words" {
@@ -644,14 +706,14 @@ func TestBeadMustBelongToTheProject(t *testing.T) {
 func TestEndRemovesOnlyTheRecordedWorkspace(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	if err := r.fleet.End(ctx, "bees-8"); !errors.Is(err, worker.ErrNotSpawned) {
+	if err := r.fleet.End(ctx, "bees-8", false); !errors.Is(err, worker.ErrNotSpawned) {
 		t.Fatalf("never spawned: err = %v, want ErrNotSpawned", err)
 	}
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	recorded := r.h.workspaces[0].ID
 	r.h.workspaces = append(r.h.workspaces, worker.Workspace{ID: "w-other", Label: "bees-8"}) // a decoy
 	for range 2 {
-		if err := r.fleet.End(ctx, "bees-8"); err != nil {
+		if err := r.fleet.End(ctx, "bees-8", false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -663,14 +725,67 @@ func TestEndRemovesOnlyTheRecordedWorkspace(t *testing.T) {
 	}
 }
 
-// fakeGitHub answers MergedHeads with a fixed list or error.
+// A workspace id herdr has handed to another worktree is not the worker's to remove (bees-7.4).
+func TestEndRefusesARecordedWorkspaceOpenOnAnotherWorktree(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	r.h.workspaces[0].Path = filepath.Join(t.TempDir(), "someone-else")
+	if err := r.fleet.End(ctx, "bees-8", true); !errors.Is(err, worker.ErrNotOurs) {
+		t.Fatalf("err = %v, want ErrNotOurs", err)
+	}
+	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); len(r.h.removed) != 0 || sp.Ended {
+		t.Fatalf("removed = %v, ended = %v; want nothing touched", r.h.removed, sp.Ended)
+	}
+}
+
+// A recorded workspace herdr no longer has is already gone: the end is recorded.
+func TestEndOfAVanishedWorkspaceRecordsTheEnd(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	r.h.workspaces = nil
+	if err := r.fleet.End(ctx, "bees-8", false); err != nil {
+		t.Fatal(err)
+	}
+	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); len(r.h.removed) != 0 || !sp.Ended {
+		t.Fatalf("removed = %v, ended = %v; want ended, nothing removed", r.h.removed, sp.Ended)
+	}
+}
+
+// bs end keeps uncommitted work unless told to discard it (bees-7.4).
+func TestEndKeepsADirtyWorktreeWithoutForce(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	r.h.dirty = map[string]bool{r.h.workspaces[0].Path: true}
+	if err := r.fleet.End(ctx, "bees-8", false); !errors.Is(err, worker.ErrDirty) || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("err = %v, want ErrDirty naming --force", err)
+	}
+	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); len(r.h.removed) != 0 || sp.Ended {
+		t.Fatalf("removed = %v, ended = %v; want the worktree kept and the worker live", r.h.removed, sp.Ended)
+	}
+	if err := r.fleet.End(ctx, "bees-8", true); err != nil {
+		t.Fatal(err)
+	}
+	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); len(r.h.removed) != 1 || !sp.Ended {
+		t.Fatalf("with force: removed = %v, ended = %v", r.h.removed, sp.Ended)
+	}
+}
+
+// fakeGitHub answers MergedHeads with a fixed list or error, and Protected with protected.
 type fakeGitHub struct {
-	heads []string
-	err   error
+	heads     []string
+	err       error
+	protected bool
 }
 
 func (g fakeGitHub) MergedHeads(ctx context.Context, repo, branch string) ([]string, error) {
 	return g.heads, g.err
+}
+
+func (g fakeGitHub) Protected(ctx context.Context, repo string) (bool, error) {
+	return g.protected, g.err
 }
 
 // gitCommit writes files (name → content) in dir and commits them.
@@ -777,7 +892,7 @@ func TestPruneDeletesTheBranchOnlyIfMerged(t *testing.T) {
 			if c.gh != nil {
 				r.fleet.G = c.gh(gitTip(t, r.repo, "bees-8"))
 			}
-			if err := r.fleet.End(ctx, "bees-8"); err != nil {
+			if err := r.fleet.End(ctx, "bees-8", false); err != nil {
 				t.Fatal(err)
 			}
 			pruned, err := r.fleet.Prune(ctx, false)
@@ -821,7 +936,7 @@ func TestEndKeepsTheBranch(t *testing.T) {
 	r := newRig(t)
 	squashMerged(t, r)
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
-	if err := r.fleet.End(ctx, "bees-8"); err != nil {
+	if err := r.fleet.End(ctx, "bees-8", false); err != nil {
 		t.Fatal(err)
 	}
 	if !branchExists(r.repo, "bees-8") {
@@ -834,7 +949,7 @@ func TestPruneDryRunDeletesNothing(t *testing.T) {
 	r := newRig(t)
 	squashMerged(t, r)
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
-	_ = r.fleet.End(ctx, "bees-8")
+	_ = r.fleet.End(ctx, "bees-8", false)
 	pruned, err := r.fleet.Prune(ctx, true)
 	if err != nil || len(pruned) != 1 || pruned[0].Merge != worker.Merged || pruned[0].Deleted {
 		t.Fatalf("dry run: %+v, %v", pruned, err)
@@ -853,7 +968,7 @@ func TestPruneTouchesOnlyEndedWorkersRecordedBranches(t *testing.T) {
 	if pruned, err := r.fleet.Prune(ctx, false); err != nil || len(pruned) != 0 {
 		t.Fatalf("live worker: %+v, %v", pruned, err)
 	}
-	_ = r.fleet.End(ctx, "bees-8")
+	_ = r.fleet.End(ctx, "bees-8", false)
 	r.h.exit("bees-8")
 	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil { // live once more
 		t.Fatal(err)
@@ -861,7 +976,7 @@ func TestPruneTouchesOnlyEndedWorkersRecordedBranches(t *testing.T) {
 	if pruned, err := r.fleet.Prune(ctx, false); err != nil || len(pruned) != 0 {
 		t.Fatalf("respawned worker: %+v, %v", pruned, err)
 	}
-	_ = r.fleet.End(ctx, "bees-8")
+	_ = r.fleet.End(ctx, "bees-8", false)
 	for range 2 { // the second prune finds the branch gone
 		if _, err := r.fleet.Prune(ctx, false); err != nil {
 			t.Fatal(err)

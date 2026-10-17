@@ -9,11 +9,11 @@ import (
 
 func TestSendRingsTheRecipientWithItsUnreadCount(t *testing.T) {
 	useTempLogbook(t)
-	bs(t, "send", "--as", "bees-1-3", "queen", "first")
+	bs(t, "send", "--as", "bees-1-3", "queen-test", "first")
 	reg := claudetest.FakeRegistry(t)
-	got := reg.Add(t, "queen", "")
-	bs(t, "send", "--as", "bees-1-2", "queen", "second")
-	if _, stderr, code := bs(t, "send", "--as", "bees-1-2", "queen", "third"); code != 0 {
+	got := reg.Add(t, "queen-test", "")
+	bs(t, "send", "--as", "bees-1-2", "queen-test", "second")
+	if _, stderr, code := bs(t, "send", "--as", "bees-1-2", "queen-test", "third"); code != 0 {
 		t.Fatalf("send: exit %d: %s", code, stderr)
 	}
 	lines := got() // the fake listener takes only the first ring, sent after "second"
@@ -26,6 +26,7 @@ func TestSendRingsTheRecipientWithItsUnreadCount(t *testing.T) {
 
 func TestSendCountsRepeatSenders(t *testing.T) {
 	useTempLogbook(t)
+	endedWorker(t, "worker-a", t.TempDir()) // recorded in the project, so bs rings it
 	bs(t, "send", "--as", "queen", "worker-a", "one")
 	got := claudetest.FakeRegistry(t).Add(t, "worker-a", "")
 	bs(t, "send", "--as", "queen", "--now", "worker-a", "two")
@@ -39,6 +40,7 @@ func TestSendCountsRepeatSenders(t *testing.T) {
 
 func TestSendToAStoppedSessionQueuesTheMessage(t *testing.T) {
 	useTempLogbook(t)
+	endedWorker(t, "worker-a", t.TempDir())
 	out, stderr, code := bs(t, "send", "--as", "queen", "worker-a", "hello")
 	if code != 0 || !strings.Contains(out, "queued; worker-a is not running") {
 		t.Fatalf("exit %d, stdout %q, stderr %q", code, out, stderr)
@@ -50,6 +52,7 @@ func TestSendToAStoppedSessionQueuesTheMessage(t *testing.T) {
 
 func TestSendWarnsWhenTheRingFailsButKeepsTheMessage(t *testing.T) {
 	useTempLogbook(t)
+	endedWorker(t, "worker-a", t.TempDir())
 	reg := claudetest.FakeRegistry(t)
 	reg.Add(t, "worker-a", "")
 	reg.Edit(t, func(e map[string]any) { e["messagingSocketPath"] = "/nonexistent/s.sock" })
@@ -58,6 +61,22 @@ func TestSendWarnsWhenTheRingFailsButKeepsTheMessage(t *testing.T) {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
 	if inbox, _, _ := bs(t, "inbox", "--as", "worker-a"); !strings.Contains(inbox, "hello") {
+		t.Fatalf("inbox = %q", inbox)
+	}
+}
+
+// A ring is a user turn, so bs rings only its project's queen and recorded workers;
+// a message for anyone else is stored and never rung (bees-7.4).
+func TestSendNeverRingsAStranger(t *testing.T) {
+	useTempLogbook(t)
+	reg := claudetest.FakeRegistry(t)
+	reg.Add(t, "other-1", "")
+	reg.Edit(t, func(e map[string]any) { e["messagingSocketPath"] = "/nonexistent/s.sock" }) // any ring would fail loudly
+	out, stderr, code := bs(t, "send", "--as", "queen-test", "other-1", "hello")
+	if code != 0 || strings.Contains(out, "queued") || strings.Contains(stderr, "couldn't ring") || !strings.Contains(stderr, "without ringing it") {
+		t.Fatalf("exit %d, stdout %q, stderr %q; want stored, not rung", code, out, stderr)
+	}
+	if inbox, _, _ := bs(t, "inbox", "--as", "other-1"); !strings.Contains(inbox, "hello") {
 		t.Fatalf("inbox = %q", inbox)
 	}
 }

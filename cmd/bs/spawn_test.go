@@ -35,7 +35,9 @@ func (h *fakeHive) StartClaude(ctx context.Context, pane, name string, args ...s
 	return worker.CheckAgentArgs(args)
 }
 
-func (h *fakeHive) RemoveWorktree(ctx context.Context, workspace string) error { return nil }
+func (h *fakeHive) RemoveWorktree(ctx context.Context, workspace string, force bool) error {
+	return nil
+}
 func (h *fakeHive) Workspaces(ctx context.Context) ([]worker.Workspace, error) { return nil, nil }
 func (h *fakeHive) Show(ctx context.Context, id string) (worker.Bead, error) {
 	if strings.HasSuffix(id, ".404") {

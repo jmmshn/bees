@@ -35,6 +35,8 @@ var (
 	ErrLabelChange = errors.New("the worker is recorded with another label")
 	ErrTwice       = errors.New("named twice in one spawn")
 	ErrNotStarted  = errors.New("not started: another worker in this spawn was refused")
+	ErrDirty       = errors.New("the worktree has modified or untracked files")
+	ErrNotOurs     = errors.New("the recorded workspace is open on another worktree")
 )
 
 // LabelRules says what a worker's label must be. The queen writes the label; bs only checks it.
@@ -64,7 +66,9 @@ type Herdr interface {
 	// StartClaude runs claude with args in pane. ErrWaiting: blocked at a startup prompt.
 	// ErrUnconfirmed: herdr gave up waiting. ErrUnsafeArg: an argument herdr can't pass.
 	StartClaude(ctx context.Context, pane, name string, args ...string) error
-	RemoveWorktree(ctx context.Context, workspace string) error // already gone → nil
+	// RemoveWorktree removes workspace and its worktree; already gone → nil. Without force
+	// it refuses a worktree with modified or untracked files: ErrDirty.
+	RemoveWorktree(ctx context.Context, workspace string, force bool) error
 	Workspaces(ctx context.Context) ([]Workspace, error)
 }
 
@@ -426,9 +430,12 @@ func (f Fleet) protected(ctx context.Context, sp logbook.Spawn) bool {
 const confirmWait = 20 * time.Second
 
 // End removes the worker's recorded workspace and records the end. It never asks herdr
-// which workspace to remove. Ending an ended worker is a no-op. The worker's branch is always
-// kept, with its work: Prune deletes it once merged.
-func (f Fleet) End(ctx context.Context, name string) error {
+// which workspace to remove, and removes the recorded one only while it is still open on
+// the recorded worktree, so a reused workspace id can't take another worktree with it
+// (bees-7.4). A worktree with uncommitted or untracked files is kept unless force: ErrDirty.
+// Ending an ended worker is a no-op. The worker's branch is always kept, with its
+// committed work: Prune deletes it once merged.
+func (f Fleet) End(ctx context.Context, name string, force bool) error {
 	sp, ok, err := f.LB.LatestSpawn(ctx, name)
 	if err != nil {
 		return err
@@ -439,8 +446,20 @@ func (f Fleet) End(ctx context.Context, name string) error {
 	if sp.Ended {
 		return nil
 	}
-	if err := f.H.RemoveWorktree(ctx, sp.Workspace); err != nil {
+	wss, err := f.H.Workspaces(ctx)
+	if err != nil {
 		return err
+	}
+	if i := slices.IndexFunc(wss, func(w Workspace) bool { return w.ID == sp.Workspace }); i >= 0 {
+		if sp.Worktree == "" || filepath.Clean(wss[i].Path) != filepath.Clean(sp.Worktree) {
+			return fmt.Errorf("%s: workspace %s is open on %q, not its recorded worktree %q: %w; nothing removed", name, sp.Workspace, wss[i].Path, sp.Worktree, ErrNotOurs)
+		}
+		if err := f.H.RemoveWorktree(ctx, sp.Workspace, force); err != nil {
+			if errors.Is(err, ErrDirty) {
+				return fmt.Errorf("%s: %w in %s; commit or move them, or end it with --force to discard them", name, ErrDirty, sp.Worktree)
+			}
+			return err
+		}
 	}
 	return f.LB.RecordEnd(ctx, f.Me, sp.ID)
 }

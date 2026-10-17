@@ -43,6 +43,13 @@ func TestHerdrTimeoutIsUnconfirmed(t *testing.T) {
 	}
 }
 
+func TestHerdrDirtyWorktreeNeedsForce(t *testing.T) {
+	fakeHerdrBinary(t, "dirty_worktree_requires_force")
+	if err := (worker.HerdrCLI{}).RemoveWorktree(context.Background(), "w1", false); !errors.Is(err, worker.ErrDirty) {
+		t.Fatalf("err = %v, want ErrDirty", err)
+	}
+}
+
 func TestClaudeSessionsAliveReadsClaudesRegistry(t *testing.T) {
 	reg := claudetest.FakeRegistry(t)
 	reg.Add(t, "bees-8", "")

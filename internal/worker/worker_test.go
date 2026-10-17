@@ -34,6 +34,7 @@ type fakeHerdr struct {
 	agents     map[string]string // live Claude sessions: name → pane
 	started    [][]string        // pane, name, args...
 	removed    []string
+	dirty      map[string]bool // worktree paths with modified or untracked files
 	failStart  error
 	liveAnyway bool  // with failStart: Claude came up all the same, as after herdr's timeout
 	aliveErr   error // the registry can't be read
@@ -92,7 +93,12 @@ func (h *fakeHerdr) Alive(ctx context.Context, name string, wait time.Duration) 
 	return ok, h.aliveErr
 }
 
-func (h *fakeHerdr) RemoveWorktree(ctx context.Context, workspace string) error {
+// RemoveWorktree refuses a dirty worktree without force, as herdr 0.9.3 does with
+// dirty_worktree_requires_force (TestHerdrDirtyWorktreeNeedsForce).
+func (h *fakeHerdr) RemoveWorktree(ctx context.Context, workspace string, force bool) error {
+	if i := slices.IndexFunc(h.workspaces, func(w worker.Workspace) bool { return w.ID == workspace }); i >= 0 && h.dirty[h.workspaces[i].Path] && !force {
+		return fmt.Errorf("herdr worktree: contains modified or untracked files, use --force: %w", worker.ErrDirty)
+	}
 	h.removed = append(h.removed, workspace)
 	h.workspaces = slices.DeleteFunc(h.workspaces, func(w worker.Workspace) bool { return w.ID == workspace })
 	return nil
@@ -431,7 +437,7 @@ func TestEndedHalfStartedWorkerRespawnsWithOneBrief(t *testing.T) {
 	r := newRig(t)
 	r.h.failStart = errors.New("herdr agent: agent arguments cannot be encoded safely")
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
-	if err := r.fleet.End(ctx, "bees-8"); err != nil {
+	if err := r.fleet.End(ctx, "bees-8", false); err != nil {
 		t.Fatal(err)
 	}
 	r.h.failStart = nil
@@ -648,7 +654,7 @@ func TestRespawnAfterEndReusesTheRecordedLabel(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
-	if err := r.fleet.End(ctx, "bees-8"); err != nil {
+	if err := r.fleet.End(ctx, "bees-8", false); err != nil {
 		t.Fatal(err)
 	}
 	st, err := r.fleet.Spawn(ctx, "bees-8", "")
@@ -662,7 +668,7 @@ func TestRespawnAfterEndReusesTheRecordedLabel(t *testing.T) {
 		t.Fatalf("recorded label = %q", sp.Label)
 	}
 	// An explicit label renames the work.
-	if err := r.fleet.End(ctx, "bees-8"); err != nil {
+	if err := r.fleet.End(ctx, "bees-8", false); err != nil {
 		t.Fatal(err)
 	}
 	if st, err := r.fleet.Spawn(ctx, "bees-8", "new words"); err != nil || st.Label != "new words" {
@@ -700,14 +706,14 @@ func TestBeadMustBelongToTheProject(t *testing.T) {
 func TestEndRemovesOnlyTheRecordedWorkspace(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	if err := r.fleet.End(ctx, "bees-8"); !errors.Is(err, worker.ErrNotSpawned) {
+	if err := r.fleet.End(ctx, "bees-8", false); !errors.Is(err, worker.ErrNotSpawned) {
 		t.Fatalf("never spawned: err = %v, want ErrNotSpawned", err)
 	}
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	recorded := r.h.workspaces[0].ID
 	r.h.workspaces = append(r.h.workspaces, worker.Workspace{ID: "w-other", Label: "bees-8"}) // a decoy
 	for range 2 {
-		if err := r.fleet.End(ctx, "bees-8"); err != nil {
+		if err := r.fleet.End(ctx, "bees-8", false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -716,6 +722,54 @@ func TestEndRemovesOnlyTheRecordedWorkspace(t *testing.T) {
 	}
 	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); !sp.Ended {
 		t.Fatalf("spawn not marked ended: %+v", sp)
+	}
+}
+
+// A workspace id herdr has handed to another worktree is not the worker's to remove (bees-7.4).
+func TestEndRefusesARecordedWorkspaceOpenOnAnotherWorktree(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	r.h.workspaces[0].Path = filepath.Join(t.TempDir(), "someone-else")
+	if err := r.fleet.End(ctx, "bees-8", true); !errors.Is(err, worker.ErrNotOurs) {
+		t.Fatalf("err = %v, want ErrNotOurs", err)
+	}
+	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); len(r.h.removed) != 0 || sp.Ended {
+		t.Fatalf("removed = %v, ended = %v; want nothing touched", r.h.removed, sp.Ended)
+	}
+}
+
+// A recorded workspace herdr no longer has is already gone: the end is recorded.
+func TestEndOfAVanishedWorkspaceRecordsTheEnd(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	r.h.workspaces = nil
+	if err := r.fleet.End(ctx, "bees-8", false); err != nil {
+		t.Fatal(err)
+	}
+	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); len(r.h.removed) != 0 || !sp.Ended {
+		t.Fatalf("removed = %v, ended = %v; want ended, nothing removed", r.h.removed, sp.Ended)
+	}
+}
+
+// bs end keeps uncommitted work unless told to discard it (bees-7.4).
+func TestEndKeepsADirtyWorktreeWithoutForce(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	r.h.dirty = map[string]bool{r.h.workspaces[0].Path: true}
+	if err := r.fleet.End(ctx, "bees-8", false); !errors.Is(err, worker.ErrDirty) || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("err = %v, want ErrDirty naming --force", err)
+	}
+	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); len(r.h.removed) != 0 || sp.Ended {
+		t.Fatalf("removed = %v, ended = %v; want the worktree kept and the worker live", r.h.removed, sp.Ended)
+	}
+	if err := r.fleet.End(ctx, "bees-8", true); err != nil {
+		t.Fatal(err)
+	}
+	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); len(r.h.removed) != 1 || !sp.Ended {
+		t.Fatalf("with force: removed = %v, ended = %v", r.h.removed, sp.Ended)
 	}
 }
 
@@ -838,7 +892,7 @@ func TestPruneDeletesTheBranchOnlyIfMerged(t *testing.T) {
 			if c.gh != nil {
 				r.fleet.G = c.gh(gitTip(t, r.repo, "bees-8"))
 			}
-			if err := r.fleet.End(ctx, "bees-8"); err != nil {
+			if err := r.fleet.End(ctx, "bees-8", false); err != nil {
 				t.Fatal(err)
 			}
 			pruned, err := r.fleet.Prune(ctx, false)
@@ -882,7 +936,7 @@ func TestEndKeepsTheBranch(t *testing.T) {
 	r := newRig(t)
 	squashMerged(t, r)
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
-	if err := r.fleet.End(ctx, "bees-8"); err != nil {
+	if err := r.fleet.End(ctx, "bees-8", false); err != nil {
 		t.Fatal(err)
 	}
 	if !branchExists(r.repo, "bees-8") {
@@ -895,7 +949,7 @@ func TestPruneDryRunDeletesNothing(t *testing.T) {
 	r := newRig(t)
 	squashMerged(t, r)
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
-	_ = r.fleet.End(ctx, "bees-8")
+	_ = r.fleet.End(ctx, "bees-8", false)
 	pruned, err := r.fleet.Prune(ctx, true)
 	if err != nil || len(pruned) != 1 || pruned[0].Merge != worker.Merged || pruned[0].Deleted {
 		t.Fatalf("dry run: %+v, %v", pruned, err)
@@ -914,7 +968,7 @@ func TestPruneTouchesOnlyEndedWorkersRecordedBranches(t *testing.T) {
 	if pruned, err := r.fleet.Prune(ctx, false); err != nil || len(pruned) != 0 {
 		t.Fatalf("live worker: %+v, %v", pruned, err)
 	}
-	_ = r.fleet.End(ctx, "bees-8")
+	_ = r.fleet.End(ctx, "bees-8", false)
 	r.h.exit("bees-8")
 	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil { // live once more
 		t.Fatal(err)
@@ -922,7 +976,7 @@ func TestPruneTouchesOnlyEndedWorkersRecordedBranches(t *testing.T) {
 	if pruned, err := r.fleet.Prune(ctx, false); err != nil || len(pruned) != 0 {
 		t.Fatalf("respawned worker: %+v, %v", pruned, err)
 	}
-	_ = r.fleet.End(ctx, "bees-8")
+	_ = r.fleet.End(ctx, "bees-8", false)
 	for range 2 { // the second prune finds the branch gone
 		if _, err := r.fleet.Prune(ctx, false); err != nil {
 			t.Fatal(err)

@@ -78,7 +78,7 @@ bs spawn --label L <bead> …   start a worker per bead, in parallel, each in it
 bs send [--now] <to> <body|-> store a message, then ring <to>
 bs inbox [--peek]             print unread; without --peek, record receipts
 bs status [--json]            sessions, running or not, and unread counts
-bs end <worker|bead>          remove the worker's recorded workspace; keep its branch
+bs end [--force] <worker|bead> remove its recorded workspace, keep its branch; --force discards uncommitted files
 bs prune [--dry-run]          delete ended workers' local branches once merged
 bs version                    print the commit bs was built from
 bs init                       create the logbook (optional; any command does)

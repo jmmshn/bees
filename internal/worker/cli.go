@@ -107,10 +107,19 @@ func (HerdrCLI) StartClaude(ctx context.Context, pane, name string, args ...stri
 // worker busy with its doorbell is never idle in time.
 const herdrStartTimeout = 10 * time.Second
 
-func (HerdrCLI) RemoveWorktree(ctx context.Context, workspace string) error {
-	code, err := herdr(ctx, nil, "worktree", "remove", "--workspace", workspace, "--force")
-	if code == "workspace_not_found" {
+func (HerdrCLI) RemoveWorktree(ctx context.Context, workspace string, force bool) error {
+	args := []string{"worktree", "remove", "--workspace", workspace}
+	if force {
+		args = append(args, "--force")
+	}
+	code, err := herdr(ctx, nil, args...)
+	// Codes seen with herdr 0.9.3 (bees-7.4): without --force herdr refuses a worktree with
+	// modified or untracked files, and removes the workspace only with it.
+	switch code {
+	case "workspace_not_found":
 		return nil
+	case "dirty_worktree_requires_force":
+		return fmt.Errorf("%w: %w", err, ErrDirty)
 	}
 	return err
 }

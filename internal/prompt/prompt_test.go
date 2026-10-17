@@ -54,6 +54,9 @@ func TestFileHoldsTheRolePromptInBsCache(t *testing.T) {
 			}
 		}
 	}
+	if fi, err := os.Stat(filepath.Join(cache, "bees")); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Fatalf("cache dir: %v, %v; want 0700, private to the user", fi.Mode(), err)
+	}
 }
 
 // A relayed answer from the queen is a plain answer; the worker prompt must not

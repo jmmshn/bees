@@ -24,6 +24,19 @@ func open(t *testing.T) *logbook.Logbook {
 	return lb
 }
 
+// Other local users must not read the mail: Open makes the logbook's directory 0700.
+func TestOpenMakesAPrivateDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "sub")
+	lb, err := logbook.Open(context.Background(), filepath.Join(dir, "logbook.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lb.Close()
+	if fi, err := os.Stat(dir); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Fatalf("logbook dir: %v, %v; want 0700", fi.Mode(), err)
+	}
+}
+
 func TestSentMessageIsUnreadForRecipientOnly(t *testing.T) {
 	ctx := context.Background()
 	lb := open(t)

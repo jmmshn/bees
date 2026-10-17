@@ -53,7 +53,7 @@ func Open(ctx context.Context, path string) (*Logbook, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil { // other local users must not read the mail
 		return nil, err
 	}
 	q := url.Values{}

@@ -269,3 +269,26 @@ func (GitHubCLI) MergedHeads(ctx context.Context, repo, branch string) ([]string
 	}
 	return heads, nil
 }
+
+// Protected asks GitHub whether the default branch is protected: a branch's protected
+// field is readable with read access, while its protection rules need admin.
+func (GitHubCLI) Protected(ctx context.Context, repo string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, ghTimeout)
+	defer cancel()
+	gh := func(args ...string) (string, error) {
+		var stderr bytes.Buffer
+		cmd := exec.CommandContext(ctx, "gh", args...)
+		cmd.Dir, cmd.Stderr, cmd.WaitDelay = repo, &stderr, time.Second
+		out, err := cmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("gh %s: %w: %s", args[0], err, strings.TrimSpace(stderr.String()))
+		}
+		return strings.TrimSpace(string(out)), nil
+	}
+	def, err := gh("api", "repos/{owner}/{repo}", "--jq", ".default_branch")
+	if err != nil {
+		return false, err
+	}
+	prot, err := gh("api", "repos/{owner}/{repo}/branches/"+def, "--jq", ".protected")
+	return prot == "true", err
+}

@@ -325,26 +325,41 @@ func (f Fleet) open(ctx context.Context, p plan) (logbook.Spawn, error) {
 // the spawner's project: never from the worktree's git dir, which names another project in
 // a --repo worktree and would send its messages and receipts to that logbook (bees-1.54).
 //
-// A worker owns its worktree and branch, and the keeper merges every PR by hand, so the
-// classifier may let it build, test and push its own branch (bees-1.51). Every autoMode list
-// keeps "$defaults": a list without it replaces the built-in rules (force push,
-// exfiltration). The deny rules run before the classifier, and a Bash rule matches only a
-// command spelled as written, so they also cover git -C dir push. Not git * push: that
-// would deny a commit whose message says "push … main".
-func workerSettings(project string, sp logbook.Spawn) (string, error) {
+// A worker owns its worktree and branch, so the classifier may let it build, test and push
+// its own branch (bees-1.51). The environment says the keeper merges by hand only when
+// GitHub reports the default branch protected (protected): unchecked, that claim would
+// relax the classifier on pushes (bees-7.4). Every autoMode list keeps "$defaults": a list
+// without it replaces the built-in rules (force push, exfiltration).
+//
+// The deny rules run before the classifier. A rule's * matches any text, a space or a
+// slash too (probed on Claude Code 2.1.302), so git -* push covers git -C dir push and
+// git -c k=v push, and */git push covers /usr/bin/git push. They are a speed bump, not
+// the guard: a shell finds other spellings, and branch protection on main is the real
+// one (docs/SETUP.md). Not git * push: that would deny a commit whose message says
+// "push … main".
+func workerSettings(project string, sp logbook.Spawn, protected bool) (string, error) {
 	branch := cmp.Or(sp.Branch, sp.Name)
 	var deny []string
-	for _, push := range []string{"git push", "git -C * push"} {
-		for _, bad := range []string{"--force*", "-f*", "+*", "main*", "master*", "*:main*", "*:master*"} {
-			deny = append(deny, "Bash("+push+" "+bad+")", "Bash("+push+" * "+bad+")")
+	for _, git := range []string{"git", "command git", "*/git"} {
+		for _, push := range []string{git + " push", git + " -* push"} {
+			for _, bad := range []string{"--force*", "-f*", "+*", "main*", "master*", "*:main*", "*:master*", "*refs/heads/main*", "*refs/heads/master*"} {
+				deny = append(deny, "Bash("+push+" "+bad+")")
+				if !strings.HasPrefix(bad, "*") { // a leading * already covers the words before it
+					deny = append(deny, "Bash("+push+" * "+bad+")")
+				}
+			}
 		}
 	}
 	deny = append(deny, "Bash(gh pr merge*)", "Bash(gh * pr merge*)", "Bash(gh pr review* --approve*)", "Bash(gh pr review* -a*)", "Bash(gh api *merge*)")
+	env := fmt.Sprintf("Host containment: a bees worker, working in its own git worktree %s on its own branch %s of the repository %s.", sp.Worktree, branch, sp.Repo)
+	if protected {
+		env += " GitHub protects the repository's default branch, so the worker's work reaches it only through a pull request the keeper merges."
+	}
 	b, err := json.Marshal(map[string]any{
 		"crossSessionInbound": "accept",
 		"env":                 map[string]string{"BS_PROJECT": project},
 		"autoMode": map[string][]string{
-			"environment": {"$defaults", fmt.Sprintf("Host containment: a bees worker, working in its own git worktree %s on its own branch %s of the repository %s. The keeper reviews and merges every pull request by hand, so nothing the worker pushes reaches main without a human.", sp.Worktree, branch, sp.Repo)},
+			"environment": {"$defaults", env},
 			"allow": {"$defaults",
 				fmt.Sprintf("Running this repository's own build, lint and test commands (such as go vet, go test, go build -o into the worktree, pre-commit) inside the worktree %s.", sp.Worktree),
 				fmt.Sprintf("Committing to and pushing (never force-pushing) the worker's own branch %s to the repository's origin, opening a pull request from it, and pushing further commits to that open pull request.", branch),
@@ -364,7 +379,7 @@ func workerSettings(project string, sp logbook.Spawn) (string, error) {
 func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Started, error) {
 	st := Started{Name: sp.Name, Label: sp.Label, Workspace: sp.Workspace, Resumed: resume, Continued: resume && sp.Read}
 	doorbell := fmt.Sprintf("[bs] you are %s, working on %s — run: bs inbox   (reply with: bs send %s \"...\")", sp.Name, sp.Bead, f.Me)
-	settings, err := workerSettings(f.P.Name, sp)
+	settings, err := workerSettings(f.P.Name, sp, f.protected(ctx, sp))
 	if err != nil {
 		return st, err
 	}
@@ -394,6 +409,16 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 		}
 	}
 	return st, err
+}
+
+// protected reports whether GitHub protects the default branch of sp's repo. Without
+// GitHub, or when gh fails, it says no: the worker is then told nothing about merges.
+func (f Fleet) protected(ctx context.Context, sp logbook.Spawn) bool {
+	if f.G == nil {
+		return false
+	}
+	ok, err := f.G.Protected(ctx, cmp.Or(sp.Repo, f.P.Repo))
+	return err == nil && ok
 }
 
 // confirmWait is how long start waits for Claude's registry after herdr gives up.

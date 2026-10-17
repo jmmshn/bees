@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -245,9 +246,64 @@ func TestSpawnStartsAWorkerInItsOwnWorkspace(t *testing.T) {
 	if !strings.Contains(strings.Join(settings.AutoMode["environment"], " "), wt) {
 		t.Errorf("autoMode.environment = %q, want the worktree %s", settings.AutoMode["environment"], wt)
 	}
-	for _, rule := range []string{"Bash(git push --force*)", "Bash(git push * main*)", "Bash(git -C * push * --force*)", "Bash(gh pr merge*)", "Bash(gh pr review* --approve*)"} {
-		if !slices.Contains(settings.Permissions.Deny, rule) {
-			t.Errorf("permissions.deny = %q, want %s", settings.Permissions.Deny, rule)
+	if env := strings.Join(settings.AutoMode["environment"], " "); strings.Contains(env, "merge") {
+		t.Errorf("autoMode.environment = %q: without GitHub's word that main is protected, it must not claim the keeper merges", env)
+	}
+	denied := func(cmd string) bool {
+		return slices.ContainsFunc(settings.Permissions.Deny, func(rule string) bool { return claudeRuleMatches(rule, cmd) })
+	}
+	for _, cmd := range []string{
+		"git push --force origin bees-8", "git push origin main", "git push -u origin bees-8:main",
+		"git -C /wt push origin +bees-8", "git push origin HEAD:refs/heads/main", "git -c k=v push origin main",
+		"/usr/bin/git push origin main", "command git push origin master", "command /usr/bin/git -C /wt push -f",
+		"gh pr merge 41", "gh pr review 41 --approve",
+	} {
+		if !denied(cmd) {
+			t.Errorf("deny rules let through %q", cmd)
+		}
+	}
+	for _, cmd := range []string{
+		"git push -u origin bees-8", "git -C /wt push origin bees-8", "git push origin HEAD:refs/heads/bees-8",
+		"git commit -m 'deny git push to main'", "gh pr create --base main",
+	} {
+		if denied(cmd) {
+			t.Errorf("deny rules refuse the worker's own %q", cmd)
+		}
+	}
+}
+
+// claudeRuleMatches is Claude Code's Bash permission rule match: Bash(<pattern>) where *
+// matches any text, spaces and slashes too (probed on Claude Code 2.1.302 with
+// claude -p --settings: Bash(*/git push*) denied /usr/bin/git push origin main).
+func claudeRuleMatches(rule, cmd string) bool {
+	pat, ok := strings.CutPrefix(rule, "Bash(")
+	if !ok {
+		return false
+	}
+	parts := strings.Split(strings.TrimSuffix(pat, ")"), "*")
+	for i := range parts {
+		parts[i] = regexp.QuoteMeta(parts[i])
+	}
+	return regexp.MustCompile("^" + strings.Join(parts, ".*") + "$").MatchString(cmd)
+}
+
+// The environment tells the classifier the keeper merges by hand only when GitHub says
+// the default branch is protected (bees-7.4).
+func TestWorkerEnvironmentClaimsReviewOnlyOnAProtectedMain(t *testing.T) {
+	for i, gh := range []worker.GitHub{nil, fakeGitHub{protected: true, err: errors.New("offline")}, fakeGitHub{protected: true}} {
+		r := newRig(t)
+		r.fleet.G = gh
+		if _, err := r.fleet.Spawn(context.Background(), "bees-8", "spawn and end"); err != nil {
+			t.Fatal(err)
+		}
+		start := r.h.started[0]
+		var settings struct{ AutoMode map[string][]string }
+		if err := json.Unmarshal([]byte(start[slices.Index(start, "--settings")+1]), &settings); err != nil {
+			t.Fatal(err)
+		}
+		want := i == 2 // only GitHub answering "protected"
+		if got := strings.Contains(strings.Join(settings.AutoMode["environment"], " "), "the keeper merges"); got != want {
+			t.Errorf("GitHub %+v: environment = %q, claims keeper merges = %v, want %v", gh, settings.AutoMode["environment"], got, want)
 		}
 	}
 }
@@ -663,14 +719,19 @@ func TestEndRemovesOnlyTheRecordedWorkspace(t *testing.T) {
 	}
 }
 
-// fakeGitHub answers MergedHeads with a fixed list or error.
+// fakeGitHub answers MergedHeads with a fixed list or error, and Protected with protected.
 type fakeGitHub struct {
-	heads []string
-	err   error
+	heads     []string
+	err       error
+	protected bool
 }
 
 func (g fakeGitHub) MergedHeads(ctx context.Context, repo, branch string) ([]string, error) {
 	return g.heads, g.err
+}
+
+func (g fakeGitHub) Protected(ctx context.Context, repo string) (bool, error) {
+	return g.protected, g.err
 }
 
 // gitCommit writes files (name → content) in dir and commits them.

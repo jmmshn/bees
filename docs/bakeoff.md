@@ -383,6 +383,7 @@ What this round shows:
 bakeoff/mkrun.sh c 4b                                  # fresh toy repo + lead -> ~/.cache/bees-bakeoff/runs/t4bc
 # hand bakeoff/cards/PROTOCOL.md + cards/S4b.md + the run dir to a keeper agent (or play it yourself)
 bakeoff/collect.sh ~/.cache/bees-bakeoff/runs/t4bc     # metrics.json, transcripts/
+bakeoff/teardown.sh ~/.cache/bees-bakeoff/runs/t4bc    # close its workspaces and beads, rm its logbook; keeps the run dir
 python3 -I bakeoff/analyze.py > bakeoff/results/table.md   # also writes runs.json next to the runs
 cp ~/.cache/bees-bakeoff/runs/runs.json bakeoff/results/
 ```

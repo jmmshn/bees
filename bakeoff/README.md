@@ -17,6 +17,7 @@ bakeoff/mkrun.sh c 3                       # fresh toy repo + bare origin + lead
 # play cards/S3.md by hand, or tell a keeper agent: "read cards/DRIVER.md, then play cards/S3.md against <run dir>"
 bakeoff/observe.sh ~/.cache/bees-bakeoff/runs/t3c   # snapshot: lead, worker panes, branches
 bakeoff/collect.sh ~/.cache/bees-bakeoff/runs/t3c   # metrics.json: wall time, keeper turns, interventions, tokens, leftovers, check
+bakeoff/teardown.sh ~/.cache/bees-bakeoff/runs/t3c  # after collect: close the run's workspaces and t3c-* beads, rm t3c.db; keeps the run dir
 ```
 
 - **Location of runs.** Runs live in `$BAKEOFF_RUNS`, which defaults to `~/.cache/bees-bakeoff/runs`. That directory is outside any repo on purpose: Claude walks up parent directories for `CLAUDE.md`, so a toy repo placed inside bees would load bees' dogfood rules into every lead.

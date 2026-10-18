@@ -185,7 +185,7 @@ func cmdEnd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 
 // Exit codes of bs prune when it keeps a branch.
 const (
-	exitKeptUnmerged = 3 // some branch has work not on the default branch
+	exitKeptUnmerged = 3 // some branch has work not on the default branch, or is checked out
 	exitKeptUnknown  = 4 // some branch could not be checked, or not deleted
 )
 
@@ -218,6 +218,9 @@ func cmdPrune(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	code := 0
 	for _, r := range pruned {
 		switch {
+		case r.InUse != "":
+			fmt.Fprintf(stdout, "kept %s: checked out in worktree %s\n", r.Branch, r.InUse)
+			code = max(code, exitKeptUnmerged)
 		case r.Merge == worker.Merged && *dry:
 			fmt.Fprintf(stdout, "would delete local branch %s: merged, %s\n", r.Branch, r.Why)
 		case r.Deleted:

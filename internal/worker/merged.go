@@ -68,6 +68,24 @@ func merged(ctx context.Context, gh GitHub, repo, branch string) (Merge, string)
 	return NotMerged, fmt.Sprintf("it has work not on %s%s", strings.Join(mains, " or "), ghNote)
 }
 
+// checkedOut returns the worktree of repo that has branch checked out, or "".
+func checkedOut(ctx context.Context, repo, branch string) (string, error) {
+	out, err := gitOut(ctx, repo, "worktree", "list", "--porcelain")
+	if err != nil {
+		return "", err
+	}
+	var path string
+	for line := range strings.Lines(out) {
+		line = strings.TrimSpace(line)
+		if p, ok := strings.CutPrefix(line, "worktree "); ok {
+			path = p
+		} else if line == "branch refs/heads/"+branch {
+			return path, nil
+		}
+	}
+	return "", nil
+}
+
 // ancestor reports whether commit a is an ancestor of b.
 func ancestor(ctx context.Context, repo, a, b string) (bool, error) {
 	err := gitRun(ctx, repo, "merge-base", "--is-ancestor", a, b)

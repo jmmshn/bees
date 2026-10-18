@@ -469,13 +469,15 @@ type Pruned struct {
 	Branch, Repo string
 	Merge        Merge
 	Why          string // how the work was proven merged, or why the branch was kept
+	InUse        string // the worktree that has the branch checked out; kept, whatever Merge says
 	Deleted      bool
 	DeleteErr    error // proven merged, but git branch -D failed
 }
 
 // Prune deletes the branch of each ended worker once its work is proven merged; dry only
 // reports. It looks only at branches the logbook recorded (never guessed from git),
-// skips branches already gone, and never touches a remote.
+// skips branches already gone, keeps any branch a worktree has checked out (someone may
+// have taken it over: bees-8.4), and never touches a remote.
 func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error) {
 	ended, err := f.LB.EndedSpawns(ctx)
 	if err != nil {
@@ -489,7 +491,10 @@ func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error) {
 		}
 		p := Pruned{Branch: sp.Branch, Repo: repo}
 		p.Merge, p.Why = merged(ctx, f.G, repo, sp.Branch)
-		if p.Merge == Merged && !dry {
+		if p.InUse, err = checkedOut(ctx, repo, sp.Branch); err != nil {
+			p.Merge, p.Why = Unknown, err.Error()
+		}
+		if p.Merge == Merged && p.InUse == "" && !dry {
 			p.DeleteErr = gitRun(ctx, repo, "branch", "-D", sp.Branch)
 			p.Deleted = p.DeleteErr == nil
 		}

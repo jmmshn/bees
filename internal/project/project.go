@@ -10,8 +10,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
+
+	"github.com/jmmshn/bees/internal/proc"
 )
 
 var (
@@ -152,7 +153,7 @@ func registered() (string, bool) {
 		return "", false
 	}
 	reg := filepath.Join(home, ".claude", "sessions")
-	for pid := os.Getppid(); pid > 1; pid = parentOf(pid) {
+	for pid := os.Getppid(); pid > 1; pid = proc.Parent(pid) {
 		b, err := os.ReadFile(filepath.Join(reg, fmt.Sprintf("%d.json", pid)))
 		if err != nil {
 			continue
@@ -164,23 +165,4 @@ func registered() (string, bool) {
 		break // the nearest Claude session has no usable name
 	}
 	return "", false
-}
-
-// parentOf returns pid's parent from /proc, or 0 if it can't be read.
-func parentOf(pid int) int {
-	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-	if err != nil {
-		return 0
-	}
-	// The command name is in parentheses and may contain spaces; fields resume after ')'.
-	i := strings.LastIndexByte(string(b), ')')
-	if i < 0 {
-		return 0
-	}
-	fields := strings.Fields(string(b[i+1:]))
-	if len(fields) < 2 {
-		return 0
-	}
-	ppid, _ := strconv.Atoi(fields[1])
-	return ppid
 }

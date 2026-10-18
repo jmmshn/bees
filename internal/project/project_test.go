@@ -8,13 +8,18 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jmmshn/bees/internal/proc"
 	"github.com/jmmshn/bees/internal/project"
 )
 
 // gitRepo creates a git repo named name under a temp dir and returns its path.
 func gitRepo(t *testing.T, name string) string {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), name)
+	tmp, err := filepath.EvalSymlinks(t.TempDir()) // macOS: /var is /private/var, as git reports it
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(tmp, name)
 	git(t, "", "init", "-q", "-b", "main", dir)
 	git(t, dir, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "init")
 	return dir
@@ -156,6 +161,15 @@ func TestMeResolutionOrder(t *testing.T) {
 	}
 	if me, err := project.Me(""); err != nil || me != "beads-995-8" {
 		t.Fatalf("ppid walk: %q, %v", me, err)
+	}
+	// bs usually runs from a shell inside Claude: the walk must climb past an unregistered
+	// parent to the grandparent, which needs a real process lookup on every OS (bees-8.2).
+	if err := os.Rename(filepath.Join(reg, fmt.Sprintf("%d.json", os.Getppid())),
+		filepath.Join(reg, fmt.Sprintf("%d.json", proc.Parent(os.Getppid())))); err != nil {
+		t.Fatal(err)
+	}
+	if me, err := project.Me(""); err != nil || me != "beads-995-8" {
+		t.Fatalf("grandparent walk: %q, %v", me, err)
 	}
 	t.Setenv("BS_SESSION", "queen-bees") // a stale or inherited value must not beat the registry
 	if me, _ := project.Me(""); me != "beads-995-8" {

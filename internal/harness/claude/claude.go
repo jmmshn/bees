@@ -12,8 +12,9 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
+
+	"github.com/jmmshn/bees/internal/proc"
 )
 
 // ErrNotRunning means no live session has that name.
@@ -31,7 +32,7 @@ const (
 type Session struct {
 	Name      string
 	PID       int
-	ProcStart string // /proc start time in clock ticks, as Claude records it
+	ProcStart string // process start time as Claude records it (proc.Start)
 	Socket    string
 	Token     string // empty when the session has no key file
 	startedAt int64
@@ -66,7 +67,7 @@ func List() ([]Session, error) {
 		if json.Unmarshal(b, &e) != nil || e.PeerProtocol != 1 || e.MessagingSocketPath == "" {
 			continue
 		}
-		if start, err := procStart(e.PID); err != nil || start != e.ProcStart {
+		if start, err := proc.Start(e.PID); err != nil || start != e.ProcStart {
 			continue
 		}
 		s := Session{Name: e.Name, PID: e.PID, ProcStart: e.ProcStart, Socket: e.MessagingSocketPath, startedAt: e.StartedAt}
@@ -157,20 +158,4 @@ func uuid() string {
 	b[6] = b[6]&0x0f | 0x40
 	b[8] = b[8]&0x3f | 0x80
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
-}
-
-// procStart is field 22 of /proc/<pid>/stat, the process start time in clock ticks.
-// ponytail: Linux /proc only, like the rest of bs.
-func procStart(pid int) (string, error) {
-	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-	if err != nil {
-		return "", err
-	}
-	// The command name is in parentheses and may contain spaces; fields resume after ')'.
-	i := strings.LastIndexByte(string(b), ')')
-	f := strings.Fields(string(b[i+1:]))
-	if len(f) < 20 {
-		return "", fmt.Errorf("pid %d: short /proc stat", pid)
-	}
-	return f[19], nil
 }

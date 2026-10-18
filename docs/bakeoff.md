@@ -268,7 +268,7 @@ Practical rule for any lead: do the gated step only after the keeper asks for it
 
 ## Long-running work and crew's incidents (S9–S17)
 
-A second round tests the case bees exists for: workers that run for minutes, that the keeper wants to reach directly, and that must survive things going wrong. Six of the cards come from incidents in crew, the tool bees replaces. Each was mined from its commit history, docs and vault notes. Every card paces its worker (100 lines per commit, then a 30–60 s sleep) so that there is something running to interrupt.
+A second round tests the case bees exists for: workers that run for minutes, that the keeper wants to reach directly, and that must survive things going wrong. Six of the cards come from incidents in [crew](../GLOSSARY.md#outside-names), the tool bees replaces. Each was mined from its commit history, docs and the author's notes. Every card paces its worker (100 lines per commit, then a 30–60 s sleep) so that there is something running to interrupt.
 
 | # | Script | Source | Keeper card, short |
 |---|---|---|---|

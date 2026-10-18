@@ -42,6 +42,9 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return errUsage
 	}
 	p, err := project.Resolve(*proj)
+	if err == nil {
+		err = p.NeedRepo()
+	}
 	if err != nil {
 		return err
 	}

@@ -14,6 +14,7 @@ func TestQueenStartsClaudeNamedForTheProject(t *testing.T) {
 	t.Setenv("BS_PROJECT", "bees")
 	t.Setenv("BS_REPOS", "/src")
 	t.Setenv("BS_SESSION", "stale")
+	t.Chdir(t.TempDir()) // not this repo: its own checkout would beat BS_REPOS
 	var gotDir string
 	var gotEnv, gotArgs []string
 	execClaude = func(dir string, env []string, args ...string) error {
@@ -40,5 +41,18 @@ func TestQueenStartsClaudeNamedForTheProject(t *testing.T) {
 		if strings.HasPrefix(kv, "BS_SESSION=") || strings.HasPrefix(kv, "BS_PROJECT=") {
 			t.Errorf("queen env sets %s; identity must come from --name and the repo", kv)
 		}
+	}
+}
+
+func TestQueenOutsideItsRepoWantsBSRepos(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("BS_PROJECT", "bees")
+	t.Setenv("BS_REPOS", "")
+	t.Chdir(t.TempDir())
+	execClaude = func(string, []string, ...string) error { t.Fatal("started Claude in no repo"); return nil }
+	t.Cleanup(func() { execClaude = execClaudeProcess })
+
+	if _, stderr, code := bs(t, "queen"); code != 1 || !strings.Contains(stderr, "set BS_REPOS") {
+		t.Fatalf("queen: exit %d, stderr %q; want exit 1 telling the keeper to set BS_REPOS", code, stderr)
 	}
 }

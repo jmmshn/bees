@@ -50,7 +50,7 @@ func File(r Role, project string) (string, error) {
 		return "", err
 	}
 	dir := filepath.Join(cache, "bees")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil { // private, like the logbook
 		return "", err
 	}
 	name := project + "-" + string(r)

@@ -161,6 +161,14 @@ func TestMeResolutionOrder(t *testing.T) {
 	if me, _ := project.Me(""); me != "beads-995-8" {
 		t.Fatalf("registry vs env: %q", me)
 	}
+	// Inside a Claude session the registry is who you are: --as may only repeat it (bees-7.4).
+	if me, err := project.Me("beads-995-8"); err != nil || me != "beads-995-8" {
+		t.Fatalf("flag naming this session: %q, %v", me, err)
+	}
+	if me, err := project.Me("queen-bees"); !errors.Is(err, project.ErrNotYou) {
+		t.Fatalf("flag naming another session: %q, %v; want ErrNotYou", me, err)
+	}
+	clearEnv(t) // outside Claude, the flag names you
 	if me, _ := project.Me("keeper"); me != "keeper" {
 		t.Fatalf("flag: %q", me)
 	}

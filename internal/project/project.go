@@ -19,6 +19,8 @@ var (
 	ErrBadProject = errors.New("project names must be a letter then up to 24 letters or digits (after dropping - and _); set BS_PROJECT")
 	ErrNoRepos    = errors.New("can't find the project's repo; run bs inside it, or set BS_REPOS to the directory that holds your repos")
 	ErrNoSession  = errors.New("can't tell which session you are; run bs from inside a named Claude session, or pass --as")
+	ErrBadSession = errors.New("not a session name: a lowercase letter, then up to 31 of a-z, 0-9, - and _")
+	ErrNotYou     = errors.New("this Claude session is registered as")
 )
 
 // validName is what a project name must be once lowercased with - and _ dropped. With no "-" in
@@ -108,31 +110,60 @@ func mainRepo() string {
 	return filepath.Dir(strings.TrimSpace(string(out)))
 }
 
-// Me returns the session running bs: flag, then the name of the nearest ancestor
-// process that is a registered Claude Code session, then BS_SESSION (for use outside
-// Claude). The registry beats the environment, which a session can inherit stale.
+// SessionName is what a session name must be: a worker's name (worker.Name) or a
+// queen's. Names reach the logbook, herdr and the doorbell Claude reads as a user turn,
+// so free text never passes (bees-7.4).
+var SessionName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
+
+// CheckSession refuses a session name that breaks SessionName.
+func CheckSession(name string) error {
+	if !SessionName.MatchString(name) {
+		return fmt.Errorf("%q: %w", name, ErrBadSession)
+	}
+	return nil
+}
+
+// Me returns the session running bs: the name of the nearest ancestor process that is a
+// registered Claude Code session, else flag, else BS_SESSION (for use outside Claude).
+// Inside a Claude session the registry is the sender's identity: a flag naming anyone
+// else is refused, so a session can't send as the queen (bees-7.4). The registry also
+// beats the environment, which a session can inherit stale.
 func Me(flag string) (string, error) {
-	if flag != "" {
-		return flag, nil
+	me, inClaude := registered()
+	switch {
+	case inClaude && flag != "" && flag != me:
+		return "", fmt.Errorf("--as %s: %w %q", flag, ErrNotYou, me)
+	case inClaude:
+	case flag != "":
+		me = flag
+	case os.Getenv("BS_SESSION") != "":
+		me = os.Getenv("BS_SESSION")
+	default:
+		return "", ErrNoSession
 	}
-	if home, err := os.UserHomeDir(); err == nil {
-		reg := filepath.Join(home, ".claude", "sessions")
-		for pid := os.Getppid(); pid > 1; pid = parentOf(pid) {
-			b, err := os.ReadFile(filepath.Join(reg, fmt.Sprintf("%d.json", pid)))
-			if err != nil {
-				continue
-			}
-			var s struct{ Name string }
-			if json.Unmarshal(b, &s) == nil && s.Name != "" {
-				return s.Name, nil
-			}
-			break // the nearest Claude session has no usable name
+	return me, CheckSession(me)
+}
+
+// registered returns the name of the nearest ancestor process that is a registered,
+// named Claude Code session.
+func registered() (string, bool) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", false
+	}
+	reg := filepath.Join(home, ".claude", "sessions")
+	for pid := os.Getppid(); pid > 1; pid = parentOf(pid) {
+		b, err := os.ReadFile(filepath.Join(reg, fmt.Sprintf("%d.json", pid)))
+		if err != nil {
+			continue
 		}
+		var s struct{ Name string }
+		if json.Unmarshal(b, &s) == nil && s.Name != "" {
+			return s.Name, true
+		}
+		break // the nearest Claude session has no usable name
 	}
-	if s := os.Getenv("BS_SESSION"); s != "" {
-		return s, nil
-	}
-	return "", ErrNoSession
+	return "", false
 }
 
 // parentOf returns pid's parent from /proc, or 0 if it can't be read.

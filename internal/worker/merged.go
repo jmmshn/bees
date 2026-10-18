@@ -15,6 +15,8 @@ type GitHub interface {
 	// MergedHeads returns the head commit of each merged pull request whose head
 	// branch is branch, in the GitHub repository of the git repo at repo.
 	MergedHeads(ctx context.Context, repo, branch string) ([]string, error)
+	// Protected reports whether GitHub protects the default branch of the git repo at repo.
+	Protected(ctx context.Context, repo string) (bool, error)
 }
 
 // Merge is whether a branch's work is on the default branch.

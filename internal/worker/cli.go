@@ -107,10 +107,19 @@ func (HerdrCLI) StartClaude(ctx context.Context, pane, name string, args ...stri
 // worker busy with its doorbell is never idle in time.
 const herdrStartTimeout = 10 * time.Second
 
-func (HerdrCLI) RemoveWorktree(ctx context.Context, workspace string) error {
-	code, err := herdr(ctx, nil, "worktree", "remove", "--workspace", workspace, "--force")
-	if code == "workspace_not_found" {
+func (HerdrCLI) RemoveWorktree(ctx context.Context, workspace string, force bool) error {
+	args := []string{"worktree", "remove", "--workspace", workspace}
+	if force {
+		args = append(args, "--force")
+	}
+	code, err := herdr(ctx, nil, args...)
+	// Codes seen with herdr 0.9.3 (bees-7.4): without --force herdr refuses a worktree with
+	// modified or untracked files, and removes the workspace only with it.
+	switch code {
+	case "workspace_not_found":
 		return nil
+	case "dirty_worktree_requires_force":
+		return fmt.Errorf("%w: %w", err, ErrDirty)
 	}
 	return err
 }
@@ -268,4 +277,27 @@ func (GitHubCLI) MergedHeads(ctx context.Context, repo, branch string) ([]string
 		heads[i] = p.Head
 	}
 	return heads, nil
+}
+
+// Protected asks GitHub whether the default branch is protected: a branch's protected
+// field is readable with read access, while its protection rules need admin.
+func (GitHubCLI) Protected(ctx context.Context, repo string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, ghTimeout)
+	defer cancel()
+	gh := func(args ...string) (string, error) {
+		var stderr bytes.Buffer
+		cmd := exec.CommandContext(ctx, "gh", args...)
+		cmd.Dir, cmd.Stderr, cmd.WaitDelay = repo, &stderr, time.Second
+		out, err := cmd.Output()
+		if err != nil {
+			return "", fmt.Errorf("gh %s: %w: %s", args[0], err, strings.TrimSpace(stderr.String()))
+		}
+		return strings.TrimSpace(string(out)), nil
+	}
+	def, err := gh("api", "repos/{owner}/{repo}", "--jq", ".default_branch")
+	if err != nil {
+		return false, err
+	}
+	prot, err := gh("api", "repos/{owner}/{repo}/branches/"+def, "--jq", ".protected")
+	return prot == "true", err
 }

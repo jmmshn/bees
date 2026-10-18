@@ -158,12 +158,13 @@ func cmdEnd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 	fs.SetOutput(stderr)
 	proj := fs.String("project", "", "project (default: BS_PROJECT, else the current git repo)")
 	as := fs.String("as", "", "session doing the ending (default: this Claude session)")
+	force := fs.Bool("force", false, "remove the worktree even with uncommitted or untracked files, discarding them")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) != 1 {
-		fmt.Fprintln(stderr, "usage: bs end <worker | bead>")
+		fmt.Fprintln(stderr, "usage: bs end [--force] <worker | bead>")
 		return errUsage
 	}
 	f, err := fleet(ctx, *proj, *as, "")
@@ -175,7 +176,7 @@ func cmdEnd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 	if err != nil {
 		return err
 	}
-	if err := f.End(ctx, name); err != nil {
+	if err := f.End(ctx, name, *force); err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "ended %s\nbranch %s kept; bs prune deletes it once merged\n", name, name)

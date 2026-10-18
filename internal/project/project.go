@@ -15,12 +15,13 @@ import (
 )
 
 var (
-	ErrNoProject  = errors.New("can't tell which project; run inside its git repo, set BS_PROJECT or pass --project")
-	ErrBadProject = errors.New("project names must be a letter then up to 24 letters or digits (after dropping - and _); set BS_PROJECT")
-	ErrNoRepos    = errors.New("can't find the project's repo; run bs inside it, or set BS_REPOS to the directory that holds your repos")
-	ErrNoSession  = errors.New("can't tell which session you are; run bs from inside a named Claude session, or pass --as")
-	ErrBadSession = errors.New("not a session name: a lowercase letter, then up to 31 of a-z, 0-9, - and _")
-	ErrNotYou     = errors.New("this Claude session is registered as")
+	ErrNoProject    = errors.New("can't tell which project; run inside its git repo, set BS_PROJECT or pass --project")
+	ErrBadProject   = errors.New("project names must be a letter then up to 24 letters or digits (after dropping - and _); set BS_PROJECT")
+	ErrNoRepos      = errors.New("can't find the project's repo; run bs inside it, or set BS_REPOS to the directory that holds your repos")
+	ErrNoSession    = errors.New("can't tell which session you are; run bs from inside a named Claude session, or pass --as")
+	ErrBadSession   = errors.New("not a session name: a lowercase letter, then up to 31 of a-z, 0-9, - and _")
+	ErrNotYou       = errors.New("this Claude session is registered as")
+	ErrWrongProject = errors.New("this session's BS_PROJECT names another project than the repo you are in")
 )
 
 // validName is what a project name must be once lowercased with - and _ dropped. With no "-" in
@@ -47,13 +48,20 @@ func (p Project) NeedRepo() error {
 }
 
 // Resolve finds the project from flag, then BS_PROJECT, then the git repo containing
-// the working directory. A linked worktree resolves to its main repo. The repo is the
+// the working directory. A linked worktree resolves to its main repo. Inside a Claude
+// session, an inherited BS_PROJECT holds only in the repo the session was launched in:
+// a worker that runs bs in another project's repo must pick with --project (bees-8.7). The repo is the
 // git repo when it is the project's, else the project's directory under BS_REPOS, else
 // empty: messages need only the logbook, and NeedRepo stops what would run in no repo.
 func Resolve(flag string) (Project, error) {
-	name, git := flag, mainRepo()
+	name, git := flag, mainRepo("")
 	if name == "" {
 		name = os.Getenv("BS_PROJECT")
+		if here := normalise(filepath.Base(git)); name != "" && git != "" && here != normalise(name) {
+			if _, cwd, ok := registered(); ok && mainRepo(cwd) != git {
+				return Project{}, fmt.Errorf("%w: you are in %s; pass --project %s, or --project %s for the session's own", ErrWrongProject, git, here, normalise(name))
+			}
+		}
 	}
 	if name == "" {
 		if git == "" {
@@ -99,11 +107,13 @@ func repoDir(repos, name string) string {
 	return filepath.Join(repos, name)
 }
 
-// mainRepo returns the main checkout of the git repo containing the working directory,
-// or "" outside git. Git's common dir is shared by every worktree of a repo.
+// mainRepo returns the main checkout of the git repo containing dir (the working
+// directory if ""), or "" outside git. Git's common dir is shared by every worktree of a repo.
 // ponytail: assumes a non-bare repo whose common dir is <checkout>/.git.
-func mainRepo() string {
-	out, err := exec.Command("git", "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
+func mainRepo(dir string) string {
+	cmd := exec.Command("git", "rev-parse", "--path-format=absolute", "--git-common-dir")
+	cmd.Dir = dir
+	out, err := cmd.Output()
 	if err != nil {
 		return ""
 	}
@@ -129,7 +139,7 @@ func CheckSession(name string) error {
 // else is refused, so a session can't send as the queen (bees-7.4). The registry also
 // beats the environment, which a session can inherit stale.
 func Me(flag string) (string, error) {
-	me, inClaude := registered()
+	me, _, inClaude := registered()
 	switch {
 	case inClaude && flag != "" && flag != me:
 		return "", fmt.Errorf("--as %s: %w %q", flag, ErrNotYou, me)
@@ -144,12 +154,12 @@ func Me(flag string) (string, error) {
 	return me, CheckSession(me)
 }
 
-// registered returns the name of the nearest ancestor process that is a registered,
-// named Claude Code session.
-func registered() (string, bool) {
+// registered returns the name and launch directory of the nearest ancestor process that
+// is a registered, named Claude Code session.
+func registered() (name, cwd string, ok bool) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", false
+		return "", "", false
 	}
 	reg := filepath.Join(home, ".claude", "sessions")
 	for pid := os.Getppid(); pid > 1; pid = parentOf(pid) {
@@ -157,13 +167,13 @@ func registered() (string, bool) {
 		if err != nil {
 			continue
 		}
-		var s struct{ Name string }
+		var s struct{ Name, Cwd string }
 		if json.Unmarshal(b, &s) == nil && s.Name != "" {
-			return s.Name, true
+			return s.Name, s.Cwd, true
 		}
 		break // the nearest Claude session has no usable name
 	}
-	return "", false
+	return "", "", false
 }
 
 // parentOf returns pid's parent from /proc, or 0 if it can't be read.

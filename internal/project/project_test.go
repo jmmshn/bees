@@ -1,11 +1,13 @@
 package project_test
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jmmshn/bees/internal/project"
@@ -133,6 +135,48 @@ func TestNamedProjectUsesItsOwnGitRepo(t *testing.T) {
 	p, err := project.Resolve("")
 	if err != nil || p.Repo != repo {
 		t.Fatalf("got %+v, %v; want repo %s with no BS_REPOS", p, err, repo)
+	}
+}
+
+// register makes the test binary's parent a Claude session called name, launched in cwd.
+func register(t *testing.T, name, cwd string) {
+	t.Helper()
+	reg := filepath.Join(os.Getenv("HOME"), ".claude", "sessions")
+	if err := os.MkdirAll(reg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(map[string]any{"name": name, "pid": os.Getppid(), "cwd": cwd})
+	if err := os.WriteFile(filepath.Join(reg, fmt.Sprintf("%d.json", os.Getppid())), b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A worker's settings carry BS_PROJECT. In its own worktree that beats the git repo, which
+// names another project in a --repo worktree (bees-1.54). In some other repo it would
+// silently file into the worker's project, so bs refuses and says how to pick (bees-8.7).
+func TestInheritedProjectYieldsToAnotherRepo(t *testing.T) {
+	clearEnv(t)
+	own := gitRepo(t, "jobflow-ray") // a --repo worker's worktree: another project's repo
+	register(t, "bees-8-1", own)
+	t.Setenv("BS_PROJECT", "bees")
+	t.Chdir(own)
+	if p, err := project.Resolve(""); err != nil || p.Name != "bees" {
+		t.Fatalf("own worktree: %+v, %v; want bees", p, err)
+	}
+	t.Chdir(gitRepo(t, "bsdemo"))
+	if p, err := project.Resolve(""); !errors.Is(err, project.ErrWrongProject) || !strings.Contains(err.Error(), "--project bsdemo") {
+		t.Fatalf("another repo: %+v, %v; want ErrWrongProject naming --project bsdemo", p, err)
+	}
+	if p, err := project.Resolve("bsdemo"); err != nil || p.Name != "bsdemo" {
+		t.Fatalf("--project bsdemo: %+v, %v", p, err)
+	}
+	if p, err := project.Resolve("bees"); err != nil || p.Name != "bees" {
+		t.Fatalf("--project bees: %+v, %v", p, err)
+	}
+	clearEnv(t) // outside Claude, a BS_PROJECT the keeper set still wins
+	t.Setenv("BS_PROJECT", "bees")
+	if p, err := project.Resolve(""); err != nil || p.Name != "bees" {
+		t.Fatalf("outside Claude: %+v, %v; want bees", p, err)
 	}
 }
 

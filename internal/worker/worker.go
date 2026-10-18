@@ -322,8 +322,9 @@ func (f Fleet) open(ctx context.Context, p plan) (logbook.Spawn, error) {
 	return sp, err
 }
 
-// workerSettings is passed with --settings: Claude reads settings.local.json from the main
-// checkout even in a worktree, so per-worker settings can't live in a file, and the auto
+// workerSettings is passed with --settings, as a file in bs's cache (inline JSON is too
+// long to type into a pane: bees-8.3). Claude reads settings.local.json from the main
+// checkout even in a worktree, so per-worker settings can't live in the repo, and the auto
 // mode classifier reads autoMode only from user, managed or --settings settings. The
 // worker's bs finds its name from its Claude process and its project from env.BS_PROJECT,
 // the spawner's project: never from the worktree's git dir, which names another project in
@@ -387,11 +388,15 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 	if err != nil {
 		return st, err
 	}
+	settingsFile, err := prompt.Cache(sp.Name+"-settings.json", settings)
+	if err != nil {
+		return st, err
+	}
 	file, err := prompt.File(prompt.Worker, f.P.Name)
 	if err != nil {
 		return st, err
 	}
-	args := []string{"--name", sp.Name, "--settings", settings, "--append-system-prompt-file", file, doorbell}
+	args := []string{"--name", sp.Name, "--settings", settingsFile, "--append-system-prompt-file", file, doorbell}
 	if st.Continued {
 		args = append([]string{"--continue"}, args...)
 	}

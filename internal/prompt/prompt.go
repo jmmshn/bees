@@ -45,6 +45,11 @@ func Text(r Role, project string) string {
 // It is rewritten at every launch, through a rename so a concurrent launch never reads
 // half a file, and Claude reads it only at startup.
 func File(r Role, project string) (string, error) {
+	return Cache(project+"-"+string(r)+".md", Text(r, project))
+}
+
+// Cache writes body to <user cache dir>/bees/<name> through a rename, and returns its path.
+func Cache(name, body string) (string, error) {
 	cache, err := os.UserCacheDir()
 	if err != nil {
 		return "", err
@@ -53,19 +58,18 @@ func File(r Role, project string) (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil { // private, like the logbook
 		return "", err
 	}
-	name := project + "-" + string(r)
-	tmp, err := os.CreateTemp(dir, name+"-*.md")
+	tmp, err := os.CreateTemp(dir, name+"-*")
 	if err != nil {
 		return "", err
 	}
 	defer os.Remove(tmp.Name()) // a no-op once renamed
-	if _, err := tmp.WriteString(Text(r, project)); err != nil {
+	if _, err := tmp.WriteString(body); err != nil {
 		tmp.Close()
 		return "", err
 	}
 	if err := tmp.Close(); err != nil {
 		return "", err
 	}
-	path := filepath.Join(dir, name+".md")
+	path := filepath.Join(dir, name)
 	return path, os.Rename(tmp.Name(), path)
 }

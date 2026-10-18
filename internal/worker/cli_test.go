@@ -86,6 +86,19 @@ func TestCheckAgentArgs(t *testing.T) {
 	}
 }
 
+// herdr types the launch line into the pane's shell; one that lands before the shell's line
+// editor is up goes through the tty's canonical queue, which drops what passes MAX_CANON,
+// newline included (1024 bytes on macOS, probed with herdr 0.9.3: bees-8.3).
+func TestCheckAgentArgsRefusesALaunchTheTtyWouldCut(t *testing.T) {
+	long := strings.Repeat("x", 1024)
+	if err := worker.CheckAgentArgs([]string{"--name", "bees-8", long}); !errors.Is(err, worker.ErrLongLaunch) {
+		t.Fatalf("err = %v, want ErrLongLaunch", err)
+	}
+	if err := worker.CheckAgentArgs([]string{"--name", "bees-8", long[:500]}); err != nil {
+		t.Fatalf("500 bytes: %v", err)
+	}
+}
+
 func TestStartClaudeRefusesUnsafeArgsWithoutRunningHerdr(t *testing.T) {
 	fakeHerdrBinary(t, "herdr_was_run")
 	err := worker.HerdrCLI{}.StartClaude(context.Background(), "w1:p1", "bees-8", "a\nb")

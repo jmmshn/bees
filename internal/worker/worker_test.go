@@ -133,6 +133,7 @@ func newRig(t *testing.T) rig {
 	ctx := context.Background()
 	dir := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache"))
+	t.Setenv("HOME", dir) // macOS ignores XDG_CACHE_HOME: keep prompt and settings files out of ~/Library/Caches
 	lb, err := logbook.Open(ctx, filepath.Join(dir, "bees.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -236,7 +237,7 @@ func TestSpawnStartsAWorkerInItsOwnWorkspace(t *testing.T) {
 		AutoMode            map[string][]string `json:"autoMode"`
 		Permissions         struct{ Deny []string }
 	}
-	if err := json.Unmarshal([]byte(start[i+1]), &settings); err != nil || settings.CrossSessionInbound != "accept" {
+	if err := json.Unmarshal(settingsFile(t, start), &settings); err != nil || settings.CrossSessionInbound != "accept" {
 		t.Fatalf("--settings %q: %v", start[i+1], err)
 	}
 	// A list without $defaults would drop the built-in rules (force push, exfiltration).
@@ -304,7 +305,7 @@ func TestWorkerEnvironmentClaimsReviewOnlyOnAProtectedMain(t *testing.T) {
 		}
 		start := r.h.started[0]
 		var settings struct{ AutoMode map[string][]string }
-		if err := json.Unmarshal([]byte(start[slices.Index(start, "--settings")+1]), &settings); err != nil {
+		if err := json.Unmarshal(settingsFile(t, start), &settings); err != nil {
 			t.Fatal(err)
 		}
 		want := i == 2 // only GitHub answering "protected"
@@ -527,16 +528,27 @@ func TestAWorkerInAnotherProjectsRepoStaysInTheSpawnersProject(t *testing.T) {
 	}
 }
 
-// bsProject returns env.BS_PROJECT from a start's --settings.
-func bsProject(t *testing.T, start []string) string {
+// settingsFile returns the JSON in the file a start passes with --settings. It is a file,
+// not inline JSON, so the launch line stays short enough to type (bees-8.3).
+func settingsFile(t *testing.T, start []string) []byte {
 	t.Helper()
 	i := slices.Index(start, "--settings")
 	if i < 0 {
 		t.Fatalf("start = %q, want --settings", start)
 	}
-	var settings struct{ Env map[string]string }
-	if err := json.Unmarshal([]byte(start[i+1]), &settings); err != nil {
+	b, err := os.ReadFile(start[i+1])
+	if err != nil {
 		t.Fatalf("--settings %q: %v", start[i+1], err)
+	}
+	return b
+}
+
+// bsProject returns env.BS_PROJECT from a start's --settings.
+func bsProject(t *testing.T, start []string) string {
+	t.Helper()
+	var settings struct{ Env map[string]string }
+	if err := json.Unmarshal(settingsFile(t, start), &settings); err != nil {
+		t.Fatalf("--settings: %v", err)
 	}
 	return settings.Env["BS_PROJECT"]
 }

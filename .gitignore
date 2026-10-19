@@ -4,3 +4,5 @@
 *.out
 /scratch/
 /bakeoff/results/runs/
+/demo/*.cast
+/demo/*.gif

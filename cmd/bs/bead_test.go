@@ -99,7 +99,8 @@ func TestEpicPointsAtBeadNew(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	if !strings.HasPrefix(out, "web2-1\n") || !strings.Contains(out, `bs bead new --parent web2-1 "..."`) {
-		t.Errorf("out = %q", out)
+	// Only the id on stdout, like bs bead new, so E=$(bs epic …) holds just the id (bees-8.7).
+	if out != "web2-1\n" || !strings.Contains(stderr, `bs bead new --parent web2-1 "..."`) {
+		t.Errorf("out = %q, stderr = %q", out, stderr)
 	}
 }

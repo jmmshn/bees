@@ -15,6 +15,7 @@ toy=$(basename "$run")
 [[ $toy =~ ^lt[0-9]{16}$ ]] || { echo "$run is not a live-test run dir" >&2; exit 1; }
 repo=$run/$toy # never read from live.json
 queen_ws=$(jq -r '.workspace // empty' "$run/live.json" 2>/dev/null)
+[[ $HOME == /* ]] || { echo "HOME=$HOME is not absolute" >&2; exit 1; }
 store=$HOME/.local/share/bees
 if [ "$(uname)" = Darwin ]; then cache=$HOME/Library/Caches/bees; else cache=${XDG_CACHE_HOME:-$HOME/.cache}/bees; fi
 projects=$HOME/.claude/projects enc=$(sed 's/[^A-Za-z0-9]/-/g' <<<"$run") # Claude's name for a project dir
@@ -64,13 +65,21 @@ left=$(bd query --all --limit 0 --json "id=\"$toy-*\"" | jq -r '.[].id' | tr '\n
 [ -z "$left" ] || fail "beads left: $left"
 
 # 5. Files, last: the logbook goes only once everything it records is gone.
-rm -rf -- "$repo" "$repo-WT" || fail "couldn't remove $repo"
+# Delete only absolute paths whose name carries the toy id, never a bare $HOME-relative one:
+# a review agent's rm of $HOME/.local/share/bees/bees.db deleted the real logbook (bees-8.12).
+del() {
+	for p in "$@"; do
+		case $p in /*/"$toy"*) ;; *) fail "refusing to delete $p: not an absolute path named after $toy" ;; esac
+	done
+	rm -rf -- "$@"
+}
+del "$repo" "$repo-WT" || fail "couldn't remove $repo"
 # Claude's transcripts of the toy's sessions: kept as the run's record, moved out of ~/.claude.
 for t in "$projects/$enc"-*; do
 	[ -d "$t" ] || continue
 	mkdir -p "$run/keeper/transcripts" && mv -- "$t" "$run/keeper/transcripts/" || fail "couldn't move $t"
 done
-rm -f -- "$store/$toy.db" "$store/$toy.db-wal" "$store/$toy.db-shm" "$cache/$toy"-*
+del "$store/$toy.db" "$store/$toy.db-wal" "$store/$toy.db-shm" "$cache/$toy"-* || fail "couldn't remove $toy's logbook or cache files"
 echo "removed the toy repo, its worktrees, logbook and cache files; kept $run/keeper (with the transcripts)"
 
 # 6. Leaks: anything left by the toy, or written by it into another project.

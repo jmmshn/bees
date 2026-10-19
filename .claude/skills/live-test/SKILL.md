@@ -22,13 +22,15 @@ Setup makes a git repo at `~/.cache/bees-live/<toy>/<toy>` (or under `$BEES_LIVE
 
 **Stay in the toy.** Pass `--project <toy>` to every bs call of yours: a bare `bs` in this checkout acts on the real bees project, and an exported `BS_PROJECT` holds only inside the checkout your session was launched in (elsewhere bs refuses it). Leave `BS_LOGBOOK` unset: it reaches your shell and the queen, never the workers, who would then read another logbook. Both scripts unset both.
 
+**Never delete or mutate by hand** under `~` or `$HOME` (`rm`, `mv`, `sqlite3` writes): each Bash call starts a fresh shell, so a `HOME` or path you exported earlier is gone and `$HOME` is the real one. That is how a review agent deleted the real `bees.db` (bees-8.12). `teardown.sh` is the only deleter, and it removes only absolute paths named after the toy. A scratch file of yours goes under `<run>/keeper/`, by its absolute path.
+
 ## 2. Drive
 
 Play the keeper, through the queen's pane only (`pane` in live.json):
 
 - Say a line: `herdr agent prompt <pane> "<line>"`, then `herdr agent wait <pane> --until working --timeout 20000`, then `herdr agent wait <pane> --timeout 600000`. Check `herdr pane read <pane> --source recent --lines 40` shows `❯ <line>`: a pre-filled suggestion can swallow it.
 - One line per prompt. herdr refuses control characters in agent text, so multi-line text goes in a file under `<run>/keeper/`, and the line says `read <file>`.
-- Read state from `bs status --project <toy>` and the toy's logbook (`~/.local/share/bees/<toy>.db`, read-only through `python3 -I` and `sqlite3` with `mode=ro`: the sandbox stops the `sqlite3` CLI opening it), never from panes, worktrees on disk or scrollback (motif 1).
+- Read state from `bs status --project <toy>` and the toy's logbook (`~/.local/share/bees/<toy>.db`, read-only through `python3 -I` and `sqlite3` with `mode=ro`: the sandbox stops the `sqlite3` CLI opening it), never from panes, worktrees on disk or scrollback (motif 1). Until the queen's first `bs` call creates the toy's logbook, `bs status`, `send`, `inbox`, `end` and `prune` refuse with exit 2 (R48): that is "not started yet", not a failure.
 - A worker stuck at a prompt: answer it in its pane, and log that as a workaround; it is evidence for `capture-pitfall`.
 
 ## 3. Record (optional, for demos)

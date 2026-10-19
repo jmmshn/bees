@@ -21,10 +21,10 @@ var newFleet = func(f worker.Fleet) worker.Fleet {
 	return f
 }
 
-// fleet resolves the project, the calling session and the logbook into a Fleet.
-// The caller closes the returned Fleet's logbook.
-func fleet(ctx context.Context, flagProject, flagAs, flagRepo string) (worker.Fleet, error) {
-	p, lb, err := scope(ctx, flagProject)
+// fleet resolves the project, the calling session and the logbook into a Fleet; starts is
+// as for scope. The caller closes the returned Fleet's logbook.
+func fleet(ctx context.Context, flagProject, flagAs, flagRepo string, starts io.Writer) (worker.Fleet, error) {
+	p, lb, err := scope(ctx, flagProject, starts)
 	if err != nil {
 		return worker.Fleet{}, err
 	}
@@ -107,7 +107,7 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 			}
 		}
 	}
-	f, err := fleet(ctx, *proj, *as, repo)
+	f, err := fleet(ctx, *proj, *as, repo, stderr)
 	if err != nil {
 		return err
 	}
@@ -167,7 +167,7 @@ func cmdEnd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 		fmt.Fprintln(stderr, "usage: bs end [--force] <worker | bead>")
 		return errUsage
 	}
-	f, err := fleet(ctx, *proj, *as, "")
+	f, err := fleet(ctx, *proj, *as, "", nil)
 	if err != nil {
 		return err
 	}
@@ -202,7 +202,7 @@ func cmdPrune(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		fmt.Fprintln(stderr, "usage: bs prune [--dry-run]")
 		return errUsage
 	}
-	p, lb, err := scope(ctx, *proj)
+	p, lb, err := scope(ctx, *proj, nil)
 	if err != nil {
 		return err
 	}

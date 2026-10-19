@@ -48,6 +48,12 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if err != nil {
 		return err
 	}
+	// The queen starts the project, so her bs commands find a logbook.
+	_, lb, err := scope(ctx, *proj, stderr)
+	if err != nil {
+		return err
+	}
+	lb.Close()
 	// No BS_* variables: the queen's bs finds its name from --name and its project from
 	// the repo (R25). Drop inherited ones so they can't override either.
 	env := slices.DeleteFunc(os.Environ(), func(kv string) bool {

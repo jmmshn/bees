@@ -1,6 +1,17 @@
 # Takes
 
-One entry per take: what happened, what changed for the next one.
+One entry per take: what happened, what changed for the next one. **Take 7 is the one in
+the README** (`docs/img/demo2.gif`, 86.6 s, 4.8 MB).
+
+| Take | Verdict |
+|---|---|
+| 1 | Not recorded: the keeper moved capture off screen before it started. |
+| 2 | Timed out in the studies on two driver bugs (label match, `done` ≠ idle); bs fine. |
+| 3 | First full run (5 min). The GIF had a blank end card, a dropped piece, and the note on the wrong study. |
+| 4 | Clean: the note is on zigzag and the panes are tight; the bee is still a scribble and the prompt noisy. |
+| 5 | The zoomed bee and the plain prompt work; the zigzag only shows in motion, and the flower was lost. |
+| 6 | Failed at the review: the studies were renamed, and review.sh only matched `STUDY.md`. |
+| 7 | **Final.** The honey trail shows the zigzag in a still; it ends 🐝🌼 bzzzz!, and the files are named after the shapes. |
 
 ## Take 1 (2026-10-19, full screen)
 
@@ -67,3 +78,16 @@ Nothing recorded: the keeper switched to off-screen capture before it started. S
   - Line 2 asks for the studies as straight.md, zigzag.md and loop.md: the queen's review
     wanted names that mean something.
   - Line 2 asks the picked worker to build "following my note".
+
+## Take 6 (off-screen)
+
+- Failed at the review: line 2 now names the studies straight.md etc., and review.sh only
+  matched titles ending `STUDY.md`. It now matches any `.md` in the sidebar. `no leaks`.
+
+## Take 7 (off-screen, final)
+
+- 4 min 38 s real; GIF 86.6 s, 4.8 MB; `no leaks`. The steer is now "leave a trail of
+  honey drops (o) where the bee flew, and keep the flower next to it on the last frame",
+  following the queen's review: the zigzag has to show in a still, and the last frame
+  has to show the flower and the buzz. The worker kept the flower, added the trail and a
+  `bzzzz!`, and wrote a test for both.

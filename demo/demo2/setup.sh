@@ -35,6 +35,8 @@ git -C "$repo" add buzz.py && git -C "$repo" commit -qm "buzz.py: a bee and a fl
 prof=$HOME/.cache/bees-demo2/chrome
 mkdir -p "$prof"
 warm=$stage/warm.md && printf '# warm-up\n' >"$warm"
+# Its drafts and records go under $stage too, so no take inherits another's note.
+export PLANNOTATOR_DATA_DIR=$stage/plannotator
 PLANNOTATOR_BROWSER=none PLANNOTATOR_PORT=19480 plannotator annotate "$warm" --gate --json >/dev/null 2>&1 &
 pn=$!
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --user-data-dir="$prof" \
@@ -53,7 +55,7 @@ wait "$pn" "$chrome" 2>/dev/null || true
 # or HERDR_* variables, and plannotator opens its page through stage.sh.
 (cd "$repo" && env -i HOME="$HOME" USER="$USER" LOGNAME="$USER" SHELL="${SHELL:-/bin/zsh}" PATH="$PATH" \
 	TERM=xterm-256color COLORTERM=truecolor LANG="${LANG:-en_US.UTF-8}" BEADS_DIR="${BEADS_DIR:-}" \
-	PLANNOTATOR_BROWSER="$here/stage.sh" PLANNOTATOR_PORT=19480 \
+	PLANNOTATOR_BROWSER="$here/stage.sh" PLANNOTATOR_PORT=19480 PLANNOTATOR_DATA_DIR="$PLANNOTATOR_DATA_DIR" \
 	nohup herdr --session "$session" server </dev/null >"$stage/herdr-server.log" 2>&1 &)
 sock=
 for _ in $(seq 40); do

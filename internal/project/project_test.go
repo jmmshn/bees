@@ -302,8 +302,10 @@ func TestMeFindsTheSessionOfAnOrphanedBsFromItsEnv(t *testing.T) {
 	if me, err := project.Me(""); err != nil || me != "bees-8-8" {
 		t.Fatalf("orphan: %q, %v; want bees-8-8", me, err)
 	}
-	if me, err := project.Me("zz-spoof"); !errors.Is(err, project.ErrNotYou) {
-		t.Fatalf("orphan --as another: %q, %v; want ErrNotYou", me, err)
+	// A shell that inherited the env (a terminal started from a Claude Bash) is that session
+	// while it lives: the refusal names the env and how to drop it.
+	if me, err := project.Me("zz-spoof"); !errors.Is(err, project.ErrNotYou) || !strings.Contains(err.Error(), "env -u CLAUDE_PID -u CLAUDE_CODE_SESSION_ID") {
+		t.Fatalf("orphan --as another: %q, %v; want ErrNotYou with the unset hint", me, err)
 	}
 	// An env that doesn't match a live entry (leaked from another session, or a session
 	// whose pid was reused) fails closed: falling through to "not in Claude" would let
@@ -319,8 +321,9 @@ func TestMeFindsTheSessionOfAnOrphanedBsFromItsEnv(t *testing.T) {
 		},
 	} {
 		edit()
-		if me, err := project.Me("keeper"); !errors.Is(err, project.ErrStaleSession) {
-			t.Errorf("%s: %q, %v; want ErrStaleSession", name, me, err)
+		if me, err := project.Me("keeper"); !errors.Is(err, project.ErrStaleSession) ||
+			!strings.Contains(err.Error(), fmt.Sprintf("CLAUDE_PID=%d", pid)) || !strings.Contains(err.Error(), "env -u CLAUDE_PID -u CLAUDE_CODE_SESSION_ID") {
+			t.Errorf("%s: %q, %v; want ErrStaleSession naming the pid and the unset hint", name, me, err)
 		}
 		writeEntry("sid-1", start)
 		t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-1")
@@ -339,6 +342,45 @@ func TestMeFindsTheSessionOfAnOrphanedBsFromItsEnv(t *testing.T) {
 	}
 	if me, err := project.Me("bees-8-8"); !errors.Is(err, project.ErrNotYou) {
 		t.Fatalf("--as the forged session: %q, %v; want ErrNotYou", me, err)
+	}
+}
+
+// An unnamed Claude ancestor is a nested claude: the env may be the outer session's, so
+// it names no one and --as holds (bees-8.8).
+func TestUnnamedClaudeAncestorStopsBeforeTheEnv(t *testing.T) {
+	clearEnv(t)
+	register(t, "", "")
+	pid := os.Getpid()
+	start, err := proc.Start(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`{"name":"bees-8-8","pid":%d,"sessionId":"sid-1","procStart":%q}`, pid, start)
+	reg := filepath.Join(os.Getenv("HOME"), ".claude", "sessions")
+	if err := os.WriteFile(filepath.Join(reg, fmt.Sprintf("%d.json", pid)), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLAUDE_PID", fmt.Sprint(pid))
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-1")
+	if me, err := project.Me("keeper"); err != nil || me != "keeper" {
+		t.Fatalf("unnamed ancestor, env naming bees-8-8: %q, %v; want keeper", me, err)
+	}
+}
+
+// A stale Claude env also reaches Resolve, when BS_PROJECT names another project than the
+// repo: the error says that is what made bs look for the session (bees-8.8).
+func TestResolveSaysWhyItCheckedAStaleSession(t *testing.T) {
+	clearEnv(t)
+	t.Chdir(gitRepo(t, "bsdemo"))
+	t.Setenv("BS_PROJECT", "bees")
+	t.Setenv("CLAUDE_PID", fmt.Sprint(os.Getpid()))
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-gone")
+	_, err := project.Resolve("")
+	if !errors.Is(err, project.ErrStaleSession) || !strings.Contains(err.Error(), "BS_PROJECT=bees") {
+		t.Fatalf("got %v; want ErrStaleSession naming BS_PROJECT=bees", err)
+	}
+	if p, err := project.Resolve("bsdemo"); err != nil || p.Name != "bsdemo" {
+		t.Fatalf("--project skips the check: %+v, %v", p, err)
 	}
 }
 

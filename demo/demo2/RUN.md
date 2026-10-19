@@ -56,7 +56,7 @@ What take.sh types, in order:
 | 1 | keeper | `git worktree list` |
 | 2 | queen | For each branch show me git log --oneline main..\<branch\>. Then copy the three STUDY.md files to straight.md, zigzag.md and loop.md in a temp folder and run plannotator annotate on those with --gate --json in the background. When I decide, have the worker I pick build it, following my note, and end the other two. |
 | 2 | plannotator | open each study; on zigzag's, a global comment "zigzag, end with a buzz"; *More decisions ▸ Approve with notes* |
-| 3 | zigzag | make the zigzag a bit wider |
+| 3 | zigzag | leave a trail of honey drops (o) where the bee flew, and keep the flower next to it on the last frame |
 | 4 | keeper | `git merge --no-ff <zigzag branch>`, `git log --oneline --graph`, `python3 buzz.py`, `git branch -D <the two study branches>` |
 | 4 | queen | Close it out: bd close the beads and the epic, bs end the zigzag worker, then bs prune. |
 

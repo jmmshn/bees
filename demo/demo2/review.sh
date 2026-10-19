@@ -22,7 +22,7 @@ page() { curl -fsS "http://127.0.0.1:$port/json/list" | jq -e 'any(.[]; .type ==
 until_ 300 "plannotator's page" page
 # A pointer for the video: headless Chrome draws none. glide(el) moves it onto el, then clicks.
 lib='window.B=(t)=>[...document.querySelectorAll("button,[role=menuitem]")].find(b=>b.innerText.trim().startsWith(t)||b.title===t||b.ariaLabel===t);
-window.studies=()=>[...document.querySelectorAll("button")].filter(b=>b.title.endsWith("STUDY.md"));
+window.studies=()=>[...document.querySelectorAll("button")].filter(b=>b.title.endsWith(".md"));
 window.glide=async(el)=>{let c=document.getElementById("demo-cursor");
  if(!c){c=document.createElement("div");c.id="demo-cursor";
   c.style.cssText="position:fixed;z-index:2147483647;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;background:rgba(255,214,10,.85);box-shadow:0 0 0 3px rgba(0,0,0,.5);pointer-events:none;left:600px;top:390px;transition:left .6s ease,top .6s ease";

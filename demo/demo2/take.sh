@@ -135,7 +135,7 @@ mark beat3
 sleep 4
 focus zigzag
 sleep 8
-type_into "$zpane" "make the zigzag a bit wider"
+type_into "$zpane" "leave a trail of honey drops (o) where the bee flew, and keep the flower next to it on the last frame"
 mark steered
 mark wait
 base=$(git -C "$repo" rev-parse "$zz")

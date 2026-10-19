@@ -202,6 +202,16 @@ Nothing records whether a session is alive
 ([ADR-0004](docs/adr/0004-liveness-is-derived-not-stored.md)); that is worked out each
 time from Claude's registry and `/proc`. A dead session needs no cleanup: its messages wait.
 
+### One way in per harness
+
+bees needs agent sessions that can reach each other: one live session finds another by
+name and puts a prompt into its conversation. The logbook keeps every message, so the
+harness only has to deliver a doorbell. Claude Code does that with its built-in
+cross-session socket; oh-my-pi would need a small bs bridge extension
+([design](docs/design/omp-harness.md)); any other harness needs its own way in.
+
+![The queen's message stops in the logbook and a doorbell carries on to the worker: through Claude Code's built-in session socket, through a bs bridge extension in oh-my-pi, and, faded, any other harness that needs a way in](docs/img/harness-lanes.svg)
+
 ## Status
 
 v0 on Linux: every "Done when" item in [SPEC](docs/SPEC.md#done-when) passes (`go test ./...`

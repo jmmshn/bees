@@ -35,6 +35,8 @@ func Home(name string) string
 // keeper, BS_SESSION=free → ""  (falls back to the resolved project, as today)
 ```
 
+Order matters for a project named `queen`. Its workers are `queen-3` and `queen-3-1`, which look like `queen-<p>`. Try the worker pattern first: `queen-3` then gives `queen`, because a project name must start with a letter (R27⁶), so `3` can't be a project. That project's own queen is `queen-queen`, which still gives `queen`. The parse is unambiguous as long as the worker pattern comes first, and a test should pin `queen-3`, `queen-3-1` and `queen-queen`.
+
 `bs send <to>` writes to `Home(to)`'s logbook, from the sender's registry name. It rings `to` only if `to` is that project's queen or a worker recorded there. This is the bees-7.4 rule, "bs rings only its own project's sessions", checked against the recipient's logbook instead of the sender's. With this rule:
 
 - **Replies come back on their own.** `queen-b ▸ bs send bees-8-9` lands in `bees.db` and rings, so the worker's plain `bs inbox` shows it.
@@ -60,7 +62,18 @@ A cross-project epic is then two epics, one per project, joined by proxies. Ther
 
 ## Identity and authentication
 
-Sending as someone else gets worse with this change: a spoofed `--as` now reaches every project's logbook, not just one. **bees-8.8 (the orphaned `bs` that skips the process-tree check) must be fixed before this ships.** Its likely fix, a per-spawn secret that `bs` hands the session, works across projects through the same mapping. To check a sender, a logbook reads `Home(from)`'s logbook, where that sender's spawn (or `bs queen`) entry recorded the secret. Every project's logbook is a file of one user on one machine, so reading another project's file adds no new trust boundary. The boundary that matters is attention: a ring is a user turn, which is why bs rings only sessions recorded in the target's own logbook.
+Sending as someone else gets worse with this change: a spoofed `--as` now reaches every project's logbook, not just one. **bees-8.8 (the orphaned `bs` that skips the process-tree check) must be fixed before this ships.**
+
+bees-8.8 is building an env fallback: when the parent walk finds no Claude ancestor, bs takes `CLAUDE_PID` and `CLAUDE_CODE_SESSION_ID` from the environment and checks them against `~/.claude/sessions`. That fits cross-project routing as it is. The sender's name comes from Claude's machine-wide registry, never from a logbook, so `bs send` resolves `from` the same way whichever logbook it writes to. The recipient's logbook doesn't need to check anything against the sender's home logbook, and no secret has to be shared between projects.
+
+What this needs from bees-8.8:
+
+- **Project-independent identity.** `Me()` must not consult any logbook or `BS_PROJECT`, so the identity is the same in every logbook. The env fallback already works this way.
+- **Fail closed.** A registry entry that is missing or doesn't match refuses `--as` instead of trusting it. This matters more here, because a failure now reaches every logbook.
+
+The limit stays the one bees-8.8 states. Any process running as the same user can set those variables, or write the logbook files directly. bees has no boundary against the user's own processes. Its boundaries are against the wrong store by accident (bees-8.7) and against a session claiming another session's name.
+
+The boundary this change has to keep is attention. A ring is a user turn, so bs rings only sessions recorded in the target's own logbook.
 
 ## Considered options
 
@@ -81,7 +94,7 @@ Sending as someone else gets worse with this change: a spoofed `--as` now reache
 
 Build it in this order, each step as its own bead:
 
-1. Fix bees-8.8. It blocks the rest.
+1. Land bees-8.8 (env fallback, fail closed, `Me()` independent of the project). It blocks the rest.
 2. Add `Home(name)` and route `bs send` by it, checking the ring rule against the recipient's logbook. Replay `bs send` / `bs inbox` live between two throwaway projects.
 3. Add the prompt rules for cross-project asks (bakeoff replay, since this touches messaging).
 4. Probe `bd ship`/`external:` in the shared store. Then build `bs bead wait` on top of it, or as the proxy sweep if it doesn't work.

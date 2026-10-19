@@ -124,7 +124,7 @@ mark studied
 
 # Beat 2: the review, in plannotator.
 mark beat2
-type_into "$queen" "For each branch show me git log --oneline main..<branch>, then run plannotator annotate on the three STUDY.md files with --gate --json in the background. When I decide, have the worker I pick build it and end the other two."
+type_into "$queen" "For each branch show me git log --oneline main..<branch>. Then copy the three STUDY.md files to straight.md, zigzag.md and loop.md in a temp folder and run plannotator annotate on those with --gate --json in the background. When I decide, have the worker I pick build it, following my note, and end the other two."
 zz=$(workers_all | awk -F'\t' '$1 ~ /zigzag/ { print $2 }')
 "$here/review.sh" "$out" "$zz" || die "the review failed"
 
@@ -158,8 +158,9 @@ sleep 3
 # The flight, at the top of the pane, where edit.py zooms in.
 type_into "$keeper" "clear; python3 buzz.py"
 mark flight
-sleep 7
+sleep 3 # edit.py plays these 3 s at half speed
 mark flew
+sleep 2
 studies=$(workers_all | awk -F'\t' '$1 !~ /zigzag/ { print $2 }' | tr '\n' ' ')
 type_into "$keeper" "git branch -D $studies"
 sleep 3

@@ -52,3 +52,18 @@ Nothing recorded: the keeper switched to off-screen capture before it started. S
   - The flight runs on a cleared pane and is cut from a second agg render at 28 px,
     cropped to the keeper pane's top rows.
   - The take ends on `git log --graph` plus the bee, also zoomed, and the end card holds it.
+
+## Take 5 (off-screen)
+
+- 90 s GIF at first (86.5 s re-cut), 4.5 MB, `no leaks`. The plain `buzz $` prompt works,
+  and so does the zoom: the bee is big, and the end card holds the merge graph with the
+  bee. That worker's build ended with the bee on the flower but no flower and no "bzzz":
+  workers vary.
+- **Re-cut from the same take:** the crop is 1.5 rows down (it caught herdr's tab bar)
+  and 60×16 cells (17×84 left black bands); a few budgets trimmed to make 86.5 s.
+- **For take 6:**
+  - The zigzag lasted about 1.5 s of a 7 s stretch. The flight is now 3 s real, played at
+    0.5×.
+  - Line 2 asks for the studies as straight.md, zigzag.md and loop.md: the queen's review
+    wanted names that mean something.
+  - Line 2 asks the picked worker to build "following my note".

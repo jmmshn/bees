@@ -42,28 +42,29 @@ END = ("bees: one queen, a fleet of Claude workers, all on local git", "github.c
 STRETCH = {
     "start": (1, 1),
     "beat1": (7, 1),  # the question typed; the queen files beads and spawns
-    "spawned": (5, 1, "1 · each worker gets its own branch and worktree"),
+    "spawned": (4, 1, "1 · each worker gets its own branch and worktree"),
     "branches": (0.5, 1),
     "tiled": (8, 1, "1 · three Claude workers prototype in parallel: straight, zigzag, loop"),
     "untiled": (1.5, 1),
     "studied": (1, 1),
-    "beat2": (5, 2),  # the queen's git logs; plannotator starts
+    "beat2": (4, 2),  # the queen's git logs; plannotator starts
     "browser": (14, 2),  # the review
-    "terminal": (5, 3),  # the queen picks, sends the build, ends two
+    "terminal": (4, 3),  # the queen picks, sends the build, ends two
     "beat3": (6, 3),  # the steer
     "steered": (1, 3),
     "wait": (3, None),
     "built": (2, 3),
     "beat4": (6, 4),  # merge, graph
-    "flight": (6, 4),  # the bee flies, zoomed
+    "flight": (6, 4),  # the bee flies, zoomed, at SLOW speed
     "flew": (3, 4),  # branch -D the two studies
     "pruned": (2, 4),  # the queen's close-out
-    "closed": (2, 4),
+    "closed": (1.5, 4),
     "finale": (5, 4),  # the graph and the bee again, zoomed
 }
+SLOW = {"flight": 0.5}  # stretches played at a fixed speed below real time: the bee is quick
 # Stretches shown zoomed: a second agg render at ZOOM_FONT, cropped to the keeper pane's top
 # rows (herdr's sidebar takes the first PANE_COL columns), so the bee is big enough to see.
-ZOOMED, ZOOM_FONT, PANE_COL, ZOOM_COLS, ZOOM_ROWS = {"flight", "finale"}, 28, 26, 84, 17
+ZOOMED, ZOOM_FONT, PANE_COL, ZOOM_COLS, ZOOM_ROWS = {"flight", "finale"}, 28, 26, 60, 16
 
 
 def run(*cmd):
@@ -188,7 +189,7 @@ def main(out):
                else "zoom" if m in ZOOMED else "term")
         if t2 - t < 0.05:
             continue
-        speed = max(1.0, (t2 - t) / budget)
+        speed = SLOW.get(m) or max(1.0, (t2 - t) / budget)
         text = (own[0] if own else CAPTIONS[beat]) + (f"   ⏩ {speed:.0f}×" if speed >= 2 else "")
         stretches.append((src, t, t2, speed, text))
 
@@ -202,7 +203,8 @@ def main(out):
         zoom_v = cfr(render(out / "term.cast", out / "term-zoom.gif", ZOOM_FONT), out / "term-zoom.mp4")
         zw, zh = dims(zoom_v)
         cw, ch = zw / size["cols"], zh / size["rows"]
-        crop = f"crop={ZOOM_COLS * cw:.0f}:{ZOOM_ROWS * ch:.0f}:{PANE_COL * cw:.0f}:{ch:.0f}"
+        # 1.5 rows down: herdr's tab bar is row 0, and agg pads the top by about half a row.
+        crop = f"crop={ZOOM_COLS * cw:.0f}:{ZOOM_ROWS * ch:.0f}:{PANE_COL * cw:.0f}:{1.5 * ch:.0f}"
     pane_v = {label: (cfr(gif, out / f"pane-{label}.mp4"), start) for label, gif, start in panes}
     parts = out / "parts"
     parts.mkdir(exist_ok=True)

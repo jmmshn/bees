@@ -181,6 +181,21 @@ func TestBelongs(t *testing.T) {
 	}
 }
 
+func TestIsWorkerOf(t *testing.T) {
+	for _, c := range []struct {
+		project, name string
+		want          bool
+	}{
+		{"bees", "bees-8", true}, {"bees", "bees-8-10", true},
+		{"bees", "bees-review", false}, {"bees", "bees-8-", false}, {"bees", "queen-bees", false},
+		{"bees", "bees", false}, {"bees", "beesx-1", false}, {"bees", "keeper", false},
+	} {
+		if got := worker.IsWorkerOf(c.project, c.name); got != c.want {
+			t.Errorf("IsWorkerOf(%q, %q) = %v, want %v", c.project, c.name, got, c.want)
+		}
+	}
+}
+
 func TestNextEpic(t *testing.T) {
 	ids := []string{"bees-1", "bees-1.4", "bees-9", "bees-10.2", "dotfiles-40", "beads-995"}
 	if got := worker.NextEpic("bees", ids); got != "bees-11" {
@@ -789,8 +804,8 @@ func TestEndKeepsADirtyWorktreeWithoutForce(t *testing.T) {
 	}
 }
 
-// EndAll ends the logbook's live workers and nothing else, keeps one it can't end or that
-// isn't the project's, and heals on a second run (bees-8.10).
+// EndAll ends the logbook's live workers and nothing else, including one --repo spawned for
+// another project's bead, keeps one it can't end, and heals on a second run (bees-8.10).
 func TestEndAllEndsOnlyRecordedLiveWorkersAndHealsOnRerun(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
@@ -803,7 +818,7 @@ func TestEndAllEndsOnlyRecordedLiveWorkersAndHealsOnRerun(t *testing.T) {
 	_, _ = r.fleet.Spawn(ctx, "bees-9", "spawn and end")  // live again, in w3
 	_, _ = r.fleet.Spawn(ctx, "bees-10", "spawn and end") // w4
 	r.fleet.ForeignRepo = true
-	_, _ = r.fleet.Spawn(ctx, "dotfiles-3", "spawn and end")                                                                // w5: another project's name
+	_, _ = r.fleet.Spawn(ctx, "dotfiles-3", "spawn and end")                                                                // w5: --repo, another project's bead
 	r.h.workspaces = append(r.h.workspaces, worker.Workspace{ID: "w-other", Label: "bees-8", Path: r.h.workspaces[0].Path}) // not recorded
 	r.h.workspaces = slices.DeleteFunc(r.h.workspaces, func(w worker.Workspace) bool { return w.ID == "w4" })               // bees-10's vanished
 	r.h.dirty = map[string]bool{filepath.Join(r.repo+"-WT", "bees-9"): true}
@@ -820,17 +835,17 @@ func TestEndAllEndsOnlyRecordedLiveWorkersAndHealsOnRerun(t *testing.T) {
 		return strings.Join(s, " ")
 	}
 	got, err := r.fleet.EndAll(ctx, worker.EndOpts{})
-	if want := "bees-10:w4:gone=true:kept=false bees-8:w1:gone=false:kept=false bees-9:w3:gone=false:kept=true dotfiles-3:w5:gone=false:kept=true"; summary(got, err) != want {
+	if want := "bees-10:w4:gone=true:kept=false bees-8:w1:gone=false:kept=false bees-9:w3:gone=false:kept=true dotfiles-3:w5:gone=false:kept=false"; summary(got, err) != want {
 		t.Fatalf("EndAll = %s\nwant     %s", summary(got, err), want)
 	}
-	if !errors.Is(got[2].Err, worker.ErrDirty) || !errors.Is(got[3].Err, worker.ErrForeign) || !slices.Equal(r.h.removed, []string{"w1"}) {
-		t.Fatalf("errs = %v, %v; removed = %v; want ErrDirty, ErrForeign and only w1", got[2].Err, got[3].Err, r.h.removed)
+	if !errors.Is(got[2].Err, worker.ErrDirty) || !slices.Equal(r.h.removed, []string{"w1", "w5"}) {
+		t.Fatalf("err = %v; removed = %v; want ErrDirty and only w1, w5", got[2].Err, r.h.removed)
 	}
 	r.h.dirty = nil
-	if got := summary(r.fleet.EndAll(ctx, worker.EndOpts{})); got != "bees-9:w3:gone=false:kept=false dotfiles-3:w5:gone=false:kept=true" {
-		t.Fatalf("rerun = %s; want bees-9 ended, dotfiles-3 still kept", got)
+	if got := summary(r.fleet.EndAll(ctx, worker.EndOpts{})); got != "bees-9:w3:gone=false:kept=false" {
+		t.Fatalf("rerun = %s; want only bees-9, now ended", got)
 	}
-	if slices.Contains(r.h.removed, "w-other") || slices.Contains(r.h.removed, "w5") {
+	if slices.Contains(r.h.removed, "w-other") {
 		t.Fatalf("removed a workspace that isn't the project's: %v", r.h.removed)
 	}
 }
@@ -859,7 +874,7 @@ func TestEndWithHerdrDownKeepsTheWorker(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
-	r.h.listErr = errors.New("herdr workspace list: connection refused")
+	r.h.listErr = fmt.Errorf("%w: herdr workspace list: no herdr server is running", worker.ErrHerdrDown) // as HerdrCLI labels it
 	got, err := r.fleet.EndAll(ctx, worker.EndOpts{})
 	if err != nil || len(got) != 1 || !errors.Is(got[0].Err, worker.ErrHerdrDown) || got[0].Gone {
 		t.Fatalf("EndAll = %+v, %v; want bees-8 kept with ErrHerdrDown", got, err)

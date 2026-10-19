@@ -40,7 +40,6 @@ var (
 	ErrNotOurs     = errors.New("the recorded workspace is open on another worktree")
 	// ErrHerdrDown: herdr didn't answer, so bs can't tell an open workspace from a gone one.
 	ErrHerdrDown = errors.New("herdr is unreachable")
-	ErrForeign   = errors.New("not a worker of project")
 )
 
 // LabelRules says what a worker's label must be. The queen writes the label; bs only checks it.
@@ -71,7 +70,8 @@ type Herdr interface {
 	// ErrUnconfirmed: herdr gave up waiting. ErrUnsafeArg: an argument herdr can't pass.
 	StartClaude(ctx context.Context, pane, name string, args ...string) error
 	// RemoveWorktree removes workspace and its worktree; already gone → nil. Without force
-	// it refuses a worktree with modified or untracked files: ErrDirty.
+	// it refuses a worktree with modified or untracked files: ErrDirty. Both: ErrHerdrDown
+	// when herdr itself didn't answer.
 	RemoveWorktree(ctx context.Context, workspace string, force bool) error
 	Workspaces(ctx context.Context) ([]Workspace, error)
 }
@@ -120,6 +120,15 @@ var beadNumber = regexp.MustCompile(`^-\d+(\.\d+)*$`)
 func Belongs(project, bead string) bool {
 	rest, ok := strings.CutPrefix(bead, project)
 	return ok && beadNumber.MatchString(rest)
+}
+
+var workerNumber = regexp.MustCompile(`^(-\d+)+$`)
+
+// IsWorkerOf reports whether name is the worker name of one of project's beads:
+// <project>-<n>[-<m>…]. A bare prefix test would also take a session named bees-review.
+func IsWorkerOf(project, name string) bool {
+	rest, ok := strings.CutPrefix(name, project)
+	return ok && workerNumber.MatchString(rest)
 }
 
 // Address maps to, a worker's name or a bead id of project, forward to the worker's name:
@@ -506,10 +515,10 @@ type Ending struct {
 }
 
 // EndAll ends every worker the logbook records as spawned and not yet ended, and nothing
-// else: never a workspace guessed from herdr (motif 12). It keeps a worker whose name isn't
-// the project's (ErrForeign): a logbook naming another project's workers is the wrong
-// logbook. A worker it can't end stays live in the logbook, so running it again picks up
-// where it stopped.
+// else: never a workspace guessed from herdr (motif 12). That includes a worker spawned with
+// --repo for another project's bead (dotfiles-3): this project's queen recorded it. A
+// worker it can't end stays live in the logbook, so running it again picks up where it
+// stopped.
 func (f Fleet) EndAll(ctx context.Context, o EndOpts) ([]Ending, error) {
 	live, err := f.LB.LiveSpawns(ctx)
 	if err != nil {
@@ -517,10 +526,6 @@ func (f Fleet) EndAll(ctx context.Context, o EndOpts) ([]Ending, error) {
 	}
 	out := make([]Ending, len(live))
 	for i, sp := range live {
-		if !strings.HasPrefix(sp.Name, f.P.Name+"-") {
-			out[i] = Ending{Name: sp.Name, Workspace: sp.Workspace, Err: fmt.Errorf("%s: %w %s; nothing removed", sp.Name, ErrForeign, f.P.Name)}
-			continue
-		}
 		out[i] = f.end(ctx, sp, o)
 	}
 	return out, nil
@@ -531,7 +536,7 @@ func (f Fleet) end(ctx context.Context, sp logbook.Spawn, o EndOpts) Ending {
 	e := Ending{Name: sp.Name, Workspace: sp.Workspace}
 	wss, err := f.H.Workspaces(ctx)
 	if err != nil {
-		e.Err = fmt.Errorf("%s: %w, so bs can't tell whether workspace %s is open; nothing removed: %w", sp.Name, ErrHerdrDown, sp.Workspace, err)
+		e.Err = fmt.Errorf("%s: can't tell whether workspace %s is open; nothing removed: %w", sp.Name, sp.Workspace, err)
 		return e
 	}
 	i := slices.IndexFunc(wss, func(w Workspace) bool { return w.ID == sp.Workspace })

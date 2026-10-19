@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -45,7 +44,7 @@ func (h *fakeHive) RemoveWorktree(ctx context.Context, workspace string, force b
 }
 func (h *fakeHive) Workspaces(ctx context.Context) ([]worker.Workspace, error) {
 	if h.down {
-		return nil, errors.New("herdr workspace list: connection refused")
+		return nil, fmt.Errorf("%w: herdr workspace list: no herdr server is running", worker.ErrHerdrDown) // as HerdrCLI labels it
 	}
 	return nil, nil
 }

@@ -211,7 +211,7 @@ func mayEndAll(f worker.Fleet, yes bool) error {
 	if lb := os.Getenv("BS_LOGBOOK"); lb != "" && filepath.Base(lb) != f.P.Name+".db" {
 		return fmt.Errorf("BS_LOGBOOK=%s is not project %s's logbook; unset it, or pass the project it belongs to", lb, f.P.Name)
 	}
-	if strings.HasPrefix(f.Me, f.P.Name+"-") {
+	if worker.IsWorkerOf(f.P.Name, f.Me) {
 		return fmt.Errorf("%s is a worker of project %s: a worker never ends its whole project; ask the queen", f.Me, f.P.Name)
 	}
 	if yes {

@@ -156,15 +156,16 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 func cmdEnd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("end", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	proj := fs.String("project", "", "project (default: BS_PROJECT, else the current git repo)")
+	proj := fs.String("project", "", "project (default: BS_PROJECT, else the current git repo; --all needs it)")
 	as := fs.String("as", "", "session doing the ending (default: this Claude session)")
 	force := fs.Bool("force", false, "remove the worktree even with uncommitted or untracked files, discarding them")
+	all := fs.Bool("all", false, "end every worker the project's logbook records as spawned and not yet ended")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
 	}
-	if len(pos) != 1 {
-		fmt.Fprintln(stderr, "usage: bs end [--force] <worker | bead>")
+	if *all != (len(pos) == 0) || *all && *proj == "" {
+		fmt.Fprintln(stderr, "usage: bs end [--force] <worker | bead>\n       bs end --all --project <project> [--force]")
 		return errUsage
 	}
 	f, err := fleet(ctx, *proj, *as, "")
@@ -172,6 +173,9 @@ func cmdEnd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 		return err
 	}
 	defer f.LB.Close()
+	if *all {
+		return endAll(ctx, f, *force, stdout, stderr)
+	}
 	name, err := worker.Address(ctx, f.LB, f.P.Name, pos[0])
 	if err != nil {
 		return err
@@ -180,6 +184,46 @@ func cmdEnd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 		return err
 	}
 	fmt.Fprintf(stdout, "ended %s\nbranch %s kept; bs prune deletes it once merged\n", name, name)
+	return nil
+}
+
+// Exit codes of bs end --all when it keeps a worker.
+const (
+	exitEndKept      = 1 // some worker could not be ended
+	exitEndHerdrDown = 3 // herdr didn't answer, so some worker's workspace may still be open
+)
+
+// endAll ends the project's live workers, one line each, and exits nonzero when it keeps
+// any: a re-run ends what is left.
+func endAll(ctx context.Context, f worker.Fleet, force bool, stdout, stderr io.Writer) error {
+	ended, err := f.EndAll(ctx, force)
+	if err != nil {
+		return err
+	}
+	if len(ended) == 0 {
+		fmt.Fprintf(stdout, "nothing to end: project %s has no worker spawned and not yet ended\n", f.P.Name)
+		return nil
+	}
+	code := 0
+	for _, e := range ended {
+		switch {
+		case errors.Is(e.Err, worker.ErrHerdrDown):
+			fmt.Fprintf(stderr, "bs end: kept %v\n", e.Err)
+			code = exitEndHerdrDown
+		case e.Err != nil:
+			fmt.Fprintf(stderr, "bs end: kept %v\n", e.Err)
+			code = max(code, exitEndKept)
+		case e.Gone:
+			fmt.Fprintf(stdout, "ended %s: workspace %s was already gone\n", e.Name, e.Workspace)
+		default:
+			fmt.Fprintf(stdout, "ended %s: removed workspace %s\n", e.Name, e.Workspace)
+		}
+	}
+	if code != 0 {
+		fmt.Fprintf(stderr, "bs end: some workers are still live; fix the cause above and run bs end --all --project %s again\n", f.P.Name)
+		return exitCode(code)
+	}
+	fmt.Fprintf(stdout, "branches kept; bs prune deletes them once merged\n")
 	return nil
 }
 

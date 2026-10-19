@@ -38,6 +38,7 @@ type fakeHerdr struct {
 	failStart  error
 	liveAnyway bool  // with failStart: Claude came up all the same, as after herdr's timeout
 	aliveErr   error // the registry can't be read
+	listErr    error // herdr can't be reached
 }
 
 func (h *fakeHerdr) CreateWorktree(ctx context.Context, repo, branch, path, label string) (worker.Workspace, error) {
@@ -105,7 +106,7 @@ func (h *fakeHerdr) RemoveWorktree(ctx context.Context, workspace string, force 
 }
 
 func (h *fakeHerdr) Workspaces(ctx context.Context) ([]worker.Workspace, error) {
-	return h.workspaces, nil
+	return h.workspaces, h.listErr
 }
 
 // exit simulates the worker's Claude process ending.
@@ -784,6 +785,69 @@ func TestEndKeepsADirtyWorktreeWithoutForce(t *testing.T) {
 	}
 	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); len(r.h.removed) != 1 || !sp.Ended {
 		t.Fatalf("with force: removed = %v, ended = %v", r.h.removed, sp.Ended)
+	}
+}
+
+// EndAll ends the logbook's live workers and nothing else, keeps one it can't end, and
+// heals that on a second run (bees-8.10).
+func TestEndAllEndsOnlyRecordedLiveWorkersAndHealsOnRerun(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	for _, b := range []string{"bees-8", "bees-9"} {
+		if _, err := r.fleet.Spawn(ctx, b, "spawn and end"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = r.fleet.End(ctx, "bees-9", false)
+	_, _ = r.fleet.Spawn(ctx, "bees-9", "spawn and end") // live again, in a new workspace
+	r.fleet.ForeignRepo = true
+	_, _ = r.fleet.Spawn(ctx, "dotfiles-3", "spawn and end")
+	r.h.workspaces = append(r.h.workspaces, worker.Workspace{ID: "w-other", Label: "bees-8", Path: r.h.workspaces[0].Path}) // not recorded
+	r.h.workspaces = slices.DeleteFunc(r.h.workspaces, func(w worker.Workspace) bool { return w.ID == "w4" })               // dotfiles-3's vanished
+	r.h.dirty = map[string]bool{filepath.Join(r.repo+"-WT", "bees-9"): true}
+	r.h.removed = nil
+
+	got, err := r.fleet.EndAll(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary := func(es []worker.Ending) string {
+		var s []string
+		for _, e := range es {
+			s = append(s, fmt.Sprintf("%s:%s:gone=%v:err=%v", e.Name, e.Workspace, e.Gone, e.Err != nil))
+		}
+		return strings.Join(s, " ")
+	}
+	if want := "bees-8:w1:gone=false:err=false bees-9:w3:gone=false:err=true dotfiles-3:w4:gone=true:err=false"; summary(got) != want {
+		t.Fatalf("EndAll = %s\nwant     %s", summary(got), want)
+	}
+	if !errors.Is(got[1].Err, worker.ErrDirty) || !slices.Equal(r.h.removed, []string{"w1"}) {
+		t.Fatalf("err = %v, removed = %v; want ErrDirty and only w1", got[1].Err, r.h.removed)
+	}
+	r.h.dirty = nil
+	if got, err = r.fleet.EndAll(ctx, false); err != nil || summary(got) != "bees-9:w3:gone=false:err=false" {
+		t.Fatalf("rerun = %s, %v; want only bees-9 ended", summary(got), err)
+	}
+	if got, err = r.fleet.EndAll(ctx, false); err != nil || len(got) != 0 {
+		t.Fatalf("third run = %s, %v; want nothing to end", summary(got), err)
+	}
+	if slices.Contains(r.h.removed, "w-other") {
+		t.Fatalf("removed the unrecorded workspace: %v", r.h.removed)
+	}
+}
+
+// With herdr down, bs can't tell open from gone: it keeps the worker live and says so.
+func TestEndWithHerdrDownKeepsTheWorker(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	r.h.listErr = errors.New("herdr workspace list: connection refused")
+	got, err := r.fleet.EndAll(ctx, false)
+	if err != nil || len(got) != 1 || !errors.Is(got[0].Err, worker.ErrHerdrDown) || got[0].Gone {
+		t.Fatalf("EndAll = %+v, %v; want bees-8 kept with ErrHerdrDown", got, err)
+	}
+	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); sp.Ended || len(r.h.removed) != 0 {
+		t.Fatalf("ended = %v, removed = %v; want nothing touched", sp.Ended, r.h.removed)
 	}
 }
 

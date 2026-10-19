@@ -38,6 +38,8 @@ var (
 	ErrNotStarted  = errors.New("not started: another worker in this spawn was refused")
 	ErrDirty       = errors.New("the worktree has modified or untracked files")
 	ErrNotOurs     = errors.New("the recorded workspace is open on another worktree")
+	// ErrHerdrDown: herdr didn't answer, so bs can't tell an open workspace from a gone one.
+	ErrHerdrDown = errors.New("herdr is unreachable")
 )
 
 // LabelRules says what a worker's label must be. The queen writes the label; bs only checks it.
@@ -481,25 +483,57 @@ func (f Fleet) End(ctx context.Context, name string, force bool) error {
 	if sp.Ended {
 		return nil
 	}
+	_, err = f.end(ctx, sp, force)
+	return err
+}
+
+// Ending is what EndAll did with one worker.
+type Ending struct {
+	Name, Workspace string
+	Gone            bool  // herdr no longer had the workspace, so only the end was recorded
+	Err             error // the worker was kept: still live in the logbook
+}
+
+// EndAll ends every worker the logbook records as spawned and not yet ended, and nothing
+// else: never a workspace guessed from herdr (motif 12). A worker it can't end is kept live
+// in the logbook, so running it again picks up where it stopped.
+func (f Fleet) EndAll(ctx context.Context, force bool) ([]Ending, error) {
+	live, err := f.LB.LiveSpawns(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Ending, len(live))
+	for i, sp := range live {
+		out[i] = Ending{Name: sp.Name, Workspace: sp.Workspace}
+		out[i].Gone, out[i].Err = f.end(ctx, sp, force)
+	}
+	return out, nil
+}
+
+// end removes live spawn sp's workspace and records the end; gone means herdr no longer
+// had the workspace.
+func (f Fleet) end(ctx context.Context, sp logbook.Spawn, force bool) (gone bool, err error) {
+	name := sp.Name
 	wss, err := f.H.Workspaces(ctx)
 	if err != nil {
-		return err
+		return false, fmt.Errorf("%s: %w, so bs can't tell whether workspace %s is open; nothing removed: %w", name, ErrHerdrDown, sp.Workspace, err)
 	}
-	if i := slices.IndexFunc(wss, func(w Workspace) bool { return w.ID == sp.Workspace }); i >= 0 {
+	i := slices.IndexFunc(wss, func(w Workspace) bool { return w.ID == sp.Workspace })
+	if i >= 0 {
 		if sp.Worktree == "" || filepath.Clean(wss[i].Path) != filepath.Clean(sp.Worktree) {
-			return fmt.Errorf("%s: workspace %s is open on %q, not its recorded worktree %q: %w; nothing removed", name, sp.Workspace, wss[i].Path, sp.Worktree, ErrNotOurs)
+			return false, fmt.Errorf("%s: workspace %s is open on %q, not its recorded worktree %q: %w; nothing removed", name, sp.Workspace, wss[i].Path, sp.Worktree, ErrNotOurs)
 		}
 		if err := f.H.RemoveWorktree(ctx, sp.Workspace, force); err != nil {
 			if errors.Is(err, ErrDirty) {
-				return fmt.Errorf("%s: %w in %s; commit or move them, or end it with --force to discard them", name, ErrDirty, sp.Worktree)
+				return false, fmt.Errorf("%s: %w in %s; commit or move them, or end it with --force to discard them", name, ErrDirty, sp.Worktree)
 			}
-			return err
+			return false, err
 		}
 	}
 	if err := f.LB.RecordEnd(ctx, f.Me, sp.ID); err != nil {
-		return err
+		return false, err
 	}
-	return prompt.Remove(name + "-settings*.json") // * also takes the fixed name of 8.3's first cut
+	return i < 0, prompt.Remove(name + "-settings*.json") // * also takes the fixed name of 8.3's first cut
 }
 
 // Pruned is what Prune found for one ended worker's branch.

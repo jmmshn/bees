@@ -274,13 +274,20 @@ FROM entries s WHERE s.kind = 'spawned' AND s.subject = ? ORDER BY s.rowid DESC 
 
 // EndedSpawns returns the latest spawn of each worker whose latest spawn has ended, by
 // name. A worker spawned again since it ended is live, so it is left out.
-func (l *Logbook) EndedSpawns(ctx context.Context) ([]Spawn, error) {
+func (l *Logbook) EndedSpawns(ctx context.Context) ([]Spawn, error) { return l.latestSpawns(ctx, true) }
+
+// LiveSpawns returns the latest spawn of each worker whose latest spawn has not ended, by
+// name: the workers bs end --all ends.
+func (l *Logbook) LiveSpawns(ctx context.Context) ([]Spawn, error) { return l.latestSpawns(ctx, false) }
+
+// latestSpawns returns each worker's latest spawn, by name, if its ended state is ended.
+func (l *Logbook) latestSpawns(ctx context.Context, ended bool) ([]Spawn, error) {
 	rows, err := l.db.QueryContext(ctx, `
 SELECT s.id, s.subject, s.data FROM entries s
 WHERE s.kind = 'spawned'
   AND s.rowid = (SELECT MAX(x.rowid) FROM entries x WHERE x.kind = 'spawned' AND x.subject = s.subject)
-  AND EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = s.id)
-ORDER BY s.subject`)
+  AND EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = s.id) = ?
+ORDER BY s.subject`, ended)
 	if err != nil {
 		return nil, err
 	}
@@ -295,7 +302,7 @@ ORDER BY s.subject`)
 		if err := json.Unmarshal([]byte(data), &s); err != nil {
 			return nil, fmt.Errorf("spawn record %s: %w", s.ID, err)
 		}
-		s.Ended = true
+		s.Ended = ended
 		out = append(out, s)
 	}
 	return out, rows.Err()

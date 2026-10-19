@@ -17,7 +17,7 @@ commands:
   init      create the logbook file and table if missing
   queen     start this project's queen session
   spawn     start a worker for a bead in its own herdr workspace
-  end       remove a worker's workspace; its branch is kept
+  end       remove a worker's workspace (--all: every live worker's); its branch is kept
   prune     delete ended workers' local branches once their work is merged
   epic      create the project's next epic (<project>-<n>)
   bead      list the project's beads (ls) or add one under an epic (new)

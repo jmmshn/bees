@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ type fakeHive struct {
 	next   int
 	labels map[string]string // workspace label → worker
 	live   map[string]bool
+	down   bool // herdr doesn't answer
 }
 
 func (h *fakeHive) CreateWorktree(ctx context.Context, repo, branch, path, label string) (worker.Workspace, error) {
@@ -38,7 +40,12 @@ func (h *fakeHive) StartClaude(ctx context.Context, pane, name string, args ...s
 func (h *fakeHive) RemoveWorktree(ctx context.Context, workspace string, force bool) error {
 	return nil
 }
-func (h *fakeHive) Workspaces(ctx context.Context) ([]worker.Workspace, error) { return nil, nil }
+func (h *fakeHive) Workspaces(ctx context.Context) ([]worker.Workspace, error) {
+	if h.down {
+		return nil, errors.New("herdr workspace list: connection refused")
+	}
+	return nil, nil
+}
 func (h *fakeHive) Show(ctx context.Context, id string) (worker.Bead, error) {
 	if strings.HasSuffix(id, ".404") {
 		return worker.Bead{}, fmt.Errorf("no bead %s", id)
@@ -124,5 +131,35 @@ func TestSpawnBeadsAfterDoubleDash(t *testing.T) {
 	h := useFakeHive(t)
 	if _, stderr, code := bs(t, "spawn", "--project", "test", "--as", "queen-test", "--label", "sort fruits", "--", "test-1.1"); code != 0 || h.labels["sort fruits"] != "test-1-1" {
 		t.Fatalf("exit %d, stderr %q, spawned %v", code, stderr, h.labels)
+	}
+}
+
+// bs end --all needs --project, keeps every worker while herdr is down (exit 3), and ends
+// them on a re-run once herdr answers (bees-8.10).
+func TestEndAllSaysWhatItKeptAndHealsOnRerun(t *testing.T) {
+	useTempLogbook(t)
+	h := useFakeHive(t)
+	if _, _, code := bs(t, "end", "--as", "queen-test", "--all"); code != 2 {
+		t.Fatalf("--all without --project: exit %d, want 2", code)
+	}
+	if _, _, code := bs(t, "end", "--project", "test", "--as", "queen-test", "--all", "test-1-1"); code != 2 {
+		t.Fatalf("--all with a worker: exit %d, want 2", code)
+	}
+	end := []string{"end", "--project", "test", "--as", "queen-test", "--all"}
+	if out, _, code := bs(t, end...); code != 0 || out != "nothing to end: project test has no worker spawned and not yet ended\n" {
+		t.Fatalf("empty: exit %d, %q", code, out)
+	}
+	if _, stderr, code := bs(t, "spawn", "--project", "test", "--as", "queen-test", "--label", "sort fruits", "test-1.1", "--label", "dedupe todo", "test-1.2"); code != 0 {
+		t.Fatalf("spawn: exit %d, %s", code, stderr)
+	}
+	h.down = true
+	out, stderr, code := bs(t, end...)
+	if code != exitEndHerdrDown || out != "" || strings.Count(stderr, "herdr is unreachable") != 2 || !strings.Contains(stderr, "run bs end --all --project test again") {
+		t.Fatalf("herdr down: exit %d, out %q, stderr %q", code, out, stderr)
+	}
+	h.down = false
+	out, _, code = bs(t, end...)
+	if code != 0 || out != "ended test-1-1: workspace w1 was already gone\nended test-1-2: workspace w2 was already gone\nbranches kept; bs prune deletes them once merged\n" {
+		t.Fatalf("rerun: exit %d, %q", code, out)
 	}
 }

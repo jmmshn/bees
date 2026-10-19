@@ -17,8 +17,10 @@ bakeoff/mkrun.sh c 3                       # fresh toy repo + bare origin + lead
 # play cards/S3.md by hand, or tell a keeper agent: "read cards/DRIVER.md, then play cards/S3.md against <run dir>"
 bakeoff/observe.sh ~/.cache/bees-bakeoff/runs/t3c   # snapshot: lead, worker panes, branches
 bakeoff/collect.sh ~/.cache/bees-bakeoff/runs/t3c   # metrics.json: wall time, keeper turns, interventions, tokens, leftovers, check
+bs end --all --project t3c                         # arm c, after collect.sh: ends the workers the run's logbook recorded
 ```
 
+- **A one-off live check is not a card.** To exercise a bs change by hand, use the `live-test` skill (`.claude/skills/live-test/SKILL.md`): its own toy project, a scripted teardown and a leak check.
 - **Location of runs.** Runs live in `$BAKEOFF_RUNS`, which defaults to `~/.cache/bees-bakeoff/runs`. That directory is outside any repo on purpose: Claude walks up parent directories for `CLAUDE.md`, so a toy repo placed inside bees would load bees' dogfood rules into every lead.
 - **Which bs.** Arm c runs the `bs` on PATH. To replay a branch's prompts without installing it (only the queen installs bs), build it and pass its path: `go build -o bin/bs ./cmd/bs && BAKEOFF_BS=bin/bs bakeoff/mkrun.sh c 1`. The queen inherits that PATH, so its spawns (and the worker prompt they carry) use that build; spawned workers start in fresh herdr shells and run the shared `bs` for their own `bs send`/`bs inbox`.
 - **Project names.** A toy repo's directory is `t<script><arm>`, and that is its bs project name, so bees runs never touch the real `bees` logbook.

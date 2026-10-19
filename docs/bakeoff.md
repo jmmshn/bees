@@ -383,9 +383,12 @@ What this round shows:
 bakeoff/mkrun.sh c 4b                                  # fresh toy repo + lead -> ~/.cache/bees-bakeoff/runs/t4bc
 # hand bakeoff/cards/PROTOCOL.md + cards/S4b.md + the run dir to a keeper agent (or play it yourself)
 bakeoff/collect.sh ~/.cache/bees-bakeoff/runs/t4bc     # metrics.json, transcripts/
+bs end --all --project t4bc                            # arm c: end the workers the run's logbook recorded
 python3 -I bakeoff/analyze.py > bakeoff/results/table.md   # also writes runs.json next to the runs
 cp ~/.cache/bees-bakeoff/runs/runs.json bakeoff/results/
 ```
+
+A live check outside a card (a bs change, a bug probe, a demo) uses the `live-test` skill (`.claude/skills/live-test/SKILL.md`) instead: it sets up a toy project, tears it down and checks for leaks.
 
 The harness lessons, for the next card you write:
 

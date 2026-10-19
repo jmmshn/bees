@@ -5,9 +5,9 @@ description: Live-test bs end to end in a throwaway project, from setup to a lea
 
 # Live-test bs
 
-A live test plays the keeper against a real queen in a **toy** project, then tears the toy down. Done means: the check has its expected-vs-actual record, and `teardown.sh` exited 0 with `no leaks`. A leak (a bead, logbook row or mail in a real project; a workspace, worktree or file left behind) fails the test, whatever the check showed.
+A live test plays the keeper against a real queen in a **toy** project, then tears the toy down. Done means: the check has its expected-vs-actual record, and `teardown.sh` exited 0 with `no leaks`. A leak (a workspace, pane, worktree, bead or file of the toy's left behind) fails the test, whatever the check showed. Leftovers outside the toy (a bead or logbook row the toy's sessions wrote into a real project) are not leaks: teardown notes them, and they get cleaned later.
 
-The toy's id (`lt<16 digits>`) names everything it owns: its project, beads (`<toy>-N`, and any bead its sessions file elsewhere, whose `created_by` is the toy id), logbook (`~/.local/share/bees/<toy>.db`), cache files (`<toy>-*`) and sessions (`queen-<toy>`, `<toy>-N`). Teardown finds what to remove from that id and the run's records, never from herdr's list.
+The toy's id (`lt<16 digits>`) names everything it owns: its project, beads (`<toy>-N`), logbook (`~/.local/share/bees/<toy>.db`), cache files (`<toy>-*`) and sessions (`queen-<toy>`, `<toy>-N`). Teardown finds what to remove from that id and the run's records, never from herdr's list.
 
 ## 1. Setup
 
@@ -16,7 +16,7 @@ go build -o bin/bs ./cmd/bs                    # the build under test, in this c
 .claude/skills/live-test/setup.sh [<bin dir>]  # prints live.json: toy, run, repo, pane, workspace, builds
 ```
 
-Setup makes a git repo at `~/.cache/bees-live/<toy>/<toy>` (or under `$BEES_LIVE`, symlinks resolved) (outside every repo, so bees' `CLAUDE.md` stays out of the toy's sessions), sets its git `user.name` to the toy id (bd's `created_by` for every bead the toy's sessions file), opens a herdr workspace on it, starts `bs queen` there with your build first on its PATH and `BS_LOGBOOK`/`BS_PROJECT` unset, answers the folder-trust prompt, and exits 0 only once the queen is up and idle. Keep every file you write under `<run>/keeper/`; other live tests may run beside yours.
+Setup makes a git repo at `~/.cache/bees-live/<toy>/<toy>` (or under `$BEES_LIVE`, symlinks resolved) (outside every repo, so bees' `CLAUDE.md` stays out of the toy's sessions), sets its git `user.name` to the toy id (bd's `created_by` on every bead the toy's sessions file, so teardown can note one filed elsewhere), opens a herdr workspace on it, starts `bs queen` there with your build first on its PATH and `BS_LOGBOOK`/`BS_PROJECT` unset, answers the folder-trust prompt, and exits 0 only once the queen is up and idle. Keep every file you write under `<run>/keeper/`; other live tests may run beside yours.
 
 **Which build ran what.** The queen's bs calls run your build (`queen_bs` in live.json). Workers start from herdr's environment, so they run the shared `bs` on PATH (`worker_bs`). Say both in your report; to test a worker-side change, the shared bs must be that build, which is the queen's install, never yours (bees-8.19 tracks lifting this).
 
@@ -58,10 +58,11 @@ In order, stopping at the first failure (exit 1; fix the cause and run it again,
 
 1. `bs end --all --project <toy> --force --forget --yes`: every worker the toy's logbook records as live, nothing else. `--forget` records the end of a worker whose workspace id herdr has reused, leaving that workspace open. It runs the shared bs, or your build when the shared one predates `--forget`, from `/` so no checkout's project or staleness hint gets in.
 2. Closes the queen's workspace, the id setup recorded, only while a pane in it is in the run dir; then runs step 1 again, for a worker the queen spawned meanwhile.
-3. Deletes every bead the toy owns: `<toy>-*`, and any bead with `created_by` the toy id, wherever it was filed. It stops instead if one is linked to a bead the toy doesn't own (other than a stray bead's parent epic), since `bd delete` would rewrite that bead's references to `[deleted:ID]`.
+3. Deletes every `<toy>-*` bead. It stops instead if one is linked to a bead outside the toy, since `bd delete` would rewrite that bead's references to `[deleted:ID]`.
 4. Removes the toy repo and its worktrees, moves the toy's Claude transcripts from `~/.claude/projects` into `<run>/keeper/transcripts/`, then removes its logbook and cache files. `<run>/keeper/` is kept for your records; delete it when you're done. Claude's folder-trust entry for the toy stays in `~/.claude.json`, which live sessions rewrite.
-5. Checks for leaks (exit 2): panes in the run dir (or herdr unreachable, so it can't tell), toy files, and rows the toy's sessions (`queen-<toy>`, `<toy>-N`) wrote into any other logbook, read through `logbook.py`. A row that only mentions the toy, such as your pitfall report about the run, is not a leak.
+5. Checks for leaks (exit 2): panes in the run dir (or herdr unreachable, so it can't tell) and toy files.
+6. Prints a `note:` line, never an exit code, for each leftover outside the toy: beads with `created_by` the toy id outside `<toy>-*`, and rows the toy's sessions (`queen-<toy>`, `<toy>-N`) wrote into other logbooks (read through `logbook.py`). Teardown leaves these alone.
 
 ## 6. Report
 
-Exit 2 is a leak: run `capture-pitfall` on how it got there, and report it to the queen or keeper; don't remove it yourself (see "Never delete or mutate by hand"). A pane or file left behind clears on a teardown rerun once its cause is fixed; a row in another logbook stays, since logbooks are append-only. Report the check's expected-vs-actual lines, both builds, every workaround, and `no leaks`.
+Exit 2 is a leak: run `capture-pitfall` on how it got there, fix the cause, and rerun teardown; don't remove it yourself (see "Never delete or mutate by hand"). Copy any `note:` lines into your report so the leftovers can be cleaned later. Report the check's expected-vs-actual lines, both builds, every workaround, and `no leaks`.

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # teardown.sh <run dir>: removes what setup.sh and the run made, then checks for leaks.
 # Exit 0: all gone. 1: a step failed; later steps were skipped, so fix it and run again.
-# 2: torn down, but something leaked outside the toy (listed).
+# 2: torn down, but something the toy owns is left (listed). Leftovers outside the toy are
+# printed as notes, never an exit code.
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 unset BS_LOGBOOK BS_PROJECT # an exported one would point bs at another project's logbook
@@ -55,24 +56,15 @@ if [ -n "$queen_ws" ]; then
 fi
 endall
 
-# 4. Beads: every bead the toy owns, open or closed, deleted rather than closed so none is
-# left: its <toy>-* beads, and any its sessions filed elsewhere. bd records git user.name as
-# created_by, and setup.sh sets that to the toy id in the toy repo and its worktrees.
-# bd query can't filter on created_by, so take every bead since setup and pick in jq. No
-# live.json means setup died before the toy repo existed, so no session could file one.
-t0=$(jq -r '.created // empty' "$run/live.json" 2>/dev/null)
-mine() {
-	if [ -n "$t0" ]; then q="id=\"$toy-*\" OR created>=\"$t0\""; else q="id=\"$toy-*\""; fi
-	bd query --all --limit 0 --json "$q" | jq -r --arg t "$toy" '.[] | select(.created_by == $t or (.id | startswith($t + "-"))) | .id'
-}
+# 4. Beads: every <toy>-* bead, open or closed, deleted rather than closed so none is left.
+mine() { bd query --all --limit 0 --json "id=\"$toy-*\"" | jq -r '.[].id'; }
 beads=$(mine) || fail "bd query failed"
 if [ -n "$beads" ]; then
 	# bd delete rewrites a linked bead's references to [deleted:ID], so a link to a bead
-	# outside the toy would change a real bead quietly: stop and show it instead. A stray
-	# bead's link to its parent epic is expected and goes with it.
+	# outside the toy would change a real bead quietly: stop and show it instead.
 	# shellcheck disable=SC2086 # one id per word
-	links=$(bd show $beads --json | jq -r --arg p "$toy-" --arg t "$toy" '.[] | . as $b | ((.dependencies // []) | map(select(.dependency_type != "parent-child"))) + (.dependents // []) | .[] | select(.created_by != $t and (.id | startswith($p) | not)) | "\($b.id) ↔ \(.id)"') || fail "bd show failed"
-	[ -z "$links" ] || fail "toy beads are linked to beads the toy doesn't own; remove these links first (bd dep remove): $links"
+	links=$(bd show $beads --json | jq -r --arg p "$toy-" '.[] | . as $b | (.dependencies // []) + (.dependents // []) | .[] | select(.id | startswith($p) | not) | "\($b.id) ↔ \(.id)"') || fail "bd show failed"
+	[ -z "$links" ] || fail "toy beads are linked to beads outside the toy; remove these links first (bd dep remove): $links"
 	# shellcheck disable=SC2086
 	bd delete --force $beads >/dev/null || fail "bd delete failed"
 	echo "deleted beads:" $beads
@@ -100,7 +92,7 @@ done
 del "$store/$toy.db" "$store/$toy.db-wal" "$store/$toy.db-shm" "$cache/$toy"-* || fail "couldn't remove $toy's logbook or cache files"
 echo "removed the toy repo, its worktrees, logbook and cache files; kept $run/keeper (with the transcripts)"
 
-# 6. Leaks: anything left by the toy, or written by it into another project.
+# 6. Leaks: what the toy owns and teardown should have removed. Exit 2.
 leaks=0
 leak() { echo "LEAK: $*" >&2; leaks=1; }
 if ! panes=$(herdr pane list); then
@@ -110,13 +102,24 @@ elif jq -e --arg d "$run/" 'any(.result.panes[]; (.cwd // "") + "/" | startswith
 fi
 left=$(ls -d "$store/$toy".db* "$cache/$toy"-* "$repo" "$projects/$enc"-* 2>/dev/null | tr '\n' ' ')
 [ -z "$left" ] || leak "files left: $left"
-# Rows the toy's sessions wrote into any other logbook. Only rows by queen-<toy> or <toy>-N,
-# not rows that mention the toy: a pitfall report or a worker's mail about the run names it
-# too, and an append-only logbook can't drop that row, so it would leak on every rerun.
+
+# 7. Leftovers outside the toy: noted, never an exit code, and left for a later cleanup.
+# Beads its sessions filed elsewhere (bd's created_by is git user.name, which setup.sh sets
+# to the toy id; bd query can't filter on it, so pick in jq), and rows they wrote into
+# other logbooks (read through logbook.py, so no logbook is touched).
+note() { echo "note: $*"; }
+t0=$(jq -r '.created // empty' "$run/live.json" 2>/dev/null)
+if [ -n "$t0" ]; then
+	if out=$(bd query --all --limit 0 --json "created>=\"$t0\"" | jq -r --arg t "$toy" '[.[] | select(.created_by == $t) | "\(.id) (\(.title))"] | join(", ")'); then
+		[ -z "$out" ] || note "beads $toy filed outside $toy-*: $out"
+	else
+		note "couldn't list beads $toy filed elsewhere"
+	fi
+fi
 for db in "$store"/*.db; do
 	[ -e "$db" ] || continue
-	n=$(python3 -I "$here/logbook.py" "$db" "SELECT count(*) FROM entries WHERE actor = ? OR actor LIKE ?" "queen-$toy" "$toy-%") || { leak "couldn't read $db"; continue; }
-	[ "$n" = 0 ] || leak "$n logbook rows written by $toy's sessions into $db"
+	n=$(python3 -I "$here/logbook.py" "$db" "SELECT count(*) FROM entries WHERE actor = ? OR actor LIKE ?" "queen-$toy" "$toy-%") || { note "couldn't read $db"; continue; }
+	[ "$n" = 0 ] || note "$n rows written by $toy's sessions in $db"
 done
 [ $leaks = 0 ] || exit 2
 echo "no leaks"

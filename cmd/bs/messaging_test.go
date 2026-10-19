@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -131,12 +132,33 @@ func TestSendNeedsRecipientAndBody(t *testing.T) {
 	}
 }
 
-func TestSendWorksWithoutInit(t *testing.T) {
+// A deleted logbook must not come back empty from the next send (bees-8.12): only a command
+// that starts a project makes one.
+func TestCommandsRefuseAMissingLogbook(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("BS_PROJECT", "test")
-	t.Setenv("BS_LOGBOOK", filepath.Join(t.TempDir(), "logbook.db"))
-	if _, stderr, code := bs(t, "send", "--as", "queen", "worker-a", "hi"); code != 0 {
-		t.Fatalf("send: exit %d: %s", code, stderr)
+	t.Setenv("BS_SESSION", "")
+	path := filepath.Join(t.TempDir(), "logbook.db")
+	t.Setenv("BS_LOGBOOK", path)
+	for _, args := range [][]string{
+		{"send", "--as", "queen-test", "test-1-1", "hi"},
+		{"inbox", "--as", "test-1-1"},
+		{"status"},
+		{"end", "--as", "queen-test", "test-1-1"},
+		{"prune", "--dry-run"},
+	} {
+		if _, stderr, code := bs(t, args...); code != 2 || !strings.Contains(stderr, "no logbook for project test at "+path) {
+			t.Errorf("%s: exit %d, stderr %q; want exit 2 naming the missing logbook", args[0], code, stderr)
+		}
+		if _, err := os.Stat(path); err == nil {
+			t.Fatalf("%s created the logbook", args[0])
+		}
+	}
+	if _, stderr, code := bs(t, "init"); code != 0 || stderr != "bs: new empty logbook for project test at "+path+"\n" {
+		t.Fatalf("init: exit %d, stderr %q", code, stderr)
+	}
+	if _, stderr, code := bs(t, "init"); code != 0 || stderr != "" {
+		t.Fatalf("second init: exit %d, stderr %q; an existing logbook is not announced", code, stderr)
 	}
 }
 
@@ -181,6 +203,8 @@ func TestInitRejectsArguments(t *testing.T) {
 func TestEachProjectHasItsOwnLogbook(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("BS_LOGBOOK", "")
+	bs(t, "init", "--project", "alpha")
+	bs(t, "init", "--project", "beta")
 	bs(t, "send", "--project", "alpha", "--as", "queen-alpha", "worker-1", "for alpha")
 	out, _, _ := bs(t, "inbox", "--project", "beta", "--as", "worker-1")
 	if out != "no unread messages\n" {

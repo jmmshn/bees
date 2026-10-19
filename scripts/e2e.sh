@@ -49,6 +49,7 @@ trap cleanup EXIT
 
 command -v bs >/dev/null || fail "bs is not on PATH (go install ./cmd/bs)"
 [ -z "$(session "$queen")$(session "$worker")" ] || fail "$queen or $worker is already running"
+bs init 2>/dev/null
 bs inbox --as "$keeper" >/dev/null # start from an empty keeper inbox
 
 echo "starting $queen and $worker"

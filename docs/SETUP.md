@@ -8,7 +8,7 @@ For a guided setup, run the [`setup-bees`](../.claude/skills/setup-bees/SKILL.md
 
 ```sh
 go install ./cmd/bs     # from this repo
-bs init                 # optional: creates ~/.local/share/bees/<project>.db (any bs command does)
+bs init                 # creates ~/.local/share/bees/<project>.db (bs queen and bs spawn do too)
 ```
 
 ## Names

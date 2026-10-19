@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 
 	"github.com/jmmshn/bees/internal/prompt"
 	"slices"
@@ -12,6 +13,7 @@ import (
 func TestQueenStartsClaudeNamedForTheProject(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("BS_PROJECT", "bees")
+	t.Setenv("BS_LOGBOOK", "")
 	t.Setenv("BS_REPOS", "/src")
 	t.Setenv("BS_SESSION", "stale")
 	t.Chdir(t.TempDir()) // not this repo: its own checkout would beat BS_REPOS
@@ -23,8 +25,16 @@ func TestQueenStartsClaudeNamedForTheProject(t *testing.T) {
 	}
 	t.Cleanup(func() { execClaude = execClaudeProcess })
 
-	if _, stderr, code := bs(t, "queen"); code != 0 {
+	_, stderr, code := bs(t, "queen")
+	if code != 0 {
 		t.Fatalf("queen: exit %d: %s", code, stderr)
+	}
+	// The queen starts the project: her logbook exists before her first bs command.
+	if !strings.Contains(stderr, "bs: new empty logbook for project bees") {
+		t.Errorf("stderr = %q; want the new logbook announced", stderr)
+	}
+	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".local/share/bees/bees.db")); err != nil {
+		t.Errorf("queen made no logbook: %v", err)
 	}
 	if gotDir != "/src/bees" {
 		t.Errorf("dir = %q", gotDir)

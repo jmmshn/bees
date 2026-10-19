@@ -66,7 +66,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return 0
 		case errors.Is(err, errUsage):
 			return 2
-		case errors.Is(err, project.ErrNoSession), errors.Is(err, project.ErrNoProject), errors.Is(err, project.ErrWrongProject):
+		case errors.Is(err, project.ErrNoSession), errors.Is(err, project.ErrNoProject), errors.Is(err, project.ErrWrongProject), errors.Is(err, errNoLogbook):
 			fmt.Fprintf(stderr, "bs %s: %v\n", args[0], err)
 			return 2
 		case err != nil:

@@ -2,24 +2,35 @@
 
 ![beads → bees → bs](docs/img/beads-bees-bs.svg)
 
-**One queen, many workers.** The **queen** is a taskmaster and never writes the code. It
-splits your request into [beads](https://github.com/steveyegge/beads) (`bd`), spawns a
-**worker** per bead in a labelled [herdr](https://herdr.dev) workspace, and reports back to
-you. Each worker works on its own, in its own git worktree, and tells the queen when it is
-done. You talk only to the queen. `bs` is the small Go CLI that ties Claude Code, herdr
-and beads together.
+## Why
+
+Vibe coding makes big PRs. In one long session, every problem found along the way joins
+the ask, so the scope keeps climbing and the PR keeps growing. Handing work between agents
+as whole transcripts makes it worse: each one inherits everything the last one saw. bees
+puts structure in the way. Each piece of work is a separate brief, in a separate session,
+and sessions talk through messages, not transcripts.
+
+**One queen, many workers.** The **queen** is a taskmaster and never writes the code, so
+scope doesn't pile up in its own session. It splits your request into
+[beads](https://github.com/steveyegge/beads) (`bd`), spawns a **worker** per bead in a
+labelled [herdr](https://herdr.dev) workspace, and reports back to you. Each worker runs
+in its own Claude session and git worktree, so one bead's context doesn't leak into
+another's, and tells the queen when it is done. You talk only to the queen. `bs` is the
+small Go CLI that ties Claude Code, herdr and beads together.
 
 ![The keeper asks the queen for three jobs in a Claude Code chat; the queen calls bs epic and bs bead new, bs spawn opens three labelled herdr workspaces, the workers report done in bs inbox, and after "merge all three" the queen calls bd close, bs end and bs prune](docs/img/queen.gif)
 
 **Every piece of work is a bead.** The bead is the worker's brief, its name (`bees-2.1` →
 session, branch and worktree `bees-2-1`) and its exit: the work is done only when its PR
-merges and the queen runs `bd close`. Nothing runs that isn't tracked.
+merges and the queen runs `bd close`. Nothing runs that isn't tracked. A worker that hits a
+decision outside its bead asks the queen instead of widening its own brief.
 
 ![The worker's first prompt is a doorbell; bs inbox shows its brief from the bead, it does the work, pushes, and reports with bs send queen-t2c "done: …"](docs/img/worker.gif)
 
-Queen and workers talk with `bs send` and `bs inbox`. Each message lands in a SQLite
-**logbook** first; then a **doorbell** prompt goes into the recipient's Claude session,
-so an idle session acts on it without anyone typing.
+Queen and workers talk with `bs send` and `bs inbox`, never by passing transcripts. Each
+message lands in a SQLite **logbook** first; then a **doorbell** prompt goes into the
+recipient's Claude session, so an idle session acts on it without anyone typing. The
+doorbell carries no content, only who wrote and how many are unread.
 
 The two chat GIFs replay bake-off run t2c ([bakeoff/cards/S2.md](bakeoff/cards/S2.md),
 a toy repo that pushes branches instead of opening PRs). The herdr window and the Claude

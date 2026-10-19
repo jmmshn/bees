@@ -122,3 +122,29 @@ func TestPruneSaysOnlyWhatItDidLocally(t *testing.T) {
 		t.Fatalf("origin lost pushed: %v", err)
 	}
 }
+
+// A branch in use whose merge couldn't be checked reports both and exits 4, the
+// probe-failure code; a gone worktree comes with the command that frees the branch.
+func TestPruneReportsABranchInUseWithItsProbeFailure(t *testing.T) {
+	useTempLogbook(t)
+	saved := newFleet
+	t.Cleanup(func() { newFleet = saved })
+	newFleet = func(f worker.Fleet) worker.Fleet { return f } // no gh
+
+	repo := repoWithBranch(t, "trunk", "test-3") // no main: can't check
+	wt := filepath.Join(t.TempDir(), "wt")
+	if out, err := exec.Command("git", "-C", repo, "worktree", "add", "-q", wt, "test-3").CombinedOutput(); err != nil {
+		t.Fatalf("worktree add: %v\n%s", err, out)
+	}
+	endedWorker(t, "test-3", repo)
+	out, _, code := bs(t, "prune")
+	if code != exitKeptUnknown || !strings.Contains(out, "kept test-3: in use in worktree") || !strings.Contains(out, "could not check: no default branch") {
+		t.Fatalf("in use, unknown: exit %d, %q", code, out)
+	}
+	if err := os.RemoveAll(wt); err != nil {
+		t.Fatal(err)
+	}
+	if out, _, _ := bs(t, "prune"); !strings.Contains(out, "which is gone; git worktree prune frees it") {
+		t.Fatalf("gone worktree: %q", out)
+	}
+}

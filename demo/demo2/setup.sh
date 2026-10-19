@@ -10,7 +10,7 @@ unset BS_LOGBOOK BS_PROJECT # the toy's sessions find their logbook and project 
 here=$(cd "$(dirname "$0")" && pwd)
 session=buzz
 die() { echo "setup: $*" >&2; exit 1; }
-for t in herdr bs bd claude jq git python3 plannotator curl; do command -v "$t" >/dev/null || die "needs $t on PATH"; done
+for t in herdr bs bd claude jq git python3 plannotator curl node; do command -v "$t" >/dev/null || die "needs $t on PATH"; done
 [[ $HOME == /* ]] || die "HOME=$HOME is not absolute"
 root=$HOME/demo repo=$HOME/demo/buzz stage=$HOME/demo/.stage
 store=$HOME/.local/share/bees
@@ -30,11 +30,30 @@ git -C "$repo" config user.name keeper && git -C "$repo" config user.email keepe
 cp "$here/buzz.py" "$repo/buzz.py"
 git -C "$repo" add buzz.py && git -C "$repo" commit -qm "buzz.py: a bee and a flower"
 
+# plannotator keeps its first-visit dialogs' answers in the browser, per origin: one fixed port
+# (above) and stage.sh's profile, warmed up here headless, keep them off camera.
+prof=$HOME/.cache/bees-demo2/chrome
+mkdir -p "$prof"
+warm=$stage/warm.md && printf '# warm-up\n' >"$warm"
+PLANNOTATOR_BROWSER=none PLANNOTATOR_PORT=19480 plannotator annotate "$warm" --gate --json >/dev/null 2>&1 &
+pn=$!
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --user-data-dir="$prof" \
+	--remote-debugging-port=9224 --no-first-run http://localhost:19480 >/dev/null 2>&1 &
+chrome=$!
+B='(t)=>[...document.querySelectorAll("button")].find(b=>b.innerText.trim()===t)'
+for _ in $(seq 20); do node "$here/cdp.mjs" 9224 "!!($B)('Approve')" 2>/dev/null | grep -q true && break; sleep 0.5; done
+sleep 1
+node "$here/cdp.mjs" 9224 "($B)('Continue')?.click(), 0" >/dev/null 2>&1; sleep 1
+node "$here/cdp.mjs" 9224 "($B)('Got it')?.click(), 0" >/dev/null 2>&1; sleep 1
+node "$here/cdp.mjs" 9224 "($B)('Approve')?.click(), 0" >/dev/null 2>&1; sleep 1
+kill "$pn" "$chrome" 2>/dev/null || true
+wait "$pn" "$chrome" 2>/dev/null || true
+
 # The session's panes inherit the server's environment: none of this shell's BS_*, CLAUDE_*
 # or HERDR_* variables, and plannotator opens its page through stage.sh.
 (cd "$repo" && env -i HOME="$HOME" USER="$USER" LOGNAME="$USER" SHELL="${SHELL:-/bin/zsh}" PATH="$PATH" \
 	TERM=xterm-256color COLORTERM=truecolor LANG="${LANG:-en_US.UTF-8}" BEADS_DIR="${BEADS_DIR:-}" \
-	PLANNOTATOR_BROWSER="$here/stage.sh" \
+	PLANNOTATOR_BROWSER="$here/stage.sh" PLANNOTATOR_PORT=19480 \
 	nohup herdr --session "$session" server </dev/null >"$stage/herdr-server.log" 2>&1 &)
 sock=
 for _ in $(seq 40); do

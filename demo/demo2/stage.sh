@@ -7,9 +7,11 @@
 # that instance: its Space closes and the screen slides back to the terminal.
 set -euo pipefail
 url=${1:?usage: stage.sh <url>}
-prof=$HOME/demo/.stage/chrome # setup.sh made $HOME/demo/.stage; teardown.sh removes it
+# A profile that outlives the toy, so plannotator's first-visit dialogs (setup.sh's warm-up
+# dismisses them) stay dismissed. Port 9223 lets take.sh click through the review.
+prof=$HOME/.cache/bees-demo2/chrome
 mkdir -p "$prof"
-open -na "Google Chrome" --args --user-data-dir="$prof" --kiosk "$url" \
+open -na "Google Chrome" --args --user-data-dir="$prof" --remote-debugging-port=9223 --kiosk "$url" \
 	--no-first-run --no-default-browser-check --hide-crash-restore-bubble # --kiosk: full screen with no tabs, toolbar or sign-in chip
 # plannotator waits for this script, so the watcher runs detached with its pipes closed.
 nohup bash -c '

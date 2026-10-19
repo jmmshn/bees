@@ -3,6 +3,7 @@
 # Exit 0: all gone. 1: a step failed; later steps were skipped, so fix it and run again.
 # 2: torn down, but something leaked outside the toy (listed).
 set -uo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
 unset BS_LOGBOOK BS_PROJECT # an exported one would point bs at another project's logbook
 # pwd -P: herdr reports pane cwds with symlinks resolved, so the run dir must be too.
 run=$(cd "${1:?usage: teardown.sh <run dir>}" && pwd -P) || exit 1
@@ -27,7 +28,7 @@ bs=$(command -v bs || true)
 if [ -z "$bs" ] || ! (cd / && "$bs" end -h 2>&1 | grep -q -- -forget); then
 	# The build setup recorded, else (no live.json yet) this checkout's, as setup.sh defaults to.
 	bin=$(jq -r '.bin // empty' "$run/live.json" 2>/dev/null) || bin=
-	bs=${bin:-$(cd "$(dirname "$0")/../../.." && pwd)/bin}/bs
+	bs=${bin:-$(cd "$here/../../.." && pwd)/bin}/bs
 fi
 [ -x "$bs" ] || fail "no bs with end --forget (the shared one is older; build one in the checkout under test)"
 endall() {
@@ -54,14 +55,29 @@ if [ -n "$queen_ws" ]; then
 fi
 endall
 
-# 4. Beads: every <toy>-* bead, open or closed, deleted rather than closed so none is left.
-beads=$(bd query --all --limit 0 --json "id=\"$toy-*\"" | jq -r '.[].id') || fail "bd query failed"
+# 4. Beads: every bead the toy owns, open or closed, deleted rather than closed so none is
+# left: its <toy>-* beads, and any its sessions filed elsewhere. bd records git user.name as
+# created_by, and setup.sh sets that to the toy id in the toy repo and its worktrees.
+# bd query can't filter on created_by, so take every bead since setup and pick in jq. No
+# live.json means setup died before the toy repo existed, so no session could file one.
+t0=$(jq -r '.created // empty' "$run/live.json" 2>/dev/null)
+mine() {
+	if [ -n "$t0" ]; then q="id=\"$toy-*\" OR created>=\"$t0\""; else q="id=\"$toy-*\""; fi
+	bd query --all --limit 0 --json "$q" | jq -r --arg t "$toy" '.[] | select(.created_by == $t or (.id | startswith($t + "-"))) | .id'
+}
+beads=$(mine) || fail "bd query failed"
 if [ -n "$beads" ]; then
+	# bd delete rewrites a linked bead's references to [deleted:ID], so a link to a bead
+	# outside the toy would change a real bead quietly: stop and show it instead. A stray
+	# bead's link to its parent epic is expected and goes with it.
 	# shellcheck disable=SC2086 # one id per word
+	links=$(bd show $beads --json | jq -r --arg p "$toy-" --arg t "$toy" '.[] | . as $b | ((.dependencies // []) | map(select(.dependency_type != "parent-child"))) + (.dependents // []) | .[] | select(.created_by != $t and (.id | startswith($p) | not)) | "\($b.id) ↔ \(.id)"') || fail "bd show failed"
+	[ -z "$links" ] || fail "toy beads are linked to beads the toy doesn't own; remove these links first (bd dep remove): $links"
+	# shellcheck disable=SC2086
 	bd delete --force $beads >/dev/null || fail "bd delete failed"
 	echo "deleted beads:" $beads
 fi
-left=$(bd query --all --limit 0 --json "id=\"$toy-*\"" | jq -r '.[].id' | tr '\n' ' ')
+left=$(mine | tr '\n' ' ') || fail "bd query failed"
 [ -z "$left" ] || fail "beads left: $left"
 
 # 5. Files, last: the logbook goes only once everything it records is gone.
@@ -77,7 +93,9 @@ del "$repo" "$repo-WT" || fail "couldn't remove $repo"
 # Claude's transcripts of the toy's sessions: kept as the run's record, moved out of ~/.claude.
 for t in "$projects/$enc"-*; do
 	[ -d "$t" ] || continue
-	mkdir -p "$run/keeper/transcripts" && mv -- "$t" "$run/keeper/transcripts/" || fail "couldn't move $t"
+	dest=$run/keeper/transcripts/$(basename "$t")
+	[ ! -e "$dest" ] || dest=$dest.$(date +%s) # a rerun after the session wrote more
+	mkdir -p "$run/keeper/transcripts" && mv -- "$t" "$dest" || fail "couldn't move $t"
 done
 del "$store/$toy.db" "$store/$toy.db-wal" "$store/$toy.db-shm" "$cache/$toy"-* || fail "couldn't remove $toy's logbook or cache files"
 echo "removed the toy repo, its worktrees, logbook and cache files; kept $run/keeper (with the transcripts)"
@@ -92,28 +110,13 @@ elif jq -e --arg d "$run/" 'any(.result.panes[]; (.cwd // "") + "/" | startswith
 fi
 left=$(ls -d "$store/$toy".db* "$cache/$toy"-* "$repo" "$projects/$enc"-* 2>/dev/null | tr '\n' ' ')
 [ -z "$left" ] || leak "files left: $left"
-# Rows naming the toy in any other logbook. Read from a copy, so the real logbook gets no
-# -wal/-shm side files and no write: mode=ro can't open an idle WAL logbook without its -shm.
-snap=$(mktemp -d) || fail "mktemp failed"
-trap 'rm -rf -- "$snap"' EXIT
-rows() {
-	rm -f -- "$snap"/l.db*
-	cp -- "$1" "$snap/l.db" && { [ ! -f "$1-wal" ] || cp -- "$1-wal" "$snap/l.db-wal"; } || return 1
-	python3 -I - "$snap/l.db" "$toy" <<-'EOF'
-		import sqlite3, sys
-		db, toy = sys.argv[1:]
-		like = "%" + toy + "%"
-		c = sqlite3.connect(db)
-		print(c.execute("SELECT count(*) FROM entries WHERE actor LIKE ? OR subject LIKE ? OR data LIKE ?", (like, like, like)).fetchone()[0])
-	EOF
-}
+# Rows the toy's sessions wrote into any other logbook. Only rows by queen-<toy> or <toy>-N,
+# not rows that mention the toy: a pitfall report or a worker's mail about the run names it
+# too, and an append-only logbook can't drop that row, so it would leak on every rerun.
 for db in "$store"/*.db; do
 	[ -e "$db" ] || continue
-	n=$(rows "$db") || { leak "couldn't read $db"; continue; }
-	[ "$n" = 0 ] || leak "$n logbook rows naming $toy in $db"
+	n=$(python3 -I "$here/logbook.py" "$db" "SELECT count(*) FROM entries WHERE actor = ? OR actor LIKE ?" "queen-$toy" "$toy-%") || { leak "couldn't read $db"; continue; }
+	[ "$n" = 0 ] || leak "$n logbook rows written by $toy's sessions into $db"
 done
-# Beads in other projects that name the toy: its id is in every session name and path of the run.
-stray=$(bd query --all --limit 0 --json "title=$toy OR description=$toy OR notes=$toy" | jq -r '.[] | "\(.id) \(.title)"') || leak "bd query for stray beads failed"
-[ -z "$stray" ] || leak "beads naming $toy in other projects: $stray"
 [ $leaks = 0 ] || exit 2
 echo "no leaks"

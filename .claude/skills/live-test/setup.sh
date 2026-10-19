@@ -22,27 +22,32 @@ jq -n --arg toy "$toy" --arg run "$run" --arg repo "$repo" --arg bin "$bin" --ar
 record() { jq --arg k "$1" --arg v "$2" '.[$k] = $v' "$run/live.json" >"$run/live.json.new" && mv "$run/live.json.new" "$run/live.json"; }
 git init -q -b main "$repo"
 git -C "$repo" config commit.gpgsign false # the signing key and identity live under ~/repos only
-git -C "$repo" config user.name live-test && git -C "$repo" config user.email live-test@example.invalid
+# bd records git user.name as a bead's created_by: the toy id marks every bead the toy's
+# sessions file, wherever they file it, so teardown.sh can find and delete it.
+git -C "$repo" config user.name "$toy" && git -C "$repo" config user.email live-test@example.invalid
 printf '# %s\n\nA throwaway project for a live test of bs.\n' "$toy" >"$repo/README.md"
 git -C "$repo" add -A && git -C "$repo" commit -qm "toy"
 ws=$(herdr workspace create --cwd "$repo" --label "live $toy" --no-focus)
 record workspace "$(jq -r .result.workspace.workspace_id <<<"$ws")"
 pane=$(jq -r .result.root_pane.pane_id <<<"$ws")
 record pane "$pane"
-# bs queen drops BS_PROJECT and finds the toy from the cwd. The PATH reaches the queen's own
+# The pane's shell starts from herdr's environment, not this one, so unset BS_LOGBOOK and
+# BS_PROJECT there too: the queen finds the toy from the cwd. The PATH reaches the queen's own
 # bs calls only: workers start from herdr's environment and run the shared bs.
-herdr pane run "$pane" "PATH=$bin:\$PATH bs queen" >/dev/null
+herdr pane run "$pane" "env -u BS_LOGBOOK -u BS_PROJECT PATH=$(printf %q "$bin"):\$PATH bs queen" >/dev/null
 cat "$run/live.json"
-# Trust the new folder once, as a human would; Claude keys trust by repo root, so workers' worktrees
-# inherit it. The prompt can draw before Claude reads keys (bees-8.1), so send them until it's gone.
-seen=
-for _ in $(seq 30); do
-	if herdr pane read "$pane" 2>/dev/null | grep -q "Yes, I trust this folder"; then
-		seen=1
-		herdr pane send-keys "$pane" down enter >/dev/null
-	elif [ -n "$seen" ]; then
-		exit 0
-	fi
-	sleep 2 # time for Claude to take the keys and redraw
+# Trust the new folder once, as a human would; Claude keys trust by repo root, so workers'
+# worktrees inherit it. The prompt can draw before Claude reads keys (bees-8.1): send them
+# once, give Claude 10 s to take them, and only then send again. Sending while the prompt
+# is merely slow to redraw would put an extra enter into the queen's input box.
+trusting() { herdr pane read "$pane" 2>/dev/null | grep -q "Yes, I trust this folder"; }
+for _ in $(seq 30); do trusting && break; sleep 1; done
+for _ in 1 2 3; do
+	trusting || break
+	herdr pane send-keys "$pane" down enter >/dev/null
+	for _ in $(seq 10); do sleep 1; trusting || break; done
 done
-[ -z "$seen" ] || { echo "setup: the folder-trust prompt is still up in $pane; answer it there" >&2; exit 1; }
+trusting && { echo "setup: the folder-trust prompt is still up in $pane; answer it there" >&2; exit 1; }
+# Setup succeeds only with the queen's Claude up and idle (motif 11): a bs queen that failed,
+# or a Claude that never drew, leaves no agent to wait for.
+herdr agent wait "$pane" --until idle --timeout 60000 >/dev/null || { echo "setup: no queen came up in $pane; read it with herdr pane read $pane" >&2; exit 1; }

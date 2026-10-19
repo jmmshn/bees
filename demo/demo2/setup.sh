@@ -70,7 +70,11 @@ old=$(herdr workspace list | jq -r '.result.workspaces[].workspace_id')
 ws=$(herdr workspace create --cwd "$repo" --label queen --focus)
 pane=$(jq -r .result.root_pane.pane_id <<<"$ws")
 for w in $old; do herdr workspace close "$w" >/dev/null; done
-herdr workspace create --cwd "$repo" --label keeper --no-focus >/dev/null # the keeper's shell, for git merge
+# The keeper's shell, for git merge: zsh with a plain prompt, none of the keeper's own rc files.
+mkdir -p "$stage/zdot"
+printf '%s\n' "PROMPT='%F{yellow}buzz%f \$ '" 'RPROMPT=' >"$stage/zdot/.zshrc"
+kws=$(herdr workspace create --cwd "$repo" --label keeper --no-focus)
+herdr pane run "$(jq -r .result.root_pane.pane_id <<<"$kws")" "exec env ZDOTDIR=$stage/zdot zsh -i" >/dev/null
 herdr pane run "$pane" "bs queen" >/dev/null
 
 # Trust the new folder once, as a human would; workers' worktrees inherit it. The prompt can

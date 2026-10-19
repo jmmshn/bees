@@ -154,9 +154,11 @@ sleep 1
 type_into "$keeper" "git merge --no-ff $zz -m 'Merge the zigzag bee'"
 sleep 2
 type_into "$keeper" "clear; git --no-pager log --oneline --graph -6"
-sleep 4
-type_into "$keeper" "python3 buzz.py"
-sleep 8
+sleep 3
+# The flight, at the top of the pane, where edit.py zooms in.
+type_into "$keeper" "clear; python3 buzz.py"
+mark flight
+sleep 7
 mark flew
 studies=$(workers_all | awk -F'\t' '$1 !~ /zigzag/ { print $2 }' | tr '\n' ' ')
 type_into "$keeper" "git branch -D $studies"
@@ -168,9 +170,10 @@ sleep 5
 mark wait
 settle "$queen" queen
 mark closed
-sleep 3
+sleep 2
 focus keeper
-type_into "$keeper" "clear; python3 buzz.py"
+type_into "$keeper" "clear; git --no-pager log --oneline --graph -4; python3 buzz.py"
+mark finale
 sleep 8
 mark end
 stop_rec

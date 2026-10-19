@@ -54,11 +54,16 @@ STRETCH = {
     "steered": (1, 3),
     "wait": (3, None),
     "built": (2, 3),
-    "beat4": (9, 4),  # merge, graph, the bee
+    "beat4": (6, 4),  # merge, graph
+    "flight": (6, 4),  # the bee flies, zoomed
     "flew": (3, 4),  # branch -D the two studies
     "pruned": (2, 4),  # the queen's close-out
-    "closed": (3, 4),  # the bee again
+    "closed": (2, 4),
+    "finale": (5, 4),  # the graph and the bee again, zoomed
 }
+# Stretches shown zoomed: a second agg render at ZOOM_FONT, cropped to the keeper pane's top
+# rows (herdr's sidebar takes the first PANE_COL columns), so the bee is big enough to see.
+ZOOMED, ZOOM_FONT, PANE_COL, ZOOM_COLS, ZOOM_ROWS = {"flight", "finale"}, 28, 26, 84, 17
 
 
 def run(*cmd):
@@ -95,11 +100,17 @@ def fit(w=W, h=H):
             f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color={BG},fps={FPS},format=yuv420p,setsar=1")
 
 
-def render(cast, gif):
+def render(cast, gif, font=14):
     """The cast as a GIF at real time, by agg."""
     if not gif.exists():
-        run("agg", "--idle-time-limit", "100000", "--fps-cap", str(FPS), "--font-size", "14", str(cast), str(gif))
+        run("agg", "--idle-time-limit", "100000", "--fps-cap", str(FPS), "--font-size", str(font), str(cast), str(gif))
     return gif
+
+
+def dims(path):
+    r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=width,height", "-of", "csv=p=0", str(path)],
+                       capture_output=True, text=True, check=True)
+    return tuple(int(x) for x in r.stdout.split(",")[:2])
 
 
 def probe(path):
@@ -173,7 +184,8 @@ def main(out):
     for (t, m), (t2, _) in zip(marks, marks[1:]):
         budget, b, *own = STRETCH.get(m, (3, None))
         beat = b or beat
-        src = "browser" if m == "browser" else "panes" if m == "tiled" and panes else "term"
+        src = ("browser" if m == "browser" else "panes" if m == "tiled" and panes
+               else "zoom" if m in ZOOMED else "term")
         if t2 - t < 0.05:
             continue
         speed = max(1.0, (t2 - t) / budget)
@@ -185,6 +197,12 @@ def main(out):
         return path if path.exists() else card(path, bar_body(text), BAR)
 
     term_v = cfr(term, out / "term.mp4")
+    if any(st[0] == "zoom" for st in stretches):
+        size = json.loads((out / "term.cast").open().readline())["term"]
+        zoom_v = cfr(render(out / "term.cast", out / "term-zoom.gif", ZOOM_FONT), out / "term-zoom.mp4")
+        zw, zh = dims(zoom_v)
+        cw, ch = zw / size["cols"], zh / size["rows"]
+        crop = f"crop={ZOOM_COLS * cw:.0f}:{ZOOM_ROWS * ch:.0f}:{PANE_COL * cw:.0f}:{ch:.0f}"
     pane_v = {label: (cfr(gif, out / f"pane-{label}.mp4"), start) for label, gif, start in panes}
     parts = out / "parts"
     parts.mkdir(exist_ok=True)
@@ -209,20 +227,23 @@ def main(out):
             ins += still(bar(text), secs)
             graph += f";[v][{2 * n}:v]vstack[out]"
         else:
-            video, base = (out / "browser.mp4", b0) if src == "browser" else (term_v, t0)
-            z = tt if src == "browser" else t2
+            if src == "browser":
+                video, base, z = out / "browser.mp4", b0, tt
+            else:
+                video, base, z = zoom_v if src == "zoom" else term_v, t0, t2
             ins = clip(video, t - base, z - base) + still(bar(text), secs)
-            graph = f"[0:v]{retime},{fit()}[v];[v][1:v]vstack[out]"
+            graph = f"[0:v]{retime},{crop + ',' if src == 'zoom' else ''}{fit()}[v];[v][1:v]vstack[out]"
         part = piece(dst, ins, graph, secs)
         if src == "browser":
             groups += [[part], []]
         else:
             groups[-1].append(part)
-    # The end card: the last terminal frame, held, over the summary and the repo.
-    end = stretches[-1][2] - t0
-    groups[-1].append(piece(parts / "99-end.mp4", clip(term_v, end - 0.5, end) + still(bar(END), TAIL),
-                            f"[0:v]tpad=stop_mode=clone:stop_duration={TAIL},trim=duration={TAIL},"
-                            f"setpts=PTS-STARTPTS,{fit()}[v];[v][1:v]vstack[out]", TAIL))
+    # The end card: the last frame, held, over the summary and the repo.
+    end, last = stretches[-1][2] - t0, stretches[-1][0]
+    groups[-1].append(piece(parts / "99-end.mp4", clip(zoom_v if last == "zoom" else term_v, end - 0.5, end)
+                            + still(bar(END), TAIL),
+                            f"[0:v]tpad=stop_mode=clone:stop_duration={TAIL},trim=duration={TAIL},setpts=PTS-STARTPTS,"
+                            f"{crop + ',' if last == 'zoom' else ''}{fit()}[v];[v][1:v]vstack[out]", TAIL))
 
     # Join each group's pieces, then wipe from one group into the next.
     joined = []

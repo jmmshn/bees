@@ -40,3 +40,15 @@ Nothing recorded: the keeper switched to off-screen capture before it started. S
     "zigzag".
   - The stacked panes spent 5 of their 14 lines on Claude's input box and status bar.
     paneshot.py drops them and keeps 16 lines.
+
+## Take 4 (off-screen, first through run.sh)
+
+- 4 min 18 s real; GIF 79 s, 4.5 MB; `no leaks`. The note lands on zigzag's study, and the
+  stacked panes now show only the work.
+- The queen's review of take 3: the end card was an empty terminal; the keeper's starship
+  prompt showed `(us-east-1)`, `via v3.13.7`; the bee was a scribble at agg's 14 px.
+- **For take 5:**
+  - The keeper pane runs zsh with its own ZDOTDIR: prompt `buzz $`, no starship.
+  - The flight runs on a cleared pane and is cut from a second agg render at 28 px,
+    cropped to the keeper pane's top rows.
+  - The take ends on `git log --graph` plus the bee, also zoomed, and the end card holds it.

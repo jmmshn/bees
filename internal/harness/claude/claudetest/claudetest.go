@@ -10,9 +10,10 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/jmmshn/bees/internal/proc"
 )
 
 // Registry is a fake ~/.claude/sessions under a temp HOME. Its one session is this test
@@ -75,7 +76,7 @@ func (r Registry) Add(t *testing.T, name, token string) func() []map[string]any 
 	}
 
 	pid := os.Getpid()
-	start, err := procStart(pid)
+	start, err := proc.Start(pid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,17 +111,4 @@ func (r Registry) write(t *testing.T, name string, v any) {
 	if err := os.WriteFile(filepath.Join(r.dir, name), b, 0o600); err != nil {
 		t.Fatal(err)
 	}
-}
-
-// procStart is field 22 of /proc/<pid>/stat, the process start time in clock ticks.
-func procStart(pid int) (string, error) {
-	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-	if err != nil {
-		return "", err
-	}
-	f := strings.Fields(string(b[strings.LastIndexByte(string(b), ')')+1:]))
-	if len(f) < 20 {
-		return "", fmt.Errorf("pid %d: short /proc stat", pid)
-	}
-	return f[19], nil
 }

@@ -3,6 +3,7 @@
 package project
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,8 +11,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
+
+	"github.com/jmmshn/bees/internal/proc"
 )
 
 var (
@@ -49,17 +51,18 @@ func (p Project) NeedRepo() error {
 
 // Resolve finds the project from flag, then BS_PROJECT, then the git repo containing
 // the working directory. A linked worktree resolves to its main repo. Inside a Claude
-// session, an inherited BS_PROJECT holds only in the repo the session was launched in:
-// a worker that runs bs in another project's repo must pick with --project (bees-8.7). The repo is the
+// session, an inherited BS_PROJECT holds only within the checkout the session was
+// launched in (a submodule in it too): a worker that runs bs in another project's repo
+// must pick with --project (bees-8.7). The repo is the
 // git repo when it is the project's, else the project's directory under BS_REPOS, else
 // empty: messages need only the logbook, and NeedRepo stops what would run in no repo.
 func Resolve(flag string) (Project, error) {
 	name, git := flag, mainRepo("")
 	if name == "" {
 		name = os.Getenv("BS_PROJECT")
-		if here := normalise(filepath.Base(git)); name != "" && git != "" && here != normalise(name) {
-			if _, cwd, ok := registered(); ok && mainRepo(cwd) != git {
-				return Project{}, fmt.Errorf("%w: you are in %s; pass --project %s, or --project %s for the session's own", ErrWrongProject, git, here, normalise(name))
+		if name != "" && git != "" && normalise(filepath.Base(git)) != normalise(name) {
+			if err := inLaunchCheckout(name, git); err != nil {
+				return Project{}, err
 			}
 		}
 	}
@@ -107,9 +110,39 @@ func repoDir(repos, name string) string {
 	return filepath.Join(repos, name)
 }
 
+// inLaunchCheckout refuses an inherited BS_PROJECT name when bs runs inside a Claude
+// session outside the checkout that session was launched in, git being the repo bs is in.
+func inLaunchCheckout(name, git string) error {
+	_, cwd, inClaude, err := registered()
+	if err != nil || !inClaude {
+		return err
+	}
+	if cwd == "" { // fail closed: without it, any repo would pass as the session's own
+		return fmt.Errorf("%w: the Claude session has no recorded launch directory; pass --project", ErrWrongProject)
+	}
+	if mainRepo(cwd) == git {
+		return nil
+	}
+	if top := topLevel(cwd); top != "" {
+		if wd, err := os.Getwd(); err == nil {
+			if rel, err := filepath.Rel(top, wd); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
+				return nil // a submodule or nested repo inside the session's own checkout
+			}
+		}
+	}
+	var picks []string
+	for _, n := range []string{normalise(filepath.Base(git)), normalise(name)} {
+		if validName.MatchString(n) {
+			picks = append(picks, "--project "+n)
+		}
+	}
+	return fmt.Errorf("%w: you are in %s; pass %s", ErrWrongProject, git, cmp.Or(strings.Join(picks, " or "), "--project"))
+}
+
 // mainRepo returns the main checkout of the git repo containing dir (the working
-// directory if ""), or "" outside git. Git's common dir is shared by every worktree of a repo.
-// ponytail: assumes a non-bare repo whose common dir is <checkout>/.git.
+// directory if ""), or "" outside git. Git's common dir, shared by every worktree of a
+// repo, is <checkout>/.git; a submodule's lives in its superproject's .git/modules, so a
+// submodule is its own checkout. ponytail: worktrees of a submodule resolve to themselves.
 func mainRepo(dir string) string {
 	cmd := exec.Command("git", "rev-parse", "--path-format=absolute", "--git-common-dir")
 	cmd.Dir = dir
@@ -117,7 +150,21 @@ func mainRepo(dir string) string {
 	if err != nil {
 		return ""
 	}
-	return filepath.Dir(strings.TrimSpace(string(out)))
+	if common := strings.TrimSpace(string(out)); filepath.Base(common) == ".git" {
+		return filepath.Dir(common)
+	}
+	return topLevel(dir)
+}
+
+// topLevel returns the top of the checkout containing dir, or "" outside git.
+func topLevel(dir string) string {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // SessionName is what a session name must be: a worker's name (worker.Name) or a
@@ -139,7 +186,10 @@ func CheckSession(name string) error {
 // else is refused, so a session can't send as the queen (bees-7.4). The registry also
 // beats the environment, which a session can inherit stale.
 func Me(flag string) (string, error) {
-	me, _, inClaude := registered()
+	me, _, inClaude, err := registered()
+	if err != nil {
+		return "", err
+	}
 	switch {
 	case inClaude && flag != "" && flag != me:
 		return "", fmt.Errorf("--as %s: %w %q", flag, ErrNotYou, me)
@@ -155,42 +205,34 @@ func Me(flag string) (string, error) {
 }
 
 // registered returns the name and launch directory of the nearest ancestor process that
-// is a registered, named Claude Code session.
-func registered() (name, cwd string, ok bool) {
+// is a registered, named, live Claude Code session: its registry entry's procStart must match the pid's
+// start time, as in claude.List, so a stale entry on a reused pid names no one. A failed
+// process lookup is an error, never "not in Claude": that would let --as name anyone.
+func registered() (name, cwd string, ok bool, err error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", "", false
+		return "", "", false, err
 	}
 	reg := filepath.Join(home, ".claude", "sessions")
-	for pid := os.Getppid(); pid > 1; pid = parentOf(pid) {
+	for pid := os.Getppid(); pid > 1; {
 		b, err := os.ReadFile(filepath.Join(reg, fmt.Sprintf("%d.json", pid)))
-		if err != nil {
-			continue
+		if err == nil {
+			var s struct{ Name, ProcStart, Cwd string }
+			if json.Unmarshal(b, &s) != nil || s.Name == "" {
+				break // the nearest Claude session has no usable name
+			}
+			start, err := proc.Start(pid)
+			if err != nil {
+				return "", "", false, fmt.Errorf("checking Claude session %s (pid %d): %w", s.Name, pid, err)
+			}
+			if start == s.ProcStart {
+				return s.Name, s.Cwd, true, nil
+			}
+			// A stale entry: the pid was reused by a process that isn't that session.
 		}
-		var s struct{ Name, Cwd string }
-		if json.Unmarshal(b, &s) == nil && s.Name != "" {
-			return s.Name, s.Cwd, true
+		if pid, err = proc.Parent(pid); err != nil {
+			return "", "", false, fmt.Errorf("finding the Claude session that ran bs: %w", err)
 		}
-		break // the nearest Claude session has no usable name
 	}
-	return "", "", false
-}
-
-// parentOf returns pid's parent from /proc, or 0 if it can't be read.
-func parentOf(pid int) int {
-	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-	if err != nil {
-		return 0
-	}
-	// The command name is in parentheses and may contain spaces; fields resume after ')'.
-	i := strings.LastIndexByte(string(b), ')')
-	if i < 0 {
-		return 0
-	}
-	fields := strings.Fields(string(b[i+1:]))
-	if len(fields) < 2 {
-		return 0
-	}
-	ppid, _ := strconv.Atoi(fields[1])
-	return ppid
+	return "", "", false, nil
 }

@@ -969,6 +969,60 @@ func TestPruneKeepsABranchCheckedOutInAWorktree(t *testing.T) {
 	}
 }
 
+// A rebase or bisect detaches the worktree's HEAD, so worktree list says "detached", but
+// git still counts the branch as in use there (bees-8.4 review).
+func TestPruneKeepsABranchMidRebaseInAWorktree(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	gitRun(t, "", "init", "-q", "-b", "main", r.repo)
+	gitCommit(t, r.repo, "init", map[string]string{"a.txt": "A"})
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	_ = r.fleet.End(ctx, "bees-8", false)
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt := filepath.Join(tmp, "rebasing")
+	gitRun(t, r.repo, "worktree", "add", "-q", "-b", "bees-8", wt)
+	gitCommit(t, wt, "work", map[string]string{"a.txt": "branch"})
+	gitCommit(t, r.repo, "main moves", map[string]string{"a.txt": "main"})
+	_ = exec.Command("git", "-C", wt, "-c", "user.email=t@t", "-c", "user.name=t", "rebase", "main").Run() // stops on the conflict
+	pruned, err := r.fleet.Prune(ctx, false)
+	if err != nil || len(pruned) != 1 {
+		t.Fatalf("prune: %+v, %v", pruned, err)
+	}
+	if p := pruned[0]; p.Deleted || p.InUse != wt || !branchExists(r.repo, "bees-8") {
+		t.Fatalf("want kept, in use at %s: %+v", wt, p)
+	}
+}
+
+// A worktree whose directory is gone still holds its branch until git worktree prune;
+// prune says so instead of keeping the branch forever without a hint.
+func TestPruneSaysWhenTheWorktreeHoldingABranchIsGone(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	gitRun(t, "", "init", "-q", "-b", "main", r.repo)
+	gitCommit(t, r.repo, "init", map[string]string{"a.txt": "A"})
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	_ = r.fleet.End(ctx, "bees-8", false)
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt := filepath.Join(tmp, "gone")
+	gitRun(t, r.repo, "worktree", "add", "-q", "-b", "bees-8", wt)
+	if err := os.RemoveAll(wt); err != nil {
+		t.Fatal(err)
+	}
+	pruned, err := r.fleet.Prune(ctx, false)
+	if err != nil || len(pruned) != 1 {
+		t.Fatalf("prune: %+v, %v", pruned, err)
+	}
+	if p := pruned[0]; p.Deleted || p.InUse != wt || !p.Prunable {
+		t.Fatalf("want kept, in use at %s and prunable: %+v", wt, p)
+	}
+}
+
 func TestPruneDryRunDeletesNothing(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)

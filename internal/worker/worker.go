@@ -469,7 +469,8 @@ type Pruned struct {
 	Branch, Repo string
 	Merge        Merge
 	Why          string // how the work was proven merged, or why the branch was kept
-	InUse        string // the worktree that has the branch checked out; kept, whatever Merge says
+	InUse        string // the worktree that has the branch in use; kept, whatever Merge says
+	Prunable     bool   // InUse's directory is gone: git worktree prune frees the branch
 	Deleted      bool
 	DeleteErr    error // proven merged, but git branch -D failed
 }
@@ -491,12 +492,16 @@ func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error) {
 		}
 		p := Pruned{Branch: sp.Branch, Repo: repo}
 		p.Merge, p.Why = merged(ctx, f.G, repo, sp.Branch)
-		if p.InUse, err = checkedOut(ctx, repo, sp.Branch); err != nil {
+		if p.InUse, p.Prunable, err = checkedOut(ctx, repo, sp.Branch); err != nil {
 			p.Merge, p.Why = Unknown, err.Error()
 		}
 		if p.Merge == Merged && p.InUse == "" && !dry {
 			p.DeleteErr = gitRun(ctx, repo, "branch", "-D", sp.Branch)
 			p.Deleted = p.DeleteErr == nil
+			// git knows in-use states bs doesn't look for; its refusal names the worktree.
+			if _, at, ok := strings.Cut(fmt.Sprint(p.DeleteErr), "used by worktree at "); ok {
+				p.InUse, p.DeleteErr = strings.Trim(strings.TrimSpace(at), "'"), nil
+			}
 		}
 		out = append(out, p)
 	}

@@ -11,8 +11,10 @@ bin=$(cd "${1:-$here/../../../bin}" 2>/dev/null && pwd) || bin=
 toy=lt$(date -u +%y%m%d%H%M%S)$(printf %04d $((RANDOM % 10000)))
 # Outside any repo: Claude walks up for CLAUDE.md, and bees' would load into the toy's sessions.
 root=${BEES_LIVE:-$HOME/.cache/bees-live}
+# pwd -P: herdr reports pane cwds with symlinks resolved, and teardown.sh matches on them.
+mkdir -p "$root" && root=$(cd "$root" && pwd -P)
 run=$root/$toy repo=$root/$toy/$toy
-mkdir -p "$root" && mkdir "$run" && mkdir "$run/keeper" # mkdir fails on a clash
+mkdir "$run" && mkdir "$run/keeper" # mkdir fails on a clash
 # live.json is written first and grows with each step, so teardown.sh can undo a half-built setup.
 jq -n --arg toy "$toy" --arg run "$run" --arg repo "$repo" --arg bin "$bin" --arg t0 "$(date -u +%FT%TZ)" \
 	--arg build "$("$bin/bs" version 2>/dev/null)" --arg shared "$(cd / && bs version 2>/dev/null || echo none)" \
@@ -31,8 +33,16 @@ record pane "$pane"
 # bs calls only: workers start from herdr's environment and run the shared bs.
 herdr pane run "$pane" "PATH=$bin:\$PATH bs queen" >/dev/null
 cat "$run/live.json"
-# Trust the new folder once, as a human would; Claude keys trust by repo root, so workers' worktrees inherit it.
+# Trust the new folder once, as a human would; Claude keys trust by repo root, so workers' worktrees
+# inherit it. The prompt can draw before Claude reads keys (bees-8.1), so send them until it's gone.
+seen=
 for _ in $(seq 30); do
-	herdr pane read "$pane" 2>/dev/null | grep -q "Yes, I trust this folder" && { herdr pane send-keys "$pane" down enter >/dev/null; break; }
-	sleep 1
+	if herdr pane read "$pane" 2>/dev/null | grep -q "Yes, I trust this folder"; then
+		seen=1
+		herdr pane send-keys "$pane" down enter >/dev/null
+	elif [ -n "$seen" ]; then
+		exit 0
+	fi
+	sleep 2 # time for Claude to take the keys and redraw
 done
+[ -z "$seen" ] || { echo "setup: the folder-trust prompt is still up in $pane; answer it there" >&2; exit 1; }

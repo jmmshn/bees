@@ -16,7 +16,7 @@ go build -o bin/bs ./cmd/bs                    # the build under test, in this c
 .claude/skills/live-test/setup.sh [<bin dir>]  # prints live.json: toy, run, repo, pane, workspace, builds
 ```
 
-Setup makes a git repo at `~/.cache/bees-live/<toy>/<toy>` (outside every repo, so bees' `CLAUDE.md` stays out of the toy's sessions), opens a herdr workspace on it, starts `bs queen` there with your build first on its PATH, and answers the folder-trust prompt. Keep every file you write under `<run>/keeper/`; other live tests may run beside yours.
+Setup makes a git repo at `~/.cache/bees-live/<toy>/<toy>` (or under `$BEES_LIVE`, symlinks resolved) (outside every repo, so bees' `CLAUDE.md` stays out of the toy's sessions), opens a herdr workspace on it, starts `bs queen` there with your build first on its PATH, and answers the folder-trust prompt. Keep every file you write under `<run>/keeper/`; other live tests may run beside yours.
 
 **Which build ran what.** The queen's bs calls run your build (`queen_bs` in live.json). Workers start from herdr's environment, so they run the shared `bs` on PATH (`worker_bs`). Say both in your report; to test a worker-side change, the shared bs must be that build, which is the queen's install, never yours.
 
@@ -58,7 +58,7 @@ In order, stopping at the first failure (exit 1; fix the cause and run it again,
 2. Closes the queen's workspace, the id setup recorded, only while a pane in it is in the run dir; then runs step 1 again, for a worker the queen spawned meanwhile.
 3. Deletes every `<toy>-*` bead.
 4. Removes the toy repo and its worktrees, moves the toy's Claude transcripts from `~/.claude/projects` into `<run>/keeper/transcripts/`, then removes its logbook and cache files. `<run>/keeper/` is kept for your records; delete it when you're done. Claude's folder-trust entry for the toy stays in `~/.claude.json`, which live sessions rewrite.
-5. Checks for leaks (exit 2): panes in the run dir, toy files, rows naming the toy or written as `keeper` in any other logbook, and beads in other projects that name the toy.
+5. Checks for leaks (exit 2): panes in the run dir (or herdr unreachable, so it can't tell), toy files, rows naming the toy in any other logbook (read from a copy, so no logbook is touched), and beads in other projects that name the toy.
 
 ## 6. Report
 

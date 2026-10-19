@@ -4,3 +4,4 @@
 *.out
 /scratch/
 /bakeoff/results/runs/
+__pycache__/

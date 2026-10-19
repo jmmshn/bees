@@ -18,6 +18,12 @@ in its own Claude session and git worktree, so one bead's context doesn't leak i
 another's, and tells the queen when it is done. You talk only to the queen. `bs` is the
 small Go CLI that ties Claude Code, herdr and beads together.
 
+![A design study, start to finish: the queen fans "how should the bee reach the flower?" out to three workers, the keeper picks zigzag in plannotator, that worker builds it with a steer mid-build, and a plain git merge lands it](docs/img/demo2.gif)
+
+A design study from start to finish ([replay it](demo/demo2/RUN.md)): three workers
+prototype in parallel, the keeper picks one in plannotator, the worker that already has
+the context builds it, and a plain `git merge` lands it.
+
 ![The keeper asks the queen for three jobs in a Claude Code chat; the queen calls bs epic and bs bead new, bs spawn opens three labelled herdr workspaces, the workers report done in bs inbox, and after "merge all three" the queen calls bd close, bs end and bs prune](docs/img/queen.gif)
 
 **Every piece of work is a bead.** The bead is the worker's brief, its name (`bees-2.1` →

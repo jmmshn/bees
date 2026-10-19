@@ -12,7 +12,7 @@ Status: **accepted**, **superseded** (replaced by a later decision), or **open**
 | S1 | The spec lives in the repo: `docs/SPEC.md`, `GLOSSARY.md`, `docs/adr/`. | accepted | this file |
 | S3 | Desk only; no phone path in v1 (that stays with dotfiles-4). Things that need the keeper show up in `bs status`. | accepted | SPEC v1 outline |
 | S4 | Claude Code only for v0/v1, behind a harness interface (`Launch`, `Ring`, `Alive`). omp comes in v1.1 through an in-process extension. | accepted | SPEC v1 outline |
-| R5 | Linux only. | accepted | SPEC |
+| R5 | Linux only. | accepted, Linux and macOS by R47 | SPEC |
 | R7 | Vocabulary: keeper, queen, bee, session, logbook, entry, message, receipt, unread, inbox, doorbell, ring. | accepted, bee → worker by R45 | GLOSSARY |
 
 ## Messaging model
@@ -105,6 +105,7 @@ Status: **accepted**, **superseded** (replaced by a later decision), or **open**
 | R44 | The human's role is the keeper, not the captain (bees-1.46): it fits the hive (queen, bees; the keeper tends the hive and harvests the work). Renamed across GLOSSARY, docs, role prompts, skills and bakeoff cards and scripts (`keeper.log`, `keeper_turns`, `keeper-wip`). bakeoff/HISTORY.md rows and bakeoff/results/ keep "captain". Amends R7. | accepted | GLOSSARY |
 | R45 | The sessions a queen spawns are workers, not bees (bees-1.15): "worker" says what the session does, and the mixed metaphor is intended (queen and worker bees). Renamed across GLOSSARY, SPEC, SETUP, the setup-bees skill, `scripts/e2e.sh`, CLI help and messages, and code: package `bee` → `worker` (`internal/worker`). The tool and project keep the name bees and `bs`; the queen, session names from bead ids (`bees-2-1`) and logbook kinds (`spawned`/`ended`) are unchanged. Earlier rows, ADRs, bakeoff/HISTORY.md and bakeoff/results/ keep "bee". Amends R7, R24. | accepted | GLOSSARY |
 | R46 | A worker's project is its spawner's, never its worktree's repo (bees-1.54). A `--repo` worker's bs resolved the project from its worktree's git dir, so its `bs send queen-bees` and its receipts went to `dotfiles.db`: the queen was rung for messages its `bs inbox` (`bees.db`) never had, and the brief stayed unread. Every worker now launches with `env.BS_PROJECT` = the spawner's project in `--settings` (Claude applies it to the session's commands, over any inherited value) and with the spawner's `WORKER.md`; a restart continues only after a receipt, as in the project's own repo. `bs send` warns when the recipient is neither the project's queen nor a worker spawned in it. Amends R25 (one `BS_*` variable, carried by `--settings`) and R32 (a `--repo` worker gets the prompt). | accepted | SPEC |
+| R47 | Linux and macOS (bees-8.6). The keeper runs bees on a Mac. bs reads process parents and start times through `internal/proc`: `/proc` on Linux, `/bin/ps` elsewhere, matching the `procStart` Claude Code records (bees-8.2); spawn keeps its launch line under macOS's 1024-byte tty limit (bees-8.3). Release builds and CI cover darwin. Amends R5. | accepted | SPEC |
 | R19, R22, R18′ | Roster table, reserve-first spawn, label-only project. | superseded by R18″/R23 | ADR-0006 |
 
 ## Prior art for handoff (bees-1.1)

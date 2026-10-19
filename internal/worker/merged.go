@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -66,6 +68,57 @@ func merged(ctx context.Context, gh GitHub, repo, branch string) (Merge, string)
 		}
 	}
 	return NotMerged, fmt.Sprintf("it has work not on %s%s", strings.Join(mains, " or "), ghNote)
+}
+
+// checkedOut returns the worktree of repo that has branch in use, as git counts it when
+// it refuses to delete a branch: checked out, or being rebased or bisected there (which
+// detaches HEAD, so worktree list says only "detached"). prunable means that worktree's
+// directory is gone, and git worktree prune would free the branch.
+func checkedOut(ctx context.Context, repo, branch string) (path string, prunable bool, err error) {
+	out, err := gitOut(ctx, repo, "worktree", "list", "--porcelain", "-z")
+	if err != nil {
+		return "", false, err
+	}
+	ref := "refs/heads/" + branch
+	// Records are runs of NUL-ended fields, each record ended by an empty field.
+	for rec := range strings.SplitSeq(strings.TrimSuffix(out, "\x00\x00"), "\x00\x00") {
+		var wt, gitDir string
+		var mine, gone bool
+		for f := range strings.SplitSeq(rec, "\x00") {
+			switch k, v, _ := strings.Cut(f, " "); k {
+			case "worktree":
+				wt = v
+			case "branch":
+				mine = v == ref
+			case "prunable":
+				gone = true
+			}
+		}
+		if !mine && !gone {
+			if gitDir, err = gitOut(ctx, wt, "rev-parse", "--absolute-git-dir"); err != nil {
+				return "", false, err
+			}
+			mine = busyWith(strings.TrimSpace(gitDir), branch)
+		}
+		if mine {
+			return wt, gone, nil
+		}
+	}
+	return "", false, nil
+}
+
+// busyWith reports whether a rebase or bisect in the worktree with gitDir started from branch.
+func busyWith(gitDir, branch string) bool {
+	for _, f := range []string{"rebase-merge/head-name", "rebase-apply/head-name", "BISECT_START"} {
+		b, err := os.ReadFile(filepath.Join(gitDir, f))
+		if err != nil {
+			continue
+		}
+		if s := strings.TrimSpace(string(b)); s == "refs/heads/"+branch || s == branch {
+			return true
+		}
+	}
+	return false
 }
 
 // ancestor reports whether commit a is an ancestor of b.

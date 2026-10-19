@@ -229,7 +229,7 @@ func endAll(ctx context.Context, f worker.Fleet, force bool, stdout, stderr io.W
 
 // Exit codes of bs prune when it keeps a branch.
 const (
-	exitKeptUnmerged = 3 // some branch has work not on the default branch
+	exitKeptUnmerged = 3 // some branch has work not on the default branch, or is in use in a worktree
 	exitKeptUnknown  = 4 // some branch could not be checked, or not deleted
 )
 
@@ -262,6 +262,18 @@ func cmdPrune(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	code := 0
 	for _, r := range pruned {
 		switch {
+		case r.InUse != "":
+			fmt.Fprintf(stdout, "kept %s: in use in worktree %s", r.Branch, r.InUse)
+			if r.Prunable {
+				fmt.Fprint(stdout, ", which is gone; git worktree prune frees it")
+			}
+			if r.Merge == worker.Unknown {
+				fmt.Fprintf(stdout, "; could not check: %s\n", r.Why)
+				code = exitKeptUnknown
+			} else {
+				fmt.Fprintln(stdout)
+				code = max(code, exitKeptUnmerged)
+			}
 		case r.Merge == worker.Merged && *dry:
 			fmt.Fprintf(stdout, "would delete local branch %s: merged, %s\n", r.Branch, r.Why)
 		case r.Deleted:

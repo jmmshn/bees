@@ -16,7 +16,7 @@ v0 proves the core loop: the queen sends a message, an idle worker wakes, reads 
 | Ring every unread message on every send | `Plan` reconciler, coalescing, re-ring, flag the queen, watchdog |
 | `--now` | Keeper inbox, disk warning, omp adapter |
 
-Platform: Linux only.
+Platform: Linux and macOS (R47).
 
 ## Done when
 
@@ -236,7 +236,7 @@ bs init                       create the logbook file and table if missing (opti
 bs queen                      start the queen: claude --name queen-<project> --append-system-prompt-file <project>-queen.md in the repo (no BS_* set)
 bs spawn [--repo P] --label L <bead> [--label L <bead> …]  start a worker per bead (SpawnAll), each in its own herdr workspace labelled by the --label before it (--label only on a first spawn; --repo before the first bead, for all); exit 2 if refused (nothing started), 1 if any start failed
 bs end [--force] <worker|bead>  remove the worker's recorded workspace; keep its branch
-bs prune [--dry-run]          delete ended workers' local branches once merged; exit 3 if one is kept unmerged, 4 if one couldn't be checked or deleted
+bs prune [--dry-run]          delete ended workers' local branches once merged; exit 3 if one is kept unmerged or checked out in a worktree, 4 if one couldn't be checked or deleted
 bs epic <title>               create the project's next epic, <project>-<n>
 bs bead ls [--all] [<expr>]   bd query 'id="<project>-*"', not closed unless --all; <expr> is ANDed
 bs bead new --parent <project>-N [--description D] [--type T] [--priority P] <title>

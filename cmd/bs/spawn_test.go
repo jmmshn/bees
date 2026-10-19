@@ -149,7 +149,7 @@ func TestEndAllSaysWhatItKeptAndHealsOnRerun(t *testing.T) {
 		t.Fatalf("--all with a worker: exit %d, want 2", code)
 	}
 	end := []string{"end", "--project", "test", "--as", "keeper", "--all"}
-	if _, stderr, code := bs(t, end...); code != 1 || !strings.Contains(stderr, "has no logbook") {
+	if _, stderr, code := bs(t, end...); code != 2 || !strings.Contains(stderr, "no logbook for project test") {
 		t.Fatalf("no logbook: exit %d, %q", code, stderr)
 	}
 	if _, err := os.Stat(os.Getenv("BS_LOGBOOK")); err == nil {

@@ -8,7 +8,7 @@ For a guided setup, run the [`setup-bees`](../.claude/skills/setup-bees/SKILL.md
 
 ```sh
 go install ./cmd/bs     # from this repo
-bs init                 # optional: creates ~/.local/share/bees/<project>.db (any bs command does)
+bs init                 # creates ~/.local/share/bees/<project>.db (bs queen and bs spawn do too)
 ```
 
 ## Names
@@ -64,7 +64,7 @@ Any Claude session can take part if it was started with a name and accepts cross
 claude --name worker-a --settings '{"crossSessionInbound":"accept"}'
 ```
 
-Without `crossSessionInbound: accept`, a session in bypass mode holds rung messages instead of acting on them. Outside Claude, say who you are with `--as <name>` or `BS_SESSION`. Inside a named Claude session bs takes your name from Claude's registry and refuses an `--as` naming anyone else, and `bs send` rings only the project's queen and the workers it spawned; mail for anyone else is stored without a ring.
+Without `crossSessionInbound: accept`, a session in bypass mode holds rung messages instead of acting on them. Outside Claude, say who you are with `--as <name>` or `BS_SESSION`. Inside a named Claude session bs takes your name from Claude's registry and refuses an `--as` naming anyone else, and `bs send` rings only the project's queen and the workers it spawned; mail for anyone else is stored without a ring. That refusal stops a careless `--as`, not a determined one: a bs detached from its session (`( bs … & )`, `nohup`, `setsid`) has no Claude ancestor left, so `--as` is taken as given, and any process of your user can write the logbook directly.
 
 ## Check it works
 

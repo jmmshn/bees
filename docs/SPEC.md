@@ -63,7 +63,7 @@ Rules:
 - Entries are only inserted, never updated or deleted.
 - Each write is one `BEGIN IMMEDIATE` transaction; concurrent writers wait on the busy timeout instead of failing.
 - A receipt id is deterministic and written with `INSERT OR IGNORE`, so a duplicate is a no-op.
-- `Open` creates the table and indexes if missing, so `bs init` is optional.
+- `Open` creates the file, table and indexes if missing. Only `bs init`, `queen` and `spawn` call it on a missing file, and say so on stderr; every other command refuses one (exit 2), so a deleted logbook is never silently recreated empty (R48).
 - Unread is always this query, in insertion order (`rowid`). Never use a cursor or a time window.
 
 ```sql
@@ -150,7 +150,7 @@ func Me(flagAs string) (string, error)      // --as → parent-process walk → 
 - The project comes from git's *common* directory, so a shell inside `<repo>-WT/bees-2-1` resolves to the main repo's project.
 - `Repo` is the main checkout when the project comes from git, else the directory under `$BS_REPOS` whose normalised name is the project, so `jobflowray` finds `jobflow-ray`, else empty: messages need only the logbook, and `bs queen` and `bs spawn` fail with `ErrNoRepos` (set `BS_REPOS`); `Logbook` is `$BS_LOGBOOK`, else `~/.local/share/bees/<project>.db`.
 - Role prompts (R40): `internal/prompt/QUEEN.md` for the queen and `WORKER.md` for workers, each followed by `BEADS.md` (the bead rules both share), embedded in bs with `{{project}}` filled in by `prompt.Text(role, project)`. `prompt.File` writes one to `<user cache dir>/bees/<project>-<role>.md` (`~/.cache/bees/<project>-queen.md`, `…-worker.md`; through a rename, at every launch), passed as `--append-system-prompt-file` to the queen and to every worker, `--repo` ones too (R46). A file, not the text, because herdr refuses agent arguments containing control characters (R39). They are the one place the standing instructions for each role live: the queen hands out beads, reads the fleet from `bs status`, and closes a bead only after its PR is merged; a worker reads its brief and inbox, asks the queen when blocked, and ends on a PR and `done: <bead> PR #N`; both list and file beads with `bs bead`, which keeps them in the project (R32). Claude records the prompt with the conversation until compaction, so restart a queen with `bs queen`, not a bare `claude --resume`.
-- `Me` walks `getppid()` upward to the first pid with `~/.claude/sessions/<pid>.json` and uses its `name`. The registry beats `BS_SESSION`, which a session can inherit stale; `BS_SESSION` is for use outside Claude. Otherwise it fails with `run bs from inside a named Claude session, or pass --as`.
+- `Me` walks `getppid()` upward to the first pid with `~/.claude/sessions/<pid>.json` and uses its `name`. The registry beats `BS_SESSION`, which a session can inherit stale; `BS_SESSION` is for use outside Claude. Otherwise it fails with `run bs from inside a named Claude session, or pass --as`. Refusing an `--as` that names another session stops a careless one, not a determined one: a bs detached from its session (`( bs … & )`, `nohup`, `setsid`) is reparented to init, the walk finds no Claude ancestor and `--as` is taken as given. Claude's own background Bash stays under claude. Same-uid processes can't be fenced from each other, and any of them can write the logbook directly (bees-8.8).
 
 ## Spawn
 
@@ -232,7 +232,7 @@ func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error)           
 ## Commands
 
 ```text
-bs init                       create the logbook file and table if missing (optional)
+bs init                       create the logbook file and table if missing; bs queen and spawn do too, any other command refuses a missing logbook (exit 2)
 bs queen                      start the queen: claude --name queen-<project> --append-system-prompt-file <project>-queen.md in the repo (no BS_* set)
 bs spawn [--repo P] --label L <bead> [--label L <bead> …]  start a worker per bead (SpawnAll), each in its own herdr workspace labelled by the --label before it (--label only on a first spawn; --repo before the first bead, for all); exit 2 if refused (nothing started), 1 if any start failed
 bs end [--force] <worker|bead>  remove the worker's recorded workspace; keep its branch

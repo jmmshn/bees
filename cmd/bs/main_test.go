@@ -2,9 +2,18 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 )
+
+// TestMain runs the tests outside Claude even when a Claude session runs them: its
+// session env would name a session the tests' fake HOME has never heard of (bees-8.8).
+func TestMain(m *testing.M) {
+	os.Unsetenv("CLAUDE_PID")
+	os.Unsetenv("CLAUDE_CODE_SESSION_ID")
+	os.Exit(m.Run())
+}
 
 func TestNoArgsPrintsUsageAndFails(t *testing.T) {
 	var out, stderr bytes.Buffer

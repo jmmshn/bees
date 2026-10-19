@@ -38,7 +38,7 @@ func git(t *testing.T, dir string, args ...string) {
 
 func clearEnv(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	for _, k := range []string{"BS_PROJECT", "BS_SESSION", "BS_LOGBOOK", "BS_REPOS"} {
+	for _, k := range []string{"BS_PROJECT", "BS_SESSION", "BS_LOGBOOK", "BS_REPOS", "CLAUDE_PID", "CLAUDE_CODE_SESSION_ID"} {
 		t.Setenv(k, "")
 	}
 }
@@ -273,6 +273,72 @@ func TestMeResolutionOrder(t *testing.T) {
 	clearEnv(t) // outside Claude, the flag names you
 	if me, _ := project.Me("keeper"); me != "keeper" {
 		t.Fatalf("flag: %q", me)
+	}
+}
+
+// A backgrounded bs is reparented to init, so no Claude ancestor is left to walk to; the
+// session env Claude's Bash tool exports, which the orphan inherits, still names it (bees-8.8).
+func TestMeFindsTheSessionOfAnOrphanedBsFromItsEnv(t *testing.T) {
+	clearEnv(t)
+	reg := filepath.Join(os.Getenv("HOME"), ".claude", "sessions")
+	if err := os.MkdirAll(reg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// This test process is no ancestor of itself, so only the env can lead to it.
+	pid := os.Getpid()
+	start, err := proc.Start(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeEntry := func(sessionID, procStart string) {
+		body := fmt.Sprintf(`{"name":"bees-8-8","pid":%d,"sessionId":%q,"procStart":%q}`, pid, sessionID, procStart)
+		if err := os.WriteFile(filepath.Join(reg, fmt.Sprintf("%d.json", pid)), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeEntry("sid-1", start)
+	t.Setenv("CLAUDE_PID", fmt.Sprint(pid))
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-1")
+	if me, err := project.Me(""); err != nil || me != "bees-8-8" {
+		t.Fatalf("orphan: %q, %v; want bees-8-8", me, err)
+	}
+	if me, err := project.Me("zz-spoof"); !errors.Is(err, project.ErrNotYou) {
+		t.Fatalf("orphan --as another: %q, %v; want ErrNotYou", me, err)
+	}
+	// An env that doesn't match a live entry (leaked from another session, or a session
+	// whose pid was reused) fails closed: falling through to "not in Claude" would let
+	// --as name anyone.
+	for name, edit := range map[string]func(){
+		"other session id": func() { writeEntry("sid-2", start) },
+		"stale procStart":  func() { writeEntry("sid-1", "Mon Jan  1 00:00:00 2001") },
+		"no session id":    func() { writeEntry("", start) },
+		"no entry":         func() { os.Remove(filepath.Join(reg, fmt.Sprintf("%d.json", pid))) },
+		"no CLAUDE_CODE_SESSION_ID": func() {
+			writeEntry("sid-1", start)
+			t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+		},
+	} {
+		edit()
+		if me, err := project.Me("keeper"); !errors.Is(err, project.ErrStaleSession) {
+			t.Errorf("%s: %q, %v; want ErrStaleSession", name, me, err)
+		}
+		writeEntry("sid-1", start)
+		t.Setenv("CLAUDE_CODE_SESSION_ID", "sid-1")
+	}
+	// A Claude ancestor beats the env: a worker can't forge the queen's pid and session id.
+	ppStart, err := proc.Start(os.Getppid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`{"name":"bees-8-9","pid":%d,"procStart":%q}`, os.Getppid(), ppStart)
+	if err := os.WriteFile(filepath.Join(reg, fmt.Sprintf("%d.json", os.Getppid())), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if me, err := project.Me(""); err != nil || me != "bees-8-9" {
+		t.Fatalf("ancestor vs forged env: %q, %v; want bees-8-9", me, err)
+	}
+	if me, err := project.Me("bees-8-8"); !errors.Is(err, project.ErrNotYou) {
+		t.Fatalf("--as the forged session: %q, %v; want ErrNotYou", me, err)
 	}
 }
 

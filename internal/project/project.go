@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/jmmshn/bees/internal/proc"
@@ -23,6 +24,7 @@ var (
 	ErrNoSession    = errors.New("can't tell which session you are; run bs from inside a named Claude session, or pass --as")
 	ErrBadSession   = errors.New("not a session name: a lowercase letter, then up to 31 of a-z, 0-9, - and _")
 	ErrNotYou       = errors.New("this Claude session is registered as")
+	ErrStaleSession = errors.New("CLAUDE_PID and CLAUDE_CODE_SESSION_ID name no live Claude session; unset both outside Claude")
 	ErrWrongProject = errors.New("this session's BS_PROJECT names another project than the repo you are in")
 )
 
@@ -185,6 +187,10 @@ func CheckSession(name string) error {
 // Inside a Claude session the registry is the sender's identity: a flag naming anyone
 // else is refused, so a session can't send as the queen (bees-7.4). The registry also
 // beats the environment, which a session can inherit stale.
+//
+// The guard stops a careless --as, not a determined one: a session that strips its
+// Claude env and orphans bs escapes it, and any process of the same user can write the
+// logbook directly anyway (bees-8.8).
 func Me(flag string) (string, error) {
 	me, _, inClaude, err := registered()
 	if err != nil {
@@ -208,6 +214,8 @@ func Me(flag string) (string, error) {
 // is a registered, named, live Claude Code session: its registry entry's procStart must match the pid's
 // start time, as in claude.List, so a stale entry on a reused pid names no one. A failed
 // process lookup is an error, never "not in Claude": that would let --as name anyone.
+// With no Claude ancestor (a backgrounded bs is reparented to init), the session env
+// Claude's Bash tool exports, which the orphan inherits, names the session instead.
 func registered() (name, cwd string, ok bool, err error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -234,5 +242,34 @@ func registered() (name, cwd string, ok bool, err error) {
 			return "", "", false, fmt.Errorf("finding the Claude session that ran bs: %w", err)
 		}
 	}
-	return "", "", false, nil
+	return fromEnv(reg)
+}
+
+// fromEnv returns the session CLAUDE_PID and CLAUDE_CODE_SESSION_ID name: a live registry
+// entry with that pid, procStart and session id. Neither set means not in Claude; set but
+// naming no live session is ErrStaleSession, never "not in Claude".
+func fromEnv(reg string) (name, cwd string, ok bool, err error) {
+	pid, sid := os.Getenv("CLAUDE_PID"), os.Getenv("CLAUDE_CODE_SESSION_ID")
+	if pid == "" && sid == "" {
+		return "", "", false, nil
+	}
+	n, err := strconv.Atoi(pid)
+	if err != nil || n <= 1 || sid == "" {
+		return "", "", false, ErrStaleSession
+	}
+	b, err := os.ReadFile(filepath.Join(reg, fmt.Sprintf("%d.json", n)))
+	if err != nil {
+		return "", "", false, ErrStaleSession
+	}
+	var s struct{ Name, ProcStart, Cwd, SessionID string }
+	if json.Unmarshal(b, &s) != nil || s.SessionID != sid {
+		return "", "", false, ErrStaleSession
+	}
+	if start, err := proc.Start(n); err != nil || start != s.ProcStart {
+		return "", "", false, ErrStaleSession
+	}
+	if s.Name == "" {
+		return "", "", false, nil // the session has no usable name, as in the walk
+	}
+	return s.Name, s.Cwd, true, nil
 }

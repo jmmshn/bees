@@ -20,7 +20,7 @@ sock() { herdr session list | awk -v s="$session" '$1 == s && $2 == "running" { 
 sock=$(sock)
 if [ -n "$sock" ] && [ -f "$store/buzz.db" ]; then
 	for w in $(cd / && bs status --project buzz --json | jq -r '.[] | select(.running and .session != "queen-buzz") | .session'); do
-		(cd / && HERDR_SOCKET_PATH=$sock bs end --project buzz --as keeper --force "$w") || fail "bs end $w failed"
+		(cd / && HERDR_SOCKET_PATH=$sock BS_SESSION=keeper bs end --project buzz --force "$w") || fail "bs end $w failed"
 	done
 fi
 # 2. The herdr session: its panes, the queen with them.

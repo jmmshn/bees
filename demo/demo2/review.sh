@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # review.sh <out dir> <pick>: play the keeper in plannotator's review page, which stage.sh
 # opened in a headless Chrome on DevTools port 9223, while cast.mjs records it to
-# <out>/browser/. Shows each study, then the one whose path contains <pick>, adds the note
+# <out>/browser/. Shows each study, then the one whose name contains <pick> (or, failing
+# that, "zigzag": the queen may copy the studies under new names), adds the note
 # "zigzag, end with a buzz" and approves with it. Appends its marks to <out>/marks.tsv.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -41,7 +42,7 @@ for ((i = 0; i < n; i++)); do
 	js "$lib; glide(studies()[$i])" >/dev/null
 	sleep 2
 done
-js "$lib; glide(studies().find(b=>b.title.includes('$pick')) ?? studies()[0])" >/dev/null
+js "$lib; glide(studies().find(b=>b.title.includes('$pick')) ?? studies().find(b=>b.title.includes('zigzag')) ?? studies()[0])" >/dev/null
 sleep 1.5
 js "$lib; glide(B('Add global comment'))" >/dev/null
 sleep 0.5

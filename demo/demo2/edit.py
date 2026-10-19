@@ -36,15 +36,15 @@ CAPTIONS = {
     4: "4 · plain git merge, and the bee flies",
 }
 END = ("bees: one queen, a fleet of Claude workers, all on local git", "github.com/jmmshn/bees")
-# The stretch starting at each mark: its budget in output seconds, and its beat (None: the
-# beat it is in). The browser stretch runs from "browser" to "terminal"; "tiled" to
-# "untiled" shows the three workers' panes stacked.
+# The stretch starting at each mark: its budget in output seconds, its beat (None: the beat
+# it is in), and optionally a caption of its own. The browser stretch runs from "browser"
+# to "terminal"; "tiled" to "untiled" shows the three workers' panes stacked.
 STRETCH = {
     "start": (1, 1),
     "beat1": (7, 1),  # the question typed; the queen files beads and spawns
-    "spawned": (5, 1),  # keeper: git worktree list
+    "spawned": (5, 1, "1 · each worker gets its own branch and worktree"),
     "branches": (0.5, 1),
-    "tiled": (8, None),  # the three workers studying
+    "tiled": (8, 1, "1 · three Claude workers prototype in parallel: straight, zigzag, loop"),
     "untiled": (1.5, 1),
     "studied": (1, 1),
     "beat2": (5, 2),  # the queen's git logs; plannotator starts
@@ -84,7 +84,9 @@ def bar_body(text):
         return (f"<div style='font-weight:600;font-size:20px'>{html.escape(text[0])}</div>"
                 f"<div style='font:500 17px ui-monospace,Menlo,monospace;color:#f5c542;margin-top:2px'>"
                 f"{html.escape(text[1])}</div>")
-    return f"<div style='font-weight:600;font-size:25px'>{html.escape(text)}</div>"
+    text, _, badge = text.partition("   ⏩")  # the speed-up sits at the right edge, so the
+    badge = f"<div style='position:absolute;right:18px;font:600 20px sans-serif;color:#8b949e'>⏩{html.escape(badge)}</div>" if badge else ""
+    return f"{badge}<div style='font-weight:600;font-size:25px'>{html.escape(text)}</div>"  # caption stays put across a wipe
 
 
 def fit(w=W, h=H):
@@ -93,37 +95,48 @@ def fit(w=W, h=H):
             f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color={BG},fps={FPS},format=yuv420p,setsar=1")
 
 
-class Graph:
-    """ffmpeg inputs and filter_complex, built up together."""
-
-    def __init__(self, out):
-        self.out, self.inputs, self.filters, self.n = out, [], [], 0
-
-    def input(self, *args):
-        self.inputs += [*args]
-        self.n += 1
-        return f"{self.n - 1}:v"
-
-    def image(self, path, secs):
-        """A still image as a stream secs long: one input per use, since an endless loop
-        feeding a filter that has stopped reading spins ffmpeg forever."""
-        return self.input("-loop", "1", "-framerate", str(FPS), "-t", f"{secs + 0.5:.2f}", "-i", str(path))
-
-    def bar(self, text, secs):
-        name = "bar-" + hashlib.sha1(repr(text).encode()).hexdigest()[:10]
-        path = self.out / f"{name}.png"
-        if not path.exists():
-            card(path, bar_body(text), BAR)
-        return self.image(path, secs)
-
-    def add(self, f):
-        self.filters.append(f)
-
-
 def render(cast, gif):
+    """The cast as a GIF at real time, by agg."""
     if not gif.exists():
         run("agg", "--idle-time-limit", "100000", "--fps-cap", str(FPS), "--font-size", "14", str(cast), str(gif))
     return gif
+
+
+def probe(path):
+    """A video file's duration in seconds."""
+    r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+                       capture_output=True, text=True, check=True)
+    return float(r.stdout)
+
+
+ENC = ["-r", str(FPS), "-pix_fmt", "yuv420p", "-c:v", "libx264", "-crf", "18", "-preset", "veryfast"]
+
+
+def cfr(src, dst):
+    """src as a constant-frame-rate video: agg writes a frame only when the screen changes,
+    and a cut inside an idle stretch must still find frames."""
+    if not dst.exists():
+        run("ffmpeg", "-y", "-i", str(src), "-vf", f"fps={FPS},pad=ceil(iw/2)*2:ceil(ih/2)*2", *ENC, str(dst))
+    return dst
+
+
+def still(path, secs):
+    """ffmpeg input args for a still image held secs."""
+    return ["-loop", "1", "-framerate", str(FPS), "-t", f"{secs:.3f}", "-i", str(path)]
+
+
+def clip(path, a, z):
+    """ffmpeg input args for path from a to z seconds."""
+    return ["-ss", f"{max(0.0, a):.3f}", "-t", f"{z - max(0.0, a):.3f}", "-i", str(path)]
+
+
+def piece(dst, inputs, graph, secs):
+    """Render one piece, secs long, and check it came out that long."""
+    run("ffmpeg", "-y", *inputs, "-filter_complex", graph, "-map", "[out]", "-t", f"{secs:.3f}", *ENC, str(dst))
+    got = probe(dst)
+    if abs(got - secs) > 0.25:
+        sys.exit(f"{dst.name}: {got:.2f}s, planned {secs:.2f}s")
+    return dst
 
 
 def main(out):
@@ -143,7 +156,9 @@ def main(out):
         cast = out / f"pane-{label}.cast"
         if cast.exists():
             panes.append((label, render(cast, out / f"pane-{label}.gif"), json.loads(cast.open().readline())["start"]))
-    frames = [l.split("\t") for l in (out / "browser" / "frames.tsv").read_text().splitlines() if l]
+    # CDP can deliver a frame a hair before the one it follows: order them by their own time.
+    frames = sorted((l.split("\t") for l in (out / "browser" / "frames.tsv").read_text().splitlines() if l),
+                    key=lambda f: float(f[1]))
     b0 = float(frames[0][1])
     lst = []
     for (f, t), (_, t2) in zip(frames, frames[1:] + [(None, float(frames[-1][1]) + 1)]):
@@ -156,89 +171,80 @@ def main(out):
     # Stretches: (source, start, end in wall-clock seconds, speed, caption).
     stretches, beat = [], 1
     for (t, m), (t2, _) in zip(marks, marks[1:]):
-        budget, b = STRETCH.get(m, (3, None))
+        budget, b, *own = STRETCH.get(m, (3, None))
         beat = b or beat
         src = "browser" if m == "browser" else "panes" if m == "tiled" and panes else "term"
         if t2 - t < 0.05:
             continue
         speed = max(1.0, (t2 - t) / budget)
-        text = CAPTIONS[beat] + (f"   ⏩ {speed:.0f}×" if speed >= 2 else "")
+        text = (own[0] if own else CAPTIONS[beat]) + (f"   ⏩ {speed:.0f}×" if speed >= 2 else "")
         stretches.append((src, t, t2, speed, text))
 
-    g = Graph(out)
-    tin, bin_ = g.input("-i", str(term)), g.input("-i", str(out / "browser.mp4"))
-    pin = {label: g.input("-i", str(gif)) for label, gif, _ in panes}
-    uses = {"term": sum(s[0] == "term" for s in stretches) + 1}
-    for label in pin:
-        uses[label] = sum(s[0] == "panes" for s in stretches)
-    g.add(f"[{tin}]split={uses['term']}" + "".join(f"[term{i}]" for i in range(uses["term"])))
-    for label, n in uses.items():
-        if label != "term" and n > 1:
-            g.add(f"[{pin[label]}]split={n}" + "".join(f"[{label}{i}]" for i in range(n)))
-    used = dict.fromkeys(uses, 0)
+    def bar(text):
+        path = out / ("bar-" + hashlib.sha1(repr(text).encode()).hexdigest()[:10] + ".png")
+        return path if path.exists() else card(path, bar_body(text), BAR)
 
-    def take(label):
-        i = used[label]
-        used[label] += 1
-        return f"{label}{i}" if label == "term" or uses[label] > 1 else pin[label]
-
-    def retime(pad, a, z, speed):
-        return f"[{pad}]trim={a:.2f}:{z:.2f},setpts=(PTS-STARTPTS)/{speed:.3f}"
-
-    groups, cur = [], []
+    term_v = cfr(term, out / "term.mp4")
+    pane_v = {label: (cfr(gif, out / f"pane-{label}.mp4"), start) for label, gif, start in panes}
+    parts = out / "parts"
+    parts.mkdir(exist_ok=True)
     title = card(out / "title.png", f"<div style='font-weight:700;font-size:64px;color:#f5c542'>🐝 {TITLE[0]}</div>"
                  f"<div style='font-weight:500;font-size:30px;margin-top:14px'>{html.escape(TITLE[1])}</div>",
                  H + BAR)
-    g.add(f"[{g.image(title, TITLE_LEN)}]trim=duration={TITLE_LEN},setpts=PTS-STARTPTS,{fit(W, H + BAR)}[title]")
-    cur.append(("[title]", TITLE_LEN))
-    for i, (src, t, t2, speed, text) in enumerate(stretches):
+    groups = [[piece(parts / "00-title.mp4", still(title, TITLE_LEN), f"[0:v]{fit(W, H + BAR)}[out]", TITLE_LEN)]]
+    for i, (src, t, t2, speed, text) in enumerate(stretches, 1):
         secs = (t2 - t) / speed
-        if src == "term":
-            g.add(retime(take("term"), t - t0, t2 - t0, speed) + f",{fit()}[v{i}]")
-        elif src == "browser":
-            g.add(retime(bin_, max(0, t - b0), tt - b0, speed) + f",{fit()}[v{i}]")
-        else:  # the three workers, stacked, each under its label
-            rows, h = [], H // len(panes) - ROW_BAR
-            for label, _, start in panes:
+        dst = parts / f"{i:02d}-{src}.mp4"
+        retime = f"setpts=(PTS-STARTPTS)/{speed:.4f}"
+        if src == "panes":  # the three workers, stacked, each under its label
+            ins, h = [], H // len(panes) - ROW_BAR
+            for k, (label, (video, start)) in enumerate(pane_v.items()):
                 lab = out / f"label-{label}.png"
                 if not lab.exists():
                     card(lab, f"<div style='font:600 17px Menlo,monospace;color:#f5c542'>{html.escape(label)}</div>", ROW_BAR)
-                lab = g.image(lab, secs)
-                g.add(retime(take(label), max(0, t - start), t2 - start, speed) + f",{fit(W, h)}[r{i}{label}]")
-                g.add(f"[{lab}][r{i}{label}]vstack=shortest=1[rr{i}{label}]")
-                rows.append(f"[rr{i}{label}]")
-            g.add(f"{''.join(rows)}vstack=inputs={len(rows)},{fit()}[v{i}]")
-        g.add(f"[v{i}][{g.bar(text, secs)}]vstack=shortest=1[p{i}]")
-        piece = (f"[p{i}]", secs)
-        if src == "browser":
-            groups += [cur, [piece]]
-            cur = []
+                ins += clip(video, t - start, t2 - start) + still(lab, secs)
+            n = len(pane_v)
+            graph = ";".join(f"[{2 * k}:v]{retime},{fit(W, h)}[c{k}];[{2 * k + 1}:v][c{k}]vstack[r{k}]" for k in range(n))
+            graph += ";" + "".join(f"[r{k}]" for k in range(n)) + f"vstack=inputs={n},{fit()}[v]"
+            ins += still(bar(text), secs)
+            graph += f";[v][{2 * n}:v]vstack[out]"
         else:
-            cur.append(piece)
+            video, base = (out / "browser.mp4", b0) if src == "browser" else (term_v, t0)
+            z = tt if src == "browser" else t2
+            ins = clip(video, t - base, z - base) + still(bar(text), secs)
+            graph = f"[0:v]{retime},{fit()}[v];[v][1:v]vstack[out]"
+        part = piece(dst, ins, graph, secs)
+        if src == "browser":
+            groups += [[part], []]
+        else:
+            groups[-1].append(part)
     # The end card: the last terminal frame, held, over the summary and the repo.
     end = stretches[-1][2] - t0
-    g.add(f"[{take('term')}]trim=start={end - 0.3:.2f},setpts=PTS-STARTPTS,"
-          f"tpad=stop_mode=clone:stop_duration={TAIL},trim=duration={TAIL},{fit()}[vend]")
-    g.add(f"[vend][{g.bar(END, TAIL)}]vstack=shortest=1[pend]")
-    cur.append(("[pend]", TAIL))
-    groups.append(cur)
+    groups[-1].append(piece(parts / "99-end.mp4", clip(term_v, end - 0.5, end) + still(bar(END), TAIL),
+                            f"[0:v]tpad=stop_mode=clone:stop_duration={TAIL},trim=duration={TAIL},"
+                            f"setpts=PTS-STARTPTS,{fit()}[v];[v][1:v]vstack[out]", TAIL))
 
-    # Concatenate within each group, then wipe from one group into the next.
-    for k, parts in enumerate(groups):
-        g.add(f"{''.join(p for p, _ in parts)}concat=n={len(parts)}:v=1:a=0[g{k}]")
-    acc, prev = sum(d for _, d in groups[0]), "g0"
-    for k in range(1, len(groups)):
-        wipe = "wipeleft" if k % 2 else "wiperight"
-        g.add(f"[{prev}][g{k}]xfade=transition={wipe}:duration={WIPE}:offset={acc - WIPE:.2f}[x{k}]")
-        acc += sum(d for _, d in groups[k]) - WIPE
-        prev = f"x{k}"
+    # Join each group's pieces, then wipe from one group into the next.
+    joined = []
+    for k, grp in enumerate(groups):
+        lst = parts / f"group{k}.txt"
+        lst.write_text("".join(f"file '{p}'\n" for p in grp))
+        dst = parts / f"group{k}.mp4"
+        run("ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(lst), "-c", "copy", str(dst))
+        joined.append(dst)
     mp4, gif = out / "demo.mp4", out / "demo.gif"
-    run("ffmpeg", "-y", *g.inputs, "-filter_complex", ";".join(g.filters), "-map", f"[{prev}]",
-        "-t", f"{acc:.2f}", "-r", str(FPS), "-pix_fmt", "yuv420p", "-c:v", "libx264", "-crf", "20", str(mp4))
-    run("gifski", "--fps", str(FPS), "--width", str(W), "--quality", "75", "-o", str(gif), str(mp4))
+    acc, prev = probe(joined[0]), joined[0]
+    for k, nxt in enumerate(joined[1:], 1):
+        wipe = "wipeleft" if k % 2 else "wiperight"
+        dst = mp4 if k == len(joined) - 1 else parts / f"wiped{k}.mp4"
+        run("ffmpeg", "-y", "-i", str(prev), "-i", str(nxt), "-filter_complex",
+            f"[0:v][1:v]xfade=transition={wipe}:duration={WIPE}:offset={acc - WIPE:.3f}[out]",
+            "-map", "[out]", *ENC, str(dst))
+        acc, prev = probe(dst), dst
+    run("gifski", "--fps", str(FPS), "--width", str(W), "--quality", "65", "-o", str(gif), str(mp4))
     (out / "edit.tsv").write_text("".join(f"{s}\t{a - t0:.1f}\t{z - t0:.1f}\t{v:.1f}\t{x}\n"
                                           for s, a, z, v, x in stretches))
-    print(f"{mp4}: {acc:.1f}s; {gif}: {gif.stat().st_size / 1e6:.1f} MB; {len(stretches)} stretches")
+    print(f"{mp4}: {probe(mp4):.1f}s; {gif}: {gif.stat().st_size / 1e6:.1f} MB; {len(stretches)} stretches")
 
 
 if __name__ == "__main__":

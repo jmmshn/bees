@@ -36,7 +36,9 @@ stop_rec() {
 }
 trap stop_rec EXIT
 
-ws_of() { herdr workspace list | jq -r --arg l "$1" '.result.workspaces[] | select(.label == $l) | .workspace_id' | head -1; }
+# ws_of <label>: the workspace labelled exactly that, else one whose label has it as a word
+# (the queen may label a worker "zigzag path study").
+ws_of() { herdr workspace list | jq -r --arg l "$1" '[.result.workspaces[] | select(.label == $l)] + [.result.workspaces[] | select(.label | test("\\b" + $l + "\\b"))] | .[0].workspace_id // empty'; }
 pane_of() { herdr pane list | jq -r --arg w "$1" '[.result.panes[] | select(.workspace_id == $w)][0].pane_id'; }
 status_of() { herdr pane list | jq -r --arg p "$1" '.result.panes[] | select(.pane_id == $p) | .agent_status // "unknown"'; }
 focus() { herdr workspace focus "$(ws_of "$1")" >/dev/null; }
@@ -64,7 +66,7 @@ type_into() {
 	for ((i = 0; i < ${#s}; i += 4)); do herdr pane send-text "$p" "${s:i:4}" >/dev/null; sleep 0.03; done
 	sleep 0.4 && herdr pane send-keys "$p" enter >/dev/null
 }
-idle() { [ "$(status_of "$1")" = idle ]; }
+idle() { case $(status_of "$1") in idle | done) ;; *) return 1 ;; esac; } # done: a finished turn not yet looked at
 working() { [ "$(status_of "$1")" = working ]; }
 settle() { # the agent in pane $1 idle for 6 s straight
 	until_ 900 "$2 to go idle" idle "$1"
@@ -89,7 +91,7 @@ sleep 3
 
 # Beat 1: the question.
 mark beat1
-type_into "$queen" "Design study: how should the bee reach the flower? Three workers: straight, zigzag, loop. Each prototypes it in buzz.py and writes STUDY.md (how it looks, trade-offs, open questions), commits both on its branch and reports done with the branch name. No remote, no PR. Don't build yet."
+type_into "$queen" "Design study: how should the bee reach the flower? Three workers, labelled straight, zigzag and loop. Each prototypes it in buzz.py and writes STUDY.md (how it looks, trade-offs, open questions), commits both on its branch and reports done with the branch name. No remote, no PR. Don't build yet."
 three() { [ "$(workers | wc -l)" -ge 3 ]; }
 until_ 300 "three workers" three
 workers >"$out/workers.tsv"
@@ -123,7 +125,7 @@ mark studied
 # Beat 2: the review, in plannotator.
 mark beat2
 type_into "$queen" "For each branch show me git log --oneline main..<branch>, then run plannotator annotate on the three STUDY.md files with --gate --json in the background. When I decide, have the worker I pick build it and end the other two."
-zz=$(workers_all | awk -F'\t' '$1 == "zigzag" { print $2 }')
+zz=$(workers_all | awk -F'\t' '$1 ~ /zigzag/ { print $2 }')
 "$here/review.sh" "$out" "$zz" || die "the review failed"
 
 # Beat 3: the build, with a steer mid-build.
@@ -156,7 +158,7 @@ sleep 4
 type_into "$keeper" "python3 buzz.py"
 sleep 8
 mark flew
-studies=$(workers_all | awk -F'\t' '$1 != "zigzag" { print $2 }' | tr '\n' ' ')
+studies=$(workers_all | awk -F'\t' '$1 !~ /zigzag/ { print $2 }' | tr '\n' ' ')
 type_into "$keeper" "git branch -D $studies"
 sleep 3
 mark pruned

@@ -3,8 +3,8 @@
 
 A herdr client shows one workspace at a time, so the three workers can't share one cast.
 This polls each pane's visible screen (herdr pane read --source visible --format ansi) once
-a second, keeps its last ROWS lines, and writes <out>/pane-<label>.cast, one full redraw
-per change. Event times are seconds since the cast header's wall-clock "start" (a float,
+a second, drops Claude's input box and status lines, keeps the last ROWS lines, and writes
+<out>/pane-<label>.cast, one full redraw per change. Event times are seconds since the cast header's wall-clock "start" (a float,
 for edit.py). Runs until SIGTERM. HERDR_SOCKET_PATH must point at the session.
 """
 
@@ -16,7 +16,7 @@ import sys
 import time
 from pathlib import Path
 
-ROWS = 14
+ROWS = 16
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
 
@@ -26,6 +26,10 @@ def snap(pane):
     if r.returncode:
         return None
     lines = r.stdout.rstrip("\n").split("\n")
+    # Claude's input box sits between the last two rules (a line of ─), the status lines under it.
+    rules = [i for i, l in enumerate(lines) if ANSI.sub("", l).strip().startswith("──")]
+    if len(rules) >= 2:
+        lines = lines[: rules[-2]]
     while lines and not ANSI.sub("", lines[-1]).strip():
         lines.pop()
     return lines[-ROWS:]

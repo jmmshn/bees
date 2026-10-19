@@ -63,7 +63,7 @@ Rules:
 - Entries are only inserted, never updated or deleted.
 - Each write is one `BEGIN IMMEDIATE` transaction; concurrent writers wait on the busy timeout instead of failing.
 - A receipt id is deterministic and written with `INSERT OR IGNORE`, so a duplicate is a no-op.
-- `Open` creates the table and indexes if missing, so `bs init` is optional.
+- `Open` creates the file, table and indexes if missing. Only `bs init`, `queen` and `spawn` call it on a missing file, and say so on stderr; every other command refuses one (exit 2), so a deleted logbook is never silently recreated empty (R48).
 - Unread is always this query, in insertion order (`rowid`). Never use a cursor or a time window.
 
 ```sql
@@ -232,7 +232,7 @@ func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error)           
 ## Commands
 
 ```text
-bs init                       create the logbook file and table if missing (optional)
+bs init                       create the logbook file and table if missing; bs queen and spawn do too, any other command refuses a missing logbook (exit 2)
 bs queen                      start the queen: claude --name queen-<project> --append-system-prompt-file <project>-queen.md in the repo (no BS_* set)
 bs spawn [--repo P] --label L <bead> [--label L <bead> …]  start a worker per bead (SpawnAll), each in its own herdr workspace labelled by the --label before it (--label only on a first spawn; --repo before the first bead, for all); exit 2 if refused (nothing started), 1 if any start failed
 bs end [--force] <worker|bead>  remove the worker's recorded workspace; keep its branch

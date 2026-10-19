@@ -81,7 +81,7 @@ bs status [--json]            sessions, running or not, and unread counts
 bs end [--force] <worker|bead> remove its recorded workspace, keep its branch; --force discards uncommitted files
 bs prune [--dry-run]          delete ended workers' local branches once merged
 bs version                    print the commit bs was built from
-bs init                       create the logbook (optional; any command does)
+bs init                       create the logbook (bs queen and spawn do too; others refuse without one)
 ```
 
 Every command takes `--project`; `send`, `inbox`, `spawn` and `end` take `--as <session>`

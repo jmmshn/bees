@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
+	"os"
 	"strings"
 	"time"
 
@@ -18,10 +20,26 @@ import (
 // errUsage means the arguments were wrong; the message has already been printed.
 var errUsage = errors.New("usage")
 
+// errNoLogbook means the project's logbook is missing and the command may not start one.
+var errNoLogbook = errors.New("no logbook")
+
 // scope resolves the project and opens its logbook. Callers close the logbook.
-func scope(ctx context.Context, flagProject string) (project.Project, *logbook.Logbook, error) {
+// Only a command that starts a project (init, queen, spawn) passes starts, where a new
+// logbook is announced; with nil a missing logbook is refused, since opening one creates
+// it and a deleted logbook would silently come back empty (bees-8.12, motif 14).
+func scope(ctx context.Context, flagProject string, starts io.Writer) (project.Project, *logbook.Logbook, error) {
 	p, err := project.Resolve(flagProject)
 	if err != nil {
+		return p, nil, err
+	}
+	if _, err := os.Stat(p.Logbook); errors.Is(err, fs.ErrNotExist) {
+		if starts == nil {
+			return p, nil, fmt.Errorf("%w for project %s at %s: start the project with bs queen; "+
+				"if it already had a queen or workers, the logbook was deleted, so restore the file "+
+				"rather than starting afresh", errNoLogbook, p.Name, p.Logbook)
+		}
+		fmt.Fprintf(starts, "bs: new empty logbook for project %s at %s\n", p.Name, p.Logbook)
+	} else if err != nil {
 		return p, nil, err
 	}
 	lb, err := logbook.Open(ctx, p.Logbook)
@@ -69,7 +87,7 @@ func cmdInit(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		fmt.Fprintln(stderr, "usage: bs init [--project <name>]")
 		return errUsage
 	}
-	_, lb, err := scope(ctx, *proj)
+	_, lb, err := scope(ctx, *proj, stderr)
 	if err != nil {
 		return err
 	}
@@ -102,7 +120,7 @@ func cmdSend(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		}
 		body = strings.TrimRight(string(b), "\n")
 	}
-	p, lb, err := scope(ctx, *proj)
+	p, lb, err := scope(ctx, *proj, nil)
 	if err != nil {
 		return err
 	}
@@ -204,7 +222,7 @@ func cmdInbox(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if err != nil {
 		return err
 	}
-	_, lb, err := scope(ctx, *proj)
+	_, lb, err := scope(ctx, *proj, nil)
 	if err != nil {
 		return err
 	}

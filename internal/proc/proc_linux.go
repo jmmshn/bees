@@ -7,14 +7,13 @@ import (
 	"strings"
 )
 
-// Parent returns pid's parent, or 0 if it can't be read.
-func Parent(pid int) int {
+// Parent returns pid's parent.
+func Parent(pid int) (int, error) {
 	f, err := stat(pid)
 	if err != nil {
-		return 0
+		return 0, err
 	}
-	ppid, _ := strconv.Atoi(f[1])
-	return ppid
+	return strconv.Atoi(f[1])
 }
 
 // Start is field 22 of /proc/<pid>/stat, the start time in clock ticks.
@@ -23,13 +22,18 @@ func Start(pid int) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if f[0] == "Z" {
+		return "", fmt.Errorf("pid %d is a zombie: %w", pid, ErrGone)
+	}
 	return f[19], nil
 }
 
 // stat returns the fields of /proc/<pid>/stat after the command name.
 func stat(pid int) ([]string, error) {
 	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-	if err != nil {
+	if os.IsNotExist(err) {
+		return nil, fmt.Errorf("pid %d: %w", pid, ErrGone)
+	} else if err != nil {
 		return nil, err
 	}
 	// The command name is in parentheses and may contain spaces; fields resume after ')'.

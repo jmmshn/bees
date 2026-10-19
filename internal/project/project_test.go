@@ -155,17 +155,39 @@ func TestMeResolutionOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The test binary's parent stands in for the Claude process that ran bs.
-	body := `{"name":"beads-995-8","pid":` + fmt.Sprint(os.Getppid()) + `}`
-	if err := os.WriteFile(filepath.Join(reg, fmt.Sprintf("%d.json", os.Getppid())), []byte(body), 0o644); err != nil {
+	start, err := proc.Start(os.Getppid())
+	if err != nil {
 		t.Fatal(err)
 	}
+	entry := filepath.Join(reg, fmt.Sprintf("%d.json", os.Getppid()))
+	writeEntry := func(procStart string) {
+		body := fmt.Sprintf(`{"name":"beads-995-8","pid":%d,"procStart":%q}`, os.Getppid(), procStart)
+		if err := os.WriteFile(entry, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A stale entry on a reused pid names no one (bees-8.2 review).
+	writeEntry("Mon Jan  1 00:00:00 2001")
+	if me, err := project.Me(""); err != nil || me != "outside-claude" {
+		t.Fatalf("stale entry: %q, %v; want the env name", me, err)
+	}
+	writeEntry(start)
 	if me, err := project.Me(""); err != nil || me != "beads-995-8" {
 		t.Fatalf("ppid walk: %q, %v", me, err)
 	}
 	// bs usually runs from a shell inside Claude: the walk must climb past an unregistered
 	// parent to the grandparent, which needs a real process lookup on every OS (bees-8.2).
-	if err := os.Rename(filepath.Join(reg, fmt.Sprintf("%d.json", os.Getppid())),
-		filepath.Join(reg, fmt.Sprintf("%d.json", proc.Parent(os.Getppid())))); err != nil {
+	gp, err := proc.Parent(os.Getppid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gpStart, err := proc.Start(gp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(entry)
+	body := fmt.Sprintf(`{"name":"beads-995-8","pid":%d,"procStart":%q}`, gp, gpStart)
+	if err := os.WriteFile(filepath.Join(reg, fmt.Sprintf("%d.json", gp)), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if me, err := project.Me(""); err != nil || me != "beads-995-8" {

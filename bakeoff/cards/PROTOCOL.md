@@ -30,6 +30,6 @@ Append one line per event to `<run dir>/keeper.log`, with the UTC timestamp `dat
 4. Never edit the toy repo or run git in it yourself, except `!` lines the lead asked for.
 5. Hard cap: 25 minutes from the first line, then `end (timeout)`.
 6. When the card ends: save `herdr pane read <pane> --source recent --lines 400` to `<run dir>/lead.txt` (transcripts are copied by collect.sh; no worker pane captures needed). Log the moment the lead tells you work is ready as `event: lead reports ready`. Then run `bakeoff/collect.sh <run dir>` and report its JSON plus a 5–10 line narrative: what happened at each step, every surprise, every workaround, in the order it happened.
-7. **Stay inside your run.** Keep every file you write (helpers, notes, captures) under `<run dir>/keeper/`, never a session scratchpad: other keepers may be playing other runs from the same session. Prompt only the pane in your own run's `run.json`.
+7. **Stay inside your run.** The run's records stay where the rules above put them (`keeper.log`, `lead.txt` in the run dir); any other file you write (helpers, notes, captures) goes under `<run dir>/keeper/`, never a session scratchpad: other keepers may be playing other runs from the same session. Type only into your own run's panes: its lead's pane from `run.json`, and its workers' panes for a rule 3 intervention.
 
 Leave cleanup to the lead; the card says when to ask for it. Don't close workspaces or kill processes yourself, except where a card says so.

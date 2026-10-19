@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jmmshn/bees/internal/harness/claude/claudetest"
 	"github.com/jmmshn/bees/internal/worker"
 )
 
@@ -138,6 +141,7 @@ func TestSpawnBeadsAfterDoubleDash(t *testing.T) {
 // them on a re-run once herdr answers (bees-8.10).
 func TestEndAllSaysWhatItKeptAndHealsOnRerun(t *testing.T) {
 	useTempLogbook(t)
+	t.Setenv("BS_LOGBOOK", filepath.Join(t.TempDir(), "test.db")) // the project's own logbook
 	h := useFakeHive(t)
 	if _, _, code := bs(t, "end", "--as", "queen-test", "--all"); code != 2 {
 		t.Fatalf("--all without --project: exit %d, want 2", code)
@@ -145,9 +149,12 @@ func TestEndAllSaysWhatItKeptAndHealsOnRerun(t *testing.T) {
 	if _, _, code := bs(t, "end", "--project", "test", "--as", "queen-test", "--all", "test-1-1"); code != 2 {
 		t.Fatalf("--all with a worker: exit %d, want 2", code)
 	}
-	end := []string{"end", "--project", "test", "--as", "queen-test", "--all"}
-	if out, _, code := bs(t, end...); code != 0 || out != "nothing to end: project test has no worker spawned and not yet ended\n" {
-		t.Fatalf("empty: exit %d, %q", code, out)
+	end := []string{"end", "--project", "test", "--as", "keeper", "--all"}
+	if _, stderr, code := bs(t, end...); code != 1 || !strings.Contains(stderr, "has no logbook") {
+		t.Fatalf("no logbook: exit %d, %q", code, stderr)
+	}
+	if _, err := os.Stat(os.Getenv("BS_LOGBOOK")); err == nil {
+		t.Fatal("bs end created a logbook")
 	}
 	if _, stderr, code := bs(t, "spawn", "--project", "test", "--as", "queen-test", "--label", "sort fruits", "test-1.1", "--label", "dedupe todo", "test-1.2"); code != 0 {
 		t.Fatalf("spawn: exit %d, %s", code, stderr)
@@ -161,5 +168,31 @@ func TestEndAllSaysWhatItKeptAndHealsOnRerun(t *testing.T) {
 	out, _, code = bs(t, end...)
 	if code != 0 || out != "ended test-1-1: workspace w1 was already gone\nended test-1-2: workspace w2 was already gone\nbranches kept; bs prune deletes them once merged\n" {
 		t.Fatalf("rerun: exit %d, %q", code, out)
+	}
+	if out, _, code = bs(t, end...); code != 0 || !strings.HasPrefix(out, "nothing to end") {
+		t.Fatalf("third run: exit %d, %q", code, out)
+	}
+}
+
+// bs end --all refuses to end the wrong fleet: another project's logbook, from one of the
+// project's own workers, or from or beside a running queen without --yes (bees-8.10).
+func TestEndAllRefusesTheWrongFleet(t *testing.T) {
+	useTempLogbook(t)
+	useFakeHive(t)
+	refused := func(why string, args ...string) {
+		t.Helper()
+		if _, stderr, code := bs(t, append([]string{"end", "--project", "test", "--all"}, args...)...); code != 1 || !strings.Contains(stderr, why) {
+			t.Errorf("%v: exit %d, %q; want refused with %q", args, code, stderr, why)
+		}
+	}
+	refused("is not project test's logbook", "--as", "keeper") // BS_LOGBOOK is logbook.db
+	t.Setenv("BS_LOGBOOK", filepath.Join(t.TempDir(), "test.db"))
+	bs(t, "init")
+	refused("a worker never ends its whole project", "--as", "test-1-1", "--yes")
+	refused("pass --yes", "--as", "queen-test")
+	claudetest.FakeRegistry(t).Add(t, "queen-test", "")
+	refused("queen-test is running", "--as", "keeper")
+	if out, stderr, code := bs(t, "end", "--project", "test", "--all", "--as", "keeper", "--yes"); code != 0 {
+		t.Fatalf("--yes: exit %d, %q %q", code, out, stderr)
 	}
 }

@@ -136,6 +136,10 @@ func (HerdrCLI) RemoveWorktree(ctx context.Context, workspace string, force bool
 		return nil
 	case "dirty_worktree_requires_force":
 		return fmt.Errorf("%w: %w", err, ErrDirty)
+	case "":
+		if err != nil { // no herdr error envelope: herdr itself didn't answer
+			return fmt.Errorf("%w: %w", ErrHerdrDown, err)
+		}
 	}
 	return err
 }

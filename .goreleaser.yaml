@@ -4,7 +4,7 @@ builds:
   - main: ./cmd/bs
     binary: bs
     env: [CGO_ENABLED=0]
-    goos: [linux]
+    goos: [linux, darwin]
     goarch: [amd64, arm64]
     flags: [-trimpath, -buildvcs=true]
     # bs version reads the commit from Go's VCS stamp; -buildvcs=true fails the build without one.

@@ -10,8 +10,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
+
+	"github.com/jmmshn/bees/internal/proc"
 )
 
 var (
@@ -129,7 +130,10 @@ func CheckSession(name string) error {
 // else is refused, so a session can't send as the queen (bees-7.4). The registry also
 // beats the environment, which a session can inherit stale.
 func Me(flag string) (string, error) {
-	me, inClaude := registered()
+	me, inClaude, err := registered()
+	if err != nil {
+		return "", err
+	}
 	switch {
 	case inClaude && flag != "" && flag != me:
 		return "", fmt.Errorf("--as %s: %w %q", flag, ErrNotYou, me)
@@ -145,42 +149,34 @@ func Me(flag string) (string, error) {
 }
 
 // registered returns the name of the nearest ancestor process that is a registered,
-// named Claude Code session.
-func registered() (string, bool) {
+// named, live Claude Code session: its registry entry's procStart must match the pid's
+// start time, as in claude.List, so a stale entry on a reused pid names no one. A failed
+// process lookup is an error, never "not in Claude": that would let --as name anyone.
+func registered() (string, bool, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", false
+		return "", false, err
 	}
 	reg := filepath.Join(home, ".claude", "sessions")
-	for pid := os.Getppid(); pid > 1; pid = parentOf(pid) {
+	for pid := os.Getppid(); pid > 1; {
 		b, err := os.ReadFile(filepath.Join(reg, fmt.Sprintf("%d.json", pid)))
-		if err != nil {
-			continue
+		if err == nil {
+			var s struct{ Name, ProcStart string }
+			if json.Unmarshal(b, &s) != nil || s.Name == "" {
+				break // the nearest Claude session has no usable name
+			}
+			start, err := proc.Start(pid)
+			if err != nil {
+				return "", false, fmt.Errorf("checking Claude session %s (pid %d): %w", s.Name, pid, err)
+			}
+			if start == s.ProcStart {
+				return s.Name, true, nil
+			}
+			// A stale entry: the pid was reused by a process that isn't that session.
 		}
-		var s struct{ Name string }
-		if json.Unmarshal(b, &s) == nil && s.Name != "" {
-			return s.Name, true
+		if pid, err = proc.Parent(pid); err != nil {
+			return "", false, fmt.Errorf("finding the Claude session that ran bs: %w", err)
 		}
-		break // the nearest Claude session has no usable name
 	}
-	return "", false
-}
-
-// parentOf returns pid's parent from /proc, or 0 if it can't be read.
-func parentOf(pid int) int {
-	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-	if err != nil {
-		return 0
-	}
-	// The command name is in parentheses and may contain spaces; fields resume after ')'.
-	i := strings.LastIndexByte(string(b), ')')
-	if i < 0 {
-		return 0
-	}
-	fields := strings.Fields(string(b[i+1:]))
-	if len(fields) < 2 {
-		return 0
-	}
-	ppid, _ := strconv.Atoi(fields[1])
-	return ppid
+	return "", false, nil
 }

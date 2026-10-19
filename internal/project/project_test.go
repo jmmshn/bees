@@ -8,13 +8,18 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jmmshn/bees/internal/proc"
 	"github.com/jmmshn/bees/internal/project"
 )
 
 // gitRepo creates a git repo named name under a temp dir and returns its path.
 func gitRepo(t *testing.T, name string) string {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), name)
+	tmp, err := filepath.EvalSymlinks(t.TempDir()) // macOS: /var is /private/var, as git reports it
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(tmp, name)
 	git(t, "", "init", "-q", "-b", "main", dir)
 	git(t, dir, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "init")
 	return dir
@@ -150,12 +155,43 @@ func TestMeResolutionOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The test binary's parent stands in for the Claude process that ran bs.
-	body := `{"name":"beads-995-8","pid":` + fmt.Sprint(os.Getppid()) + `}`
-	if err := os.WriteFile(filepath.Join(reg, fmt.Sprintf("%d.json", os.Getppid())), []byte(body), 0o644); err != nil {
+	start, err := proc.Start(os.Getppid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(reg, fmt.Sprintf("%d.json", os.Getppid()))
+	writeEntry := func(procStart string) {
+		body := fmt.Sprintf(`{"name":"beads-995-8","pid":%d,"procStart":%q}`, os.Getppid(), procStart)
+		if err := os.WriteFile(entry, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A stale entry on a reused pid names no one (bees-8.2 review).
+	writeEntry("Mon Jan  1 00:00:00 2001")
+	if me, err := project.Me(""); err != nil || me != "outside-claude" {
+		t.Fatalf("stale entry: %q, %v; want the env name", me, err)
+	}
+	writeEntry(start)
+	if me, err := project.Me(""); err != nil || me != "beads-995-8" {
+		t.Fatalf("ppid walk: %q, %v", me, err)
+	}
+	// bs usually runs from a shell inside Claude: the walk must climb past an unregistered
+	// parent to the grandparent, which needs a real process lookup on every OS (bees-8.2).
+	gp, err := proc.Parent(os.Getppid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gpStart, err := proc.Start(gp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(entry)
+	body := fmt.Sprintf(`{"name":"beads-995-8","pid":%d,"procStart":%q}`, gp, gpStart)
+	if err := os.WriteFile(filepath.Join(reg, fmt.Sprintf("%d.json", gp)), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if me, err := project.Me(""); err != nil || me != "beads-995-8" {
-		t.Fatalf("ppid walk: %q, %v", me, err)
+		t.Fatalf("grandparent walk: %q, %v", me, err)
 	}
 	t.Setenv("BS_SESSION", "queen-bees") // a stale or inherited value must not beat the registry
 	if me, _ := project.Me(""); me != "beads-995-8" {

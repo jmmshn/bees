@@ -9,6 +9,29 @@ you. Each worker works on its own, in its own git worktree, and tells the queen 
 done. You talk only to the queen. `bs` is the small Go CLI that ties Claude Code, herdr
 and beads together.
 
+![A design study, start to finish: the queen fans "how should the bee reach the flower?" out to three workers, the keeper picks zigzag in plannotator, that worker builds it with a steer mid-build, and a plain git merge lands it](docs/img/demo2.gif)
+
+A design study from start to finish: three workers prototype in parallel, the keeper picks
+one in plannotator, the worker that already has the context builds it, and a plain
+`git merge` lands it. Replay it with [demo/demo2/run.sh](demo/demo2/RUN.md).
+
+```mermaid
+flowchart LR
+    K[keeper] -- types --> Q["queen<br/>(Claude Code)"]
+    Q -- "1 bs send" --> L[("logbook")]
+    Q == "2 ring: Claude Code's<br/>messaging socket" ==> W["worker<br/>(Claude Code)"]
+    W -- "3 bs inbox" --> L
+    S[["per-worker --settings"]] -. permissions .-> W
+    H[herdr] -. "starts it; holds<br/>pane + worktree" .-> W
+```
+
+bs never types into a terminal to move the conversation along. A message is stored in the
+logbook first. Then bs rings the recipient over Claude Code's own cross-session messaging
+socket, found through `~/.claude/sessions`, and the ring arrives as a prompt in that
+session's conversation. Each worker gets its permissions from its own `--settings` file;
+herdr only starts the sessions and holds their panes and worktrees, and it carries no
+messages.
+
 ![The keeper asks the queen for three jobs in a Claude Code chat; the queen calls bs epic and bs bead new, bs spawn opens three labelled herdr workspaces, the workers report done in bs inbox, and after "merge all three" the queen calls bd close, bs end and bs prune](docs/img/queen.gif)
 
 **Every piece of work is a bead.** The bead is the worker's brief, its name (`bees-2.1` →

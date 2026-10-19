@@ -1,6 +1,6 @@
 # Demo 2: recording plan
 
-No take runs until the keeper approves this plan.
+Approved by the keeper 2026-10-19 with five changes, folded in below (marked **[k]**).
 
 ## 1. What take 1 taught
 
@@ -28,19 +28,27 @@ teach:
 
 | # | On screen | Caption | Final | Source |
 |---|---|---|---|---|
-| 1 | queen pane: question typed, `bs epic`, `bs bead new` ×3, `bs spawn` | 1 · keeper asks the queen for a design study; she fans it out to 3 workers | 8 s | cast, beat1→spawned, ≤4× |
-| 2 | straight, zigzag, loop panes, 3 s each, mid-prototype | same | 8 s | cast, real time |
-| 3 | queen: three `done` messages arriving | same, plus `⏩ N×` | 5 s | cast, studies wait, compressed |
+| 0 | title card **[k]**: 🐝 bees, "a queen runs a design study with 3 Claude workers" | — | 2.5 s | rendered |
+| 1 | queen pane: question typed, `bs epic`, `bs bead new` ×3, `bs spawn` | 1 · keeper asks the queen for a design study; the queen fans it out to 3 workers **[k]** | 8 s | cast, beat1→spawned |
+| 1b | keeper shell: `git worktree list`, three branches, three worktrees **[k]** | same | 5 s | cast |
+| 2 | the three worker panes **stacked**, labelled straight / zigzag / loop, while they study **[k]** | same, plus `⏩ N×` | 8 s | paneshot casts |
+| 3 | queen: three `done` messages | same | 3 s | cast |
 | 4 | queen: `git log main..<branch>` ×3, plannotator starts | 2 · keeper reviews all three studies in plannotator and picks one | 5 s | cast |
 | — | wipe left, terminal → browser | — | 0.6 s | xfade |
-| 5 | plannotator: each STUDY.md 2 s, zigzag's, note typed, *Approve with notes* | same | 15 s | browser screencast |
+| 5 | plannotator: each STUDY.md 2 s, zigzag's, note typed, *Approve with notes* | same | 14 s | browser screencast |
 | — | wipe right, browser → terminal | — | 0.6 s | xfade |
 | 6 | queen: reads the decision, `bs send` build to zigzag, `bs end` ×2 | 3 · the worker that already has the context builds it; keeper steers mid-build | 5 s | cast |
 | 7 | zigzag pane: steer typed mid-build | same | 6 s | cast |
-| 8 | zigzag pane: build finishing, commit, `done` | same, plus `⏩ N×` | 5 s | cast, compressed |
-| 9 | keeper shell: `git merge --no-ff`, `git log --graph`, `python3 buzz.py` (bee zigzags, bzzz) | 4 · plain git merge, and the bee flies | 10 s | cast, real time |
-| 10 | queen: close-out (bd close, bs end, bs prune, branch -D) | same | 4 s | cast, compressed |
-| 11 | keeper shell: the bee at the flower | end card: *bees: one queen, a fleet of Claude workers, all on local git* | 4 s | cast, last frame held |
+| 8 | zigzag pane: build finishing, commit, `done` | same, plus `⏩ N×` | 5 s | cast |
+| 9 | keeper shell: `git merge --no-ff`, `git log --graph`, `python3 buzz.py`, then `git branch -D` the two study branches **[k]** | 4 · plain git merge, and the bee flies | 12 s | cast |
+| 10 | queen: close-out (bd close, bs end, bs prune; no `branch -D` **[k]**) | same | 4 s | cast |
+| 11 | keeper shell: the bee at the flower | end card: *bees: one queen, a fleet of Claude workers, all on local git* over *github.com/jmmshn/bees* **[k]** | 4 s | cast, last frame held |
+
+**Shot 2, stacked rather than side by side [k].** A herdr client shows one workspace at a time, so the
+three panes are recorded separately: `paneshot.py` polls each pane's visible screen once a second
+(`herdr pane read --source visible --format ansi`), keeps its last 14 lines, and writes one cast per
+pane. Side by side, three ~120-column panes at 1200 px would be ~3 px per character; stacked rows of
+1200 × 234 keep them readable.
 
 ## 3. Capture
 

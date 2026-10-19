@@ -19,8 +19,9 @@ unset BS_LOGBOOK BS_PROJECT
 
 now() { perl -MTime::HiRes=time -e 'printf "%.2f\n", time'; }
 mark() { printf '%s\t%s\n' "$(now)" "$*" >>"$out/marks.tsv"; log "mark $*"; }
-rec=
-stop_rec() { # detach asciinema's herdr client: the cast ends, the session stays
+rec= shots=
+stop_rec() {
+	[ -z "$shots" ] || kill "$shots" 2>/dev/null || true # detach asciinema's herdr client: the cast ends, the session stays
 	[ -n "$rec" ] || return 0
 	local p c
 	for p in $(pgrep -f "herdr session attach buzz"); do
@@ -39,6 +40,7 @@ ws_of() { herdr workspace list | jq -r --arg l "$1" '.result.workspaces[] | sele
 pane_of() { herdr pane list | jq -r --arg w "$1" '[.result.panes[] | select(.workspace_id == $w)][0].pane_id'; }
 status_of() { herdr pane list | jq -r --arg p "$1" '.result.panes[] | select(.pane_id == $p) | .agent_status // "unknown"'; }
 focus() { herdr workspace focus "$(ws_of "$1")" >/dev/null; }
+workers_all() { cat "$out/workers.tsv"; }
 workers() { (cd / && bs status --project buzz --json) | jq -r '.[] | select(.running and .session != "queen-buzz") | "\(.label)\t\(.session)"'; }
 # until <secs> <what> <cmd...>: poll cmd every 2 s.
 until_() {
@@ -46,8 +48,15 @@ until_() {
 	local end=$(($(date +%s) + secs))
 	until "$@" >/dev/null 2>&1; do
 		[ "$(date +%s)" -lt "$end" ] || die "timed out after ${secs}s waiting for $what"
+		blocked
 		sleep 2
 	done
+}
+# A pane waiting on a permission prompt stops the take: the keeper answers those, not take.sh.
+blocked() {
+	local p
+	p=$(herdr pane list | jq -r '[.result.panes[] | select(.agent_status == "blocked") | .pane_id][0] // empty')
+	[ -z "$p" ] || { herdr pane read "$p" --source recent --lines 30 >>"$out/take.log"; die "pane $p is blocked on a prompt (its text is in take.log)"; }
 }
 # type_into <pane> <text>: type text a few keys at a time, so it reads as typed, then Enter.
 type_into() {
@@ -83,11 +92,21 @@ mark beat1
 type_into "$queen" "Design study: how should the bee reach the flower? Three workers: straight, zigzag, loop. Each prototypes it in buzz.py and writes STUDY.md (how it looks, trade-offs, open questions), commits both on its branch and reports done with the branch name. No remote, no PR. Don't build yet."
 three() { [ "$(workers | wc -l)" -ge 3 ]; }
 until_ 300 "three workers" three
+workers >"$out/workers.tsv"
 mark spawned
+sleep 2
+# Three branches, three worktrees, from the keeper's shell.
+focus keeper
+type_into "$keeper" "git worktree list"
 sleep 3
-for l in straight zigzag loop; do focus "$l"; sleep 4; done
+mark branches
 focus queen
-mark wait
+# The workers' panes, recorded by paneshot.py while they study; edit.py stacks them.
+specs=()
+while IFS=$'\t' read -r l s; do specs+=("$l=$(pane_of "$(ws_of "$l")")"); done < <(workers)
+python3 "$here/paneshot.py" "$out" "${specs[@]}" &
+shots=$!
+mark tiled
 studied() { # every worker's branch has STUDY.md, and the worker is idle
 	local l s
 	while IFS=$'\t' read -r l s; do
@@ -96,13 +115,15 @@ studied() { # every worker's branch has STUDY.md, and the worker is idle
 	done < <(workers)
 }
 until_ 900 "three studies" studied
+mark untiled
+kill "$shots"
 settle "$queen" queen
 mark studied
 
 # Beat 2: the review, in plannotator.
 mark beat2
 type_into "$queen" "For each branch show me git log --oneline main..<branch>, then run plannotator annotate on the three STUDY.md files with --gate --json in the background. When I decide, have the worker I pick build it and end the other two."
-zz=$(workers | awk -F'\t' '$1 == "zigzag" { print $2 }')
+zz=$(workers_all | awk -F'\t' '$1 == "zigzag" { print $2 }')
 "$here/review.sh" "$out" "$zz" || die "the review failed"
 
 # Beat 3: the build, with a steer mid-build.
@@ -130,21 +151,25 @@ focus keeper
 sleep 1
 type_into "$keeper" "git merge --no-ff $zz -m 'Merge the zigzag bee'"
 sleep 2
-type_into "$keeper" "git log --oneline --graph"
-sleep 3
+type_into "$keeper" "clear; git --no-pager log --oneline --graph -6"
+sleep 4
 type_into "$keeper" "python3 buzz.py"
 sleep 8
 mark flew
+studies=$(workers_all | awk -F'\t' '$1 != "zigzag" { print $2 }' | tr '\n' ' ')
+type_into "$keeper" "git branch -D $studies"
+sleep 3
+mark pruned
 focus queen
-type_into "$queen" "Close it out: bd close the beads and the epic, bs end the zigzag worker, bs prune, and git branch -D the two unmerged study branches."
+type_into "$queen" "Close it out: bd close the beads and the epic, bs end the zigzag worker, then bs prune."
 sleep 5
 mark wait
 settle "$queen" queen
 mark closed
-sleep 4
+sleep 3
 focus keeper
 type_into "$keeper" "clear; python3 buzz.py"
 sleep 8
 mark end
 stop_rec
-log "done: $out/take.mov"
+log "done: $out"

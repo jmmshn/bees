@@ -185,6 +185,11 @@ func CheckSession(name string) error {
 // Inside a Claude session the registry is the sender's identity: a flag naming anyone
 // else is refused, so a session can't send as the queen (bees-7.4). The registry also
 // beats the environment, which a session can inherit stale.
+//
+// The guard stops a careless --as, not a determined one: a bs detached from its session
+// (`( bs … & )`, nohup, setsid) is reparented to init, so the walk finds no Claude
+// session and --as names anyone; any process of the same user can also write the logbook
+// directly. Same-uid processes can't be fenced from each other (bees-8.8).
 func Me(flag string) (string, error) {
 	me, _, inClaude, err := registered()
 	if err != nil {

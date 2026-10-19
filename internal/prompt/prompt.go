@@ -45,27 +45,76 @@ func Text(r Role, project string) string {
 // It is rewritten at every launch, through a rename so a concurrent launch never reads
 // half a file, and Claude reads it only at startup.
 func File(r Role, project string) (string, error) {
+	return Cache(project+"-"+string(r)+".md", Text(r, project))
+}
+
+// Dir is <user cache dir>/bees, where bs keeps the files it launches Claude with.
+func Dir() (string, error) {
 	cache, err := os.UserCacheDir()
 	if err != nil {
 		return "", err
 	}
 	dir := filepath.Join(cache, "bees")
-	if err := os.MkdirAll(dir, 0o700); err != nil { // private, like the logbook
+	return dir, os.MkdirAll(dir, 0o700) // private, like the logbook
+}
+
+// Private writes body to a new file in Dir named by pattern (its * a random number) and
+// returns its path. The file is created exclusively and readable only by the user, so no
+// other process can have it first or swap it in under a name bs would reuse.
+func Private(pattern, body string) (string, error) {
+	dir, err := Dir()
+	if err != nil {
 		return "", err
 	}
-	name := project + "-" + string(r)
-	tmp, err := os.CreateTemp(dir, name+"-*.md")
+	f, err := os.CreateTemp(dir, pattern)
+	if err != nil {
+		return "", err
+	}
+	if _, err := f.WriteString(body); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(f.Name())
+		return "", err
+	}
+	return f.Name(), nil
+}
+
+// Remove deletes the files in Dir matching pattern (filepath.Match syntax).
+func Remove(pattern string) error {
+	dir, err := Dir()
+	if err != nil {
+		return err
+	}
+	paths, err := filepath.Glob(filepath.Join(dir, pattern))
+	for _, path := range paths {
+		if rerr := os.Remove(path); rerr != nil && !os.IsNotExist(rerr) {
+			err = rerr
+		}
+	}
+	return err
+}
+
+// Cache writes body to <user cache dir>/bees/<name> through a rename, and returns its path.
+func Cache(name, body string) (string, error) {
+	dir, err := Dir()
+	if err != nil {
+		return "", err
+	}
+	tmp, err := os.CreateTemp(dir, name+"-*")
 	if err != nil {
 		return "", err
 	}
 	defer os.Remove(tmp.Name()) // a no-op once renamed
-	if _, err := tmp.WriteString(Text(r, project)); err != nil {
+	if _, err := tmp.WriteString(body); err != nil {
 		tmp.Close()
 		return "", err
 	}
 	if err := tmp.Close(); err != nil {
 		return "", err
 	}
-	path := filepath.Join(dir, name+".md")
+	path := filepath.Join(dir, name)
 	return path, os.Rename(tmp.Name(), path)
 }

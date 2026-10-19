@@ -71,15 +71,31 @@ func (HerdrCLI) CreateWorktree(ctx context.Context, repo, branch, path, label st
 // ErrUnsafeArg is an agent argument herdr refuses to pass to the agent's shell.
 var ErrUnsafeArg = errors.New("herdr can't pass an agent argument containing a control character")
 
-// CheckAgentArgs applies herdr's rule for agent arguments: herdr agent start refuses
+// ErrLongLaunch is a launch line too long for herdr to type into a starting shell.
+var ErrLongLaunch = errors.New("launch line too long to type into a pane")
+
+// maxLaunch bounds the agent arguments' bytes. herdr types claude and its arguments into
+// the pane's shell, and keys that land before the shell's line editor is up go through the
+// tty's canonical queue, which drops what passes MAX_CANON, newline included: 1024 bytes
+// on macOS (probed with herdr 0.9.3, bees-8.3). This leaves room for herdr's command and
+// quoting.
+const maxLaunch = 768
+
+// CheckAgentArgs applies herdr's rules for agent arguments. herdr agent start refuses
 // any argument containing a Unicode control character (newline, tab, ESC, DEL, C1) with
 // invalid_agent_argument (probed on herdr 0.9.3; TestCheckAgentArgsMatchesRealHerdr
-// re-checks the installed herdr). Text that may span lines goes in a file instead.
+// re-checks the installed herdr), and the tty cuts a launch past maxLaunch. Long or
+// multi-line text goes in a file instead.
 func CheckAgentArgs(args []string) error {
+	n := 0
 	for i, a := range args {
 		if strings.IndexFunc(a, unicode.IsControl) >= 0 {
 			return fmt.Errorf("agent argument %d (%.40q): %w", i, a, ErrUnsafeArg)
 		}
+		n += len(a) + 1
+	}
+	if n > maxLaunch {
+		return fmt.Errorf("%d bytes, over %d: %w", n, maxLaunch, ErrLongLaunch)
 	}
 	return nil
 }

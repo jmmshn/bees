@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -258,6 +259,16 @@ func (f Fleet) check(ctx context.Context, bead, label string) (plan, error) {
 		return plan{}, err
 	}
 	p := plan{name: name, bead: bead, label: label}
+	// Check the launch line before anything is made, so a launch too long to type leaves
+	// no worktree or record behind; the settings file's * is at most 10 digits.
+	dir, err := prompt.Dir()
+	if err != nil {
+		return p, err
+	}
+	worst := filepath.Join(dir, strings.Replace(settingsPattern(name), "*", "4294967295", 1))
+	if err := CheckAgentArgs(f.launch(name, bead, worst, filepath.Join(dir, f.P.Name+"-worker.md"), true)); err != nil {
+		return p, fmt.Errorf("%s: %w", name, err)
+	}
 	if label != "" {
 		if err := CheckLabel(label); err != nil {
 			return p, err
@@ -322,8 +333,11 @@ func (f Fleet) open(ctx context.Context, p plan) (logbook.Spawn, error) {
 	return sp, err
 }
 
-// workerSettings is passed with --settings: Claude reads settings.local.json from the main
-// checkout even in a worktree, so per-worker settings can't live in a file, and the auto
+// workerSettings is passed with --settings, as a private file in bs's cache made fresh at
+// each start (inline JSON is too long to type into a pane: bees-8.3) and removed by bs end
+// or a failed start. It stays while the worker runs, since Claude may read its settings
+// files again after startup. Claude reads settings.local.json from the main
+// checkout even in a worktree, so per-worker settings can't live in the repo, and the auto
 // mode classifier reads autoMode only from user, managed or --settings settings. The
 // worker's bs finds its name from its Claude process and its project from env.BS_PROJECT,
 // the spawner's project: never from the worktree's git dir, which names another project in
@@ -382,20 +396,24 @@ func workerSettings(project string, sp logbook.Spawn, protected bool) (string, e
 // claude --continue exits when there is no conversation.
 func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Started, error) {
 	st := Started{Name: sp.Name, Label: sp.Label, Workspace: sp.Workspace, Resumed: resume, Continued: resume && sp.Read}
-	doorbell := fmt.Sprintf("[bs] you are %s, working on %s — run: bs inbox   (reply with: bs send %s \"...\")", sp.Name, sp.Bead, f.Me)
 	settings, err := workerSettings(f.P.Name, sp, f.protected(ctx, sp))
+	if err != nil {
+		return st, err
+	}
+	// Only a worker that isn't running gets here, so earlier starts' files are spent.
+	if err := prompt.Remove(sp.Name + "-settings*.json"); err != nil {
+		return st, err
+	}
+	settingsFile, err := prompt.Private(settingsPattern(sp.Name), settings)
 	if err != nil {
 		return st, err
 	}
 	file, err := prompt.File(prompt.Worker, f.P.Name)
 	if err != nil {
+		os.Remove(settingsFile)
 		return st, err
 	}
-	args := []string{"--name", sp.Name, "--settings", settings, "--append-system-prompt-file", file, doorbell}
-	if st.Continued {
-		args = append([]string{"--continue"}, args...)
-	}
-	err = f.H.StartClaude(ctx, sp.Pane, sp.Name, args...)
+	err = f.H.StartClaude(ctx, sp.Pane, sp.Name, f.launch(sp.Name, sp.Bead, settingsFile, file, st.Continued)...)
 	switch {
 	case errors.Is(err, ErrWaiting):
 		st.Waiting, err = true, nil
@@ -412,7 +430,24 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 			err = fmt.Errorf("%w: no Claude session named %s appeared within %s; read its pane (herdr pane read %s), then spawn again", err, sp.Name, confirmWait, sp.Pane)
 		}
 	}
+	if err != nil {
+		os.Remove(settingsFile)
+	}
 	return st, err
+}
+
+// settingsPattern names a worker's settings files, for prompt.Private.
+func settingsPattern(name string) string { return name + "-settings-*.json" }
+
+// launch is the claude command line that starts worker name, with a doorbell as its first
+// prompt so it reads its unread messages without needing a ring.
+func (f Fleet) launch(name, bead, settings, promptFile string, cont bool) []string {
+	doorbell := fmt.Sprintf("[bs] you are %s, working on %s — run: bs inbox   (reply with: bs send %s \"...\")", name, bead, f.Me)
+	args := []string{"--name", name, "--settings", settings, "--append-system-prompt-file", promptFile, doorbell}
+	if cont {
+		args = append([]string{"--continue"}, args...)
+	}
+	return args
 }
 
 // protected reports whether GitHub protects the default branch of sp's repo. Without
@@ -461,7 +496,10 @@ func (f Fleet) End(ctx context.Context, name string, force bool) error {
 			return err
 		}
 	}
-	return f.LB.RecordEnd(ctx, f.Me, sp.ID)
+	if err := f.LB.RecordEnd(ctx, f.Me, sp.ID); err != nil {
+		return err
+	}
+	return prompt.Remove(name + "-settings*.json") // * also takes the fixed name of 8.3's first cut
 }
 
 // Pruned is what Prune found for one ended worker's branch.

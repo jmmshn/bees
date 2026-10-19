@@ -133,6 +133,7 @@ func newRig(t *testing.T) rig {
 	ctx := context.Background()
 	dir := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache"))
+	t.Setenv("HOME", dir) // macOS ignores XDG_CACHE_HOME: keep prompt and settings files out of ~/Library/Caches
 	lb, err := logbook.Open(ctx, filepath.Join(dir, "bees.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -236,7 +237,7 @@ func TestSpawnStartsAWorkerInItsOwnWorkspace(t *testing.T) {
 		AutoMode            map[string][]string `json:"autoMode"`
 		Permissions         struct{ Deny []string }
 	}
-	if err := json.Unmarshal([]byte(start[i+1]), &settings); err != nil || settings.CrossSessionInbound != "accept" {
+	if err := json.Unmarshal(settingsFile(t, start), &settings); err != nil || settings.CrossSessionInbound != "accept" {
 		t.Fatalf("--settings %q: %v", start[i+1], err)
 	}
 	// A list without $defaults would drop the built-in rules (force push, exfiltration).
@@ -304,7 +305,7 @@ func TestWorkerEnvironmentClaimsReviewOnlyOnAProtectedMain(t *testing.T) {
 		}
 		start := r.h.started[0]
 		var settings struct{ AutoMode map[string][]string }
-		if err := json.Unmarshal([]byte(start[slices.Index(start, "--settings")+1]), &settings); err != nil {
+		if err := json.Unmarshal(settingsFile(t, start), &settings); err != nil {
 			t.Fatal(err)
 		}
 		want := i == 2 // only GitHub answering "protected"
@@ -508,13 +509,15 @@ func TestAWorkerInAnotherProjectsRepoStaysInTheSpawnersProject(t *testing.T) {
 	own := r.fleet
 	r.fleet.ForeignRepo, r.fleet.P.Repo = true, filepath.Join(t.TempDir(), "dotfiles") // as --repo does
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	projects := []string{bsProject(t, r.h.started[0])} // read now: a restart removes spent settings files
 	r.h.exit("bees-8")
 	_, _ = own.Spawn(ctx, "bees-8", "spawn and end") // a resume doesn't repeat --repo
 	if len(r.h.started) != 2 {
 		t.Fatalf("started = %q, want a start and a restart", r.h.started)
 	}
-	for _, start := range r.h.started {
-		if bsProject(t, start) != "bees" {
+	projects = append(projects, bsProject(t, r.h.started[1]))
+	for i, start := range r.h.started {
+		if projects[i] != "bees" {
 			t.Errorf("start = %q, want env.BS_PROJECT bees in --settings", start)
 		}
 		i := slices.Index(start, "--append-system-prompt-file")
@@ -527,16 +530,27 @@ func TestAWorkerInAnotherProjectsRepoStaysInTheSpawnersProject(t *testing.T) {
 	}
 }
 
-// bsProject returns env.BS_PROJECT from a start's --settings.
-func bsProject(t *testing.T, start []string) string {
+// settingsFile returns the JSON in the file a start passes with --settings. It is a file,
+// not inline JSON, so the launch line stays short enough to type (bees-8.3).
+func settingsFile(t *testing.T, start []string) []byte {
 	t.Helper()
 	i := slices.Index(start, "--settings")
 	if i < 0 {
 		t.Fatalf("start = %q, want --settings", start)
 	}
-	var settings struct{ Env map[string]string }
-	if err := json.Unmarshal([]byte(start[i+1]), &settings); err != nil {
+	b, err := os.ReadFile(start[i+1])
+	if err != nil {
 		t.Fatalf("--settings %q: %v", start[i+1], err)
+	}
+	return b
+}
+
+// bsProject returns env.BS_PROJECT from a start's --settings.
+func bsProject(t *testing.T, start []string) string {
+	t.Helper()
+	var settings struct{ Env map[string]string }
+	if err := json.Unmarshal(settingsFile(t, start), &settings); err != nil {
+		t.Fatalf("--settings: %v", err)
 	}
 	return settings.Env["BS_PROJECT"]
 }
@@ -809,6 +823,51 @@ func gitTip(t *testing.T, dir, ref string) string {
 		t.Fatal(err)
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// A launch too long for the tty is refused before spawn makes a worktree or a record, so
+// it leaves nothing half-built (bees-8.3 review). A deep cache dir makes the paths long.
+func TestSpawnRefusesALongLaunchBeforeTouchingAnything(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	deep := filepath.Join(t.TempDir(), strings.Repeat("d", 200), strings.Repeat("e", 200))
+	t.Setenv("XDG_CACHE_HOME", deep)
+	t.Setenv("HOME", deep)
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); !errors.Is(err, worker.ErrLongLaunch) {
+		t.Fatalf("err = %v, want ErrLongLaunch", err)
+	}
+	if _, ok, _ := r.lb.LatestSpawn(ctx, "bees-8"); ok || len(r.h.workspaces) != 0 {
+		t.Fatalf("recorded = %v, workspaces = %v; want nothing", ok, r.h.workspaces)
+	}
+}
+
+// The settings file gets a fresh private name per start, not a fixed one another process
+// could swap before Claude reads it, and goes away with the worker (bees-8.3 review).
+func TestSettingsFileIsPrivateAndGoesWithTheWorker(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil {
+		t.Fatal(err)
+	}
+	start := r.h.started[0]
+	path := start[slices.Index(start, "--settings")+1]
+	fi, err := os.Stat(path)
+	if err != nil || fi.Mode().Perm() != 0o600 || filepath.Base(path) == "bees-8-settings.json" {
+		t.Fatalf("settings %s: %v, %v; want a fresh 0600 file", path, fi, err)
+	}
+	if err := r.fleet.End(ctx, "bees-8", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("settings %s after bs end: %v; want it gone", path, err)
+	}
+	r.h.exit("bees-8")
+	r.h.failStart = errors.New("herdr down")
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	left, _ := filepath.Glob(filepath.Join(filepath.Dir(path), "bees-8-settings*"))
+	if len(left) != 0 {
+		t.Fatalf("after a failed start: %v; want no settings file", left)
+	}
 }
 
 func TestPruneDeletesTheBranchOnlyIfMerged(t *testing.T) {

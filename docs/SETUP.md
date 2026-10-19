@@ -64,9 +64,7 @@ Any Claude session can take part if it was started with a name and accepts cross
 claude --name worker-a --settings '{"crossSessionInbound":"accept"}'
 ```
 
-Without `crossSessionInbound: accept`, a session in bypass mode holds rung messages instead of acting on them. Outside Claude, say who you are with `--as <name>` or `BS_SESSION`. Inside a named Claude session bs takes your name from Claude's registry and refuses an `--as` naming anyone else, and `bs send` rings only the project's queen and the workers it spawned; mail for anyone else is stored without a ring.
-
-A bs that Claude's Bash tool backgrounds still knows its session from the `CLAUDE_PID` and `CLAUDE_CODE_SESSION_ID` it inherits. So does any shell started from a Claude session (a terminal or IDE opened from its Bash tool or a `!` command): bare `bs send` signs as that session and `--as` is refused, and once the session exits every bs call fails with `name no live Claude session`. In such a shell run `env -u CLAUDE_PID -u CLAUDE_CODE_SESSION_ID bs …`, or unset both. The guard stops a careless `--as`, not a determined one: any process of the same user can strip that env, or write the logbook directly.
+Without `crossSessionInbound: accept`, a session in bypass mode holds rung messages instead of acting on them. Outside Claude, say who you are with `--as <name>` or `BS_SESSION`. Inside a named Claude session bs takes your name from Claude's registry and refuses an `--as` naming anyone else, and `bs send` rings only the project's queen and the workers it spawned; mail for anyone else is stored without a ring. That refusal stops a careless `--as`, not a determined one: a bs detached from its session (`( bs … & )`, `nohup`, `setsid`) has no Claude ancestor left, so `--as` is taken as given, and any process of your user can write the logbook directly.
 
 ## Check it works
 

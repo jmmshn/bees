@@ -17,7 +17,7 @@ Run, together:
 uname -s; go version; go env GOBIN GOPATH; claude --version; herdr --version; bd --version; echo "BEADS_DIR=$BEADS_DIR"; jq --version; gh --version | head -1; command -v bs && bs version; command -v pre-commit
 ```
 
-`uname -s` must say `Linux`; bs reads `/proc` and stops there. Report one line per tool: present with version, or missing; flag `bd` older than 1.1.0. **Check:** the user has seen the list and which steps it leaves.
+`uname -s` must say `Linux` or `Darwin` (macOS); bs runs on nothing else. Report one line per tool: present with version, or missing; flag `bd` older than 1.1.0. **Check:** the user has seen the list and which steps it leaves.
 
 ## 2. Go
 

@@ -29,7 +29,7 @@ with `uv run docs/img/src/gifs.py`.
 
 ## Install
 
-Linux only. Needs [Go](https://go.dev/dl/), [Claude Code](https://code.claude.com)
+Linux or macOS. Needs [Go](https://go.dev/dl/), [Claude Code](https://code.claude.com)
 2.1.296 or later (cross-session messaging), [herdr](https://herdr.dev) to run workers,
 and [`bd`](https://github.com/steveyegge/beads) for beads.
 
@@ -60,7 +60,7 @@ vocabulary: [GLOSSARY.md](GLOSSARY.md)
 Unlike subagents, a worker is a full Claude Code session that outlives the queen that
 spawned it and wakes when a message arrives.
 
-The price: Linux, Claude Code sessions only, one machine. The doorbell rides on
+The price: Linux or macOS, Claude Code sessions only, one machine. The doorbell rides on
 Claude's own cross-session socket, which keeps nothing after a session exits and drops
 identical repeats ([ADR-0001](docs/adr/0001-logbook-is-the-only-truth.md)).
 So bs uses it only to say "you have messages" and keeps every message in the logbook:

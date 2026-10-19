@@ -16,7 +16,7 @@ v0 proves the core loop: the queen sends a message, an idle worker wakes, reads 
 | Ring every unread message on every send | `Plan` reconciler, coalescing, re-ring, flag the queen, watchdog |
 | `--now` | Keeper inbox, disk warning, omp adapter |
 
-Platform: Linux only.
+Platform: Linux and macOS (R47).
 
 ## Done when
 

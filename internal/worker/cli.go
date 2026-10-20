@@ -137,6 +137,17 @@ func (HerdrCLI) RemoveWorktree(ctx context.Context, workspace string, force bool
 	case "dirty_worktree_requires_force":
 		return fmt.Errorf("%w: %w", err, ErrDirty)
 	}
+	return down(ctx, code, err)
+}
+
+// down labels err ErrHerdrDown when herdr itself didn't answer: no server (its
+// server_not_running code, herdr 0.9.3), a CLI that couldn't run, or no answer in time.
+// Any other failure, envelope or not, is herdr answering and stays as it is.
+func down(ctx context.Context, code string, err error) error {
+	var ee *exec.ExitError
+	if err != nil && (code == "server_not_running" || code == "" && (!errors.As(err, &ee) || ctx.Err() != nil)) {
+		return fmt.Errorf("%w: %w", ErrHerdrDown, err)
+	}
 	return err
 }
 
@@ -152,8 +163,8 @@ func (HerdrCLI) Workspaces(ctx context.Context) ([]Workspace, error) {
 			} `json:"workspaces"`
 		} `json:"result"`
 	}
-	if _, err := herdr(ctx, &r, "workspace", "list"); err != nil {
-		return nil, err
+	if code, err := herdr(ctx, &r, "workspace", "list"); err != nil {
+		return nil, down(ctx, code, err)
 	}
 	var out []Workspace
 	for _, w := range r.Result.Workspaces {

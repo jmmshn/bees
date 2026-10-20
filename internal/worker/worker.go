@@ -38,6 +38,8 @@ var (
 	ErrNotStarted  = errors.New("not started: another worker in this spawn was refused")
 	ErrDirty       = errors.New("the worktree has modified or untracked files")
 	ErrNotOurs     = errors.New("the recorded workspace is open on another worktree")
+	// ErrHerdrDown: herdr didn't answer, so bs can't tell an open workspace from a gone one.
+	ErrHerdrDown = errors.New("herdr is unreachable")
 )
 
 // LabelRules says what a worker's label must be. The queen writes the label; bs only checks it.
@@ -68,7 +70,8 @@ type Herdr interface {
 	// ErrUnconfirmed: herdr gave up waiting. ErrUnsafeArg: an argument herdr can't pass.
 	StartClaude(ctx context.Context, pane, name string, args ...string) error
 	// RemoveWorktree removes workspace and its worktree; already gone → nil. Without force
-	// it refuses a worktree with modified or untracked files: ErrDirty.
+	// it refuses a worktree with modified or untracked files: ErrDirty. Both: ErrHerdrDown
+	// when herdr itself didn't answer.
 	RemoveWorktree(ctx context.Context, workspace string, force bool) error
 	Workspaces(ctx context.Context) ([]Workspace, error)
 }
@@ -117,6 +120,15 @@ var beadNumber = regexp.MustCompile(`^-\d+(\.\d+)*$`)
 func Belongs(project, bead string) bool {
 	rest, ok := strings.CutPrefix(bead, project)
 	return ok && beadNumber.MatchString(rest)
+}
+
+var workerNumber = regexp.MustCompile(`^(-\d+)+$`)
+
+// IsWorkerOf reports whether name is the worker name of one of project's beads:
+// <project>-<n>[-<m>…]. A bare prefix test would also take a session named bees-review.
+func IsWorkerOf(project, name string) bool {
+	rest, ok := strings.CutPrefix(name, project)
+	return ok && workerNumber.MatchString(rest)
 }
 
 // Address maps to, a worker's name or a bead id of project, forward to the worker's name:
@@ -464,13 +476,21 @@ func (f Fleet) protected(ctx context.Context, sp logbook.Spawn) bool {
 // Claude registers about 3 s after launch (herdr 0.9.3, bees-1.14).
 const confirmWait = 20 * time.Second
 
+// EndOpts says how far ending a worker may go.
+type EndOpts struct {
+	Force bool // remove a worktree with uncommitted or untracked files, discarding them
+	// Forget records the end of a worker whose recorded workspace herdr has handed to
+	// another worktree, leaving that workspace open: without it ErrNotOurs is a dead end.
+	Forget bool
+}
+
 // End removes the worker's recorded workspace and records the end. It never asks herdr
 // which workspace to remove, and removes the recorded one only while it is still open on
 // the recorded worktree, so a reused workspace id can't take another worktree with it
-// (bees-7.4). A worktree with uncommitted or untracked files is kept unless force: ErrDirty.
+// (bees-7.4). A worktree with uncommitted or untracked files is kept unless o.Force: ErrDirty.
 // Ending an ended worker is a no-op. The worker's branch is always kept, with its
 // committed work: Prune deletes it once merged.
-func (f Fleet) End(ctx context.Context, name string, force bool) error {
+func (f Fleet) End(ctx context.Context, name string, o EndOpts) error {
 	sp, ok, err := f.LB.LatestSpawn(ctx, name)
 	if err != nil {
 		return err
@@ -481,25 +501,69 @@ func (f Fleet) End(ctx context.Context, name string, force bool) error {
 	if sp.Ended {
 		return nil
 	}
+	e := f.end(ctx, sp, o)
+	return cmp.Or(e.Err, e.Warn)
+}
+
+// Ending is what EndAll did with one worker.
+type Ending struct {
+	Name, Workspace string
+	Gone            bool  // herdr no longer had the workspace, so only the end was recorded
+	Forgot          bool  // the workspace is open on another worktree: the end was recorded, the workspace left open
+	Err             error // the worker was kept: still live in the logbook
+	Warn            error // the worker was ended, but removing its settings files failed
+}
+
+// EndAll ends every worker the logbook records as spawned and not yet ended, and nothing
+// else: never a workspace guessed from herdr (motif 12). That includes a worker spawned with
+// --repo for another project's bead (dotfiles-3): this project's queen recorded it. A
+// worker it can't end stays live in the logbook, so running it again picks up where it
+// stopped.
+func (f Fleet) EndAll(ctx context.Context, o EndOpts) ([]Ending, error) {
+	live, err := f.LB.LiveSpawns(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Ending, len(live))
+	for i, sp := range live {
+		out[i] = f.end(ctx, sp, o)
+	}
+	return out, nil
+}
+
+// end removes live spawn sp's workspace and records the end.
+func (f Fleet) end(ctx context.Context, sp logbook.Spawn, o EndOpts) Ending {
+	e := Ending{Name: sp.Name, Workspace: sp.Workspace}
 	wss, err := f.H.Workspaces(ctx)
 	if err != nil {
-		return err
+		e.Err = fmt.Errorf("%s: can't tell whether workspace %s is open; nothing removed: %w", sp.Name, sp.Workspace, err)
+		return e
 	}
-	if i := slices.IndexFunc(wss, func(w Workspace) bool { return w.ID == sp.Workspace }); i >= 0 {
-		if sp.Worktree == "" || filepath.Clean(wss[i].Path) != filepath.Clean(sp.Worktree) {
-			return fmt.Errorf("%s: workspace %s is open on %q, not its recorded worktree %q: %w; nothing removed", name, sp.Workspace, wss[i].Path, sp.Worktree, ErrNotOurs)
+	i := slices.IndexFunc(wss, func(w Workspace) bool { return w.ID == sp.Workspace })
+	e.Gone = i < 0
+	switch {
+	case e.Gone:
+	case sp.Worktree == "" || filepath.Clean(wss[i].Path) != filepath.Clean(sp.Worktree):
+		if !o.Forget {
+			e.Err = fmt.Errorf("%s: workspace %s is open on %q, not its recorded worktree %q: %w; nothing removed (--forget records the end and leaves it open)", sp.Name, sp.Workspace, wss[i].Path, sp.Worktree, ErrNotOurs)
+			return e
 		}
-		if err := f.H.RemoveWorktree(ctx, sp.Workspace, force); err != nil {
+		e.Forgot = true
+	default:
+		if err := f.H.RemoveWorktree(ctx, sp.Workspace, o.Force); err != nil {
 			if errors.Is(err, ErrDirty) {
-				return fmt.Errorf("%s: %w in %s; commit or move them, or end it with --force to discard them", name, ErrDirty, sp.Worktree)
+				err = fmt.Errorf("%w in %s; commit or move them, or end it with --force to discard them", ErrDirty, sp.Worktree)
 			}
-			return err
+			e.Err = fmt.Errorf("%s: %w", sp.Name, err)
+			return e
 		}
 	}
 	if err := f.LB.RecordEnd(ctx, f.Me, sp.ID); err != nil {
-		return err
+		e.Err = err
+		return e
 	}
-	return prompt.Remove(name + "-settings*.json") // * also takes the fixed name of 8.3's first cut
+	e.Warn = prompt.Remove(sp.Name + "-settings*.json") // * also takes the fixed name of 8.3's first cut
+	return e
 }
 
 // Pruned is what Prune found for one ended worker's branch.

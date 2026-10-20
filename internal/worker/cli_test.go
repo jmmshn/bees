@@ -50,6 +50,31 @@ func TestHerdrDirtyWorktreeNeedsForce(t *testing.T) {
 	}
 }
 
+// Only herdr not answering is ErrHerdrDown (bees-8.10): its server_not_running code, or a
+// herdr that can't run. herdr answering with any other failure is not.
+func TestHerdrDownOnlyWhenHerdrDidNotAnswer(t *testing.T) {
+	ctx := context.Background()
+	fakeHerdrBinary(t, "server_not_running")
+	if err := (worker.HerdrCLI{}).RemoveWorktree(ctx, "w1", false); !errors.Is(err, worker.ErrHerdrDown) {
+		t.Fatalf("server_not_running: remove err = %v, want ErrHerdrDown", err)
+	}
+	if _, err := (worker.HerdrCLI{}).Workspaces(ctx); !errors.Is(err, worker.ErrHerdrDown) {
+		t.Fatalf("server_not_running: list err = %v, want ErrHerdrDown", err)
+	}
+	dir := t.TempDir() // a herdr that fails without its envelope: it answered, badly
+	if err := os.WriteFile(filepath.Join(dir, "herdr"), []byte("#!/bin/sh\necho panic >&2\nexit 2\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	if err := (worker.HerdrCLI{}).RemoveWorktree(ctx, "w1", false); err == nil || errors.Is(err, worker.ErrHerdrDown) {
+		t.Fatalf("no envelope: err = %v, want an error that isn't ErrHerdrDown", err)
+	}
+	t.Setenv("PATH", t.TempDir()) // no herdr at all
+	if _, err := (worker.HerdrCLI{}).Workspaces(ctx); !errors.Is(err, worker.ErrHerdrDown) {
+		t.Fatalf("no herdr: err = %v, want ErrHerdrDown", err)
+	}
+}
+
 func TestClaudeSessionsAliveReadsClaudesRegistry(t *testing.T) {
 	reg := claudetest.FakeRegistry(t)
 	reg.Add(t, "bees-8", "")

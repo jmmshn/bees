@@ -216,6 +216,40 @@ func TestSpawnRecordsTrackTheLatestSpawnAndItsEnd(t *testing.T) {
 	}
 }
 
+// LiveSpawns and EndedSpawns split workers by their latest spawn, so a worker spawned
+// again after an end is live.
+func TestLiveAndEndedSpawnsSplitWorkersByTheirLatestSpawn(t *testing.T) {
+	ctx := context.Background()
+	lb := open(t)
+	spawn := func(name, ws string) logbook.ID {
+		id, err := lb.RecordSpawn(ctx, "queen", logbook.Spawn{Name: name, Bead: name, Workspace: ws}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	_ = lb.RecordEnd(ctx, "queen", spawn("ended", "w1"))
+	_ = lb.RecordEnd(ctx, "queen", spawn("again", "w2"))
+	spawn("again", "w3")
+	spawn("live", "w4")
+	names := func(sps []logbook.Spawn, err error) string {
+		if err != nil {
+			t.Fatal(err)
+		}
+		var s []string
+		for _, sp := range sps {
+			s = append(s, sp.Name+":"+sp.Workspace+":"+fmt.Sprint(sp.Ended))
+		}
+		return fmt.Sprint(s)
+	}
+	if got := names(lb.LiveSpawns(ctx)); got != "[again:w3:false live:w4:false]" {
+		t.Errorf("LiveSpawns = %s", got)
+	}
+	if got := names(lb.EndedSpawns(ctx)); got != "[ended:w1:true]" {
+		t.Errorf("EndedSpawns = %s", got)
+	}
+}
+
 func TestEndingASpawnRetiresItsUnreadBrief(t *testing.T) {
 	ctx := context.Background()
 	lb := open(t)

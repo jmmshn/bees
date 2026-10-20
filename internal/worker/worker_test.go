@@ -38,6 +38,7 @@ type fakeHerdr struct {
 	failStart  error
 	liveAnyway bool  // with failStart: Claude came up all the same, as after herdr's timeout
 	aliveErr   error // the registry can't be read
+	listErr    error // herdr can't be reached
 }
 
 func (h *fakeHerdr) CreateWorktree(ctx context.Context, repo, branch, path, label string) (worker.Workspace, error) {
@@ -105,7 +106,7 @@ func (h *fakeHerdr) RemoveWorktree(ctx context.Context, workspace string, force 
 }
 
 func (h *fakeHerdr) Workspaces(ctx context.Context) ([]worker.Workspace, error) {
-	return h.workspaces, nil
+	return h.workspaces, h.listErr
 }
 
 // exit simulates the worker's Claude process ending.
@@ -143,6 +144,7 @@ func newRig(t *testing.T) rig {
 	beads := fakeBeads{
 		"bees-8":     {ID: "bees-8", Title: "spawn and end bees", Description: "Build bs spawn."},
 		"bees-9":     {ID: "bees-9", Title: "second worker"},
+		"bees-10":    {ID: "bees-10", Title: "third worker"},
 		"dotfiles-3": {ID: "dotfiles-3", Title: "dotfiles thing"},
 		"beads-x7q":  {ID: "beads-x7q", Title: "flat id"},
 	}
@@ -175,6 +177,21 @@ func TestBelongs(t *testing.T) {
 	} {
 		if got := worker.Belongs(c.project, c.bead); got != c.want {
 			t.Errorf("Belongs(%q, %q) = %v, want %v", c.project, c.bead, got, c.want)
+		}
+	}
+}
+
+func TestIsWorkerOf(t *testing.T) {
+	for _, c := range []struct {
+		project, name string
+		want          bool
+	}{
+		{"bees", "bees-8", true}, {"bees", "bees-8-10", true},
+		{"bees", "bees-review", false}, {"bees", "bees-8-", false}, {"bees", "queen-bees", false},
+		{"bees", "bees", false}, {"bees", "beesx-1", false}, {"bees", "keeper", false},
+	} {
+		if got := worker.IsWorkerOf(c.project, c.name); got != c.want {
+			t.Errorf("IsWorkerOf(%q, %q) = %v, want %v", c.project, c.name, got, c.want)
 		}
 	}
 }
@@ -438,7 +455,7 @@ func TestEndedHalfStartedWorkerRespawnsWithOneBrief(t *testing.T) {
 	r := newRig(t)
 	r.h.failStart = errors.New("herdr agent: agent arguments cannot be encoded safely")
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
-	if err := r.fleet.End(ctx, "bees-8", false); err != nil {
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	r.h.failStart = nil
@@ -668,7 +685,7 @@ func TestRespawnAfterEndReusesTheRecordedLabel(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
-	if err := r.fleet.End(ctx, "bees-8", false); err != nil {
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	st, err := r.fleet.Spawn(ctx, "bees-8", "")
@@ -682,7 +699,7 @@ func TestRespawnAfterEndReusesTheRecordedLabel(t *testing.T) {
 		t.Fatalf("recorded label = %q", sp.Label)
 	}
 	// An explicit label renames the work.
-	if err := r.fleet.End(ctx, "bees-8", false); err != nil {
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if st, err := r.fleet.Spawn(ctx, "bees-8", "new words"); err != nil || st.Label != "new words" {
@@ -720,14 +737,14 @@ func TestBeadMustBelongToTheProject(t *testing.T) {
 func TestEndRemovesOnlyTheRecordedWorkspace(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	if err := r.fleet.End(ctx, "bees-8", false); !errors.Is(err, worker.ErrNotSpawned) {
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{}); !errors.Is(err, worker.ErrNotSpawned) {
 		t.Fatalf("never spawned: err = %v, want ErrNotSpawned", err)
 	}
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	recorded := r.h.workspaces[0].ID
 	r.h.workspaces = append(r.h.workspaces, worker.Workspace{ID: "w-other", Label: "bees-8"}) // a decoy
 	for range 2 {
-		if err := r.fleet.End(ctx, "bees-8", false); err != nil {
+		if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -745,7 +762,7 @@ func TestEndRefusesARecordedWorkspaceOpenOnAnotherWorktree(t *testing.T) {
 	r := newRig(t)
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	r.h.workspaces[0].Path = filepath.Join(t.TempDir(), "someone-else")
-	if err := r.fleet.End(ctx, "bees-8", true); !errors.Is(err, worker.ErrNotOurs) {
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{Force: true}); !errors.Is(err, worker.ErrNotOurs) {
 		t.Fatalf("err = %v, want ErrNotOurs", err)
 	}
 	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); len(r.h.removed) != 0 || sp.Ended {
@@ -759,7 +776,7 @@ func TestEndOfAVanishedWorkspaceRecordsTheEnd(t *testing.T) {
 	r := newRig(t)
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	r.h.workspaces = nil
-	if err := r.fleet.End(ctx, "bees-8", false); err != nil {
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); len(r.h.removed) != 0 || !sp.Ended {
@@ -773,17 +790,97 @@ func TestEndKeepsADirtyWorktreeWithoutForce(t *testing.T) {
 	r := newRig(t)
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	r.h.dirty = map[string]bool{r.h.workspaces[0].Path: true}
-	if err := r.fleet.End(ctx, "bees-8", false); !errors.Is(err, worker.ErrDirty) || !strings.Contains(err.Error(), "--force") {
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{}); !errors.Is(err, worker.ErrDirty) || !strings.Contains(err.Error(), "--force") {
 		t.Fatalf("err = %v, want ErrDirty naming --force", err)
 	}
 	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); len(r.h.removed) != 0 || sp.Ended {
 		t.Fatalf("removed = %v, ended = %v; want the worktree kept and the worker live", r.h.removed, sp.Ended)
 	}
-	if err := r.fleet.End(ctx, "bees-8", true); err != nil {
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{Force: true}); err != nil {
 		t.Fatal(err)
 	}
 	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); len(r.h.removed) != 1 || !sp.Ended {
 		t.Fatalf("with force: removed = %v, ended = %v", r.h.removed, sp.Ended)
+	}
+}
+
+// EndAll ends the logbook's live workers and nothing else, including one --repo spawned for
+// another project's bead, keeps one it can't end, and heals on a second run (bees-8.10).
+func TestEndAllEndsOnlyRecordedLiveWorkersAndHealsOnRerun(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	for _, b := range []string{"bees-8", "bees-9"} {
+		if _, err := r.fleet.Spawn(ctx, b, "spawn and end"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = r.fleet.End(ctx, "bees-9", worker.EndOpts{})
+	_, _ = r.fleet.Spawn(ctx, "bees-9", "spawn and end")  // live again, in w3
+	_, _ = r.fleet.Spawn(ctx, "bees-10", "spawn and end") // w4
+	r.fleet.ForeignRepo = true
+	_, _ = r.fleet.Spawn(ctx, "dotfiles-3", "spawn and end")                                                                // w5: --repo, another project's bead
+	r.h.workspaces = append(r.h.workspaces, worker.Workspace{ID: "w-other", Label: "bees-8", Path: r.h.workspaces[0].Path}) // not recorded
+	r.h.workspaces = slices.DeleteFunc(r.h.workspaces, func(w worker.Workspace) bool { return w.ID == "w4" })               // bees-10's vanished
+	r.h.dirty = map[string]bool{filepath.Join(r.repo+"-WT", "bees-9"): true}
+	r.h.removed = nil
+
+	summary := func(es []worker.Ending, err error) string {
+		if err != nil {
+			t.Fatal(err)
+		}
+		var s []string
+		for _, e := range es {
+			s = append(s, fmt.Sprintf("%s:%s:gone=%v:kept=%v", e.Name, e.Workspace, e.Gone, e.Err != nil))
+		}
+		return strings.Join(s, " ")
+	}
+	got, err := r.fleet.EndAll(ctx, worker.EndOpts{})
+	if want := "bees-10:w4:gone=true:kept=false bees-8:w1:gone=false:kept=false bees-9:w3:gone=false:kept=true dotfiles-3:w5:gone=false:kept=false"; summary(got, err) != want {
+		t.Fatalf("EndAll = %s\nwant     %s", summary(got, err), want)
+	}
+	if !errors.Is(got[2].Err, worker.ErrDirty) || !slices.Equal(r.h.removed, []string{"w1", "w5"}) {
+		t.Fatalf("err = %v; removed = %v; want ErrDirty and only w1, w5", got[2].Err, r.h.removed)
+	}
+	r.h.dirty = nil
+	if got := summary(r.fleet.EndAll(ctx, worker.EndOpts{})); got != "bees-9:w3:gone=false:kept=false" {
+		t.Fatalf("rerun = %s; want only bees-9, now ended", got)
+	}
+	if slices.Contains(r.h.removed, "w-other") {
+		t.Fatalf("removed a workspace that isn't the project's: %v", r.h.removed)
+	}
+}
+
+// A workspace id herdr handed to another worktree is a dead end without Forget; with it the
+// end is recorded and the workspace left open.
+func TestEndAllForgetsAReusedWorkspace(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	r.h.workspaces[0].Path = filepath.Join(t.TempDir(), "someone-else")
+	if got, _ := r.fleet.EndAll(ctx, worker.EndOpts{Force: true}); len(got) != 1 || !errors.Is(got[0].Err, worker.ErrNotOurs) {
+		t.Fatalf("without Forget: %+v, want ErrNotOurs", got)
+	}
+	got, err := r.fleet.EndAll(ctx, worker.EndOpts{Forget: true})
+	if err != nil || len(got) != 1 || got[0].Err != nil || !got[0].Forgot {
+		t.Fatalf("with Forget: %+v, %v; want forgotten", got, err)
+	}
+	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); !sp.Ended || len(r.h.removed) != 0 {
+		t.Fatalf("ended = %v, removed = %v; want ended, nothing removed", sp.Ended, r.h.removed)
+	}
+}
+
+// With herdr down, bs can't tell open from gone: it keeps the worker live and says so.
+func TestEndWithHerdrDownKeepsTheWorker(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	r.h.listErr = fmt.Errorf("%w: herdr workspace list: no herdr server is running", worker.ErrHerdrDown) // as HerdrCLI labels it
+	got, err := r.fleet.EndAll(ctx, worker.EndOpts{})
+	if err != nil || len(got) != 1 || !errors.Is(got[0].Err, worker.ErrHerdrDown) || got[0].Gone {
+		t.Fatalf("EndAll = %+v, %v; want bees-8 kept with ErrHerdrDown", got, err)
+	}
+	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); sp.Ended || len(r.h.removed) != 0 {
+		t.Fatalf("ended = %v, removed = %v; want nothing touched", sp.Ended, r.h.removed)
 	}
 }
 
@@ -855,7 +952,7 @@ func TestSettingsFileIsPrivateAndGoesWithTheWorker(t *testing.T) {
 	if err != nil || fi.Mode().Perm() != 0o600 || filepath.Base(path) == "bees-8-settings.json" {
 		t.Fatalf("settings %s: %v, %v; want a fresh 0600 file", path, fi, err)
 	}
-	if err := r.fleet.End(ctx, "bees-8", false); err != nil {
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -951,7 +1048,7 @@ func TestPruneDeletesTheBranchOnlyIfMerged(t *testing.T) {
 			if c.gh != nil {
 				r.fleet.G = c.gh(gitTip(t, r.repo, "bees-8"))
 			}
-			if err := r.fleet.End(ctx, "bees-8", false); err != nil {
+			if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{}); err != nil {
 				t.Fatal(err)
 			}
 			pruned, err := r.fleet.Prune(ctx, false)
@@ -995,7 +1092,7 @@ func TestEndKeepsTheBranch(t *testing.T) {
 	r := newRig(t)
 	squashMerged(t, r)
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
-	if err := r.fleet.End(ctx, "bees-8", false); err != nil {
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{}); err != nil {
 		t.Fatal(err)
 	}
 	if !branchExists(r.repo, "bees-8") {
@@ -1012,7 +1109,7 @@ func TestPruneKeepsABranchCheckedOutInAWorktree(t *testing.T) {
 	gitRun(t, "", "init", "-q", "-b", "main", r.repo)
 	gitCommit(t, r.repo, "init", map[string]string{"a.txt": "A"})
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
-	_ = r.fleet.End(ctx, "bees-8", false)
+	_ = r.fleet.End(ctx, "bees-8", worker.EndOpts{})
 	wt, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -1036,7 +1133,7 @@ func TestPruneKeepsABranchMidRebaseInAWorktree(t *testing.T) {
 	gitRun(t, "", "init", "-q", "-b", "main", r.repo)
 	gitCommit(t, r.repo, "init", map[string]string{"a.txt": "A"})
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
-	_ = r.fleet.End(ctx, "bees-8", false)
+	_ = r.fleet.End(ctx, "bees-8", worker.EndOpts{})
 	tmp, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -1063,7 +1160,7 @@ func TestPruneSaysWhenTheWorktreeHoldingABranchIsGone(t *testing.T) {
 	gitRun(t, "", "init", "-q", "-b", "main", r.repo)
 	gitCommit(t, r.repo, "init", map[string]string{"a.txt": "A"})
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
-	_ = r.fleet.End(ctx, "bees-8", false)
+	_ = r.fleet.End(ctx, "bees-8", worker.EndOpts{})
 	tmp, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -1087,7 +1184,7 @@ func TestPruneDryRunDeletesNothing(t *testing.T) {
 	r := newRig(t)
 	squashMerged(t, r)
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
-	_ = r.fleet.End(ctx, "bees-8", false)
+	_ = r.fleet.End(ctx, "bees-8", worker.EndOpts{})
 	pruned, err := r.fleet.Prune(ctx, true)
 	if err != nil || len(pruned) != 1 || pruned[0].Merge != worker.Merged || pruned[0].Deleted {
 		t.Fatalf("dry run: %+v, %v", pruned, err)
@@ -1106,7 +1203,7 @@ func TestPruneTouchesOnlyEndedWorkersRecordedBranches(t *testing.T) {
 	if pruned, err := r.fleet.Prune(ctx, false); err != nil || len(pruned) != 0 {
 		t.Fatalf("live worker: %+v, %v", pruned, err)
 	}
-	_ = r.fleet.End(ctx, "bees-8", false)
+	_ = r.fleet.End(ctx, "bees-8", worker.EndOpts{})
 	r.h.exit("bees-8")
 	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil { // live once more
 		t.Fatal(err)
@@ -1114,7 +1211,7 @@ func TestPruneTouchesOnlyEndedWorkersRecordedBranches(t *testing.T) {
 	if pruned, err := r.fleet.Prune(ctx, false); err != nil || len(pruned) != 0 {
 		t.Fatalf("respawned worker: %+v, %v", pruned, err)
 	}
-	_ = r.fleet.End(ctx, "bees-8", false)
+	_ = r.fleet.End(ctx, "bees-8", worker.EndOpts{})
 	for range 2 { // the second prune finds the branch gone
 		if _, err := r.fleet.Prune(ctx, false); err != nil {
 			t.Fatal(err)

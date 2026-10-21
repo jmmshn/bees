@@ -19,6 +19,7 @@ import (
 	"github.com/jmmshn/bees/internal/config"
 	"github.com/jmmshn/bees/internal/harness"
 	"github.com/jmmshn/bees/internal/harness/agy"
+	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/project"
 	"github.com/jmmshn/bees/internal/prompt"
 	"github.com/jmmshn/bees/internal/worker"
@@ -284,6 +285,7 @@ func (d *doctor) project(ctx context.Context, p project.Project, err error, cfg 
 		d.line("FAIL", "project "+name, err.Error())
 	default:
 		d.line("ok", "project "+name, "logbook "+p.Logbook)
+		d.harnessSwitch(ctx, p, cfg.Harness)
 	}
 	none := cfg.Workspace.Kind == worker.NoWorkspace
 	switch {
@@ -328,6 +330,23 @@ func (d *doctor) project(ctx context.Context, p project.Project, err error, cfg 
 		} else {
 			d.line("ok", "gh", v+", logged in")
 		}
+	}
+}
+
+// harnessSwitch fails while a session of p runs under another harness than want: bs queen
+// and bs spawn refuse to start beside it (bees-12.15).
+func (d *doctor) harnessSwitch(ctx context.Context, p project.Project, want string) {
+	lb, err := logbook.OpenReadOnly(ctx, p.Logbook)
+	if err != nil {
+		d.line("FAIL", "harness switch", err.Error())
+		return
+	}
+	defer lb.Close()
+	switch others, err := switched(ctx, lb, p.Queen(), want); {
+	case err != nil:
+		d.line("FAIL", "harness switch", err.Error())
+	case len(others) > 0:
+		d.line("FAIL", "harness switch", strings.Join(others, ", ")+" still runs, so bs queen and bs spawn refuse to start "+want+"; bs end it first")
 	}
 }
 

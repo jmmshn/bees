@@ -2,10 +2,14 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jmmshn/bees/internal/logbook"
+	"github.com/jmmshn/bees/internal/proc"
 )
 
 // fakeBins puts a script for each bin on a PATH of its own, printing its output for its
@@ -177,5 +181,33 @@ func TestDoctorRingFileAndHerdrEndpoint(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output lacks %q:\n%s", want, out.String())
 		}
+	}
+}
+
+// bees-12.15: doctor names a live session on another harness, which bs queen and bs spawn
+// refuse to start beside.
+func TestDoctorHarnessSwitch(t *testing.T) {
+	doctorEnv(t)
+	fakeBins(t, goodMachine)
+	ctx := context.Background()
+	lb, err := logbook.Open(ctx, filepath.Join(os.Getenv("BS_LOGBOOK_DIR"), "toy.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := lb.RecordSpawn(ctx, "queen-toy", logbook.Spawn{Name: "toy-1-9", Bead: "toy-1.9", Harness: "agy", Pane: "w9:p1"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, _ := proc.Start(os.Getpid()) // this test's own process: running
+	if _, err := lb.RecordStart(ctx, logbook.Start{Spawn: id, Name: "toy-1-9", Process: proc.Process{PID: os.Getpid(), Start: start}}); err != nil {
+		t.Fatal(err)
+	}
+	lb.Close()
+	var out, stderr bytes.Buffer
+	if code := run([]string{"doctor", "--project", "toy"}, strings.NewReader(""), &out, &stderr); code != 1 {
+		t.Fatalf("exit %d, want 1:\n%s%s", code, out.String(), stderr.String())
+	}
+	if want := "FAIL  harness switch: toy-1-9 (agy) still runs"; !strings.Contains(out.String(), want) {
+		t.Errorf("output lacks %q:\n%s", want, out.String())
 	}
 }

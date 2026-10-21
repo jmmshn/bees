@@ -9,7 +9,7 @@ Two rules hold throughout:
 
 ## 1. Survey
 
-If `bs` is on `PATH`, run `bs doctor`: one line per check, `ok`, `warn` or `FAIL`. Otherwise run:
+If `bs` is on `PATH`, run `bs doctor` (one line per check: `ok`, `warn` or `FAIL`) and `go version`. Otherwise run:
 
 ```sh
 uname -s; go version; herdr --version; herdr status; bd --version; bd where; gh --version | head -1; claude --version; agy --version
@@ -64,9 +64,9 @@ mkdir -p ~/work/notes
 bs config init --project notes --workspace none --delivery manual --repo ~/work/notes
 ```
 
-A project's name is its git repo's directory name, lowercased with `-` and `_` dropped; outside git, pass `--project <name>` to bs (**Names** in [`SETUP.md`](SETUP.md)). `--fragment <file>` sets the keeper's own delivery wording.
+A project's name is its git repo's directory name, lowercased with `-` and `_` dropped (**Names** in [`SETUP.md`](SETUP.md)). bs finds a git project from the directory it runs in, so run its commands inside the repo. A non-git project has no repo to find it from: pass `--project <name>` to every bs command you run by hand. `--fragment <file>` sets the keeper's own delivery wording.
 
-**Check:** `bs config --project <name>` exits 0 for each project and shows the step 2 answers, each with the file it came from.
+**Check:** for each project, `bs config` run inside its repo (git) or `bs config --project <name>` (non-git) exits 0, shows the step 2 answers with the file each came from, and a `# repo:` line naming the project's directory. `# repo: none` means bs ran outside the repo, or `paths.repo` is unset.
 
 ## 5. Harness setup
 
@@ -74,7 +74,7 @@ A project's name is its git repo's directory name, lowercased with `-` and `_` d
 
 - Workers need nothing in Claude's settings: `bs spawn` passes each its own `--settings` (cross-session messages, auto-mode rules for its workspace, the guards). The queen gets none, and Claude in bypass permission mode holds incoming messages: if the keeper runs the queen in bypass mode, offer to add `"crossSessionInbound": "accept"` to `~/.claude/settings.json`.
 - Workers start in the keeper's default permission mode, and one at a permission prompt waits in its pane. Ask which mode they want; `"permissions": {"defaultMode": "auto"}` keeps workers moving with a check on each action.
-- **Folder trust.** Claude asks once per folder whether to trust it (a repo's worktrees share its answer), and a worker started in an untrusted folder waits at that prompt. The first `bs queen` in the project's directory asks it; the keeper answers once.
+- **Folder trust.** Claude asks once per folder whether to trust it (a repo's worktrees share its answer), and a worker started in an untrusted folder waits at that prompt. The first `bs queen` in the project's directory asks it; the keeper picks **Yes, I trust this folder**. The cursor starts on **No, exit**, so a bare Enter quits the queen.
 
 ### agy (staged)
 
@@ -84,12 +84,14 @@ bs refuses to start agy sessions until its probes land; `bs doctor` prints the r
 
 ## 6. Verify
 
-For each project, from a herdr pane in its directory (open one labelled like the workers: `herdr workspace create --cwd <dir> --label "<project> · queen"`):
+For each project, open a herdr workspace on its directory, labelled like the workers: `herdr workspace create --cwd <dir> --label "<project> · queen"` (it prints the new pane's id; `herdr pane run <pane> "<command>"` runs a command there). In that pane, run (`--project <name>` for a non-git project, nothing for a git one):
 
 ```sh
 bs doctor [--project <name>]   # every line ok or warn; FAIL names what to fix
-bs queen [--project <name>]    # starts the queen in this pane; answer the folder-trust prompt
+bs queen [--project <name>]    # starts the queen in this pane; answer the folder-trust prompt (step 5)
 ```
+
+`bs doctor` ends with a line per project check (`repo`, `guards`, …); `project: none here` means it found no project, so pass `--project`.
 
 Then, inside the queen:
 
@@ -99,6 +101,8 @@ bs bead new --parent <project>-N "say hello and stop"    # → <project>-N.1
 bs spawn --label "setup check" <project>-N.1
 ```
 
-The worker opens in a new herdr workspace, reads its brief and replies; `bs send <worker> "reply to me with bs send: pong"` prompts it if it doesn't. The queen is woken by a `[bs] 1 unread` doorbell with nobody typing, and `bs inbox` shows the reply. Clean up: `bs end <worker>`, then `bd close <project>-N.1 <project>-N`.
+The worker opens in a new herdr workspace, reads its brief and replies; `bs send <worker> "reply to me with bs send: pong"` prompts it if it doesn't. The queen is woken by a `[bs] 1 unread` doorbell with nobody typing, and `bs inbox` shows the reply. **Check:** `bs doctor` passed, and the queen received the worker's reply through a doorbell.
 
-**Check:** `bs doctor` passed, the queen received the worker's reply through a doorbell, `herdr workspace list` no longer shows the worker's workspace, and both beads are closed. Tell the keeper setup is done, and point them at **Run a queen and workers** in [`SETUP.md`](SETUP.md).
+The setup bead changes nothing, so a `github_pr` worker opens no PR. Clean up: `bs end <worker>` (a `git_worktree` worker's branch is kept; `bs prune` deletes it once merged, and `git branch -D <worker>` drops this unmerged one), then `bd close <project>-N.1 <project>-N`. **Check:** `herdr workspace list` no longer shows the worker's workspace, and both beads are closed.
+
+Tell the keeper setup is done, and point them at **Run a queen and workers** in [`SETUP.md`](SETUP.md).

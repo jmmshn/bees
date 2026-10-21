@@ -76,7 +76,7 @@ func Template(scope string, set map[string]string) (string, error) {
 	// The renderer's own check: what it writes, the loader reads.
 	var into Config
 	if err := decodeText(reflect.ValueOf(&into).Elem(), map[string]Source{}, map[string][]string{}, File{Scope: scope, Path: "bs config init"}, text); err != nil {
-		panic(err)
+		return "", err
 	}
 	return text, nil
 }
@@ -109,7 +109,7 @@ func wrap(s, prefix string, width int) string {
 func Quote(s string) string {
 	var b strings.Builder
 	b.WriteByte('"')
-	for _, r := range strings.ToValidUTF8(s, "�") {
+	for _, r := range strings.ToValidUTF8(s, "\uFFFD") {
 		switch {
 		case r == '"' || r == '\\':
 			b.WriteByte('\\')

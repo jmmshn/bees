@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -133,6 +134,9 @@ func configInit(args []string, stdout, stderr io.Writer) error {
 		scope, path = "project", filepath.Join(dir, "projects", name+".toml")
 	}
 	text, err := config.Template(scope, set)
+	if err == nil {
+		err = initRefusals(scope, set)
+	}
 	if err != nil {
 		fmt.Fprintf(stderr, "bs config init: %v\n", err)
 		return errUsage
@@ -140,22 +144,62 @@ func configInit(args []string, stdout, stderr io.Writer) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if errors.Is(err, os.ErrExist) {
-		return fmt.Errorf("%s already exists: edit it, or move it aside to write a fresh one", path)
-	}
+	// Written aside, then linked into place, which fails on an existing file: a failed
+	// write leaves no half file that every retry would refuse.
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".config-init-*")
 	if err != nil {
 		return err
 	}
-	if _, err := f.WriteString(text); err != nil {
-		f.Close()
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.WriteString(text); err != nil {
+		tmp.Close()
 		return err
 	}
-	if err := f.Close(); err != nil {
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		return err
+	}
+	if err := os.Link(tmp.Name(), path); errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("%s already exists: edit it, or move it aside to write a fresh one", path)
+	} else if err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "wrote %s; bs config shows what bs reads\n", path)
 	return nil
+}
+
+// initRefusals refuses what bs queen and bs spawn would refuse of the file bs config init
+// is about to write, over the global file (a project's) or the defaults: workspace none
+// with github_pr, none with no directory to share, a repo or fragment that isn't there.
+func initRefusals(scope string, set map[string]string) error {
+	base, err := config.Env()
+	if scope == "project" {
+		base, err = config.Load("")
+	}
+	if err != nil {
+		return err
+	}
+	kind := cmp.Or(set["workspace.kind"], base.Workspace.Kind)
+	d := base.Delivery
+	d.Kind = cmp.Or(set["delivery.kind"], d.Kind)
+	d.Fragment = cmp.Or(set["delivery.fragment"], d.Fragment)
+	errs := []error{worker.CheckWorkspace(kind, d)}
+	if scope == "project" && kind == worker.NoWorkspace && set["paths.repo"] == "" {
+		errs = append(errs, errors.New(`workspace.kind = "none" shares paths.repo: make the directory, then pass --repo <dir>`))
+	}
+	if r := set["paths.repo"]; r != "" {
+		if st, err := os.Stat(config.Expand(r)); err != nil || !st.IsDir() {
+			errs = append(errs, fmt.Errorf("paths.repo = %q: no such directory; make it first (bs never does)", r))
+		}
+	}
+	if f := set["delivery.fragment"]; f != "" {
+		if _, err := os.ReadFile(config.Expand(f)); err != nil {
+			errs = append(errs, fmt.Errorf("delivery.fragment: %w", err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // printRepo says which repo the repo chain found for p, from which link, and where

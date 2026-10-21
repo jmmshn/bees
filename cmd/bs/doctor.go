@@ -24,6 +24,9 @@ import (
 	"github.com/jmmshn/bees/internal/worker"
 )
 
+// semver is the first x.y.z in a --version line.
+var semver = regexp.MustCompile(`\d+\.\d+\.\d+`)
+
 // minVersion is the oldest release of each tool bs works with, by binary name.
 var minVersion = map[string]string{
 	"claude": "2.1.296", // cross-session messaging, which the doorbell rides on
@@ -80,10 +83,15 @@ func cmdDoctor(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 		}
 		d.line("ok", "config", strings.Join(files, ", "))
 	}
-	d.harness(ctx, cfg)
+	var p project.Project
+	var locErr error
+	if projErr == nil {
+		p, locErr = locate(name, cfg, "")
+	}
+	d.harness(ctx, cfg, p.Repo)
 	d.herdr(ctx)
 	if pane := os.Getenv("HERDR_PANE_ID"); pane != "" {
-		d.line("ok", "herdr pane", pane+": bs queen can start here")
+		d.line("ok", "herdr pane", "this shell runs in "+pane+" (bs queen needs a herdr pane)")
 	} else {
 		d.line("warn", "herdr pane", "this shell is in no herdr pane (HERDR_PANE_ID is unset): start bs queen in one")
 	}
@@ -93,7 +101,7 @@ func cmdDoctor(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 	if errors.Is(projErr, project.ErrNoProject) {
 		d.line("ok", "project", "none here (run in its repo, or pass --project): project checks skipped")
 	} else if projErr == nil {
-		d.project(ctx, name, cfg)
+		d.project(ctx, p, locErr, cfg)
 	}
 	if d.failed {
 		return exitCode(1)
@@ -102,8 +110,9 @@ func cmdDoctor(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 }
 
 // harness checks the configured harness's binary and version, then that its adapter
-// would prepare a worker's start: agy's staged refusal shows here.
-func (d *doctor) harness(ctx context.Context, cfg *config.Loaded) {
+// would prepare a worker's start in dir (the project's repo; "": the home directory) with
+// worker.path: agy's staged refusal shows here.
+func (d *doctor) harness(ctx context.Context, cfg *config.Loaded, dir string) {
 	check := "harness " + cfg.Harness
 	h, err := adapter(cfg, cfg.Worker.Role())
 	if err != nil {
@@ -115,8 +124,17 @@ func (d *doctor) harness(ctx context.Context, cfg *config.Loaded) {
 		d.line("FAIL", check, err.Error())
 		return
 	}
-	home, _ := os.UserHomeDir()
-	if _, err := h.Prepare(harness.Start{Role: prompt.Worker, Name: "doctor", Dir: home, PromptFile: os.DevNull}); err != nil {
+	if dir == "" {
+		if dir, err = os.UserHomeDir(); err != nil {
+			d.line("FAIL", check, err.Error())
+			return
+		}
+	}
+	path := make([]string, len(cfg.Worker.Path))
+	for i, p := range cfg.Worker.Path {
+		path[i] = config.Expand(p)
+	}
+	if _, err := h.Prepare(harness.Start{Role: prompt.Worker, Name: "doctor", Dir: dir, PromptFile: os.DevNull, Path: path}); err != nil {
 		d.line("FAIL", check, h.Kind()+" "+v+"; "+err.Error())
 		return
 	}
@@ -150,22 +168,27 @@ func (d *doctor) herdr(ctx context.Context) {
 		return
 	}
 	out, err := output(ctx, "herdr", "status")
-	_, server, ok := strings.Cut(out, "\nserver:")
-	if !ok {
+	if err != nil {
 		d.line("FAIL", "herdr", fmt.Sprintf("herdr status: %v: %s", err, strings.TrimSpace(out)))
 		return
 	}
+	_, server, ok := strings.Cut(out, "\nserver:")
 	field := func(k string) string {
 		if m := regexp.MustCompile(`(?m)^\s*` + k + `:\s*(.+)$`).FindStringSubmatch(server); m != nil {
 			return strings.TrimSpace(m[1])
 		}
 		return ""
 	}
-	if st := field("status"); st != "running" {
+	switch st := field("status"); {
+	case !ok || st == "":
+		d.line("FAIL", "herdr", "herdr status printed no server status: "+strings.TrimSpace(out))
+	case st != "running":
 		d.line("FAIL", "herdr", "server "+st+": start herdr in a terminal and run bs inside it")
-		return
+	case field("endpoint_compatible") == "no":
+		d.line("FAIL", "herdr", fmt.Sprintf("client %s can't talk to server %s: restart the herdr server", v, field("version")))
+	default:
+		d.line("ok", "herdr", fmt.Sprintf("%s, server %s running", v, field("version")))
 	}
-	d.line("ok", "herdr", fmt.Sprintf("%s, server %s running", v, field("version")))
 }
 
 // logbookDir checks that bs can make logbooks in dir.
@@ -219,6 +242,9 @@ func (d *doctor) ringSockets() {
 	case err != nil:
 		d.line("FAIL", "ring sockets", err.Error())
 		return
+	case st.Sys().(*syscall.Stat_t).Uid != uint32(os.Getuid()):
+		d.line("FAIL", "ring sockets", dir+" belongs to another user")
+		return
 	case st.Mode().Perm() != 0o700:
 		d.line("FAIL", "ring sockets", fmt.Sprintf("%s is mode %04o, not 0700", dir, st.Mode().Perm()))
 		return
@@ -242,13 +268,13 @@ func (d *doctor) ringSockets() {
 	d.line("ok", "ring sockets", fmt.Sprintf("%s is 0700, its %d files 0600", dir, len(entries)))
 }
 
-// project checks what bs queen and bs spawn need of project name: its repo, a workspace
-// and delivery that work together, a readable fragment, guards that build, and the tools
-// its workspace and delivery kinds use.
-func (d *doctor) project(ctx context.Context, name string, cfg *config.Loaded) {
-	p, err := locate(name, cfg, "")
+// project checks what bs queen and bs spawn need of project p, found with err: its repo,
+// a workspace and delivery that work together, a readable fragment, guards that build, and
+// the tools its workspace and delivery kinds use.
+func (d *doctor) project(ctx context.Context, p project.Project, err error, cfg *config.Loaded) {
+	name := p.Name
 	if err != nil {
-		d.line("FAIL", "project "+name, err.Error())
+		d.line("FAIL", "project", err.Error())
 		return
 	}
 	switch _, err := os.Stat(p.Logbook); {
@@ -297,8 +323,10 @@ func (d *doctor) project(ctx context.Context, name string, cfg *config.Loaded) {
 	if cfg.Delivery.Kind == "github_pr" {
 		if v, err := d.version(ctx, "gh"); err != nil {
 			d.line("warn", "gh", err.Error()+": bs prune and merge grants ask gh")
+		} else if _, err := output(ctx, "gh", "auth", "status"); err != nil {
+			d.line("warn", "gh", v+", but not logged in: run gh auth login")
 		} else {
-			d.line("ok", "gh", v)
+			d.line("ok", "gh", v+", logged in")
 		}
 	}
 }
@@ -313,7 +341,7 @@ func (d *doctor) version(ctx context.Context, bin string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%s --version: %v: %s", bin, err, strings.TrimSpace(out))
 	}
-	v := regexp.MustCompile(`\d+\.\d+\.\d+`).FindString(out)
+	v := semver.FindString(out)
 	if v == "" {
 		return "", fmt.Errorf("%s --version printed no version: %s", bin, strings.TrimSpace(out))
 	}
@@ -331,6 +359,9 @@ func output(ctx context.Context, bin string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Stdout, cmd.Stderr, cmd.WaitDelay = &b, &b, time.Second
 	err := cmd.Run()
+	if ctx.Err() == context.DeadlineExceeded {
+		err = fmt.Errorf("timed out after 5 s")
+	}
 	return b.String(), err
 }
 

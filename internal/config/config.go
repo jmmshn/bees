@@ -51,14 +51,14 @@ type Config struct {
 // fragment, the guards' default and which proofs bs prune uses.
 type Delivery struct {
 	Kind     string `toml:"kind" scope:"both" default:"github_pr" enum:"github_pr|manual" doc:"how work lands, as the role prompts word it: github_pr, a PR from the worker's own branch (needs workspace.kind = git_worktree); manual, the worker reports with bs done --report and the keeper lands it"`
-	Fragment string `toml:"fragment" scope:"both" path:"file" doc:"a file of your own delivery wording instead of the kind's (a CL flow); the queen judges when such work has landed"` // the user's own wording instead of kind's
+	Fragment string `toml:"fragment" scope:"both" path:"file" doc:"a file of your own delivery wording instead of the kind's (a CL flow); the queen judges when such work has landed"`
 }
 
 // Guards are the commands every worker is denied, as harness-neutral shell globs over a
 // command line (* matches any text), plus scoped grants (ADR-0009, bees-12.13).
 type Guards struct {
-	Deny           []string `toml:"deny" scope:"both" doc:"shell globs over a command line every worker is denied (* matches any text); empty: delivery.kind's default"`                                     // empty: the delivery kind's default
-	AllowMergeInto []string `toml:"allow_merge_into" scope:"both" doc:"base-branch globs a worker may merge its own PR into (github_pr only; bs refuses it unless gh says the default branch is protected)"` // base-branch globs a worker may merge a PR into
+	Deny           []string `toml:"deny" scope:"both" doc:"shell globs over a command line every worker is denied (* matches any text); empty: delivery.kind's default"`
+	AllowMergeInto []string `toml:"allow_merge_into" scope:"both" doc:"base-branch globs a worker may merge its own PR into (github_pr only; bs refuses it unless gh says the default branch is protected)"`
 }
 
 // Paths says where bs keeps its files and finds repos.
@@ -83,12 +83,12 @@ type Role struct {
 
 // Worker holds every worker's settings: its harness's, as in Role, and bs spawn's.
 type Worker struct {
-	ClaudeCode ClaudeCode `toml:"claude_code"`
-	Agy        Agy        `toml:"agy"`
 	// Path is bs spawn --path when the call passes none: dirs put first on the PATH of a
 	// new worker's shell commands, so a live test's toy spawns the build under test
 	// (bees-12.24).
-	Path []string `toml:"path" scope:"project" path:"dir" doc:"dirs put first on the PATH of every worker's shell commands, as bs spawn --path (a live test's build under test)"`
+	Path       []string   `toml:"path" scope:"project" path:"dir" doc:"dirs put first on the PATH of every worker's shell commands, as bs spawn --path (a live test's build under test)"`
+	ClaudeCode ClaudeCode `toml:"claude_code"`
+	Agy        Agy        `toml:"agy"`
 }
 
 // Role is w's harness tables, for the adapter, without bs spawn's own settings.

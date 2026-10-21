@@ -399,3 +399,31 @@ func TestConfigInitProjectFile(t *testing.T) {
 		t.Error("a refused init wrote the global file")
 	}
 }
+
+// bs config init refuses what bs queen and bs spawn would: none under github_pr, none with
+// no directory, a repo or fragment that isn't there.
+func TestConfigInitRefusesWhatSpawnWould(t *testing.T) {
+	dir := configEnv(t)
+	missing := filepath.Join(t.TempDir(), "nope")
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"--workspace", "none"}, `delivery.kind = "github_pr"`},
+		{[]string{"--project", "toy", "--workspace", "none", "--delivery", "manual"}, "pass --repo <dir>"},
+		{[]string{"--project", "toy", "--repo", missing}, "no such directory"},
+		{[]string{"--fragment", missing}, "delivery.fragment"},
+	} {
+		var out, stderr bytes.Buffer
+		if code := run(append([]string{"config", "init"}, c.args...), strings.NewReader(""), &out, &stderr); code != 2 || !strings.Contains(stderr.String(), c.want) {
+			t.Errorf("%v: exit %d, want 2 with %q: %s", c.args, code, c.want, stderr.String())
+		}
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) > 1 { // projects/ may exist; no file in it
+		t.Errorf("a refused init left files: %v", entries)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "config.toml")); err == nil {
+		t.Error("a refused init wrote the global file")
+	}
+}

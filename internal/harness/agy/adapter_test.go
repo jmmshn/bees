@@ -24,13 +24,28 @@ var worker = harness.Start{
 	Guards:   guards.Rules{Deny: []string{"git push *main*", "gh pr merge*", "it's"}},
 }
 
-// The worker's launch: model, its custom agent, the doorbell as the first prompt, and
-// never a flag that skips agy's own permission checks. Refused until bs has a home for
-// the files, but rendered, so the probe that finds one only has to lift the refusal.
-func TestPrepareRendersTheWorkerLaunchAndRefuses(t *testing.T) {
-	l, err := Adapter{cfg: config.Agy{Model: "gemini-3.8-flash-low"}, trusted: trustAll}.Prepare(worker)
-	if !errors.Is(err, ErrUnguarded) {
-		t.Fatalf("err = %v, want ErrUnguarded", err)
+// bees-12.27: while no home for the guard hook is proven, every start gets ErrUnguarded
+// first, whatever else is wrong with it, so no refusal the user can fix hides it.
+func TestPrepareRefusesUnguardedBeforeAnyOtherCheck(t *testing.T) {
+	untrusted := func(string) (bool, error) { return false, nil }
+	st := worker
+	st.Continue, st.Path = true, []string{"/build/bin"}
+	for _, s := range []harness.Start{st, worker, {Role: prompt.Queen, Dir: "/r"}} {
+		if _, err := (Adapter{trusted: untrusted}).Prepare(s); !errors.Is(err, ErrUnguarded) {
+			t.Errorf("Prepare(%s) = %v, want ErrUnguarded", s.Role, err)
+		}
+	}
+	if _, err := New(config.Agy{}).Prepare(worker); !errors.Is(err, ErrUnguarded) || !strings.Contains(err.Error(), `harness = "claude_code"`) {
+		t.Errorf("New's adapter: err = %v, want ErrUnguarded naming the way out", err)
+	}
+}
+
+// The worker's launch once guarded: model, its custom agent, the doorbell as the first
+// prompt, and never a flag that skips agy's own permission checks.
+func TestPrepareRendersTheWorkerLaunch(t *testing.T) {
+	l, err := Adapter{cfg: config.Agy{Model: "gemini-3.8-flash-low"}, trusted: trustAll, guarded: true}.Prepare(worker)
+	if err != nil {
+		t.Fatal(err)
 	}
 	want := []string{"--model=gemini-3.8-flash-low", "--agent", "bs-worker", "-i", worker.Doorbell}
 	if !slices.Equal(l.Args, want) {
@@ -52,7 +67,7 @@ func TestPrepareRendersTheWorkerLaunchAndRefuses(t *testing.T) {
 }
 
 func TestPrepareWithoutAModelLeavesAgysDefault(t *testing.T) {
-	l, _ := Adapter{trusted: trustAll}.Prepare(harness.Start{Role: prompt.Queen, Dir: "/r", PromptFile: "/cache/q.md"})
+	l, _ := Adapter{trusted: trustAll, guarded: true}.Prepare(harness.Start{Role: prompt.Queen, Dir: "/r", PromptFile: "/cache/q.md"})
 	if want := []string{"--agent", "bs-queen"}; !slices.Equal(l.Args, want) {
 		t.Fatalf("queen args = %q, want %q", l.Args, want)
 	}
@@ -63,7 +78,7 @@ func TestPrepareWithoutAModelLeavesAgysDefault(t *testing.T) {
 
 // The hooks.json bs renders runs bs guard with each glob intact through sh -c.
 func TestHooksRunBsGuardWithEachGlobQuoted(t *testing.T) {
-	l, _ := Adapter{trusted: trustAll}.Prepare(worker)
+	l, _ := Adapter{trusted: trustAll, guarded: true}.Prepare(worker)
 	var h map[string]struct {
 		PreToolUse []struct {
 			Matcher string
@@ -95,7 +110,7 @@ func TestHooksRunBsGuardWithEachGlobQuoted(t *testing.T) {
 func TestPrepareRefusesAResume(t *testing.T) {
 	st := worker
 	st.Continue = true
-	if _, err := (Adapter{trusted: trustAll}).Prepare(st); err == nil || !errors.Is(err, harness.ErrNoResume) {
+	if _, err := (Adapter{trusted: trustAll, guarded: true}).Prepare(st); err == nil || !errors.Is(err, harness.ErrNoResume) {
 		t.Fatalf("err = %v, want a resume refusal", err)
 	}
 }
@@ -104,20 +119,20 @@ func TestPrepareRefusesAResume(t *testing.T) {
 func TestPrepareRefusesPath(t *testing.T) {
 	st := worker
 	st.Path = []string{"/build/bin"}
-	if _, err := (Adapter{trusted: trustAll}).Prepare(st); err == nil || errors.Is(err, ErrUnguarded) || !strings.Contains(err.Error(), "--path") {
-		t.Fatalf("err = %v, want a --path refusal", err)
+	if _, err := (Adapter{trusted: trustAll, guarded: true}).Prepare(st); err == nil || !strings.Contains(err.Error(), "/build/bin") || !strings.Contains(err.Error(), "worker.path") {
+		t.Fatalf("err = %v, want a refusal naming the dir, --path and worker.path", err)
 	}
 }
 
 // An untrusted folder is refused before anything is rendered, naming where to trust.
 func TestPrepareRefusesAnUntrustedFolder(t *testing.T) {
 	untrusted := func(string) (bool, error) { return false, nil }
-	l, err := Adapter{trusted: untrusted}.Prepare(worker)
-	if err == nil || errors.Is(err, ErrUnguarded) || !strings.Contains(err.Error(), "hasn't trusted /r-WT/bees-12-12,") || l.Args != nil {
+	l, err := Adapter{trusted: untrusted, guarded: true}.Prepare(worker)
+	if err == nil || !strings.Contains(err.Error(), "hasn't trusted /r-WT/bees-12-12,") || !strings.Contains(err.Error(), "start agy once in that folder") || l.Args != nil {
 		t.Fatalf("Prepare = %v, %v; want a trust refusal naming the worktree", l, err)
 	}
 	broken := errors.New("unreadable")
-	if _, err := (Adapter{trusted: func(string) (bool, error) { return false, broken }}).Prepare(worker); !errors.Is(err, broken) {
+	if _, err := (Adapter{trusted: func(string) (bool, error) { return false, broken }, guarded: true}).Prepare(worker); !errors.Is(err, broken) {
 		t.Fatalf("err = %v, want the trust read's error", err)
 	}
 }

@@ -41,7 +41,8 @@ func fleet(ctx context.Context, cmd, flagProject, flagAs, flagRepo string, start
 		lb.Close()
 		return worker.Fleet{}, err
 	}
-	return newFleet(worker.Fleet{P: p, LB: lb, Me: me, Model: cfg.Worker.ClaudeCode.Model, ForeignRepo: flagRepo != ""}), nil
+	ws := worker.WorkspaceSpec{Kind: cfg.Workspace.Kind, Init: cfg.Workspace.Init, Finalize: cfg.Workspace.Finalize}
+	return newFleet(worker.Fleet{P: p, LB: lb, Me: me, Model: cfg.Worker.ClaudeCode.Model, ForeignRepo: flagRepo != "", WS: ws}), nil
 }
 
 func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -193,7 +194,10 @@ func cmdEnd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 	if err := f.End(ctx, name, o); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "ended %s\nbranch %s kept; bs prune deletes it once merged\n", name, name)
+	fmt.Fprintf(stdout, "ended %s\n", name)
+	if sp, _, err := f.LB.LatestSpawn(ctx, name); err == nil && sp.Branch != "" {
+		fmt.Fprintf(stdout, "branch %s kept; bs prune deletes it once merged\n", sp.Branch)
+	}
 	return nil
 }
 
@@ -263,7 +267,9 @@ func endAll(ctx context.Context, f worker.Fleet, o worker.EndOpts, stdout, stder
 		fmt.Fprintf(stderr, "bs end: some workers are still live; fix the cause above and run bs end --all --project %s again\n", f.P.Name)
 		return exitCode(code)
 	}
-	fmt.Fprintf(stdout, "branches kept; bs prune deletes them once merged\n")
+	if slices.ContainsFunc(ended, func(e worker.Ending) bool { return e.Branch != "" }) {
+		fmt.Fprintf(stdout, "branches kept; bs prune deletes them once merged\n")
+	}
 	return nil
 }
 

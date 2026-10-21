@@ -195,8 +195,11 @@ type Spawn struct {
 	Pane      string `json:"pane"`
 	Worktree  string `json:"worktree"`
 	Branch    string `json:"branch"`
-	Repo      string `json:"repo"`           // where the branch lives, for bs end
-	Base      string `json:"base,omitempty"` // the checkout the branch was cut from (Repo, or a linked worktree); empty before bees-11.3
+	Repo      string `json:"repo"`                     // where the branch lives, for bs end
+	Base      string `json:"base,omitempty"`           // the checkout the branch was cut from (Repo, or a linked worktree); empty before bees-11.3
+	Kind      string `json:"workspace_kind,omitempty"` // "none", or "" for git_worktree (ADR-0009)
+	Dir       string `json:"dir,omitempty"`            // kind none: the directory the workspace was opened on
+	Init      *Hook  `json:"init,omitempty"`           // the init hook's outcome, if one ran
 	Ended     bool   `json:"-"`
 	Read      bool   `json:"-"` // the worker has read a message since this spawn, so it has a conversation
 }
@@ -235,17 +238,37 @@ func (l *Logbook) RecordSpawn(ctx context.Context, by string, s Spawn, brief str
 	return id, tx.Commit()
 }
 
+// Hook is the outcome of a workspace hook (init or finalize, ADR-0009).
+type Hook struct {
+	Exit   int    `json:"exit"`             // -1: killed on its timeout
+	Stderr string `json:"stderr,omitempty"` // the first line it wrote to stderr
+}
+
 // RecordEnd records that by ended the given spawn. Ending it again is a no-op.
 func (l *Logbook) RecordEnd(ctx context.Context, by string, spawn ID) error {
+	return l.RecordEndHook(ctx, by, spawn, nil)
+}
+
+// RecordEndHook is RecordEnd with the finalize hook's outcome (nil: none ran) in the
+// ended entry's data.
+func (l *Logbook) RecordEndHook(ctx context.Context, by string, spawn ID, finalize *Hook) error {
+	var data sql.NullString
+	if finalize != nil {
+		b, err := json.Marshal(map[string]*Hook{"finalize": finalize})
+		if err != nil {
+			return err
+		}
+		data = sql.NullString{String: string(b), Valid: true}
+	}
 	tx, err := l.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `
-INSERT OR IGNORE INTO entries (id, ts, kind, actor, subject, ref)
-SELECT 'end:' || id, ?, 'ended', ?, subject, id FROM entries WHERE id = ? AND kind = 'spawned'`,
-		time.Now().UTC().Format(tsLayout), by, string(spawn)); err != nil {
+INSERT OR IGNORE INTO entries (id, ts, kind, actor, subject, ref, data)
+SELECT 'end:' || id, ?, 'ended', ?, subject, id, ? FROM entries WHERE id = ? AND kind = 'spawned'`,
+		time.Now().UTC().Format(tsLayout), by, data, string(spawn)); err != nil {
 		return err
 	}
 	return tx.Commit()

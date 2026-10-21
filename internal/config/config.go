@@ -32,9 +32,10 @@ import (
 // A harness's own settings nest under its table in the role's ([worker.claude_code]);
 // the role tables themselves say nothing about any harness.
 type Config struct {
-	Paths  Paths `toml:"paths"`
-	Queen  Role  `toml:"queen"`
-	Worker Role  `toml:"worker"`
+	Paths     Paths     `toml:"paths"`
+	Workspace Workspace `toml:"workspace"`
+	Queen     Role      `toml:"queen"`
+	Worker    Role      `toml:"worker"`
 }
 
 // Paths says where bs keeps its files and finds repos.
@@ -43,6 +44,13 @@ type Paths struct {
 	Repos      string `toml:"repos" scope:"global" env:"BS_REPOS" path:"dir"`
 	Repo       string `toml:"repo" scope:"project" path:"dir"`
 	Worktrees  string `toml:"worktrees" scope:"both" default:"{repo}-WT" path:"{repo}"`
+}
+
+// Workspace says what a worker's workspace is and how bs makes and removes it (ADR-0009).
+type Workspace struct {
+	Kind     string `toml:"kind" scope:"both" default:"git_worktree" enum:"git_worktree|none"`
+	Init     string `toml:"init" scope:"both"`     // a command bs runs before a first start; under none it prints the worker's dir
+	Finalize string `toml:"finalize" scope:"both"` // a command bs end runs at teardown
 }
 
 // Role holds the settings of the queen or of every worker.

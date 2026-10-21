@@ -35,7 +35,9 @@ type fakeHerdr struct {
 	started    [][]string        // pane, name, args...
 	cuts       [][2]string       // the repo and base ref each worktree was cut from
 	removed    []string
-	dirty      map[string]bool // worktree paths with modified or untracked files
+	closed     []string
+	env        map[string]map[string]string // plain workspace id → the env it was opened with
+	dirty      map[string]bool              // worktree paths with modified or untracked files
 	failStart  error
 	liveAnyway bool  // with failStart: Claude came up all the same, as after herdr's timeout
 	aliveErr   error // the registry can't be read
@@ -55,6 +57,43 @@ func (h *fakeHerdr) CreateWorktree(ctx context.Context, repo, base, branch, path
 	ws := worker.Workspace{ID: fmt.Sprintf("w%d", h.next), Label: label, Pane: fmt.Sprintf("w%d:p1", h.next), Path: path}
 	h.workspaces = append(h.workspaces, ws)
 	return ws, nil
+}
+
+// CreateWorkspace opens on $HOME for a dir that doesn't exist, as herdr 0.9.5 does
+// (exit 0), and lists no path until the workspace is tagged.
+func (h *fakeHerdr) CreateWorkspace(ctx context.Context, dir, label string, env map[string]string) (worker.Workspace, error) {
+	if _, err := os.Stat(dir); err != nil {
+		dir = os.Getenv("HOME")
+	}
+	h.next++
+	ws := worker.Workspace{ID: fmt.Sprintf("w%d", h.next), Label: label, Pane: fmt.Sprintf("w%d:p1", h.next)}
+	h.workspaces = append(h.workspaces, ws)
+	if h.env == nil {
+		h.env = map[string]map[string]string{}
+	}
+	h.env[ws.ID] = env
+	ws.Path = dir
+	return ws, nil
+}
+
+// TagWorkspace cuts each value to 80 characters, as herdr 0.9.5 does without a word.
+func (h *fakeHerdr) TagWorkspace(ctx context.Context, workspace, name, path string) error {
+	i := slices.IndexFunc(h.workspaces, func(w worker.Workspace) bool { return w.ID == workspace })
+	if i < 0 {
+		return fmt.Errorf("herdr workspace report-metadata: workspace %s not found", workspace)
+	}
+	cut := func(s string) string { return s[:min(len(s), 80)] }
+	h.workspaces[i].Worker, h.workspaces[i].Path = cut(name), cut(path)
+	return nil
+}
+
+func (h *fakeHerdr) CloseWorkspace(ctx context.Context, workspace string) error {
+	if h.listErr != nil {
+		return h.listErr
+	}
+	h.closed = append(h.closed, workspace)
+	h.workspaces = slices.DeleteFunc(h.workspaces, func(w worker.Workspace) bool { return w.ID == workspace })
+	return nil
 }
 
 func (h *fakeHerdr) StartClaude(ctx context.Context, pane, name string, args ...string) error {
@@ -227,7 +266,7 @@ func TestSpawnStartsAWorkerInItsOwnWorkspace(t *testing.T) {
 	}
 	wt := r.repo + "-WT/bees-8"
 	ws := r.h.workspaces[0]
-	if ws.Path != wt || ws.Label != "spawn and end" {
+	if ws.Path != wt || ws.Label != "bees · spawn and end" {
 		t.Fatalf("workspace = %+v", ws)
 	}
 	if _, err := os.Stat(filepath.Join(wt, ".claude")); !os.IsNotExist(err) {
@@ -698,7 +737,7 @@ func TestRespawnAfterEndReusesTheRecordedLabel(t *testing.T) {
 	if err != nil || st.Resumed || st.Label != "spawn and end" {
 		t.Fatalf("started = %+v, err = %v; want a fresh spawn with the recorded label", st, err)
 	}
-	if ws := r.h.workspaces[len(r.h.workspaces)-1]; ws.Label != "spawn and end" {
+	if ws := r.h.workspaces[len(r.h.workspaces)-1]; ws.Label != "bees · spawn and end" {
 		t.Fatalf("workspace label = %q, want the recorded one", ws.Label)
 	}
 	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); sp.Label != "spawn and end" {

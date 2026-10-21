@@ -45,6 +45,13 @@ func (h *fakeHive) StartClaude(ctx context.Context, pane, name string, args ...s
 func (h *fakeHive) RemoveWorktree(ctx context.Context, workspace string, force bool) error {
 	return nil
 }
+func (h *fakeHive) CreateWorkspace(ctx context.Context, dir, label string, env map[string]string) (worker.Workspace, error) {
+	return worker.Workspace{}, fmt.Errorf("fakeHive opens no plain workspace")
+}
+func (h *fakeHive) TagWorkspace(ctx context.Context, workspace, worker, path string) error {
+	return nil
+}
+func (h *fakeHive) CloseWorkspace(ctx context.Context, workspace string) error { return nil }
 func (h *fakeHive) Workspaces(ctx context.Context) ([]worker.Workspace, error) {
 	if h.down {
 		return nil, fmt.Errorf("%w: herdr workspace list: no herdr server is running", worker.ErrHerdrDown) // as HerdrCLI labels it
@@ -84,7 +91,7 @@ func TestSpawnManyBeadsEachWithItsLabel(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
-	if h.labels["sort fruits"] != "test-1-1" || h.labels["dedupe todo"] != "test-1-2" {
+	if h.labels["test · sort fruits"] != "test-1-1" || h.labels["test · dedupe todo"] != "test-1-2" {
 		t.Fatalf("labels = %v", h.labels)
 	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
@@ -150,7 +157,7 @@ func TestSpawnArgumentMistakesAreUsage(t *testing.T) {
 func TestSpawnBeadsAfterDoubleDash(t *testing.T) {
 	useTempLogbook(t)
 	h := useFakeHive(t)
-	if _, stderr, code := bs(t, "spawn", "--project", "test", "--as", "queen-test", "--label", "sort fruits", "--", "test-1.1"); code != 0 || h.labels["sort fruits"] != "test-1-1" {
+	if _, stderr, code := bs(t, "spawn", "--project", "test", "--as", "queen-test", "--label", "sort fruits", "--", "test-1.1"); code != 0 || h.labels["test · sort fruits"] != "test-1-1" {
 		t.Fatalf("exit %d, stderr %q, spawned %v", code, stderr, h.labels)
 	}
 }

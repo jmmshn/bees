@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -37,10 +38,17 @@ var (
 	ErrTwice       = errors.New("named twice in one spawn")
 	ErrNotStarted  = errors.New("not started: another worker in this spawn was refused")
 	ErrDirty       = errors.New("the worktree has modified or untracked files")
+	ErrDirtyDir    = fmt.Errorf("the workspace holds work: %w", ErrDirty) // kind none: the finalize hook said so
 	ErrNotOurs     = errors.New("the recorded workspace is open on another worktree")
 	// ErrHerdrDown: herdr didn't answer, so bs can't tell an open workspace from a gone one.
 	ErrHerdrDown = errors.New("herdr is unreachable")
 )
+
+// herdrLabel is the workspace label herdr shows for a worker labelled label: the project,
+// then the queen's words. herdr's sidebar shows a plain workspace with no repo above it,
+// so every kind carries the project (ADR-0009). One forward mapping: bs never parses a
+// herdr label back (motif 3), and the logbook records only the words.
+func (f Fleet) herdrLabel(label string) string { return f.P.Name + " · " + label }
 
 // LabelRules says what a worker's label must be. The queen writes the label; bs only checks it.
 const LabelRules = `a label names the work for the herdr sidebar: 1-4 lowercase words of a-z and 0-9, single spaces, no punctuation, at most 32 characters, specific to the bead.
@@ -57,8 +65,13 @@ func CheckLabel(label string) error {
 	return nil
 }
 
-// Workspace is a herdr workspace opened on a git worktree.
-type Workspace struct{ ID, Label, Pane, Path string }
+// Workspace is a herdr workspace: on a git worktree, or a plain one bs tagged with its
+// worker and path (kind none).
+type Workspace struct {
+	ID, Label, Pane string
+	Path            string // the worktree's checkout, else the path token (cut at 80 characters)
+	Worker          string // the worker token of a plain workspace bs opened; "" untagged
+}
 
 // Bead is the part of a bead bs reads.
 type Bead struct{ ID, Title, Description string }
@@ -76,6 +89,15 @@ type Herdr interface {
 	// when herdr itself didn't answer.
 	RemoveWorktree(ctx context.Context, workspace string, force bool) error
 	Workspaces(ctx context.Context) ([]Workspace, error)
+	// CreateWorkspace opens a plain workspace on dir with env set in its root pane's shell.
+	// herdr 0.9.5 opens $HOME, exiting 0, for a dir that doesn't exist: check it first.
+	CreateWorkspace(ctx context.Context, dir, label string, env map[string]string) (Workspace, error)
+	// TagWorkspace tags workspace with its worker and path, since herdr lists no directory
+	// for a plain workspace.
+	TagWorkspace(ctx context.Context, workspace, worker, path string) error
+	// CloseWorkspace closes a plain workspace, leaving its directory; already gone → nil.
+	// ErrHerdrDown when herdr didn't answer.
+	CloseWorkspace(ctx context.Context, workspace string) error
 }
 
 // Sessions tells whether a Claude session is running, from Claude's own registry
@@ -102,6 +124,7 @@ type Fleet struct {
 	Me          string // the queen doing the spawning
 	ForeignRepo bool   // skip the check that the bead belongs to P (--repo)
 	Model       string // claude --model for every start; "" leaves Claude's own default
+	WS          WorkspaceSpec
 }
 
 var herdrName = project.SessionName
@@ -323,6 +346,15 @@ func (f Fleet) check(ctx context.Context, bead, label string) (plan, error) {
 	if err != nil {
 		return p, err
 	}
+	if f.WS.Kind == NoWorkspace {
+		// A plain workspace's directory is init's to choose and may be shared, so find an
+		// orphan by the worker token bs tags it with.
+		if i := slices.IndexFunc(wss, func(w Workspace) bool { return w.Worker == name }); i >= 0 {
+			return p, fmt.Errorf("%s: %w; check it, then close it with: herdr workspace close %s", name, ErrOrphan, wss[i].ID)
+		}
+		_, err = f.P.LogbookDir()
+		return p, err
+	}
 	// Find an orphan by its worktree, never its label: the path is built forward from
 	// the name, while a label is free text. The latest spawn's recorded worktree counts
 	// too, since paths.worktrees may have moved since it ended.
@@ -340,27 +372,149 @@ func (f Fleet) check(ctx context.Context, bead, label string) (plan, error) {
 // worktree is where worker name's worktree goes: <paths.worktrees>/<name>.
 func (f Fleet) worktree(name string) string { return filepath.Join(f.P.Worktrees, name) }
 
-// open opens a first spawn's worktree and records the spawn; a resume has both already.
+// open makes a first spawn's workspace, runs its init hook and records the spawn; a
+// resume has all three already. It is all or nothing (motif 8): a failure before the
+// record takes back what it made, so spawning again starts clean.
 func (f Fleet) open(ctx context.Context, p plan) (logbook.Spawn, error) {
 	if p.resume {
 		return p.sp, nil
 	}
-	base := ""
-	if f.P.Base != "" { // a linked worktree: herdr cuts from its HEAD, run from the main checkout
-		out, err := gitOut(ctx, f.P.Base, "rev-parse", "HEAD")
-		if err != nil {
-			return logbook.Spawn{}, err
-		}
-		base = strings.TrimSpace(out)
+	sp := logbook.Spawn{Name: p.name, Bead: p.bead, Label: p.label, Repo: f.P.Repo, Base: f.P.BaseRepo()}
+	openWS := f.openWorktree
+	if f.WS.Kind == NoWorkspace {
+		openWS = f.openPlain
 	}
-	ws, err := f.H.CreateWorktree(ctx, f.P.Repo, base, p.name, f.worktree(p.name), p.label)
+	err := openWS(ctx, &sp)
 	if err != nil {
 		return logbook.Spawn{}, err
 	}
 	// Record straight away: any failure after this point is healed by spawning again.
-	sp := logbook.Spawn{Name: p.name, Bead: p.bead, Label: p.label, Workspace: ws.ID, Pane: ws.Pane, Worktree: ws.Path, Branch: p.name, Repo: f.P.Repo, Base: f.P.BaseRepo()}
-	sp.ID, err = f.LB.RecordSpawn(ctx, f.Me, sp, brief(p.b))
-	return sp, err
+	if sp.ID, err = f.LB.RecordSpawn(ctx, f.Me, sp, brief(p.b)); err != nil {
+		return logbook.Spawn{}, errors.Join(err, f.undo(ctx, sp))
+	}
+	return sp, nil
+}
+
+// openWorktree cuts sp's branch into a worktree under paths.worktrees, then runs init
+// in it.
+func (f Fleet) openWorktree(ctx context.Context, sp *logbook.Spawn) error {
+	base := ""
+	if f.P.Base != "" { // a linked worktree: herdr cuts from its HEAD, run from the main checkout
+		out, err := gitOut(ctx, f.P.Base, "rev-parse", "HEAD")
+		if err != nil {
+			return err
+		}
+		base = strings.TrimSpace(out)
+	}
+	ws, err := f.H.CreateWorktree(ctx, f.P.Repo, base, sp.Name, f.worktree(sp.Name), f.herdrLabel(sp.Label))
+	if err != nil {
+		return err
+	}
+	sp.Workspace, sp.Pane, sp.Worktree, sp.Branch = ws.ID, ws.Pane, ws.Path, sp.Name
+	if f.WS.Init != "" {
+		h, _, err := runHook(ctx, "init", f.WS.Init, ws.Path, f.hookEnv(*sp))
+		if err != nil {
+			return errors.Join(fmt.Errorf("%s: %w; nothing recorded", sp.Name, err), f.undo(ctx, *sp))
+		}
+		sp.Init = &h
+	}
+	return nil
+}
+
+// openPlain opens a plain workspace (kind none) on the directory init prints, else on
+// the repo, with the worker's env pinned in its shell, and tags it with the worker.
+func (f Fleet) openPlain(ctx context.Context, sp *logbook.Spawn) error {
+	sp.Kind = NoWorkspace
+	if f.WS.Init == "" {
+		sp.Dir = f.P.Repo
+	} else {
+		h, out, err := runHook(ctx, "init", f.WS.Init, f.P.Repo, f.hookEnv(*sp))
+		if err != nil {
+			return fmt.Errorf("%s: %w; nothing recorded", sp.Name, err)
+		}
+		sp.Init, sp.Dir = &h, strings.TrimSpace(out)
+	}
+	fail := func(err error) error {
+		return errors.Join(fmt.Errorf("%s: %w", sp.Name, err), f.undo(ctx, *sp))
+	}
+	if err := plainDir(sp.Dir); err != nil {
+		return fail(err)
+	}
+	lbDir, err := f.P.LogbookDir()
+	if err != nil {
+		return fail(err)
+	}
+	ws, err := f.H.CreateWorkspace(ctx, sp.Dir, f.herdrLabel(sp.Label), map[string]string{"BS_PROJECT": f.P.Name, "BS_LOGBOOK_DIR": lbDir, "BS_LOGBOOK": ""})
+	if err != nil {
+		return fail(err)
+	}
+	sp.Workspace, sp.Pane = ws.ID, ws.Pane
+	if err := f.H.TagWorkspace(ctx, ws.ID, sp.Name, sp.Dir); err != nil {
+		return fail(err)
+	}
+	return nil
+}
+
+// plainDir checks the directory a plain workspace opens on: herdr would open $HOME for
+// one that doesn't exist, without a word.
+func plainDir(dir string) error {
+	switch {
+	case dir == "":
+		return errors.New("init printed no directory")
+	case strings.ContainsAny(dir, "\n\r"):
+		return fmt.Errorf("init printed more than one line: %.80q", dir)
+	case !filepath.IsAbs(dir):
+		return fmt.Errorf("init printed %q, not an absolute path", dir)
+	}
+	if fi, err := os.Stat(dir); err != nil {
+		return fmt.Errorf("workspace directory: %w", err)
+	} else if !fi.IsDir() {
+		return fmt.Errorf("workspace directory %s is not a directory", dir)
+	}
+	return nil
+}
+
+// undo takes back what open made for sp before it was recorded: a plain workspace is
+// closed, finalize runs if init succeeded, and a worktree is removed with --force, since
+// it holds only what init made in it.
+func (f Fleet) undo(ctx context.Context, sp logbook.Spawn) error {
+	var errs []error
+	if sp.Workspace != "" && sp.Kind == NoWorkspace {
+		errs = append(errs, f.H.CloseWorkspace(ctx, sp.Workspace))
+	}
+	if sp.Init != nil && f.WS.Finalize != "" {
+		_, _, err := runHook(ctx, "finalize", f.WS.Finalize, sp.Repo, f.finalizeEnv(sp, false, false))
+		errs = append(errs, err)
+	}
+	if sp.Workspace != "" && sp.Kind != NoWorkspace {
+		errs = append(errs, f.H.RemoveWorktree(ctx, sp.Workspace, true))
+	}
+	if err := errors.Join(errs...); err != nil {
+		return fmt.Errorf("undoing the spawn of %s: %w", sp.Name, err)
+	}
+	return nil
+}
+
+// hookEnv is the env every hook gets (ADR-0009).
+func (f Fleet) hookEnv(sp logbook.Spawn) map[string]string {
+	env := map[string]string{"BS_NAME": sp.Name, "BS_PROJECT": f.P.Name, "BS_REPO": sp.Repo, "BS_BASE": sp.Base}
+	if dir := cmp.Or(sp.Dir, sp.Worktree); dir != "" {
+		env["BS_DIR"] = dir
+	}
+	return env
+}
+
+// finalizeEnv is the env of a finalize hook: force says --force, check asks only
+// whether the workspace is dirty.
+func (f Fleet) finalizeEnv(sp logbook.Spawn, force, check bool) map[string]string {
+	env := f.hookEnv(sp)
+	if force {
+		env["BS_FORCE"] = "1"
+	}
+	if check {
+		env["BS_CHECK"] = "1"
+	}
+	return env
 }
 
 // workerSettings is passed with --settings, as a private file in bs's cache made fresh at
@@ -402,6 +556,15 @@ func workerSettings(project, logbookDir string, sp logbook.Spawn, protected bool
 	}
 	deny = append(deny, "Bash(gh pr merge*)", "Bash(gh * pr merge*)", "Bash(gh pr review* --approve*)", "Bash(gh pr review* -a*)", "Bash(gh api *merge*)")
 	env := fmt.Sprintf("Host containment: a bees worker, working in its own git worktree %s on its own branch %s of the repository %s.", sp.Worktree, branch, sp.Repo)
+	allow := []string{"$defaults",
+		fmt.Sprintf("Running this repository's own build, lint and test commands (such as go vet, go test, go build -o into the worktree, pre-commit) inside the worktree %s.", sp.Worktree),
+		fmt.Sprintf("Committing to and pushing (never force-pushing) the worker's own branch %s to the repository's origin, opening a pull request from it, and pushing further commits to that open pull request.", branch),
+	}
+	if sp.Kind == NoWorkspace { // no worktree, no branch: only the directory bs opened it on
+		env = fmt.Sprintf("Host containment: a bees worker, working in the directory %s for the repository %s.", sp.Dir, sp.Repo)
+		allow = []string{"$defaults", fmt.Sprintf("Running this repository's own build, lint and test commands inside the directory %s.", sp.Dir)}
+	}
+	allow = append(allow, "Running bs and bd, the bees tools, to read and send its project's messages and to read and update its own beads.")
 	if protected {
 		env += " GitHub protects the repository's default branch, so the worker's work reaches it only through a pull request the keeper merges."
 	}
@@ -410,11 +573,7 @@ func workerSettings(project, logbookDir string, sp logbook.Spawn, protected bool
 		"env":                 map[string]string{"BS_PROJECT": project, "BS_LOGBOOK_DIR": logbookDir, "BS_LOGBOOK": ""},
 		"autoMode": map[string][]string{
 			"environment": {"$defaults", env},
-			"allow": {"$defaults",
-				fmt.Sprintf("Running this repository's own build, lint and test commands (such as go vet, go test, go build -o into the worktree, pre-commit) inside the worktree %s.", sp.Worktree),
-				fmt.Sprintf("Committing to and pushing (never force-pushing) the worker's own branch %s to the repository's origin, opening a pull request from it, and pushing further commits to that open pull request.", branch),
-				"Running bs and bd, the bees tools, to read and send its project's messages and to read and update its own beads.",
-			},
+			"allow":       allow,
 		},
 		"permissions": map[string][]string{"deny": deny},
 	})
@@ -513,12 +672,14 @@ type EndOpts struct {
 	Forget bool
 }
 
-// End removes the worker's recorded workspace and records the end. It never asks herdr
-// which workspace to remove, and removes the recorded one only while it is still open on
-// the recorded worktree, so a reused workspace id can't take another worktree with it
-// (bees-7.4). A worktree with uncommitted or untracked files is kept unless o.Force: ErrDirty.
-// Ending an ended worker is a no-op. The worker's branch is always kept, with its
-// committed work: Prune deletes it once merged.
+// End tears down the worker's recorded workspace and records the end, in ADR-0009's
+// order: the dirty check, closing the workspace, the finalize hook, the ended entry. It
+// never asks herdr which workspace to remove, and closes the recorded one only while it is
+// still the worker's (its recorded worktree, or for kind none its worker tag), so a reused
+// workspace id can't take another worktree with it (bees-7.4). A dirty workspace is kept
+// unless o.Force: ErrDirty. A failed finalize leaves the worker live, so ending it again
+// reruns it. Ending an ended worker is a no-op. A worker's branch is always kept, with
+// its committed work: Prune deletes it once merged.
 func (f Fleet) End(ctx context.Context, name string, o EndOpts) error {
 	sp, ok, err := f.LB.LatestSpawn(ctx, name)
 	if err != nil {
@@ -537,10 +698,11 @@ func (f Fleet) End(ctx context.Context, name string, o EndOpts) error {
 // Ending is what EndAll did with one worker.
 type Ending struct {
 	Name, Workspace string
-	Gone            bool  // herdr no longer had the workspace, so only the end was recorded
-	Forgot          bool  // the workspace is open on another worktree: the end was recorded, the workspace left open
-	Err             error // the worker was kept: still live in the logbook
-	Warn            error // the worker was ended, but removing its settings files failed
+	Branch          string // the worker's branch, kept; "" under kind none
+	Gone            bool   // herdr no longer had the workspace, so only the end was recorded
+	Forgot          bool   // the workspace is no longer the worker's: the end was recorded, the workspace left open
+	Err             error  // the worker was kept: still live in the logbook
+	Warn            error  // the worker was ended, but removing its settings files failed
 }
 
 // EndAll ends every worker the logbook records as spawned and not yet ended, and nothing
@@ -560,9 +722,11 @@ func (f Fleet) EndAll(ctx context.Context, o EndOpts) ([]Ending, error) {
 	return out, nil
 }
 
-// end removes live spawn sp's workspace and records the end.
+// end tears down live spawn sp's workspace and records the end. The kind and directory
+// come from the record, never the config (motif 12); the hooks are the config's.
 func (f Fleet) end(ctx context.Context, sp logbook.Spawn, o EndOpts) Ending {
-	e := Ending{Name: sp.Name, Workspace: sp.Workspace}
+	e := Ending{Name: sp.Name, Workspace: sp.Workspace, Branch: sp.Branch}
+	plain := sp.Kind == NoWorkspace
 	wss, err := f.H.Workspaces(ctx)
 	if err != nil {
 		e.Err = fmt.Errorf("%s: can't tell whether workspace %s is open; nothing removed: %w", sp.Name, sp.Workspace, err)
@@ -572,27 +736,104 @@ func (f Fleet) end(ctx context.Context, sp logbook.Spawn, o EndOpts) Ending {
 	e.Gone = i < 0
 	switch {
 	case e.Gone:
-	case sp.Worktree == "" || filepath.Clean(wss[i].Path) != filepath.Clean(sp.Worktree):
+	case plain && wss[i].Worker != sp.Name:
+		if !o.Forget {
+			e.Err = fmt.Errorf("%s: workspace %s is tagged %q, not as this worker's: %w; nothing removed (--forget records the end and leaves it open)", sp.Name, sp.Workspace, wss[i].Worker, ErrNotOurs)
+			return e
+		}
+		e.Forgot = true
+	case !plain && (sp.Worktree == "" || filepath.Clean(wss[i].Path) != filepath.Clean(sp.Worktree)):
 		if !o.Forget {
 			e.Err = fmt.Errorf("%s: workspace %s is open on %q, not its recorded worktree %q: %w; nothing removed (--forget records the end and leaves it open)", sp.Name, sp.Workspace, wss[i].Path, sp.Worktree, ErrNotOurs)
 			return e
 		}
 		e.Forgot = true
-	default:
-		if err := f.H.RemoveWorktree(ctx, sp.Workspace, o.Force); err != nil {
-			if errors.Is(err, ErrDirty) {
-				err = fmt.Errorf("%w in %s; commit or move them, or end it with --force to discard them", ErrDirty, sp.Worktree)
-			}
+	}
+	open := !e.Gone && !e.Forgot
+	fin := f.WS.Finalize
+	// 1. The dirty check, before anything is closed. Without a finalize hook, herdr's
+	// worktree remove makes it, and a plain workspace's directory is never removed.
+	if !o.Force && fin != "" {
+		if err := f.dirty(ctx, sp); err != nil {
 			e.Err = fmt.Errorf("%s: %w", sp.Name, err)
 			return e
 		}
 	}
-	if err := f.LB.RecordEnd(ctx, f.Me, sp.ID); err != nil {
+	// 2. Close the workspace, which stops the agent. A worktree goes after finalize, which
+	// may still need it.
+	switch {
+	case open && plain:
+		if err := f.H.CloseWorkspace(ctx, sp.Workspace); err != nil {
+			e.Err = fmt.Errorf("%s: %w", sp.Name, err)
+			return e
+		}
+	case open && fin == "":
+		if err := f.removeWorktree(ctx, sp, o.Force); err != nil {
+			e.Err = err
+			return e
+		}
+	}
+	// 3. The finalize hook.
+	var hook *logbook.Hook
+	if fin != "" {
+		h, _, err := runHook(ctx, "finalize", fin, sp.Repo, f.finalizeEnv(sp, o.Force, false))
+		if err != nil {
+			if h.Exit == hookDirty {
+				err = fmt.Errorf("%w: %w; end it with --force to discard them", err, ErrDirty)
+			}
+			e.Err = fmt.Errorf("%s: %w; the worker stays live, so bs end runs it again", sp.Name, err)
+			return e
+		}
+		hook = &h
+		if open && !plain {
+			if err := f.removeWorktree(ctx, sp, o.Force); err != nil {
+				e.Err = err
+				return e
+			}
+		}
+	}
+	// 4. The ended entry.
+	if err := f.LB.RecordEndHook(ctx, f.Me, sp.ID, hook); err != nil {
 		e.Err = err
 		return e
 	}
 	e.Warn = prompt.Remove(sp.Name + "-settings*.json") // * also takes the fixed name of 8.3's first cut
 	return e
+}
+
+// removeWorktree removes sp's workspace and worktree; herdr refuses a dirty one without force.
+func (f Fleet) removeWorktree(ctx context.Context, sp logbook.Spawn, force bool) error {
+	err := f.H.RemoveWorktree(ctx, sp.Workspace, force)
+	if errors.Is(err, ErrDirty) {
+		err = fmt.Errorf("%w in %s; commit or move them, or end it with --force to discard them", ErrDirty, sp.Worktree)
+	}
+	if err != nil {
+		return fmt.Errorf("%s: %w", sp.Name, err)
+	}
+	return nil
+}
+
+// dirty asks whether sp's workspace holds work a teardown would lose: git status for a
+// worktree, and for kind none the finalize hook with BS_CHECK=1 (exit 0 clean, 3 dirty).
+func (f Fleet) dirty(ctx context.Context, sp logbook.Spawn) error {
+	if sp.Kind == NoWorkspace {
+		h, _, err := runHook(ctx, "finalize check", f.WS.Finalize, sp.Repo, f.finalizeEnv(sp, false, true))
+		if h.Exit == hookDirty {
+			return fmt.Errorf("%w (%s): %s; end it with --force to discard them", ErrDirtyDir, sp.Dir, cmp.Or(h.Stderr, "finalize said so"))
+		}
+		return err
+	}
+	if _, err := os.Stat(sp.Worktree); errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	out, err := gitOut(ctx, sp.Worktree, "status", "--porcelain")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(out) != "" {
+		return fmt.Errorf("%w in %s; commit or move them, or end it with --force to discard them", ErrDirty, sp.Worktree)
+	}
+	return nil
 }
 
 // Pruned is what Prune found for one ended worker's branch.
@@ -618,7 +859,7 @@ func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error) {
 	var out []Pruned
 	for _, sp := range ended {
 		repo := cmp.Or(sp.Repo, f.P.Repo)
-		if gitRun(ctx, repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+sp.Branch) != nil {
+		if sp.Branch == "" || gitRun(ctx, repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+sp.Branch) != nil { // kind none has no branch
 			continue
 		}
 		p := Pruned{Branch: sp.Branch, Repo: repo}

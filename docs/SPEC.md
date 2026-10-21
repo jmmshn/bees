@@ -244,8 +244,9 @@ bs bead new --parent <project>-N [--description D] [--type T] [--priority P] <ti
 bs send <to> [--now] <body|-> store a message, then ring <to>   (flags may follow <to>)
 bs inbox [--peek]             print unread; without --peek, record receipts in one commit
 bs status [--json]            each known session: running or not, unread count
+bs config [--project p]       every setting from $XDG_CONFIG_HOME/bees as key = "value"  # source (ADR-0008); exit 1 on a config error
 bs version                    the commit bs was built from
-send, inbox, spawn, end        --project, --as     (init, queen, epic, bead: --project)
+send, inbox, spawn, end        --project, --as     (init, queen, epic, bead, config: --project)
 ```
 
 Run inside bs's own source repo, every command warns on stderr when bs was built from a commit strictly behind that repo's `main` (R39).

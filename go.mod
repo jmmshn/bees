@@ -2,7 +2,10 @@ module github.com/jmmshn/bees
 
 go 1.27
 
-require modernc.org/sqlite v1.60.1
+require (
+	github.com/BurntSushi/toml v1.6.0
+	modernc.org/sqlite v1.60.1
+)
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect

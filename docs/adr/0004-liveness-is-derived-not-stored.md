@@ -1,5 +1,7 @@
 # Whether a session is alive is derived, never stored
 
+> Amended by [ADR-0009](0009-core-and-adapters.md): still derived, never stored, but from herdr's report on the pane the logbook recorded, for every harness, not from Claude's registry.
+
 bs never records whether a session is running. It works that out each time:
 
 - from Claude Code's session registry (`~/.claude/sessions/<pid>.json`), checking that the pid is still alive and its start time matches, when ringing;

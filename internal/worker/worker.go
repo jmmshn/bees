@@ -17,6 +17,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jmmshn/bees/internal/config"
+	"github.com/jmmshn/bees/internal/guards"
+	"github.com/jmmshn/bees/internal/harness/claude"
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/project"
 	"github.com/jmmshn/bees/internal/prompt"
@@ -98,10 +101,23 @@ type Fleet struct {
 	H           Herdr
 	S           Sessions
 	B           Beads
-	G           GitHub // nil: End proves a merge from git alone
-	Me          string // the queen doing the spawning
-	ForeignRepo bool   // skip the check that the bead belongs to P (--repo)
-	Model       string // claude --model for every start; "" leaves Claude's own default
+	G           GitHub          // nil: End proves a merge from git alone
+	Me          string          // the queen doing the spawning
+	ForeignRepo bool            // skip the check that the bead belongs to P (--repo)
+	Model       string          // claude --model for every start; "" leaves Claude's own default
+	Delivery    config.Delivery // how work lands; a zero Kind is github_pr
+	Guards      config.Guards
+}
+
+// kind is f's delivery kind; a Fleet built without config is github_pr, the default.
+func (f Fleet) kind() string { return cmp.Or(f.Delivery.Kind, "github_pr") }
+
+// gh is GitHub when the delivery kind uses it: manual never asks GitHub anything.
+func (f Fleet) gh() GitHub {
+	if f.kind() != "github_pr" {
+		return nil
+	}
+	return f.G
 }
 
 var herdrName = project.SessionName
@@ -293,6 +309,18 @@ func (f Fleet) check(ctx context.Context, bead, label string) (plan, error) {
 	if err != nil {
 		return p, err
 	}
+	// An unreadable delivery fragment or a bad guard refuses the spawn before anything is
+	// made; start checks both again at launch.
+	if _, err := prompt.Delivery(f.kind(), f.Delivery.Fragment); err != nil {
+		return p, fmt.Errorf("%s: %w", name, err)
+	}
+	at := logbook.Spawn{Name: name}
+	if ok && !sp.Ended {
+		at.Repo = sp.Repo // a resume starts in its recorded repo
+	}
+	if _, err := f.rules(ctx, at); err != nil {
+		return p, fmt.Errorf("%s: %w", name, err)
+	}
 	if ok && !sp.Ended {
 		if label != "" && label != sp.Label {
 			return p, fmt.Errorf("%s is labelled %q, not %q: %w; spawn it again without --label", name, sp.Label, label, ErrLabelChange)
@@ -381,44 +409,38 @@ func (f Fleet) open(ctx context.Context, p plan) (logbook.Spawn, error) {
 // relax the classifier on pushes (bees-7.4). Every autoMode list keeps "$defaults": a list
 // without it replaces the built-in rules (force push, exfiltration).
 //
-// The deny rules run before the classifier. A rule's * matches any text, a space or a
-// slash too (probed on Claude Code 2.1.302), so git -* push covers git -C dir push and
-// git -c k=v push, and */git push covers /usr/bin/git push. They are a speed bump, not
-// the guard: a shell finds other spellings, and branch protection on main is the real
-// one (docs/SETUP.md). Not git * push: that would deny a commit whose message says
-// "push … main".
-func workerSettings(project, logbookDir string, sp logbook.Spawn, protected bool) (string, error) {
+// The guards (guards.Build, from [delivery] and [guards]) become permissions.deny, which
+// runs before the classifier, and autoMode.allow (claude.Permissions).
+func workerSettings(project, logbookDir string, sp logbook.Spawn, protected bool, r guards.Rules) (string, error) {
 	branch := cmp.Or(sp.Branch, sp.Name)
-	var deny []string
-	for _, git := range []string{"git", "command git", "*/git"} {
-		for _, push := range []string{git + " push", git + " -* push"} {
-			for _, bad := range []string{"--force*", "-f*", "+*", "main*", "master*", "*:main*", "*:master*", "*refs/heads/main*", "*refs/heads/master*"} {
-				deny = append(deny, "Bash("+push+" "+bad+")")
-				if !strings.HasPrefix(bad, "*") { // a leading * already covers the words before it
-					deny = append(deny, "Bash("+push+" * "+bad+")")
-				}
-			}
-		}
-	}
-	deny = append(deny, "Bash(gh pr merge*)", "Bash(gh * pr merge*)", "Bash(gh pr review* --approve*)", "Bash(gh pr review* -a*)", "Bash(gh api *merge*)")
 	env := fmt.Sprintf("Host containment: a bees worker, working in its own git worktree %s on its own branch %s of the repository %s.", sp.Worktree, branch, sp.Repo)
 	if protected {
 		env += " GitHub protects the repository's default branch, so the worker's work reaches it only through a pull request the keeper merges."
 	}
+	deny, allow := claude.Permissions(r)
 	b, err := json.Marshal(map[string]any{
 		"crossSessionInbound": "accept",
 		"env":                 map[string]string{"BS_PROJECT": project, "BS_LOGBOOK_DIR": logbookDir, "BS_LOGBOOK": ""},
-		"autoMode": map[string][]string{
-			"environment": {"$defaults", env},
-			"allow": {"$defaults",
-				fmt.Sprintf("Running this repository's own build, lint and test commands (such as go vet, go test, go build -o into the worktree, pre-commit) inside the worktree %s.", sp.Worktree),
-				fmt.Sprintf("Committing to and pushing (never force-pushing) the worker's own branch %s to the repository's origin, opening a pull request from it, and pushing further commits to that open pull request.", branch),
-				"Running bs and bd, the bees tools, to read and send its project's messages and to read and update its own beads.",
-			},
-		},
-		"permissions": map[string][]string{"deny": deny},
+		"autoMode":            map[string][]string{"environment": {"$defaults", env}, "allow": allow},
+		"permissions":         map[string][]string{"deny": deny},
 	})
 	return string(b), err
+}
+
+// rules builds sp's guards.
+func (f Fleet) rules(ctx context.Context, sp logbook.Spawn) (guards.Rules, error) {
+	return Rules(ctx, cmp.Or(sp.Repo, f.P.Repo), config.Delivery{Kind: f.kind()}, f.Guards, guards.Worker{Branch: cmp.Or(sp.Branch, sp.Name), Worktree: sp.Worktree})
+}
+
+// Rules builds the guards of worker w in repo, against the repo's real default branch
+// (bees-11.7): w.Defaults is filled from origin/HEAD.
+func Rules(ctx context.Context, repo string, d config.Delivery, g config.Guards, w guards.Worker) (guards.Rules, error) {
+	head, err := originHead(ctx, repo)
+	if err != nil {
+		return guards.Rules{}, fmt.Errorf("finding the default branch to guard: %w", err)
+	}
+	w.Defaults = guards.Defaults(head)
+	return guards.Build(d, g, w)
 }
 
 // start starts Claude with a doorbell as its first prompt, so the worker reads its unread
@@ -432,7 +454,16 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 	if err != nil {
 		return st, err
 	}
-	settings, err := workerSettings(f.P.Name, lbDir, sp, f.protected(ctx, sp))
+	// Read the delivery fragment before anything is made: an unreadable one stops the start.
+	delivery, err := prompt.Delivery(f.kind(), f.Delivery.Fragment)
+	if err != nil {
+		return st, err
+	}
+	r, err := f.rules(ctx, sp)
+	if err != nil {
+		return st, err
+	}
+	settings, err := workerSettings(f.P.Name, lbDir, sp, f.protected(ctx, sp), r)
 	if err != nil {
 		return st, err
 	}
@@ -444,7 +475,7 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 	if err != nil {
 		return st, err
 	}
-	file, err := prompt.File(prompt.Worker, f.P.Name)
+	file, err := prompt.File(prompt.Worker, f.P.Name, delivery+guards.Note(f.Guards))
 	if err != nil {
 		os.Remove(settingsFile)
 		return st, err
@@ -492,12 +523,14 @@ func (f Fleet) launch(name, bead, settings, promptFile string, cont bool) []stri
 }
 
 // protected reports whether GitHub protects the default branch of sp's repo. Without
-// GitHub, or when gh fails, it says no: the worker is then told nothing about merges.
+// GitHub (or under manual delivery), or when gh fails, it says no: the worker is then
+// told nothing about merges.
 func (f Fleet) protected(ctx context.Context, sp logbook.Spawn) bool {
-	if f.G == nil {
+	gh := f.gh()
+	if gh == nil {
 		return false
 	}
-	ok, err := f.G.Protected(ctx, cmp.Or(sp.Repo, f.P.Repo))
+	ok, err := gh.Protected(ctx, cmp.Or(sp.Repo, f.P.Repo))
 	return err == nil && ok
 }
 
@@ -622,7 +655,7 @@ func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error) {
 			continue
 		}
 		p := Pruned{Branch: sp.Branch, Repo: repo}
-		p.Merge, p.Why = merged(ctx, f.G, repo, sp.Branch)
+		p.Merge, p.Why = merged(ctx, f.gh(), repo, sp.Branch)
 		if p.InUse, p.Prunable, err = checkedOut(ctx, repo, sp.Branch); err != nil {
 			p.Merge, p.Why = Unknown, err.Error()
 		}

@@ -155,6 +155,7 @@ func newRig(t *testing.T) rig {
 		"beads-x7q":  {ID: "beads-x7q", Title: "flat id"},
 	}
 	repo := filepath.Join(dir, "bees")
+	gitInit(t, repo) // the guards read its default branch
 	p := project.Project{Name: "bees", Repo: repo, Worktrees: repo + "-WT", Logbook: filepath.Join(dir, "bees.db")}
 	return rig{fleet: worker.Fleet{P: p, LB: lb, H: h, S: h, B: beads, Me: "queen-bees"}, h: h, lb: lb, repo: repo}
 }
@@ -477,6 +478,7 @@ func TestRestartInAnotherProjectsRepoContinuesOnlyAfterItsInbox(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	r.fleet.ForeignRepo, r.fleet.P.Repo = true, filepath.Join(t.TempDir(), "dotfiles")
+	gitInit(t, r.fleet.P.Repo)
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	r.h.exit("bees-8")
 	// Its bs reads this logbook (BS_PROJECT), so its receipts say whether it has a conversation.
@@ -518,7 +520,7 @@ func TestWorkersStartWithTheProjectsSystemPrompt(t *testing.T) {
 		if i < 0 {
 			t.Fatalf("start = %q, want internal/prompt/WORKER.md appended to the system prompt", start)
 		}
-		if b, err := os.ReadFile(start[i+1]); err != nil || string(b) != prompt.Text(prompt.Worker, "bees") {
+		if b, err := os.ReadFile(start[i+1]); err != nil || string(b) != workerPrompt(t) {
 			t.Fatalf("prompt file %s: %v\n%s", start[i+1], err, b)
 		}
 	}
@@ -531,6 +533,7 @@ func TestAWorkerInAnotherProjectsRepoStaysInTheSpawnersProject(t *testing.T) {
 	r := newRig(t)
 	own := r.fleet
 	r.fleet.ForeignRepo, r.fleet.P.Repo = true, filepath.Join(t.TempDir(), "dotfiles") // as --repo does
+	gitInit(t, r.fleet.P.Repo)
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	projects := []string{bsProject(t, r.h.started[0])} // read now: a restart removes spent settings files
 	r.h.exit("bees-8")
@@ -547,7 +550,7 @@ func TestAWorkerInAnotherProjectsRepoStaysInTheSpawnersProject(t *testing.T) {
 		if i < 0 {
 			t.Fatalf("start = %q, want the bees worker prompt", start)
 		}
-		if b, err := os.ReadFile(start[i+1]); err != nil || string(b) != prompt.Text(prompt.Worker, "bees") {
+		if b, err := os.ReadFile(start[i+1]); err != nil || string(b) != workerPrompt(t) {
 			t.Fatalf("prompt file %s: %v\n%s", start[i+1], err, b)
 		}
 	}
@@ -1256,6 +1259,25 @@ func TestSpawnRecordsTheBriefWithTheSpawn(t *testing.T) {
 	}
 }
 
+// gitInit makes dir an empty git repo.
+func gitInit(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, dir, "init", "-q", "-b", "main")
+}
+
+// workerPrompt is the worker prompt under the default delivery, github_pr.
+func workerPrompt(t *testing.T) string {
+	t.Helper()
+	d, err := prompt.Delivery("github_pr", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return prompt.Text(prompt.Worker, "bees", d)
+}
+
 func gitRun(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", args...)
@@ -1357,5 +1379,117 @@ func TestWorkersStartWithTheConfiguredModel(t *testing.T) {
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	if slices.ContainsFunc(r.h.started[0], func(a string) bool { return strings.HasPrefix(a, "--model") }) {
 		t.Errorf("start = %q, want no --model when none is configured", r.h.started[0])
+	}
+}
+
+// spawnSettings spawns bees-8 and returns its deny rules, its autoMode allow and its prompt.
+func spawnSettings(t *testing.T, r rig) (deny, allow []string, promptText string) {
+	t.Helper()
+	if _, err := r.fleet.Spawn(context.Background(), "bees-8", "spawn and end"); err != nil {
+		t.Fatal(err)
+	}
+	start := r.h.started[len(r.h.started)-1]
+	var settings struct {
+		AutoMode    map[string][]string `json:"autoMode"`
+		Permissions struct{ Deny []string }
+	}
+	if err := json.Unmarshal(settingsFile(t, start), &settings); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(start[slices.Index(start, "--append-system-prompt-file")+1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return settings.Permissions.Deny, settings.AutoMode["allow"], string(b)
+}
+
+func deniedBy(deny []string, cmd string) bool {
+	return slices.ContainsFunc(deny, func(rule string) bool { return claudeRuleMatches(rule, cmd) })
+}
+
+// The guards deny pushes to the repo's real default branch, not only main and master
+// (bees-11.7).
+func TestGuardsDenyPushesToTheReposRealDefaultBranch(t *testing.T) {
+	r := newRig(t)
+	gitRun(t, r.repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop")
+	deny, _, _ := spawnSettings(t, r)
+	for _, cmd := range []string{"git push origin develop", "git push origin bees-8:develop", "git push origin main"} {
+		if !deniedBy(deny, cmd) {
+			t.Errorf("deny rules let through %q", cmd)
+		}
+	}
+}
+
+// Under manual delivery a worker gets the manual fragment and guards, and bs never asks
+// GitHub anything: not whether main is protected, not whether a PR merged.
+func TestManualDeliveryNeverAsksGitHub(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	gitCommit(t, r.repo, "init", map[string]string{"a.txt": "A"})
+	r.fleet.Delivery.Kind = "manual"
+	r.fleet.G = fakeGitHub{protected: true, heads: []string{gitTip(t, r.repo, "main")}}
+	deny, allow, text := spawnSettings(t, r)
+	if deniedBy(deny, "gh pr merge 41") || !deniedBy(deny, "git push origin main") {
+		t.Errorf("manual deny = %q", deny)
+	}
+	if a := strings.Join(allow, " "); strings.Contains(a, "pull request") {
+		t.Errorf("manual allow = %q", allow)
+	}
+	if !strings.Contains(text, "Leave `bd close` to the keeper") || strings.Contains(text, "PR #N") {
+		t.Errorf("manual worker prompt:\n%s", text)
+	}
+	// GitHub would call bees-8 merged (a merged PR has its tip as head); git alone can't.
+	gitRun(t, r.repo, "checkout", "-q", "-b", "bees-8")
+	gitCommit(t, r.repo, "work", map[string]string{"c.txt": "C"})
+	gitRun(t, r.repo, "checkout", "-q", "main")
+	r.fleet.G = fakeGitHub{heads: []string{gitTip(t, r.repo, "bees-8")}}
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	pruned, err := r.fleet.Prune(ctx, false)
+	if err != nil || len(pruned) != 1 || pruned[0].Deleted || strings.Contains(pruned[0].Why, "GitHub") {
+		t.Fatalf("manual prune = %+v, %v; want bees-8 kept on git's word alone", pruned, err)
+	}
+}
+
+// An unreadable delivery fragment, or a merge grant that covers the default branch,
+// refuses the spawn before a worktree or record is made.
+func TestBadDeliveryOrGuardsRefuseTheSpawnBeforeAnythingIsMade(t *testing.T) {
+	for name, set := range map[string]func(*worker.Fleet){
+		"missing fragment":       func(f *worker.Fleet) { f.Delivery.Fragment = "/nonexistent/cl.md" },
+		"merge into the default": func(f *worker.Fleet) { f.Guards.AllowMergeInto = []string{"ma*"} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRig(t)
+			set(&r.fleet)
+			if _, err := r.fleet.Spawn(context.Background(), "bees-8", "spawn and end"); err == nil {
+				t.Fatal("spawned")
+			}
+			if _, ok, _ := r.lb.LatestSpawn(context.Background(), "bees-8"); ok || len(r.h.workspaces) != 0 {
+				t.Errorf("a refused spawn left a record (%v) or a workspace (%+v)", ok, r.h.workspaces)
+			}
+		})
+	}
+}
+
+// A fragment file is the worker's delivery wording, and a merge grant reaches both the
+// prompt and the guards (bees-12.13).
+func TestFragmentAndMergeGrantReachTheWorker(t *testing.T) {
+	r := newRig(t)
+	frag := filepath.Join(t.TempDir(), "cl.md")
+	if err := os.WriteFile(frag, []byte("Mail a CL.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.fleet.Delivery.Fragment = frag
+	r.fleet.Guards.AllowMergeInto = []string{"pilot/*"}
+	deny, allow, text := spawnSettings(t, r)
+	if !strings.Contains(text, "## Delivery\n\nMail a CL.\n") || !strings.Contains(text, "`pilot/*`") || strings.Contains(text, "PR #N") {
+		t.Errorf("worker prompt:\n%s", text)
+	}
+	if deniedBy(deny, "gh pr merge 41") || !deniedBy(deny, "git push origin main") {
+		t.Errorf("deny = %q", deny)
+	}
+	if !strings.Contains(strings.Join(allow, " "), "pilot/*") {
+		t.Errorf("allow = %q", allow)
 	}
 }

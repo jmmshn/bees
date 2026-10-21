@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/jmmshn/bees/internal/guards"
 	"github.com/jmmshn/bees/internal/prompt"
 )
 
@@ -47,6 +48,11 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if err != nil {
 		return err
 	}
+	// Read the delivery fragment first: an unreadable one starts nothing, not even a logbook.
+	delivery, err := prompt.Delivery(cfg.Delivery.Kind, cfg.Delivery.Fragment)
+	if err != nil {
+		return err
+	}
 	// The queen starts the project, so her bs commands find a logbook.
 	_, lb, err := scope(ctx, "queen", *proj, "", stderr)
 	if err != nil {
@@ -62,7 +68,7 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if os.Getenv("BS_LOGBOOK") != "" {
 		env = append(env, "BS_LOGBOOK="+p.Logbook)
 	}
-	file, err := prompt.File(prompt.Queen, p.Name)
+	file, err := prompt.File(prompt.Queen, p.Name, delivery+guards.Note(cfg.Guards))
 	if err != nil {
 		return err
 	}

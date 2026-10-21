@@ -41,7 +41,7 @@ func fleet(ctx context.Context, cmd, flagProject, flagAs, flagRepo string, start
 		lb.Close()
 		return worker.Fleet{}, err
 	}
-	return newFleet(worker.Fleet{P: p, LB: lb, Me: me, Model: cfg.Worker.ClaudeCode.Model, ForeignRepo: flagRepo != ""}), nil
+	return newFleet(worker.Fleet{P: p, LB: lb, Me: me, Model: cfg.Worker.ClaudeCode.Model, Delivery: cfg.Delivery, Guards: cfg.Guards, ForeignRepo: flagRepo != ""}), nil
 }
 
 func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -291,7 +291,11 @@ func cmdPrune(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return err
 	}
 	defer lb.Close()
-	pruned, err := newFleet(worker.Fleet{P: p, LB: lb}).Prune(ctx, *dry)
+	cfg, err := config.Load(p.Name) // the delivery kind picks prune's proofs: manual never asks GitHub
+	if err != nil {
+		return err
+	}
+	pruned, err := newFleet(worker.Fleet{P: p, LB: lb, Delivery: cfg.Delivery}).Prune(ctx, *dry)
 	if err != nil {
 		return err
 	}

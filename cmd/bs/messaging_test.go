@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -30,7 +31,12 @@ func useTempLogbook(t *testing.T) {
 	t.Setenv("BS_LOGBOOK", filepath.Join(t.TempDir(), "test.db"))
 	t.Setenv("BS_SESSION", "")
 	t.Setenv("BS_PROJECT", "test")
-	t.Setenv("BS_REPOS", t.TempDir())
+	repos := t.TempDir()
+	t.Setenv("BS_REPOS", repos)
+	// The project's repo exists, as a spawn's guards read its default branch.
+	if out, err := exec.Command("git", "init", "-q", filepath.Join(repos, "test")).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
 	if _, stderr, code := bs(t, "init"); code != 0 {
 		t.Fatalf("init: exit %d: %s", code, stderr)
 	}

@@ -139,9 +139,8 @@ func ancestor(ctx context.Context, repo, a, b string) (bool, error) {
 // branches that exist are returned.
 func defaultBranches(ctx context.Context, repo string) ([]string, error) {
 	cands := []string{"main"}
-	if head, err := gitOut(ctx, repo, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"); err == nil {
-		head = strings.TrimSpace(head)
-		cands = []string{head, strings.TrimPrefix(head, "origin/")}
+	if head, err := originHead(ctx, repo); err == nil && head != "" {
+		cands = []string{"origin/" + head, head}
 	}
 	var out []string
 	for _, c := range cands {
@@ -153,6 +152,21 @@ func defaultBranches(ctx context.Context, repo string) ([]string, error) {
 		return nil, fmt.Errorf("no default branch (tried %s)", strings.Join(cands, ", "))
 	}
 	return out, nil
+}
+
+// originHead is the branch origin/HEAD points at (develop for origin/develop), or ""
+// when it points nowhere: no origin, or a clone that never set it. Any other git failure
+// is an error, so a guard built from it fails closed.
+func originHead(ctx context.Context, repo string) (string, error) {
+	out, err := gitOut(ctx, repo, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+	var ee *exec.ExitError
+	switch {
+	case errors.As(err, &ee) && ee.ExitCode() == 1:
+		return "", nil
+	case err != nil:
+		return "", err
+	}
+	return strings.TrimPrefix(strings.TrimSpace(out), "origin/"), nil
 }
 
 // sameContent reports whether every path branch changed since it forked from main is

@@ -3,6 +3,7 @@ package logbook_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -86,11 +87,19 @@ func TestOpenMigratesAVersion0LogbookAfterCopyingItAside(t *testing.T) {
 	if unread, err := lb.Unread(ctx, "bees-8"); err != nil || len(unread) != 1 || unread[0].Body != "brief" {
 		t.Fatalf("unread after migration = %+v, %v", unread, err)
 	}
-	if _, err := lb.RecordQueen(ctx, logbook.Queen{Name: "queen-bees", Harness: "claude_code", Pane: "w2:p1", PID: 42, Start: "x"}); err != nil {
-		t.Fatalf("queen entry after migration: %v", err)
+	if _, ok, err := lb.RecordQueen(ctx, logbook.Queen{Name: "queen-bees", Harness: "claude_code", Pane: "w2:p1", PID: 42, Start: "x"}, gone); err != nil || !ok {
+		t.Fatalf("queen entry after migration: %v, %v", ok, err)
 	}
-	if err := lb.RecordEnd(ctx, "queen-bees", "s1"); err != nil { // ref still enforced
+	if err := lb.RecordEnd(ctx, "queen-bees", "s1"); err != nil {
 		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO entries (id, ts, kind, actor, ref) VALUES ('x', 't', 'ended', 'q', 'no-such-entry')`); err == nil {
+		t.Fatal("an entry referring to no entry was stored: the rebuilt table lost its foreign key")
 	}
 }
 
@@ -149,11 +158,68 @@ func TestLatestQueenIsTheNewest(t *testing.T) {
 		t.Fatalf("before any: ok=%v err=%v", ok, err)
 	}
 	for _, pid := range []int{10, 20} {
-		if _, err := lb.RecordQueen(ctx, logbook.Queen{Name: "queen-bees", Harness: "claude_code", Pane: "w1:p1", PID: pid, Start: "s"}); err != nil {
+		if _, _, err := lb.RecordQueen(ctx, logbook.Queen{Name: "queen-bees", Harness: "claude_code", Pane: "w1:p1", PID: pid, Start: "s"}, gone); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if q, ok, err := lb.LatestQueen(ctx, "queen-bees"); err != nil || !ok || q.PID != 20 || q.Pane != "w1:p1" || q.Harness != "claude_code" {
 		t.Fatalf("LatestQueen = %+v, %v, %v", q, ok, err)
+	}
+}
+
+// gone reports every recorded queen exited.
+func gone(logbook.Queen) (bool, error) { return false, nil }
+
+// bees-12.10: of queens starting at once, one is recorded and the rest find her running
+// (motif 7): the check and the record share one write transaction.
+func TestOneOfConcurrentQueensIsRecorded(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "bees.db")
+	first, err := logbook.Open(ctx, path) // concurrent first opens of a new file can be BUSY: bees-12.23
+	if err != nil {
+		t.Fatal(err)
+	}
+	first.Close()
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	recorded := 0
+	for pid := range 8 {
+		wg.Go(func() {
+			lb, err := logbook.Open(ctx, path) // one connection pool per queen, as separate processes have
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer lb.Close()
+			_, ok, err := lb.RecordQueen(ctx, logbook.Queen{Name: "queen-bees", PID: pid + 1}, func(logbook.Queen) (bool, error) { return true, nil })
+			if err != nil {
+				t.Error(err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if ok {
+				recorded++
+			}
+		})
+	}
+	wg.Wait()
+	if recorded != 1 {
+		t.Fatalf("%d queens recorded, want 1", recorded)
+	}
+}
+
+// A failed liveness check records nothing and is an error, never "gone" (motif 7).
+func TestAQueenWhoseLivenessCantBeToldIsNotRecorded(t *testing.T) {
+	ctx := context.Background()
+	lb := open(t)
+	if _, _, err := lb.RecordQueen(ctx, logbook.Queen{Name: "queen-bees", PID: 1}, gone); err != nil {
+		t.Fatal(err)
+	}
+	broken := errors.New("ps failed")
+	if _, ok, err := lb.RecordQueen(ctx, logbook.Queen{Name: "queen-bees", PID: 2}, func(logbook.Queen) (bool, error) { return false, broken }); !errors.Is(err, broken) || ok {
+		t.Fatalf("ok=%v err=%v; want the check's error", ok, err)
+	}
+	if q, _, _ := lb.LatestQueen(ctx, "queen-bees"); q.PID != 1 {
+		t.Fatalf("newest queen = %+v, want pid 1", q)
 	}
 }

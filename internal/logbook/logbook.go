@@ -14,7 +14,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -36,17 +35,20 @@ type Message struct {
 // Logbook is an open logbook file.
 type Logbook struct{ db *sql.DB }
 
-// table is the entries table of schema version 1 (ADR-0009): version 0 lacked the queen,
-// started and done kinds.
-const table = `(
+// table is the DDL of the entries table of schema version 1, named name (ADR-0009):
+// version 0 lacked the queen, started and done kinds. started and done have no writers
+// yet (bees-12.10's next stage, bees-12.18): one rebuild widens the CHECK for all three.
+func table(name string) string {
+	return `CREATE TABLE IF NOT EXISTS ` + name + ` (
   id      TEXT PRIMARY KEY,
   ts      TEXT NOT NULL,
   kind    TEXT NOT NULL CHECK (kind IN ('message','received','rang','spawned','ended','queen','started','done')),
   actor   TEXT NOT NULL,
   subject TEXT,
-  ref     TEXT REFERENCES entries(id),
+  ref     TEXT REFERENCES ` + name + `(id),
   data    TEXT CHECK (data IS NULL OR json_valid(data))
 ) STRICT`
+}
 
 const indexes = `
 CREATE INDEX IF NOT EXISTS k_subj ON entries (kind, subject, id);
@@ -56,7 +58,8 @@ CREATE INDEX IF NOT EXISTS k_ref  ON entries (kind, ref);
 // version is the schema's PRAGMA user_version.
 const version = 1
 
-// Open opens the logbook at path, creating the file, its directory and the schema if missing.
+// Open opens the logbook at path, creating the file, its directory and the schema if
+// missing, and migrating an older schema (migrate).
 // Writes take SQLite's write lock up front (BEGIN IMMEDIATE) and wait on a busy timeout.
 func Open(ctx context.Context, path string) (*Logbook, error) {
 	abs, err := filepath.Abs(path)
@@ -97,11 +100,11 @@ func migrate(ctx context.Context, db *sql.DB, path string) error {
 	if v >= version {
 		return nil
 	}
-	var old int
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = 'entries'`).Scan(&old); err != nil {
+	old, err := hasEntries(ctx, db)
+	if err != nil {
 		return err
 	}
-	if old > 0 {
+	if old {
 		if err := copyAside(ctx, db, fmt.Sprintf("%s.pre-%d", path, version)); err != nil {
 			return fmt.Errorf("copy the logbook aside before migrating it: %w", err)
 		}
@@ -122,24 +125,35 @@ func migrate(ctx context.Context, db *sql.DB, path string) error {
 	return errors.Join(err, onErr)
 }
 
+// hasEntries reports whether db has an entries table.
+func hasEntries(ctx context.Context, db querier) (bool, error) {
+	var n int
+	err := db.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = 'entries'`).Scan(&n)
+	return n > 0, err
+}
+
 // rebuild makes the version 1 table on c, unless another Open did while c waited.
 func rebuild(ctx context.Context, c *sql.Conn) error {
-	var v, old int
 	tx, err := c.BeginTx(ctx, nil) // BEGIN IMMEDIATE (_txlock)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if err := tx.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&v); err != nil || v >= version {
-		return err // another Open migrated while this one waited for the lock
-	}
-	stmts := []string{`CREATE TABLE IF NOT EXISTS entries ` + table}
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = 'entries'`).Scan(&old); err != nil {
+	var v int
+	if err := tx.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&v); err != nil {
 		return err
 	}
-	if old > 0 {
+	if v >= version {
+		return nil // another Open migrated while this one waited for the lock
+	}
+	old, err := hasEntries(ctx, tx)
+	if err != nil {
+		return err
+	}
+	stmts := []string{table("entries")}
+	if old {
 		stmts = []string{
-			`CREATE TABLE entries_v1 ` + strings.Replace(table, "REFERENCES entries(id)", "REFERENCES entries_v1(id)", 1),
+			table("entries_v1"),
 			`INSERT INTO entries_v1 (id, ts, kind, actor, subject, ref, data) SELECT id, ts, kind, actor, subject, ref, data FROM entries ORDER BY rowid`,
 			`DROP TABLE entries`,
 			`ALTER TABLE entries_v1 RENAME TO entries`,
@@ -158,17 +172,24 @@ func rebuild(ctx context.Context, c *sql.Conn) error {
 // concurrent Open may have made one already.
 func copyAside(ctx context.Context, db *sql.DB, path string) error {
 	tmp := fmt.Sprintf("%s.%s.tmp", path, newID(time.Now()))
+	defer os.Remove(tmp) // a failed VACUUM may leave part of it
 	if _, err := db.ExecContext(ctx, `VACUUM INTO ?`, tmp); err != nil {
 		return err
 	}
-	defer os.Remove(tmp)
 	if err := os.Chmod(tmp, 0o600); err != nil {
 		return err
 	}
-	if err := os.Link(tmp, path); err != nil && !errors.Is(err, os.ErrExist) {
+	switch err := os.Link(tmp, path); {
+	case err == nil, errors.Is(err, os.ErrExist):
+		return nil
+	case errors.Is(err, os.ErrPermission), errors.Is(err, errors.ErrUnsupported):
+		if _, err := os.Lstat(path); err == nil { // a file system without hard links
+			return nil
+		}
+		return os.Rename(tmp, path)
+	default:
 		return err
 	}
-	return nil
 }
 
 // Close closes the logbook.
@@ -420,8 +441,8 @@ ORDER BY s.subject`, ended)
 	return out, rows.Err()
 }
 
-// Queen records a queen bs queen started (ADR-0009): the herdr pane she runs in and her
-// process, which exec keeps from bs queen's. A queen entry is never closed: the newest is
+// Queen is a queen entry, written by bs queen before it execs the harness (ADR-0009):
+// the herdr pane she runs in and her process, whose pid and start time exec keeps. A queen entry is never closed: the newest is
 // the queen.
 type Queen struct {
 	ID      ID     `json:"-"`
@@ -432,23 +453,52 @@ type Queen struct {
 	Start   string `json:"start"` // the process's start time (proc.Start)
 }
 
-// RecordQueen records queen q.
-func (l *Logbook) RecordQueen(ctx context.Context, q Queen) (ID, error) {
+// RecordQueen records queen q, unless the newest queen entry of q.Name is one alive
+// reports running: then it returns that entry and ok false. The check and the record share
+// one write transaction, so of two queens starting at once only one is recorded (motif 7).
+func (l *Logbook) RecordQueen(ctx context.Context, q Queen, alive func(Queen) (bool, error)) (running Queen, ok bool, err error) {
 	now := time.Now().UTC()
-	id := newID(now)
 	data, err := json.Marshal(q)
 	if err != nil {
-		return "", err
+		return Queen{}, false, err
 	}
-	_, err = l.db.ExecContext(ctx, `INSERT INTO entries (id, ts, kind, actor, subject, data) VALUES (?, ?, 'queen', ?, ?, ?)`,
-		string(id), now.Format(tsLayout), q.Name, q.Name, string(data))
-	return id, err
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Queen{}, false, err
+	}
+	defer tx.Rollback()
+	prev, found, err := latestQueen(ctx, tx, q.Name)
+	if err != nil {
+		return Queen{}, false, err
+	}
+	if found {
+		switch up, err := alive(prev); {
+		case err != nil:
+			return Queen{}, false, err
+		case up:
+			return prev, false, nil
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO entries (id, ts, kind, actor, subject, data) VALUES (?, ?, 'queen', ?, ?, ?)`,
+		string(newID(now)), now.Format(tsLayout), q.Name, q.Name, string(data)); err != nil {
+		return Queen{}, false, err
+	}
+	return Queen{}, true, tx.Commit()
 }
 
 // LatestQueen returns the newest queen entry for name; ok is false when there is none.
-func (l *Logbook) LatestQueen(ctx context.Context, name string) (q Queen, ok bool, err error) {
+func (l *Logbook) LatestQueen(ctx context.Context, name string) (Queen, bool, error) {
+	return latestQueen(ctx, l.db, name)
+}
+
+// querier is a *sql.DB or a *sql.Tx.
+type querier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func latestQueen(ctx context.Context, db querier, name string) (q Queen, ok bool, err error) {
 	var data string
-	err = l.db.QueryRowContext(ctx, `SELECT id, data FROM entries WHERE kind = 'queen' AND subject = ? ORDER BY rowid DESC LIMIT 1`, name).Scan(&q.ID, &data)
+	err = db.QueryRowContext(ctx, `SELECT id, data FROM entries WHERE kind = 'queen' AND subject = ? ORDER BY rowid DESC LIMIT 1`, name).Scan(&q.ID, &data)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Queen{}, false, nil
 	}

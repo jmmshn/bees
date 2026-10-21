@@ -189,7 +189,7 @@ func TestQueenStartsOverADeadQueen(t *testing.T) {
 		t.Fatal(err)
 	}
 	start, _ := proc.Start(os.Getpid())
-	if _, err := lb.RecordQueen(context.Background(), logbook.Queen{Name: "queen-bees", Harness: "claude_code", Pane: "w1:p1", PID: os.Getpid(), Start: start + "0"}); err != nil {
+	if _, _, err := lb.RecordQueen(context.Background(), logbook.Queen{Name: "queen-bees", Harness: "claude_code", Pane: "w1:p1", PID: os.Getpid(), Start: start + "0"}, func(logbook.Queen) (bool, error) { return false, nil }); err != nil {
 		t.Fatal(err)
 	}
 	lb.Close()

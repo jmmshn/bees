@@ -70,19 +70,6 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return err
 	}
 	defer lb.Close()
-	switch q, ok, err := lb.LatestQueen(ctx, p.Queen()); {
-	case err != nil:
-		return err
-	case ok:
-		alive, err := proc.Alive(q.PID, q.Start)
-		if err != nil {
-			return fmt.Errorf("can't tell whether %s is still running (pid %d): %w", p.Queen(), q.PID, err)
-		}
-		if alive {
-			fmt.Fprintf(stderr, "bs queen: %s is already running (pid %d, pane %s); a second queen would race her spawns: use that one, or exit it first\n", p.Queen(), q.PID, q.Pane)
-			return exitCode(2)
-		}
-	}
 	// No BS_SESSION or BS_PROJECT: the queen's bs finds its name from --name and its project
 	// from the repo (R25). Drop inherited ones so they can't override either. A BS_LOGBOOK
 	// passes on absolute: relative, it would name another file in her repo.
@@ -112,9 +99,23 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if err != nil {
 		return err
 	}
-	if _, err := lb.RecordQueen(ctx, logbook.Queen{Name: p.Queen(), Harness: cfg.Harness, Pane: pane, PID: os.Getpid(), Start: start}); err != nil {
+	// A queen recorded before an exec that then failed is harmless: her pid is dead.
+	alive := func(q logbook.Queen) (bool, error) {
+		up, err := proc.Alive(q.PID, q.Start)
+		if err != nil {
+			return false, fmt.Errorf("can't tell whether %s is still running (pid %d): %w", q.Name, q.PID, err)
+		}
+		return up, nil
+	}
+	switch q, ok, err := lb.RecordQueen(ctx, logbook.Queen{Name: p.Queen(), Harness: cfg.Harness, Pane: pane, PID: os.Getpid(), Start: start}, alive); {
+	case err != nil:
+		return err
+	case !ok:
+		fmt.Fprintf(stderr, "bs queen: %s is already running (pid %d, pane %s); a second queen would race her spawns: use that one, or exit it first\n", q.Name, q.PID, q.Pane)
+		return exitCode(2)
+	}
+	if err := lb.Close(); err != nil { // exec keeps open descriptors
 		return err
 	}
-	lb.Close() // exec keeps open descriptors
 	return execAgent(p.Repo, env, h.Kind(), l.Args...)
 }

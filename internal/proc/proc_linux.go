@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Parent returns pid's parent.
@@ -156,4 +157,28 @@ func Listening(ctx context.Context, pids []int) (map[int][]int, error) {
 		}
 	}
 	return out, nil
+}
+
+// userHZ is the clock tick of /proc's start times: USER_HZ, 100 on every Linux ABI.
+const userHZ = 100
+
+// Age is how long pid has been running.
+func Age(pid int) (time.Duration, error) {
+	start, err := Start(pid)
+	if err != nil {
+		return 0, err
+	}
+	ticks, err := strconv.ParseFloat(start, 64)
+	if err != nil {
+		return 0, fmt.Errorf("pid %d: start %q: %w", pid, start, err)
+	}
+	b, err := os.ReadFile("/proc/uptime")
+	if err != nil {
+		return 0, err
+	}
+	up, err := strconv.ParseFloat(strings.Fields(string(b))[0], 64)
+	if err != nil {
+		return 0, fmt.Errorf("/proc/uptime: %w", err)
+	}
+	return time.Duration((up - ticks/userHZ) * float64(time.Second)), nil
 }

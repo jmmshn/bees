@@ -42,14 +42,13 @@ const (
 // choose a name, a directory or a prompt.
 type Start struct {
 	Role       prompt.Role
-	Name       string            // session name (ADR-0006)
-	Dir        string            // the workspace directory
-	PromptFile string            // the role prompt file
-	Doorbell   string            // first user message; "" for the queen
-	Continue   bool              // resume the last conversation in Dir
-	Env        map[string]string // pinned for every process the session starts; nil for the queen, whose env is bs queen's
-	Guards     guards.Rules      // built by the core; zero for the queen
-	Path       []string          // absolute dirs put first on the PATH of the session's shell commands (bs spawn --path)
+	Name       string       // session name (ADR-0006)
+	Dir        string       // the workspace directory
+	PromptFile string       // the role prompt file
+	Doorbell   string       // first user message; "" for the queen
+	Continue   bool         // resume the last conversation in Dir
+	Guards     guards.Rules // built by the core; zero for the queen
+	Path       []string     // absolute dirs put first on the PATH of the session's shell commands (bs spawn --path)
 }
 
 // Launch is what Prepare returns. Prepare is pure: the core writes each of Files (0600,

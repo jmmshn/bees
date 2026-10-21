@@ -76,25 +76,29 @@ func TestQueenOutsideItsRepoWantsBSRepos(t *testing.T) {
 	}
 }
 
-// A relative BS_LOGBOOK reaches the queen absolute: she runs in her repo, where the same
-// relative path would name another file and split the store (bees-11.3 review).
-func TestQueenGetsAnAbsoluteLogbook(t *testing.T) {
+// bees-12.10: the sessions bs starts are found by their herdr pane in the global
+// paths.logbook_dir only, so bs queen refuses (exit 2) a logbook anywhere else, and makes
+// nothing there.
+func TestQueenRefusesALogbookOutsideTheFleetDir(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("BS_PROJECT", "bees")
 	t.Setenv("HERDR_PANE_ID", "w1:p1")
 	t.Setenv("BS_REPOS", "/src")
+	t.Setenv("BS_LOGBOOK_DIR", "")
 	dir := t.TempDir()
 	t.Chdir(dir)
 	t.Setenv("BS_LOGBOOK", "bees.db")
-	var gotEnv []string
-	execAgent = func(_ string, env []string, _ string, _ ...string) error { gotEnv = env; return nil }
-	t.Cleanup(func() { execAgent = execAgentProcess })
-	if _, stderr, code := bs(t, "queen"); code != 0 {
-		t.Fatalf("queen: exit %d: %s", code, stderr)
+	execAgent = func(string, []string, string, ...string) error {
+		t.Fatal("started a queen on a stray logbook")
+		return nil
 	}
-	want, _ := filepath.Abs("bees.db")
-	if !slices.Contains(gotEnv, "BS_LOGBOOK="+want) || slices.Contains(gotEnv, "BS_LOGBOOK=bees.db") {
-		t.Errorf("queen env BS_LOGBOOK = %q, want %s", slices.DeleteFunc(gotEnv, func(kv string) bool { return !strings.HasPrefix(kv, "BS_LOGBOOK=") }), want)
+	t.Cleanup(func() { execAgent = execAgentProcess })
+	if _, stderr, code := bs(t, "queen"); code != 2 || !strings.Contains(stderr, "found by their herdr pane") {
+		t.Fatalf("queen: exit %d, %q; want exit 2", code, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "bees.db")); !os.IsNotExist(err) {
+		t.Fatalf("a refused queen made %s: %v", filepath.Join(dir, "bees.db"), err)
 	}
 }
 

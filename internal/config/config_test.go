@@ -71,14 +71,14 @@ func TestPrecedenceDefaultGlobalProjectEnv(t *testing.T) {
 	dir := setup(t)
 	global, proj := filepath.Join(dir, "config.toml"), filepath.Join(dir, "projects", "bees.toml")
 	write(t, global, "[paths]\nlogbook_dir = \"/g/logs\"\nrepos = \"/g/repos\"\n[worker.claude_code]\nmodel = \"opus\"\n")
-	write(t, proj, "[paths]\nlogbook_dir = \"/p/logs\"\nrepo = \"/p/bees\"\n[worker.claude_code]\nmodel = \"sonnet\"\n")
+	write(t, proj, "[paths]\nrepo = \"/p/bees\"\n[worker.claude_code]\nmodel = \"sonnet\"\n")
 	t.Setenv("BS_REPOS", "/e/repos")
 	l, err := Load("bees")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for key, want := range map[string]struct{ val, src string }{
-		"paths.logbook_dir":        {"/p/logs", "project " + proj},
+		"paths.logbook_dir":        {"/g/logs", "global " + global},
 		"paths.repos":              {"/e/repos", "env BS_REPOS"},
 		"paths.repo":               {"/p/bees", "project " + proj},
 		"paths.worktrees":          {"{repo}-WT", "default"},
@@ -263,15 +263,27 @@ func TestPathsExpandTildeOnlyAndMustBeAbsolute(t *testing.T) {
 func TestShadowedListsTheLowerValues(t *testing.T) {
 	dir := setup(t)
 	write(t, filepath.Join(dir, "config.toml"), "[paths]\nlogbook_dir = \"/g\"\n")
-	write(t, filepath.Join(dir, "projects", "bees.toml"), "[paths]\nlogbook_dir = \"/p\"\n")
 	t.Setenv("BS_LOGBOOK_DIR", "/e")
 	l, err := Load("bees")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := l.Shadowed["paths.logbook_dir"], []string{"~/.local/share/bees", "/g", "/p"}; !slices.Equal(got, want) {
+	if got, want := l.Shadowed["paths.logbook_dir"], []string{"~/.local/share/bees", "/g"}; !slices.Equal(got, want) {
 		t.Errorf("shadowed = %q, want %q", got, want)
 	}
+	if got := l.FileValue("paths.logbook_dir"); got != "/g" {
+		t.Errorf("FileValue = %q, want the global file's /g under env /e", got)
+	}
+}
+
+// bees-12.10: paths.logbook_dir is global only (ADR-0009 amendment 1): a project file's
+// value would put that project's logbook where no pane scan looks.
+func TestLogbookDirIsGlobalOnly(t *testing.T) {
+	dir := setup(t)
+	proj := filepath.Join(dir, "projects", "bees.toml")
+	write(t, proj, "[paths]\nlogbook_dir = \"/p\"\n")
+	_, err := Load("bees")
+	wantErr(t, err, proj+": paths.logbook_dir belongs in the global file, not the project one")
 }
 
 // Env skips both files: the fixed list of commands reads only the environment once

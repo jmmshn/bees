@@ -41,7 +41,7 @@ func beadLs(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	if err != nil {
 		return err
 	}
-	p, _, err := resolve("bead", *proj, "")
+	p, _, err := resolve(ctx, "bead", *proj, "", stderr)
 	if err != nil {
 		return err
 	}
@@ -75,7 +75,7 @@ func beadNew(ctx context.Context, args []string, stdout, stderr io.Writer) error
 		fmt.Fprintln(stderr, beadUsage)
 		return errUsage
 	}
-	p, _, err := resolve("bead", *proj, "")
+	p, _, err := resolve(ctx, "bead", *proj, "", stderr)
 	if err != nil {
 		return err
 	}

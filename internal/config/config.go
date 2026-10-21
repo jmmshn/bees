@@ -62,7 +62,7 @@ type Guards struct {
 
 // Paths says where bs keeps its files and finds repos.
 type Paths struct {
-	LogbookDir string `toml:"logbook_dir" scope:"both" env:"BS_LOGBOOK_DIR" default:"~/.local/share/bees" path:"dir"`
+	LogbookDir string `toml:"logbook_dir" scope:"global" env:"BS_LOGBOOK_DIR" default:"~/.local/share/bees" path:"dir"`
 	Repos      string `toml:"repos" scope:"global" env:"BS_REPOS" path:"dir"`
 	Repo       string `toml:"repo" scope:"project" path:"dir"`
 	Worktrees  string `toml:"worktrees" scope:"both" default:"{repo}-WT" path:"{repo}"`
@@ -129,6 +129,20 @@ type Loaded struct {
 	Sources  map[string]Source   // by dotted key, e.g. "worker.claude_code.model"
 	Shadowed map[string][]string // by dotted key: the values lower layers set, lowest first
 	Files    []File
+}
+
+// FileValue is key's value as the files and defaults set it, before any env override.
+func (l *Loaded) FileValue(key string) string {
+	if l.Sources[key].Kind == "env" {
+		sh := l.Shadowed[key]
+		return sh[len(sh)-1]
+	}
+	for _, f := range l.Fields() {
+		if f.Key == key {
+			return f.Value
+		}
+	}
+	return ""
 }
 
 // Field is one setting's dotted key, effective value and scope. A list setting has

@@ -70,9 +70,8 @@ func (Adapter) Ring(t harness.Target, text string, p harness.Priority) error {
 // worker runs, since Claude may read its settings files again after startup. Claude reads
 // settings.local.json from the main checkout even in a worktree, so per-worker settings
 // can't live in the repo, and the auto mode classifier reads autoMode only from user,
-// managed or --settings settings. env is st.Env: the worker's bs finds its project from
-// BS_PROJECT, the spawner's project, never from the worktree's git dir, which names
-// another project in a --repo worktree (bees-1.54).
+// managed or --settings settings. It pins no env: the worker's bs finds its project from
+// its herdr pane (ADR-0009 amendment 1).
 //
 // Every autoMode list keeps "$defaults": a list without it replaces the built-in rules
 // (force push, exfiltration). The deny rules run before the classifier; a rule's * matches
@@ -85,7 +84,6 @@ func workerSettings(st harness.Start) (string, error) {
 	}
 	s := map[string]any{
 		"crossSessionInbound": "accept",
-		"env":                 st.Env,
 		"autoMode": map[string][]string{
 			"environment": append([]string{"$defaults"}, st.Guards.Environment...),
 			"allow":       append([]string{"$defaults"}, st.Guards.Allow...),

@@ -121,3 +121,16 @@ func cut3(line string) ([]string, string) {
 	}
 	return f, strings.TrimSpace(rest)
 }
+
+// Age is how long pid has been running, from ps's lstart (to the second).
+func Age(pid int) (time.Duration, error) {
+	start, err := Start(pid)
+	if err != nil {
+		return 0, err
+	}
+	t, err := time.ParseInLocation("Mon Jan _2 15:04:05 2006", start, time.UTC)
+	if err != nil {
+		return 0, fmt.Errorf("pid %d: start %q: %w", pid, start, err)
+	}
+	return time.Since(t), nil
+}

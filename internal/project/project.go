@@ -17,13 +17,12 @@ import (
 )
 
 var (
-	ErrNoProject    = errors.New("can't tell which project; run inside its git repo, set BS_PROJECT or pass --project")
-	ErrBadProject   = errors.New("project names must be a letter then up to 24 letters or digits (after dropping - and _); set BS_PROJECT")
-	ErrNoRepos      = errors.New("can't find the project's repo; run bs inside it, or set BS_REPOS (or paths.repos in bs's config.toml) to the directory that holds your repos")
-	ErrNoSession    = errors.New("can't tell which session you are; run bs from inside a named Claude session, or pass --as")
-	ErrBadSession   = errors.New("not a session name: a lowercase letter, then up to 31 of a-z, 0-9, - and _")
-	ErrNotYou       = errors.New("this Claude session is registered as")
-	ErrWrongProject = errors.New("this session's BS_PROJECT names another project than the repo you are in")
+	ErrNoProject  = errors.New("can't tell which project; run inside its git repo, set BS_PROJECT or pass --project")
+	ErrBadProject = errors.New("project names must be a letter then up to 24 letters or digits (after dropping - and _); set BS_PROJECT")
+	ErrNoRepos    = errors.New("can't find the project's repo; run bs inside it, or set BS_REPOS (or paths.repos in bs's config.toml) to the directory that holds your repos")
+	ErrNoSession  = errors.New("can't tell which session you are; run bs from inside a named Claude session, or pass --as")
+	ErrBadSession = errors.New("not a session name: a lowercase letter, then up to 31 of a-z, 0-9, - and _")
+	ErrNotYou     = errors.New("this session is")
 )
 
 // validName is what a project name must be once lowercased with - and _ dropped. With no "-" in
@@ -76,21 +75,14 @@ type Paths struct {
 }
 
 // Name finds the project from flag, then BS_PROJECT, then the git repo containing the
-// working directory; a linked worktree names its main repo. Inside a Claude session, an
-// inherited BS_PROJECT holds only within the checkout the session was launched in (a
-// submodule in it too): a worker that runs bs in another project's repo must pick with
-// --project (bees-8.7). The name comes before any config, so no file can change it.
+// working directory; a linked worktree names its main repo. A session bs started finds
+// its project from its herdr pane before this (ADR-0009 amendment 1), so this serves the
+// keeper's own shells and scripts. The name comes before any config, so no file can
+// change it.
 func Name(flag string) (string, error) {
-	name, git := flag, mainRepo("")
+	name := cmp.Or(flag, os.Getenv("BS_PROJECT"))
 	if name == "" {
-		name = os.Getenv("BS_PROJECT")
-		if name != "" && git != "" && Normalise(filepath.Base(git)) != Normalise(name) {
-			if err := inLaunchCheckout(name, git); err != nil {
-				return "", err
-			}
-		}
-	}
-	if name == "" {
+		git := mainRepo("")
 		if git == "" {
 			return "", ErrNoProject
 		}
@@ -181,15 +173,6 @@ func plainDir(what, dir string) (string, string, error) {
 	return dir, "", nil
 }
 
-// LogbookDir is the directory to hand a worker as BS_LOGBOOK_DIR, so its bs opens p's
-// logbook. A logbook not named <project>.db (a BS_LOGBOOK of another name) has none.
-func (p Project) LogbookDir() (string, error) {
-	if filepath.Base(p.Logbook) != p.Name+".db" {
-		return "", fmt.Errorf("BS_LOGBOOK=%s is not named %s.db, so a worker can't be pointed at it with BS_LOGBOOK_DIR; rename the file, or unset BS_LOGBOOK", p.Logbook, p.Name)
-	}
-	return filepath.Dir(p.Logbook), nil
-}
-
 // Normalise lowercases a project or directory name and drops - and _ (R27⁶).
 func Normalise(s string) string {
 	return strings.ToLower(strings.NewReplacer("-", "", "_", "").Replace(s))
@@ -205,35 +188,6 @@ func repoDir(repos, name string) string {
 		}
 	}
 	return filepath.Join(repos, name)
-}
-
-// inLaunchCheckout refuses an inherited BS_PROJECT name when bs runs inside a Claude
-// session outside the checkout that session was launched in, git being the repo bs is in.
-func inLaunchCheckout(name, git string) error {
-	_, cwd, inClaude, err := registered()
-	if err != nil || !inClaude {
-		return err
-	}
-	if cwd == "" { // fail closed: without it, any repo would pass as the session's own
-		return fmt.Errorf("%w: the Claude session has no recorded launch directory; pass --project", ErrWrongProject)
-	}
-	if mainRepo(cwd) == git {
-		return nil
-	}
-	if top := topLevel(cwd); top != "" {
-		if wd, err := os.Getwd(); err == nil {
-			if rel, err := filepath.Rel(top, wd); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
-				return nil // a submodule or nested repo inside the session's own checkout
-			}
-		}
-	}
-	var picks []string
-	for _, n := range []string{Normalise(filepath.Base(git)), Normalise(name)} {
-		if validName.MatchString(n) {
-			picks = append(picks, "--project "+n)
-		}
-	}
-	return fmt.Errorf("%w: you are in %s; pass %s", ErrWrongProject, git, cmp.Or(strings.Join(picks, " or "), "--project"))
 }
 
 // mainRepo returns the main checkout of the git repo containing dir (the working
@@ -294,7 +248,7 @@ func Me(flag string) (string, error) {
 	}
 	switch {
 	case inClaude && flag != "" && flag != me:
-		return "", fmt.Errorf("--as %s: %w %q", flag, ErrNotYou, me)
+		return "", fmt.Errorf("--as %s: %w %q (its Claude session)", flag, ErrNotYou, me)
 	case inClaude:
 	case flag != "":
 		me = flag

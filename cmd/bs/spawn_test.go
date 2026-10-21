@@ -213,7 +213,8 @@ func TestSpawnBeadsAfterDoubleDash(t *testing.T) {
 // them on a re-run once herdr answers (bees-8.10).
 func TestEndAllSaysWhatItKeptAndHealsOnRerun(t *testing.T) {
 	useTempLogbook(t)
-	t.Setenv("BS_LOGBOOK", filepath.Join(t.TempDir(), "test.db")) // a fresh one: none yet
+	t.Setenv("HOME", t.TempDir()) // a fresh logbook: none yet
+	t.Setenv("BS_LOGBOOK", fleetLogbook(t))
 	h := useFakeHive(t)
 	if _, _, code := bs(t, "end", "--as", "queen-test", "--all"); code != 2 {
 		t.Fatalf("--all without --project: exit %d, want 2", code)

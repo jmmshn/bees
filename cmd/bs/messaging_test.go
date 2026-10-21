@@ -2,11 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jmmshn/bees/internal/logbook"
+	"github.com/jmmshn/bees/internal/proc"
 )
 
 // bs runs the CLI against a logbook in a temp dir and returns stdout, stderr and the exit code.
@@ -27,8 +31,9 @@ func useTempLogbook(t *testing.T) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())            // no real Claude registry: the session walk finds nothing
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // no real config files
+	t.Setenv("HERDR_PANE_ID", "")            // not in a recorded pane, whatever pane runs the tests
 	t.Setenv("BS_LOGBOOK_DIR", "")
-	t.Setenv("BS_LOGBOOK", filepath.Join(t.TempDir(), "test.db"))
+	t.Setenv("BS_LOGBOOK", fleetLogbook(t)) // where bs spawn and bs queen insist it is
 	t.Setenv("BS_SESSION", "")
 	t.Setenv("BS_PROJECT", "test")
 	repos := t.TempDir()
@@ -40,6 +45,12 @@ func useTempLogbook(t *testing.T) {
 	if _, stderr, code := bs(t, "init"); code != 0 {
 		t.Fatalf("init: exit %d: %s", code, stderr)
 	}
+}
+
+// fleetLogbook is project test's logbook at the default paths.logbook_dir under $HOME.
+func fleetLogbook(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(os.Getenv("HOME"), ".local", "share", "bees", "test.db")
 }
 
 func TestInitIsIdempotent(t *testing.T) {
@@ -266,5 +277,68 @@ func TestEndAndSendTakeABeadID(t *testing.T) {
 	}
 	if out, _, _ := bs(t, "inbox", "--as", "test-3-2"); out != "no unread messages\n" {
 		t.Errorf("phantom inbox test-3-2 = %q, want nothing queued", out)
+	}
+}
+
+// inQueenPane records queen-test in pane w1:p1 with this test's own process, and puts
+// this test in that pane: its bs calls are the queen's.
+func inQueenPane(t *testing.T) {
+	t.Helper()
+	ctx := context.Background()
+	lb, err := logbook.Open(ctx, fleetLogbook(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lb.Close()
+	start, _ := proc.Start(os.Getpid())
+	if _, _, err := lb.RecordQueen(ctx, logbook.Queen{Name: "queen-test", Harness: "claude_code", Pane: "w1:p1", PID: os.Getpid(), Start: start}, func(logbook.Queen) (bool, error) { return false, nil }); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_PANE_ID", "w1:p1")
+	t.Setenv("BS_LOGBOOK", "")
+}
+
+// bees-12.10 (T11): from a recorded queen pane, bs send --project dotfiles writes to
+// dotfiles' logbook with the pane's name as sender and from_project, and the reply command
+// shows in the recipient's inbox; --as someone else and inbox --project are refused there.
+func TestCrossProjectSendKeepsItsSender(t *testing.T) {
+	useTempLogbook(t)
+	t.Setenv("BS_LOGBOOK", "")
+	if _, stderr, code := bs(t, "init", "--project", "dotfiles"); code != 0 {
+		t.Fatalf("init dotfiles: exit %d: %s", code, stderr)
+	}
+	inQueenPane(t)
+	stray := filepath.Join(t.TempDir(), "stray.db") // inherited from herdr's env: the pane beats it
+	t.Setenv("BS_LOGBOOK", stray)
+	if _, stderr, code := bs(t, "send", "--project", "dotfiles", "queen-dotfiles", "hello"); code != 0 || !strings.Contains(stderr, "ignoring BS_LOGBOOK="+stray) {
+		t.Fatalf("send: exit %d: %s", code, stderr)
+	}
+	if _, err := os.Stat(stray); !os.IsNotExist(err) {
+		t.Fatalf("the send wrote into the inherited BS_LOGBOOK: %v", err)
+	}
+	t.Setenv("BS_LOGBOOK", "")
+	if _, stderr, code := bs(t, "send", "--as", "queen-dotfiles", "--project", "dotfiles", "queen-dotfiles", "x"); code == 0 || !strings.Contains(stderr, `"queen-test" (its herdr pane)`) {
+		t.Fatalf("--as someone else: exit %d, %q; want refused", code, stderr)
+	}
+	if _, stderr, code := bs(t, "inbox", "--project", "dotfiles"); code == 0 || !strings.Contains(stderr, "reads only its own project's inbox") {
+		t.Fatalf("inbox --project dotfiles: exit %d, %q; want refused", code, stderr)
+	}
+	t.Setenv("HERDR_PANE_ID", "")
+	out, stderr, code := bs(t, "inbox", "--project", "dotfiles", "--as", "queen-dotfiles")
+	if code != 0 || !strings.Contains(out, "from queen-test") || !strings.Contains(out, `(reply with: bs send --project test queen-test "...")`) {
+		t.Fatalf("queen-dotfiles' inbox: exit %d, %q, %q", code, out, stderr)
+	}
+}
+
+// bees-12.10: inside a recorded pane the pane decides the project and the logbook; an
+// inherited BS_PROJECT or BS_LOGBOOK that disagrees is ignored, with a warning.
+func TestAPaneIgnoresAStaleEnv(t *testing.T) {
+	useTempLogbook(t)
+	inQueenPane(t)
+	t.Setenv("BS_PROJECT", "dotfiles")
+	t.Setenv("BS_LOGBOOK", filepath.Join(t.TempDir(), "dotfiles.db"))
+	out, stderr, code := bs(t, "status")
+	if code != 0 || !strings.Contains(out, "queen-test") || !strings.Contains(stderr, "ignoring BS_PROJECT=dotfiles") || !strings.Contains(stderr, "ignoring BS_LOGBOOK=") {
+		t.Fatalf("status: exit %d, %q, %q; want queen-test's project and both warnings", code, out, stderr)
 	}
 }

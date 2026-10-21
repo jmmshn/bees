@@ -119,16 +119,6 @@ func TestLogbookOverride(t *testing.T) {
 	}
 }
 
-// A worker is handed BS_LOGBOOK_DIR, so only a logbook named <project>.db can be its.
-func TestLogbookDirNeedsTheProjectsFileName(t *testing.T) {
-	if d, err := (project.Project{Name: "bees", Logbook: "/x/bees.db"}).LogbookDir(); err != nil || d != "/x" {
-		t.Errorf("LogbookDir = %q, %v; want /x", d, err)
-	}
-	if _, err := (project.Project{Name: "bees", Logbook: "/x/other.db"}).LogbookDir(); err == nil || !strings.Contains(err.Error(), "not named bees.db") {
-		t.Errorf("err = %v, want the file name refused", err)
-	}
-}
-
 func TestNoProjectOutsideGit(t *testing.T) {
 	clearEnv(t)
 	t.Chdir(t.TempDir())
@@ -181,50 +171,17 @@ func register(t *testing.T, name, cwd string) {
 	}
 }
 
-// A worker's settings carry BS_PROJECT. In its own worktree that beats the git repo, which
-// names another project in a --repo worktree (bees-1.54). In some other repo it would
-// silently file into the worker's project, so bs refuses and says how to pick (bees-8.7).
-func TestInheritedProjectYieldsToAnotherRepo(t *testing.T) {
+// Outside a recorded pane, an inherited BS_PROJECT beats the git repo, wherever bs runs:
+// a session bs started finds its project from its pane instead (ADR-0009 amendment 1).
+func TestBSProjectBeatsTheRepo(t *testing.T) {
 	clearEnv(t)
-	own := gitRepo(t, "jobflow-ray") // a --repo worker's worktree: another project's repo
-	register(t, "bees-8-1", own)
-	t.Setenv("BS_PROJECT", "bees")
-	t.Chdir(own)
-	if p, err := resolve(""); err != nil || p.Name != "bees" {
-		t.Fatalf("own worktree: %+v, %v; want bees", p, err)
-	}
 	t.Chdir(gitRepo(t, "bsdemo"))
-	if p, err := resolve(""); !errors.Is(err, project.ErrWrongProject) || !strings.Contains(err.Error(), "--project bsdemo") {
-		t.Fatalf("another repo: %+v, %v; want ErrWrongProject naming --project bsdemo", p, err)
+	t.Setenv("BS_PROJECT", "bees")
+	if p, err := resolve(""); err != nil || p.Name != "bees" {
+		t.Fatalf("%+v, %v; want bees", p, err)
 	}
 	if p, err := resolve("bsdemo"); err != nil || p.Name != "bsdemo" {
 		t.Fatalf("--project bsdemo: %+v, %v", p, err)
-	}
-	if p, err := resolve("bees"); err != nil || p.Name != "bees" {
-		t.Fatalf("--project bees: %+v, %v", p, err)
-	}
-	// A submodule inside the session's own checkout is still the session's work: its git
-	// common dir lives in .git/modules, which must not read as a project "modules".
-	sub := gitRepo(t, "vendored")
-	git(t, own, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "lib/vendored")
-	t.Chdir(filepath.Join(own, "lib", "vendored"))
-	if p, err := resolve(""); err != nil || p.Name != "bees" {
-		t.Fatalf("submodule of the own checkout: %+v, %v; want bees", p, err)
-	}
-	// Suggestions are only names that would pass: a repo called 2fa-app isn't one.
-	t.Chdir(gitRepo(t, "2fa-app"))
-	if _, err := resolve(""); !errors.Is(err, project.ErrWrongProject) || strings.Contains(err.Error(), "2faapp") || !strings.Contains(err.Error(), "--project bees") {
-		t.Fatalf("invalid repo name: %v; want ErrWrongProject suggesting only --project bees", err)
-	}
-	register(t, "bees-8-1", "") // fail closed: no launch directory means no repo is the session's own
-	t.Chdir(own)
-	if _, err := resolve(""); !errors.Is(err, project.ErrWrongProject) {
-		t.Fatalf("empty registry cwd: %v; want ErrWrongProject", err)
-	}
-	clearEnv(t) // outside Claude, a BS_PROJECT the keeper set still wins
-	t.Setenv("BS_PROJECT", "bees")
-	if p, err := resolve(""); err != nil || p.Name != "bees" {
-		t.Fatalf("outside Claude: %+v, %v; want bees", p, err)
 	}
 }
 

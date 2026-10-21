@@ -29,10 +29,11 @@ type ID string
 
 // Message is one entry addressed from one session to another.
 type Message struct {
-	ID       ID
-	From, To string
-	Body     string
-	TS       time.Time
+	ID          ID
+	From, To    string
+	FromProject string // the sender's project when it wrote from another one's logbook; "" otherwise
+	Body        string
+	TS          time.Time
 }
 
 // Logbook is an open logbook file.
@@ -222,9 +223,20 @@ func (l *Logbook) Close() error { return l.db.Close() }
 
 // Send stores a message from one session to another and returns its id.
 func (l *Logbook) Send(ctx context.Context, from, to, body string) (ID, error) {
+	return l.SendFrom(ctx, from, "", to, body)
+}
+
+// SendFrom is Send from a session of project fromProject, writing into another project's
+// logbook (ADR-0009 amendment 1): the entry records it, so the reply needs no project read
+// back out of a name (motif 3). "" is the logbook's own project.
+func (l *Logbook) SendFrom(ctx context.Context, from, fromProject, to, body string) (ID, error) {
 	now := time.Now().UTC()
 	id := newID(now)
-	data, err := json.Marshal(map[string]string{"body": body})
+	d := map[string]string{"body": body}
+	if fromProject != "" {
+		d["from_project"] = fromProject
+	}
+	data, err := json.Marshal(d)
 	if err != nil {
 		return "", err
 	}
@@ -245,7 +257,7 @@ func (l *Logbook) Send(ctx context.Context, from, to, body string) (ID, error) {
 // order they were stored, leaving out the briefs of ended spawns.
 func (l *Logbook) Unread(ctx context.Context, session string) ([]Message, error) {
 	rows, err := l.db.QueryContext(ctx, `
-SELECT m.id, m.ts, m.actor, m.subject, json_extract(m.data, '$.body') FROM entries m
+SELECT m.id, m.ts, m.actor, m.subject, coalesce(json_extract(m.data, '$.from_project'), ''), json_extract(m.data, '$.body') FROM entries m
 WHERE m.kind = 'message' AND m.subject = ?1
   AND NOT EXISTS (SELECT 1 FROM entries r
                   WHERE r.kind = 'received' AND r.ref = m.id AND r.actor = ?1)
@@ -259,7 +271,7 @@ ORDER BY m.rowid`, session)
 	for rows.Next() {
 		var m Message
 		var ts string
-		if err := rows.Scan(&m.ID, &ts, &m.From, &m.To, &m.Body); err != nil {
+		if err := rows.Scan(&m.ID, &ts, &m.From, &m.To, &m.FromProject, &m.Body); err != nil {
 			return nil, err
 		}
 		if m.TS, err = time.Parse(tsLayout, ts); err != nil {
@@ -587,4 +599,79 @@ func (l *Logbook) LatestStart(ctx context.Context, spawn ID) (s Start, ok bool, 
 		return Start{}, false, fmt.Errorf("start record %s: %w", s.ID, err)
 	}
 	return s, true, nil
+}
+
+// OpenReadOnly opens the logbook at path for reading only: it makes no logbook,
+// directory, schema or migration (SQLite may add its -shm and -wal beside it), so scanning
+// every logbook for a pane (ADR-0009 amendment 1) can't create, rebuild or split one. A
+// missing file is an error.
+func OpenReadOnly(ctx context.Context, path string) (*Logbook, error) {
+	if _, err := os.Stat(path); err != nil {
+		return nil, err
+	}
+	q := url.Values{}
+	q.Set("mode", "ro")
+	q.Add("_pragma", "busy_timeout(5000)")
+	q.Add("_pragma", "query_only(1)")
+	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: path, RawQuery: q.Encode()}).String())
+	if err != nil {
+		return nil, err
+	}
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("open logbook %s: %w", path, err)
+	}
+	return &Logbook{db: db}, nil
+}
+
+// Recorded is a session whose entry recorded a herdr pane: an open spawn's worker, or a
+// queen whose newest queen entry has the pane.
+type Recorded struct {
+	Name, Harness string
+	Queen         bool
+	Process       proc.Process // the process that entry or its newest start recorded
+	HasProcess    bool         // a worker with no start recorded yet has none
+}
+
+// InPane returns the sessions whose entries recorded pane: open spawns (each with its
+// newest start's process) and queens whose newest queen entry has it. A logbook from
+// before queen and started entries just has none of them.
+//
+// A file with no entries table yet (one Open is still creating) records nothing.
+func (l *Logbook) InPane(ctx context.Context, pane string) ([]Recorded, error) {
+	if ok, err := hasEntries(ctx, l.db); err != nil || !ok {
+		return nil, err
+	}
+	var out []Recorded
+	rows, err := l.db.QueryContext(ctx, `
+SELECT 0, s.subject, json_extract(s.data, '$.harness'),
+       (SELECT st.data FROM entries st WHERE st.kind = 'started' AND st.ref = s.id ORDER BY st.rowid DESC LIMIT 1)
+FROM entries s
+WHERE s.kind = 'spawned' AND json_extract(s.data, '$.pane') = ?1
+  AND s.rowid = (SELECT MAX(x.rowid) FROM entries x WHERE x.kind = 'spawned' AND x.subject = s.subject)
+  AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = s.id)
+UNION ALL
+SELECT 1, q.subject, json_extract(q.data, '$.harness'), q.data FROM entries q
+WHERE q.kind = 'queen' AND json_extract(q.data, '$.pane') = ?1
+  AND q.rowid = (SELECT MAX(x.rowid) FROM entries x WHERE x.kind = 'queen' AND x.subject = q.subject)`, pane)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r Recorded
+		var h, data sql.NullString
+		if err := rows.Scan(&r.Queen, &r.Name, &h, &data); err != nil {
+			return nil, err
+		}
+		r.Harness = cmp.Or(h.String, harness.Default)
+		if data.Valid {
+			if err := json.Unmarshal([]byte(data.String), &r.Process); err != nil {
+				return nil, fmt.Errorf("entry of %s: %w", r.Name, err)
+			}
+			r.HasProcess = r.Process.PID > 0
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }

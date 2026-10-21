@@ -48,6 +48,7 @@ func TestMain(m *testing.M) {
 	}
 	os.Setenv("XDG_CONFIG_HOME", xdg)
 	os.Unsetenv("BS_LOGBOOK_DIR")
+	os.Unsetenv("HERDR_PANE_ID") // never the pane the tests run in, nor its sessions in the real store
 	code := m.Run()
 	os.RemoveAll(xdg)
 	os.Exit(code)

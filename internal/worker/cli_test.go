@@ -225,3 +225,33 @@ func TestPanesMatchesRealHerdr(t *testing.T) {
 		t.Fatalf("Panes of a gone workspace = %v, %v; want none", panes, err)
 	}
 }
+
+// The real herdr's pane list, read the way bs reads it, finds this test's own pane under
+// the directory its shell works in, and none under a fresh temp dir (motif 13).
+func TestPanesUnderMatchesRealHerdr(t *testing.T) {
+	pane := os.Getenv("HERDR_PANE_ID")
+	if pane == "" {
+		t.Skip("not in a herdr pane")
+	}
+	out, err := exec.Command("herdr", "pane", "get", pane).Output()
+	if err != nil {
+		t.Skip("herdr pane get failed: ", err)
+	}
+	var r struct {
+		Result struct {
+			Pane struct {
+				Cwd string `json:"cwd"`
+			} `json:"pane"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(out, &r); err != nil || r.Result.Pane.Cwd == "" {
+		t.Skipf("no cwd in herdr pane get: %v", err)
+	}
+	panes, err := (worker.HerdrCLI{}).PanesUnder(context.Background(), r.Result.Pane.Cwd)
+	if err != nil || !slices.Contains(panes, pane) {
+		t.Fatalf("PanesUnder(%s) = %v, %v; want %s", r.Result.Pane.Cwd, panes, err, pane)
+	}
+	if panes, err := (worker.HerdrCLI{}).PanesUnder(context.Background(), t.TempDir()); err != nil || len(panes) != 0 {
+		t.Fatalf("PanesUnder(temp) = %v, %v; want none", panes, err)
+	}
+}

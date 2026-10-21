@@ -62,6 +62,7 @@ type fakeHerdr struct {
 	helpers     []string       // processes each harness starts with, so its baseline holds them
 	moved       map[string]int // a moved pane's id → the shell it kept
 	closedPanes []string
+	cwds        map[string]string // pane → the directory its shell works in, for PanesUnder
 }
 
 // fakeProc is a process: a pid with a start time, a name and a parent, alive until it exits.
@@ -165,6 +166,22 @@ func (h *fakeHerdr) ProcessInfo(ctx context.Context, pane string) (worker.PanePr
 		}
 	}
 	return pi, nil
+}
+
+// PanesUnder lists the panes cwds says work inside dir.
+func (h *fakeHerdr) PanesUnder(ctx context.Context, dir string) ([]string, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.listErr != nil {
+		return nil, h.listErr
+	}
+	var out []string
+	for pane, cwd := range h.cwds {
+		if cwd == dir || strings.HasPrefix(cwd, dir+"/") {
+			out = append(out, pane)
+		}
+	}
+	return out, nil
 }
 
 // ClosePane ends the agent in pane, as closing a herdr pane does.
@@ -2435,6 +2452,19 @@ func TestPruneFreesAnEndedWorkersLeftoverWorktree(t *testing.T) {
 		}},
 		{name: "a workspace open on it", kept: "herdr workspace w9 is open on it", setup: func(r rig, wt string) {
 			r.h.workspaces = append(r.h.workspaces, worker.Workspace{ID: "w9", Pane: "w9:p1", Path: wt})
+		}},
+		{name: "a pane working in it", kept: "herdr pane w7:p3 works in it", setup: func(r rig, wt string) {
+			r.h.cwds = map[string]string{"w7:p3": filepath.Join(wt, "sub")} // a keeper's shell, in another workspace
+		}},
+		{name: "no start recorded", kept: "no process was recorded", setup: func(r rig, wt string) {
+			sp, _, _ := r.lb.LatestSpawn(context.Background(), "bees-8")
+			id, err := r.lb.RecordSpawn(context.Background(), "queen-bees", logbook.Spawn{Name: "bees-8", Bead: "bees-8", Worktree: sp.Worktree, Branch: "bees-8", Repo: sp.Repo}, "")
+			if err == nil {
+				err = r.lb.RecordEnd(context.Background(), "queen-bees", id)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
 		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {

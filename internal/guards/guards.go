@@ -83,6 +83,19 @@ func Build(d config.Delivery, g config.Guards, w Worker) (Rules, error) {
 			}
 		}
 	}
+	if w.Dir != "" { // kind none: no worktree or branch to describe or grant, only the denies
+		if len(g.AllowMergeInto) > 0 {
+			return Rules{}, fmt.Errorf("guards.allow_merge_into: workspace.kind none gives a worker no branch, so no pull request of its own to merge")
+		}
+		r := Rules{Deny: slices.Clone(g.Deny), Environment: []string{fmt.Sprintf("Host containment: a bees worker, working in the directory %s for the repository %s.", w.Dir, w.Repo)}, Allow: []string{
+			fmt.Sprintf("Running this repository's own build, lint and test commands inside the directory %s.", w.Dir),
+			"Running bs and bd, the bees tools, to read and send its project's messages and to read and update its own beads.",
+		}}
+		if len(r.Deny) == 0 {
+			r.Deny = pushes(w.DefaultBranches, d.Kind != "manual")
+		}
+		return r, nil
+	}
 	env := fmt.Sprintf("Host containment: a bees worker, working in its own git worktree %s on its own branch %s of the repository %s.", w.Worktree, w.Branch, w.Repo)
 	if w.Protected && d.Kind != "manual" {
 		env += " GitHub protects the repository's default branch, so the worker's work reaches it only through a pull request the keeper merges."
@@ -90,15 +103,7 @@ func Build(d config.Delivery, g config.Guards, w Worker) (Rules, error) {
 	r := Rules{Deny: slices.Clone(g.Deny), Environment: []string{env}, Allow: []string{
 		fmt.Sprintf("Running this repository's own build, lint and test commands (such as go vet, go test, go build -o into the worktree, pre-commit) inside the worktree %s.", w.Worktree),
 	}}
-	if w.Dir != "" { // kind none: no worktree or branch of its own to describe or grant
-		r.Environment = []string{fmt.Sprintf("Host containment: a bees worker, working in the directory %s for the repository %s.", w.Dir, w.Repo)}
-		r.Allow = []string{fmt.Sprintf("Running this repository's own build, lint and test commands inside the directory %s.", w.Dir)}
-	}
 	switch {
-	case w.Dir != "": // the deny default below still applies; the grants name a branch
-		if len(r.Deny) == 0 {
-			r.Deny = pushes(w.DefaultBranches, d.Kind != "manual")
-		}
 	case d.Kind == "manual":
 		if len(r.Deny) == 0 {
 			r.Deny = pushes(w.DefaultBranches, false)

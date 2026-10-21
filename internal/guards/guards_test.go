@@ -165,3 +165,10 @@ func TestAWorkerWithNoWorktreeIsToldItsDirectoryAndNoBranch(t *testing.T) {
 		t.Fatalf("deny = %q; want pushes to main still denied", r.Deny)
 	}
 }
+
+func TestAMergeGrantNeedsABranch(t *testing.T) {
+	w := guards.Worker{Repo: "/src/toy", Dir: "/src/toy", Protected: true, DefaultBranches: guards.DefaultBranches()}
+	if _, err := guards.Build(config.Delivery{Kind: "github_pr"}, config.Guards{AllowMergeInto: []string{"pilot/*"}}, w); err == nil || !strings.Contains(err.Error(), "workspace.kind none") {
+		t.Fatalf("err = %v, want allow_merge_into refused under kind none", err)
+	}
+}

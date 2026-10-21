@@ -33,8 +33,8 @@ func TestNoneOpensATaggedPlainWorkspaceOnTheRepo(t *testing.T) {
 		t.Fatal(err)
 	}
 	ws := r.h.workspaces[0]
-	if ws.Path != r.repo || ws.Worker != "bees-8" || ws.Label != "bees · hg client" {
-		t.Fatalf("workspace = %+v, want on %s, tagged bees-8", ws, r.repo)
+	if ws.Worker != "bees-8" || ws.Label != "bees · hg client" || !slices.Equal(r.h.tagged, []string{r.repo}) {
+		t.Fatalf("workspace = %+v, tagged %q; want on %s, tagged bees-8", ws, r.h.tagged, r.repo)
 	}
 	sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8")
 	if sp.Kind != worker.NoWorkspace || sp.Dir != r.repo || sp.Worktree != "" || sp.Branch != "" || sp.Label != "hg client" {
@@ -70,8 +70,8 @@ func TestNoneWorkersShareTheRepo(t *testing.T) {
 			t.Fatalf("%s: %v", x.Bead, x.Err)
 		}
 	}
-	if len(r.h.workspaces) != 2 || r.h.workspaces[0].Path != r.repo || r.h.workspaces[1].Path != r.repo {
-		t.Fatalf("workspaces = %+v, want two on the repo", r.h.workspaces)
+	if len(r.h.workspaces) != 2 || !slices.Equal(r.h.tagged, []string{r.repo, r.repo}) {
+		t.Fatalf("workspaces = %+v, tagged %q; want two on the repo", r.h.workspaces, r.h.tagged)
 	}
 }
 
@@ -121,7 +121,7 @@ func TestNoneEndLeavesAWorkspaceNotTaggedAsTheWorker(t *testing.T) {
 
 func TestNoneFindsAnOrphanByItsWorkerTag(t *testing.T) {
 	r := newPlainRig(t)
-	r.h.workspaces = append(r.h.workspaces, worker.Workspace{ID: "w90", Pane: "w90:p1", Path: r.repo, Worker: "bees-9"})
+	r.h.workspaces = append(r.h.workspaces, worker.Workspace{ID: "w90", Pane: "w90:p1", Worker: "bees-9"})
 	if _, err := r.fleet.Spawn(context.Background(), "bees-8", "hg client"); err != nil {
 		t.Fatalf("another worker's workspace on the shared repo blocked the spawn: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestNoneFindsAnOrphanByItsWorkerTag(t *testing.T) {
 	}
 }
 
-func TestNoneEndsAWorkerOnAPathHerdrCut(t *testing.T) {
+func TestNoneEndsAWorkerOnAPathLongerThanAToken(t *testing.T) {
 	ctx := context.Background()
 	r := newPlainRig(t)
 	long := filepath.Join(r.repo, strings.Repeat("deep/", 20))
@@ -141,9 +141,6 @@ func TestNoneEndsAWorkerOnAPathHerdrCut(t *testing.T) {
 	r.fleet.P.Repo = long
 	if _, err := r.fleet.Spawn(ctx, "bees-8", "hg client"); err != nil {
 		t.Fatal(err)
-	}
-	if len(r.h.workspaces[0].Path) != 80 {
-		t.Fatalf("path token = %q, want herdr's 80-character cut", r.h.workspaces[0].Path)
 	}
 	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{}); err != nil || len(r.h.closed) != 1 {
 		t.Fatalf("end = %v, closed = %v", err, r.h.closed)
@@ -159,5 +156,17 @@ func TestRecordedKindBeatsTheConfig(t *testing.T) {
 	r.fleet.WorkspaceKind = worker.GitWorktree // the keeper switched kinds since
 	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{}); err != nil || len(r.h.closed) != 1 || len(r.h.removed) != 0 {
 		t.Fatalf("end = %v, closed = %v, removed = %v; want the recorded kind's teardown", err, r.h.closed, r.h.removed)
+	}
+}
+
+func TestNoneSpawnThatCantTagClosesItsWorkspace(t *testing.T) {
+	ctx := context.Background()
+	r := newPlainRig(t)
+	r.h.tagErr = errors.New("herdr workspace report-metadata: refused")
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "hg client"); err == nil {
+		t.Fatal("spawn succeeded with an untagged workspace")
+	}
+	if _, ok, _ := r.lb.LatestSpawn(ctx, "bees-8"); ok || len(r.h.workspaces) != 0 || len(r.h.closed) != 1 {
+		t.Fatalf("workspaces = %v, closed = %v; want the workspace taken back", r.h.workspaces, r.h.closed)
 	}
 }

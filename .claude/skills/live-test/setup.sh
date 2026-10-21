@@ -34,8 +34,7 @@ record pane "$pane"
 # The pane's shell starts from herdr's environment, not this one, so unset BS_LOGBOOK and
 # BS_PROJECT there too: the queen finds the toy from the cwd. The PATH reaches the queen's own
 # bs calls only: workers start from herdr's environment and run the shared bs.
-# BEES_LIVE_CONFIG=1 gives the queen's bs its own config dir, <run>/keeper/config/bees, for a
-# test of config keys; workers and teardown.sh still read the real one.
+# BEES_LIVE_CONFIG=1: the queen's own config dir (SKILL.md).
 xdg=
 if [ -n "${BEES_LIVE_CONFIG:-}" ]; then
 	mkdir -p "$run/keeper/config/bees/projects" && record config "$run/keeper/config/bees"

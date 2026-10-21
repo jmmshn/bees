@@ -64,7 +64,7 @@ func CheckLabel(label string) error {
 // worker and path (kind none).
 type Workspace struct {
 	ID, Label, Pane string
-	Path            string // the worktree's checkout, else the path token (cut at 80 characters)
+	Path            string // the worktree's checkout; "" for a plain workspace
 	Worker          string // the worker token of a plain workspace bs opened; "" untagged
 }
 
@@ -328,6 +328,9 @@ func (f Fleet) check(ctx context.Context, bead, label string) (plan, error) {
 	sp0 := logbook.Spawn{Name: name, Bead: bead, Worktree: f.worktree(name), Branch: name, Repo: f.P.Repo}
 	if f.WorkspaceKind == NoWorkspace {
 		sp0 = logbook.Spawn{Name: name, Bead: bead, Kind: NoWorkspace, Dir: f.P.Repo, Repo: f.P.Repo}
+		if fi, err := os.Stat(f.P.Repo); err != nil || !fi.IsDir() { // herdr would open $HOME without a word
+			return p, fmt.Errorf("%s: workspace directory %s is not a directory", name, f.P.Repo)
+		}
 	}
 	protected := len(f.Guards.AllowMergeInto) > 0 && f.protected(ctx, sp0) // only a merge grant needs GitHub's word before anything is made
 	r, err := f.rules(ctx, sp0, protected)
@@ -443,10 +446,7 @@ func (f Fleet) open(ctx context.Context, p plan) (logbook.Spawn, error) {
 // worker, and records the spawn. A failure before the record closes the workspace, so
 // spawning again starts clean (motif 8).
 func (f Fleet) openPlain(ctx context.Context, p plan) (logbook.Spawn, error) {
-	dir := f.P.Repo
-	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() { // herdr would open $HOME without a word
-		return logbook.Spawn{}, fmt.Errorf("%s: workspace directory %s is not a directory", p.name, dir)
-	}
+	dir := f.P.Repo // check found it a directory
 	ws, err := f.H.CreateWorkspace(ctx, dir, f.herdrLabel(p.label))
 	if err != nil {
 		return logbook.Spawn{}, err
@@ -484,11 +484,17 @@ func (f Fleet) rules(ctx context.Context, sp logbook.Spawn, protected bool) (gua
 // main checkout, has checked out, since origin/HEAD is unset in a repo that was never cloned.
 func Rules(ctx context.Context, repo string, d config.Delivery, g config.Guards, w guards.Worker) (guards.Rules, error) {
 	var heads []string
-	if w.Dir != "" && gitRun(ctx, repo, "rev-parse", "--git-dir") != nil {
+	if w.Dir != "" {
 		// Kind none on a jj or hg checkout: no git default branch to read, so the guards
-		// cover main and master.
-		w.DefaultBranches = guards.DefaultBranches()
-		return guards.Build(d, g, w)
+		// cover main and master. Any other git failure refuses (motif 7).
+		err := gitRun(ctx, repo, "rev-parse", "--git-dir")
+		if err != nil && !strings.Contains(err.Error(), "not a git repository") {
+			return guards.Rules{}, fmt.Errorf("finding the default branch to guard: %w", err)
+		}
+		if err != nil {
+			w.DefaultBranches = guards.DefaultBranches()
+			return guards.Build(d, g, w)
+		}
 	}
 	for _, ref := range []string{"refs/remotes/origin/HEAD", "HEAD"} {
 		h, err := symRef(ctx, repo, ref)

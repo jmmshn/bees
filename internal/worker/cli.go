@@ -215,7 +215,7 @@ func (HerdrCLI) Workspaces(ctx context.Context) ([]Workspace, error) {
 	}
 	var out []Workspace
 	for _, w := range r.Result.Workspaces {
-		ws := Workspace{ID: w.ID, Label: w.Label, Path: w.Tokens[tokenPath], Worker: w.Tokens[tokenWorker]}
+		ws := Workspace{ID: w.ID, Label: w.Label, Worker: w.Tokens[tokenWorker]} // the path token may be cut: never a Path
 		if w.Worktree != nil {
 			ws.Path = w.Worktree.Path
 		}

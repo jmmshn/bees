@@ -40,6 +40,9 @@ type fakeHerdr struct {
 	cuts       [][2]string       // the repo and base ref each worktree was cut from
 	removed    []string
 	closed     []string
+	closeErr   error           // herdr can't close a workspace
+	tagged     []string        // the path each plain workspace was tagged with
+	tagErr     error           // herdr can't tag a workspace
 	dirty      map[string]bool // worktree paths with modified or untracked files
 	failStart  error
 	liveAnyway bool  // with failStart: Claude came up all the same, as after herdr's timeout
@@ -130,20 +133,24 @@ func (h *fakeHerdr) CreateWorkspace(ctx context.Context, dir, label string) (wor
 	return ws, nil
 }
 
-// TagWorkspace cuts each value to 80 characters, as herdr 0.9.5 does without a word.
+// TagWorkspace cuts each value to 80 characters, as herdr 0.9.5 does without a word; the
+// path token reads back as no Path, as HerdrCLI.Workspaces lists it.
 func (h *fakeHerdr) TagWorkspace(ctx context.Context, workspace, name, path string) error {
 	i := slices.IndexFunc(h.workspaces, func(w worker.Workspace) bool { return w.ID == workspace })
 	if i < 0 {
 		return fmt.Errorf("herdr workspace report-metadata: workspace %s not found", workspace)
 	}
-	cut := func(s string) string { return s[:min(len(s), 80)] }
-	h.workspaces[i].Worker, h.workspaces[i].Path = cut(name), cut(path)
+	if h.tagErr != nil {
+		return h.tagErr
+	}
+	h.workspaces[i].Worker = name[:min(len(name), 80)]
+	h.tagged = append(h.tagged, path)
 	return nil
 }
 
 func (h *fakeHerdr) CloseWorkspace(ctx context.Context, workspace string) error {
-	if h.listErr != nil {
-		return h.listErr
+	if h.closeErr != nil {
+		return h.closeErr
 	}
 	h.closed = append(h.closed, workspace)
 	h.workspaces = slices.DeleteFunc(h.workspaces, func(w worker.Workspace) bool { return w.ID == workspace })

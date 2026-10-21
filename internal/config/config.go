@@ -37,12 +37,13 @@ import (
 // harness. Only the active harness's tables may be set (ADR-0009).
 type Config struct {
 	// Harness is the harness every new queen and worker on this machine starts on.
-	Harness  string   `toml:"harness" scope:"global" default:"claude_code" enum:"claude_code|agy"`
-	Paths    Paths    `toml:"paths"`
-	Delivery Delivery `toml:"delivery"`
-	Guards   Guards   `toml:"guards"`
-	Queen    Role     `toml:"queen"`
-	Worker   Worker   `toml:"worker"`
+	Harness   string    `toml:"harness" scope:"global" default:"claude_code" enum:"claude_code|agy"`
+	Paths     Paths     `toml:"paths"`
+	Workspace Workspace `toml:"workspace"`
+	Delivery  Delivery  `toml:"delivery"`
+	Guards    Guards    `toml:"guards"`
+	Queen     Role      `toml:"queen"`
+	Worker    Worker    `toml:"worker"`
 }
 
 // Delivery says how a worker's work lands (ADR-0009): it picks the role prompts' delivery
@@ -65,6 +66,12 @@ type Paths struct {
 	Repos      string `toml:"repos" scope:"global" env:"BS_REPOS" path:"dir"`
 	Repo       string `toml:"repo" scope:"project" path:"dir"`
 	Worktrees  string `toml:"worktrees" scope:"both" default:"{repo}-WT" path:"{repo}"`
+}
+
+// Workspace says what a worker's workspace is (ADR-0009): its own git worktree, or none,
+// a plain herdr workspace on paths.repo.
+type Workspace struct {
+	Kind string `toml:"kind" scope:"both" default:"git_worktree" enum:"git_worktree|none"`
 }
 
 // Role holds the settings of the queen or of every worker.

@@ -62,6 +62,7 @@ func locate(name string, cfg *config.Loaded, flagRepo string) (project.Project, 
 		Repo:       config.Expand(cfg.Paths.Repo),
 		Repos:      config.Expand(cfg.Paths.Repos),
 		Worktrees:  config.Expand(cfg.Paths.Worktrees),
+		AnyVCS:     cfg.Workspace.Kind == worker.NoWorkspace,
 	})
 }
 

@@ -23,7 +23,7 @@ case $arm in
 		[ -n "${BAKEOFF_BS:-}" ] && cmd="PATH=$(cd "$(dirname "$BAKEOFF_BS")" && pwd):\$PATH bs queen" ;;
 esac
 name=$([ "$arm" = c ] && echo "queen-$id" || echo "lead-$id")
-ws=$(herdr workspace create --cwd "$repo" --label "bakeoff $id" --no-focus)
+ws=$(herdr workspace create --cwd "$repo" --label "$id · $([ "$arm" = c ] && echo queen || echo lead)" --no-focus) # <project> · <label>, as bs labels (bees-12.14)
 pane=$(jq -r .result.root_pane.pane_id <<<"$ws")
 jq -n --arg id "$id" --arg arm "$arm" --arg s "S$s" --arg repo "$repo" --arg pane "$pane" --arg name "$name" \
 	--arg ws "$(jq -r .result.workspace.workspace_id <<<"$ws")" --arg t0 "$(date -u +%FT%T.%3NZ)" \

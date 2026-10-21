@@ -15,7 +15,7 @@ import (
 // that sets none.
 const Default = "claude_code"
 
-// ErrNotRunning means no live session has the name rung.
+// ErrNotRunning means the session rung is not running: its recorded process is gone.
 var ErrNotRunning = errors.New("not running")
 
 // ErrNoResume means the harness can't resume a conversation, so a start that would
@@ -68,7 +68,7 @@ var FileKey = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z]+)?$`)
 // Target is a session as the core found it.
 type Target struct {
 	Name, Pane string
-	PID        int // the agent's pid; 0 until the core finds sessions from herdr (bees-12.10)
+	PID        int // the harness process its start or queen entry recorded, alive with its start time
 }
 
 // Harness is one agent program bs can start and ring.

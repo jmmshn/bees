@@ -370,7 +370,7 @@ func (f Fleet) check(ctx context.Context, req Request) (plan, error) {
 	if f.WorkspaceKind == NoWorkspace {
 		// Workers share this directory, so only the keeper names it: a repo the chain
 		// found by git is the checkout bs runs in, the queen's own (bees-12.28).
-		if f.P.RepoFrom != "paths.repo" && f.P.RepoFrom != "--repo" {
+		if !f.P.RepoNamed() {
 			return p, fmt.Errorf("%s: workspace kind none opens workers on paths.repo, which is unset; set it in the project's config file to the directory they share (bs config shows the repo it found: %s, from %s)", name, f.P.Repo, f.P.RepoFrom)
 		}
 		sp0 = logbook.Spawn{Name: name, Bead: bead, Kind: NoWorkspace, Dir: f.P.Repo, Repo: f.P.Repo, Path: p.path}

@@ -60,7 +60,7 @@ func Delivery(kind, fragment string) (string, error) {
 // the delivery fragment under "## Delivery" (the roles point to both), with {{project}}
 // filled in. A fragment line "<!-- queen -->" or "<!-- worker -->" starts a part only that
 // role reads, up to the next such line; text before the first one goes to both. An
-// unknown workspace kind is an error: config's enum and the spawn record allow none.
+// unknown workspace kind is an error: config's enum and the spawn record allow no other.
 func Text(r Role, project, workspace, delivery string) (string, error) {
 	ws, err := workspaces.ReadFile("workspace/" + cmp.Or(workspace, "git_worktree") + ".md")
 	if err != nil {

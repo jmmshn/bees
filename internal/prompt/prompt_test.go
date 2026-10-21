@@ -225,7 +225,7 @@ func TestNoneWorkspaceMentionsNoBranchOrWorktree(t *testing.T) {
 				t.Errorf("none %s prompt lacks %q", role, w)
 			}
 		}
-		if got, _ := prompt.Text(role, "web2", "git_worktree", manual); !strings.Contains(got, "own branch") {
+		if got := must(t, role, "git_worktree", manual); !strings.Contains(got, "own branch") {
 			t.Errorf("git_worktree %s prompt lost its branch wording:\n%s", role, got)
 		}
 	}

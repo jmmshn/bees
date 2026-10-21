@@ -141,6 +141,10 @@ func Locate(name string, c Paths) (Project, error) {
 	return p, err
 }
 
+// RepoNamed reports whether the keeper named the repo (--repo or paths.repo) rather than
+// bs finding it: workspace kind none opens workers only on a named one (bees-12.28).
+func (p Project) RepoNamed() bool { return p.RepoFrom == "--repo" || p.RepoFrom == "paths.repo" }
+
 // RepoErr is why the repo chain's repo is unusable, nil if it is fine or unknown.
 func (p Project) RepoErr() error { return p.repoErr }
 

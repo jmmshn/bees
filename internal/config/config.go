@@ -29,12 +29,15 @@ import (
 //   - path: a path, checked as ADR-0008 says: "dir", or "{repo}" when the value may
 //     begin with the {repo} placeholder (optional).
 //
-// A harness's own settings nest under its table in the role's ([worker.claude_code]);
-// the role tables themselves say nothing about any harness.
+// A harness's own settings nest under its table in the role's ([worker.claude_code]),
+// named by the harness's config name; the role tables themselves say nothing about any
+// harness. Only the active harness's tables may be set (ADR-0009).
 type Config struct {
-	Paths  Paths `toml:"paths"`
-	Queen  Role  `toml:"queen"`
-	Worker Role  `toml:"worker"`
+	// Harness is the harness every new queen and worker on this machine starts on.
+	Harness string `toml:"harness" scope:"global" default:"claude_code" enum:"claude_code"`
+	Paths   Paths  `toml:"paths"`
+	Queen   Role   `toml:"queen"`
+	Worker  Role   `toml:"worker"`
 }
 
 // Paths says where bs keeps its files and finds repos.
@@ -172,7 +175,28 @@ func load(dst any, src map[string]Source, shadowed map[string][]string, files *[
 		f.v.SetString(val)
 		src[f.key] = Source{Kind: "env", Where: env}
 	}
-	return errors.Join(errs...)
+	return errors.Join(append(errs, inactive(root, src)...)...)
+}
+
+// inactive refuses a value set in a role's table for a harness other than the active one:
+// bs would never read it. A role's tables are named by harness config names.
+func inactive(root reflect.Value, src map[string]Source) []error {
+	harness := root.FieldByName("Harness").String()
+	var errs []error
+	seen := map[string]bool{}
+	for _, f := range leaves(root, "") {
+		parts := strings.Split(f.key, ".")
+		if len(parts) != 3 || parts[0] != "queen" && parts[0] != "worker" || parts[1] == harness {
+			continue
+		}
+		s := src[f.key]
+		table := parts[0] + "." + parts[1]
+		if (s.Kind == "global" || s.Kind == "project") && !seen[s.Where+table] {
+			seen[s.Where+table] = true
+			errs = append(errs, fmt.Errorf("%s: [%s] is for harness %s, but the harness key says %s, so bs never reads it", s.Where, table, parts[1], harness))
+		}
+	}
+	return errs
 }
 
 // decodeFile lays one file's keys over root and records them in src. It reports

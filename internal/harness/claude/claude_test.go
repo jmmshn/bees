@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jmmshn/bees/internal/harness"
 	"github.com/jmmshn/bees/internal/harness/claude"
 	"github.com/jmmshn/bees/internal/harness/claude/claudetest"
 )
@@ -17,7 +18,7 @@ func TestRingSendsAuthThenUserLineThenEOF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := claude.Ring(s, "hello", claude.Now); err != nil {
+	if err := claude.Ring(s, "hello", harness.Now); err != nil {
 		t.Fatal(err)
 	}
 	lines := got()
@@ -41,7 +42,7 @@ func TestRingWithoutTokenSendsNoAuthLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := claude.Ring(s, "hello", claude.Next); err != nil {
+	if err := claude.Ring(s, "hello", harness.Next); err != nil {
 		t.Fatal(err)
 	}
 	lines := got()

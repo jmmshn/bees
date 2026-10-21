@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/jmmshn/bees/internal/prompt"
@@ -167,6 +168,42 @@ func TestQueenRefusesAnUnreadableFragment(t *testing.T) {
 	t.Cleanup(func() { execAgent = execAgentProcess })
 	if _, stderr, code := bs(t, "queen"); code != 1 || !strings.Contains(stderr, "delivery.fragment") {
 		t.Fatalf("queen: exit %d, stderr %q; want exit 1 naming delivery.fragment", code, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".local/share/bees/bees.db")); err == nil {
+		t.Error("a refused queen started a logbook")
+	}
+}
+
+// A merge grant every spawn would refuse stops bs queen before Claude starts, rather than
+// at the queen's first spawn, after its bead is made (bees-12.20).
+func TestQueenRefusesGuardsEverySpawnWouldRefuse(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	t.Setenv("BS_PROJECT", "bees")
+	t.Setenv("BS_LOGBOOK", "")
+	t.Setenv("BS_LOGBOOK_DIR", "")
+	repos := t.TempDir()
+	t.Setenv("BS_REPOS", repos)
+	if out, err := exec.Command("git", "init", "-q", filepath.Join(repos, "bees")).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	t.Chdir(t.TempDir())
+	useFakeHive(t) // no GitHub, so nothing confirms the default branch is protected
+	cfg := filepath.Join(xdg, "bees", "projects", "bees.toml")
+	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg, []byte("[guards]\nallow_merge_into = [\"pilot/*\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	execAgent = func(string, []string, string, ...string) error {
+		t.Fatal("started Claude with guards every spawn refuses")
+		return nil
+	}
+	t.Cleanup(func() { execAgent = execAgentProcess })
+	if _, stderr, code := bs(t, "queen"); code != 1 || !strings.Contains(stderr, "guards.allow_merge_into") || !strings.Contains(stderr, "bs spawn would refuse every worker") {
+		t.Fatalf("queen: exit %d, stderr %q; want exit 1 naming guards.allow_merge_into", code, stderr)
 	}
 	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".local/share/bees/bees.db")); err == nil {
 		t.Error("a refused queen started a logbook")

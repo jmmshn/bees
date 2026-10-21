@@ -55,6 +55,13 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if err != nil {
 		return err
 	}
+	// A guard every spawn would refuse stops the queen too, not her first spawn (bees-12.20).
+	// Only configured guards can fail; the defaults always build.
+	if len(cfg.Guards.Deny) > 0 || len(cfg.Guards.AllowMergeInto) > 0 {
+		if _, err := workerGuards(ctx, p, cfg); err != nil {
+			return fmt.Errorf("%w; bs spawn would refuse every worker", err)
+		}
+	}
 	// The queen starts the project, so her bs commands find a logbook.
 	_, lb, err := scope(ctx, "queen", *proj, "", stderr)
 	if err != nil {

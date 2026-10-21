@@ -13,8 +13,10 @@ The toy's id (`lt<16 digits>`) names everything it owns: its project, beads (`<t
 
 ```sh
 go build -o bin/bs ./cmd/bs                    # the build under test, in this checkout
-.claude/skills/live-test/setup.sh [<bin dir>]  # prints live.json: toy, run, repo, pane, workspace, builds
+.claude/skills/live-test/setup.sh [--config <file>] [<bin dir>]  # prints live.json: toy, run, repo, pane, workspace, builds
 ```
+
+**A toy config.** A `[delivery]`, `[guards]` or other project setting under test goes in a file of yours (under `<run>/keeper/` of an earlier run, or your scratch dir) passed as `--config <file>`. Setup copies it to `<run>/xdg/bees/projects/<toy>.toml`, in a config home of the run's own (the real one's entries linked in, so gh and git keep their config, plus the real global `config.toml`), and starts the queen with `XDG_CONFIG_HOME` there (`xdg` in live.json). Prefix your own `bs` calls with `XDG_CONFIG_HOME=<xdg>` to see the same config. Workers start from herdr's environment and read the real config. Teardown removes `<run>/xdg`; never write the toy's file under `~/.config` yourself.
 
 Setup makes a git repo at `~/.cache/bees-live/<toy>/<toy>` (or under `$BEES_LIVE`, symlinks resolved) (outside every repo, so bees' `CLAUDE.md` stays out of the toy's sessions), sets its git `user.name` to the toy id (bd's `created_by` on every bead the toy's sessions file, so teardown can note one filed elsewhere), opens a herdr workspace on it, starts `bs queen` there with your build first on its PATH and `BS_LOGBOOK`/`BS_PROJECT` unset, answers the folder-trust prompt, and exits 0 only once the queen is up and idle. Keep every file you write under `<run>/keeper/`; other live tests may run beside yours.
 

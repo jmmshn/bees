@@ -129,11 +129,7 @@ func printGuards(ctx context.Context, stdout io.Writer, p project.Project, l *co
 		fmt.Fprintln(stdout, "# guards: unknown until bs finds the repo, whose default branch they guard")
 		return
 	}
-	w := guards.Worker{Branch: "<worker>", Worktree: filepath.Join(p.Worktrees, "<worker>"), Repo: p.Repo}
-	if len(l.Guards.AllowMergeInto) > 0 && l.Delivery.Kind != "manual" {
-		w.Protected = protected(ctx, p.Repo) // a merge grant holds only on a protected default branch
-	}
-	r, err := worker.Rules(ctx, p.Repo, l.Delivery, l.Guards, w)
+	r, err := workerGuards(ctx, p, l)
 	if err != nil {
 		fmt.Fprintf(stdout, "# guards: unusable, so bs spawn refuses: %v\n", err)
 		return
@@ -146,6 +142,16 @@ func printGuards(ctx context.Context, stdout io.Writer, p project.Project, l *co
 	for _, a := range r.Allow {
 		fmt.Fprintf(stdout, "#   %s\n", a)
 	}
+}
+
+// workerGuards builds the guards every worker of p gets, with <worker> for its branch: the
+// same check bs spawn makes, so bs config shows and bs queen refuses what every spawn would.
+func workerGuards(ctx context.Context, p project.Project, l *config.Loaded) (guards.Rules, error) {
+	w := guards.Worker{Branch: "<worker>", Worktree: filepath.Join(p.Worktrees, "<worker>"), Repo: p.Repo}
+	if len(l.Guards.AllowMergeInto) > 0 && l.Delivery.Kind != "manual" {
+		w.Protected = protected(ctx, p.Repo) // a merge grant holds only on a protected default branch
+	}
+	return worker.Rules(ctx, p.Repo, l.Delivery, l.Guards, w)
 }
 
 // tomlString quotes s as a TOML basic string; Go's %q writes escapes TOML lacks (\a, \v).

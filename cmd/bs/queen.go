@@ -11,21 +11,23 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/jmmshn/bees/internal/harness"
 	"github.com/jmmshn/bees/internal/prompt"
 )
 
-// execClaude replaces bs with claude, run in dir with env. Tests swap it out.
-var execClaude = execClaudeProcess
+// execAgent replaces bs with the harness binary program, run in dir with env. Tests swap
+// it out.
+var execAgent = execAgentProcess
 
-func execClaudeProcess(dir string, env []string, args ...string) error {
-	path, err := exec.LookPath("claude")
+func execAgentProcess(dir string, env []string, program string, args ...string) error {
+	path, err := exec.LookPath(program)
 	if err != nil {
 		return err
 	}
 	if err := os.Chdir(dir); err != nil {
 		return err
 	}
-	return syscall.Exec(path, append([]string{"claude"}, args...), env)
+	return syscall.Exec(path, append([]string{program}, args...), env)
 }
 
 func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -66,9 +68,16 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if err != nil {
 		return err
 	}
-	argv := []string{"--name", p.Queen(), "--append-system-prompt-file", file}
-	if m := cfg.Queen.ClaudeCode.Model; m != "" {
-		argv = append(argv, "--model="+m) // one argument: a value starting with - stays a value
+	h, err := adapter(cfg, cfg.Queen)
+	if err != nil {
+		return err
 	}
-	return execClaude(p.Repo, env, argv...)
+	l, err := h.Prepare(harness.Start{Role: prompt.Queen, Name: p.Queen(), Dir: p.Repo, PromptFile: file})
+	if err != nil {
+		return err
+	}
+	if len(l.Files) > 0 {
+		return fmt.Errorf("harness %s wants files for the queen, which bs queen doesn't write yet", cfg.Harness)
+	}
+	return execAgent(p.Repo, env, h.Kind(), l.Args...)
 }

@@ -3,6 +3,7 @@
 package logbook
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -16,6 +17,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/jmmshn/bees/internal/harness"
 )
 
 // ID identifies an entry. Message ids sort by creation time.
@@ -199,6 +202,10 @@ type Spawn struct {
 	Base      string `json:"base,omitempty"` // the checkout the branch was cut from (Repo, or a linked worktree); empty before bees-11.3
 	Ended     bool   `json:"-"`
 	Read      bool   `json:"-"` // the worker has read a message since this spawn, so it has a conversation
+	// Harness is the config name of the harness the worker started on; an entry from
+	// before bees-12.6 reads as harness.Default. Record is that harness's Launch.Record.
+	Harness string            `json:"harness,omitempty"`
+	Record  map[string]string `json:"record,omitempty"`
 }
 
 // RecordSpawn records that by spawned s.Name and, in the same transaction, sends it
@@ -267,10 +274,19 @@ FROM entries s WHERE s.kind = 'spawned' AND s.subject = ? ORDER BY s.rowid DESC 
 		return Spawn{}, false, err
 	}
 	s.Name = name
-	if err := json.Unmarshal([]byte(data), &s); err != nil {
-		return Spawn{}, false, fmt.Errorf("spawn record %s: %w", s.ID, err)
+	if err := s.decode(data); err != nil {
+		return Spawn{}, false, err
 	}
 	return s, true, nil
+}
+
+// decode fills s from a spawned entry's data.
+func (s *Spawn) decode(data string) error {
+	if err := json.Unmarshal([]byte(data), s); err != nil {
+		return fmt.Errorf("spawn record %s: %w", s.ID, err)
+	}
+	s.Harness = cmp.Or(s.Harness, harness.Default)
+	return nil
 }
 
 // EndedSpawns returns the latest spawn of each worker whose latest spawn has ended, by
@@ -300,8 +316,8 @@ ORDER BY s.subject`, ended)
 		if err := rows.Scan(&s.ID, &s.Name, &data); err != nil {
 			return nil, err
 		}
-		if err := json.Unmarshal([]byte(data), &s); err != nil {
-			return nil, fmt.Errorf("spawn record %s: %w", s.ID, err)
+		if err := s.decode(data); err != nil {
+			return nil, err
 		}
 		s.Ended = ended
 		out = append(out, s)

@@ -34,7 +34,7 @@ func (h *fakeHive) CreateWorktree(ctx context.Context, repo, base, branch, path,
 	return worker.Workspace{ID: fmt.Sprintf("w%d", h.next), Label: label, Pane: fmt.Sprintf("w%d:p1", h.next), Path: path}, nil
 }
 
-func (h *fakeHive) StartClaude(ctx context.Context, pane, name string, args ...string) error {
+func (h *fakeHive) StartAgent(ctx context.Context, pane, name, kind string, args ...string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.live[name] = true

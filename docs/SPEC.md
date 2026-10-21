@@ -163,7 +163,7 @@ func NextEpic(project string, ids []string) string // <project>-<max+1>
 
 type Herdr interface {
 	CreateWorktree(ctx context.Context, repo, branch, path, label string) (Workspace, error)
-	StartClaude(ctx context.Context, pane, name string, args ...string) error // ErrWaiting, ErrUnconfirmed, ErrUnsafeArg
+	StartAgent(ctx context.Context, pane, name, kind string, args ...string) error // ErrWaiting, ErrUnconfirmed, ErrUnsafeArg
 	RemoveWorktree(ctx context.Context, workspace string) error               // already gone → nil
 	Workspaces(ctx context.Context) ([]Workspace, error)
 }

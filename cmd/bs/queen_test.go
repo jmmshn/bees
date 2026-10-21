@@ -21,11 +21,11 @@ func TestQueenStartsClaudeNamedForTheProject(t *testing.T) {
 	t.Chdir(t.TempDir()) // not this repo: its own checkout would beat BS_REPOS
 	var gotDir string
 	var gotEnv, gotArgs []string
-	execClaude = func(dir string, env []string, args ...string) error {
+	execAgent = func(dir string, env []string, _ string, args ...string) error {
 		gotDir, gotEnv, gotArgs = dir, env, args
 		return nil
 	}
-	t.Cleanup(func() { execClaude = execClaudeProcess })
+	t.Cleanup(func() { execAgent = execAgentProcess })
 
 	_, stderr, code := bs(t, "queen")
 	if code != 0 {
@@ -62,8 +62,8 @@ func TestQueenOutsideItsRepoWantsBSRepos(t *testing.T) {
 	t.Setenv("BS_PROJECT", "bees")
 	t.Setenv("BS_REPOS", "")
 	t.Chdir(t.TempDir())
-	execClaude = func(string, []string, ...string) error { t.Fatal("started Claude in no repo"); return nil }
-	t.Cleanup(func() { execClaude = execClaudeProcess })
+	execAgent = func(string, []string, string, ...string) error { t.Fatal("started Claude in no repo"); return nil }
+	t.Cleanup(func() { execAgent = execAgentProcess })
 
 	if _, stderr, code := bs(t, "queen"); code != 1 || !strings.Contains(stderr, "set BS_REPOS") {
 		t.Fatalf("queen: exit %d, stderr %q; want exit 1 telling the keeper to set BS_REPOS", code, stderr)
@@ -80,8 +80,8 @@ func TestQueenGetsAnAbsoluteLogbook(t *testing.T) {
 	t.Chdir(dir)
 	t.Setenv("BS_LOGBOOK", "bees.db")
 	var gotEnv []string
-	execClaude = func(_ string, env []string, _ ...string) error { gotEnv = env; return nil }
-	t.Cleanup(func() { execClaude = execClaudeProcess })
+	execAgent = func(_ string, env []string, _ string, _ ...string) error { gotEnv = env; return nil }
+	t.Cleanup(func() { execAgent = execAgentProcess })
 	if _, stderr, code := bs(t, "queen"); code != 0 {
 		t.Fatalf("queen: exit %d: %s", code, stderr)
 	}
@@ -102,8 +102,8 @@ func TestQueenStartsOnTheConfiguredModel(t *testing.T) {
 	t.Setenv("BS_REPOS", "/src")
 	t.Chdir(t.TempDir())
 	var gotArgs []string
-	execClaude = func(_ string, _ []string, args ...string) error { gotArgs = args; return nil }
-	t.Cleanup(func() { execClaude = execClaudeProcess })
+	execAgent = func(_ string, _ []string, _ string, args ...string) error { gotArgs = args; return nil }
+	t.Cleanup(func() { execAgent = execAgentProcess })
 
 	if _, stderr, code := bs(t, "queen"); code != 0 {
 		t.Fatalf("queen: exit %d: %s", code, stderr)

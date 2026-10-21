@@ -29,7 +29,7 @@ func fakeHerdrBinary(t *testing.T, code string) {
 
 func TestHerdrAgentNotReadyMeansWaiting(t *testing.T) {
 	fakeHerdrBinary(t, "agent_not_ready")
-	err := worker.HerdrCLI{}.StartClaude(context.Background(), "w1:p1", "bees-8")
+	err := worker.HerdrCLI{}.StartAgent(context.Background(), "w1:p1", "bees-8", "claude")
 	if !errors.Is(err, worker.ErrWaiting) {
 		t.Fatalf("err = %v, want ErrWaiting", err)
 	}
@@ -37,7 +37,7 @@ func TestHerdrAgentNotReadyMeansWaiting(t *testing.T) {
 
 func TestHerdrTimeoutIsUnconfirmed(t *testing.T) {
 	fakeHerdrBinary(t, "timeout")
-	err := worker.HerdrCLI{}.StartClaude(context.Background(), "w1:p1", "bees-8")
+	err := worker.HerdrCLI{}.StartAgent(context.Background(), "w1:p1", "bees-8", "claude")
 	if !errors.Is(err, worker.ErrUnconfirmed) || errors.Is(err, worker.ErrWaiting) {
 		t.Fatalf("err = %v, want ErrUnconfirmed", err)
 	}
@@ -87,7 +87,7 @@ func TestClaudeSessionsAliveReadsClaudesRegistry(t *testing.T) {
 
 func TestHerdrOtherErrorsAreNotWaiting(t *testing.T) {
 	fakeHerdrBinary(t, "pane_not_found")
-	err := worker.HerdrCLI{}.StartClaude(context.Background(), "w1:p1", "bees-8")
+	err := worker.HerdrCLI{}.StartAgent(context.Background(), "w1:p1", "bees-8", "claude")
 	if err == nil || errors.Is(err, worker.ErrWaiting) {
 		t.Fatalf("err = %v, want a plain error", err)
 	}
@@ -126,7 +126,7 @@ func TestCheckAgentArgsRefusesALaunchTheTtyWouldCut(t *testing.T) {
 
 func TestStartClaudeRefusesUnsafeArgsWithoutRunningHerdr(t *testing.T) {
 	fakeHerdrBinary(t, "herdr_was_run")
-	err := worker.HerdrCLI{}.StartClaude(context.Background(), "w1:p1", "bees-8", "a\nb")
+	err := worker.HerdrCLI{}.StartAgent(context.Background(), "w1:p1", "bees-8", "claude", "a\nb")
 	if !errors.Is(err, worker.ErrUnsafeArg) || strings.Contains(err.Error(), "herdr_was_run") {
 		t.Fatalf("err = %v, want ErrUnsafeArg before herdr runs", err)
 	}

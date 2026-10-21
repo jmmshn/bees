@@ -285,3 +285,36 @@ func TestEnvSkipsTheFiles(t *testing.T) {
 		t.Fatalf("Env() = %+v, %v", l, err)
 	}
 }
+
+// bees-12.6: harness is a global-only enum, default claude_code.
+func TestHarnessIsAGlobalEnum(t *testing.T) {
+	dir := setup(t)
+	global, proj := filepath.Join(dir, "config.toml"), filepath.Join(dir, "projects", "bees.toml")
+	if l, err := Load("bees"); err != nil || l.Harness != "claude_code" {
+		t.Fatalf("default harness = %v, %v; want claude_code", l, err)
+	}
+	write(t, global, "harness = \"agy\"\n[worker.claude_code]\nmodel = \"m\"\n")
+	write(t, proj, "harness = \"claude_code\"\n")
+	_, err := Load("bees")
+	wantErr(t, err, global+`: harness = "agy": must be one of claude_code`, proj+": harness belongs in the global file, not the project one")
+	if strings.Contains(err.Error(), "is for harness") {
+		t.Errorf("error %q also calls every table inactive under a harness that isn't one", err)
+	}
+}
+
+// bees-12.6: a table for a harness other than the active one is an error naming the file,
+// the table and the harness key. Only claude_code exists, so the active one is forced.
+func TestAnInactiveHarnessTableIsAnError(t *testing.T) {
+	dir := setup(t)
+	proj := filepath.Join(dir, "projects", "bees.toml")
+	write(t, proj, "[worker.claude_code]\nmodel = \"sonnet\"\n[queen.claude_code]\nmodel = \"opus\"\n")
+	l, err := Load("bees")
+	if err != nil {
+		t.Fatal(err)
+	}
+	errs := inactive(reflect.ValueOf(&l.Config).Elem(), l.Sources, "oh_my_pi")
+	if len(errs) != 2 {
+		t.Fatalf("errs = %v, want one per table", errs)
+	}
+	wantErr(t, errs[1], proj+": [worker.claude_code] is for harness claude_code, but the harness key says oh_my_pi")
+}

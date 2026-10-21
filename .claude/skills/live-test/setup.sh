@@ -48,7 +48,7 @@ git -C "$repo" config commit.gpgsign false # the signing key and identity live u
 git -C "$repo" config user.name "$toy" && git -C "$repo" config user.email live-test@example.invalid
 printf '# %s\n\nA throwaway project for a live test of bs.\n' "$toy" >"$repo/README.md"
 git -C "$repo" add -A && git -C "$repo" commit -qm "toy"
-ws=$(herdr workspace create --cwd "$repo" --label "live $toy" --no-focus)
+ws=$(herdr workspace create --cwd "$repo" --label "$toy · queen" --no-focus)
 record workspace "$(jq -r .result.workspace.workspace_id <<<"$ws")"
 pane=$(jq -r .result.root_pane.pane_id <<<"$ws")
 record pane "$pane"

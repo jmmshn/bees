@@ -385,6 +385,13 @@ func TestRepoChain(t *testing.T) {
 			t.Errorf("%+v: Locate err = %v, NeedRepo = %v; want only NeedRepo to refuse a non-repo", c, err, p.NeedRepo())
 		}
 	}
+	// Under workspace kind none, paths.repo may be any directory: a jj or hg checkout.
+	if p, err := project.Locate("bees", project.Paths{LogbookDir: "/lb", Repo: repos, AnyVCS: true}); err != nil || p.NeedRepo() != nil || p.Repo != repos || p.Base != "" {
+		t.Errorf("kind none, plain dir: got %+v, %v, NeedRepo = %v", p, err, p.NeedRepo())
+	}
+	if p, _ := project.Locate("bees", project.Paths{LogbookDir: "/lb", Repo: filepath.Join(repos, "nope"), AnyVCS: true}); p.NeedRepo() == nil || !strings.Contains(p.NeedRepo().Error(), "not a directory") {
+		t.Errorf("kind none, missing dir: NeedRepo = %v, want it refused", p.NeedRepo())
+	}
 }
 
 // A repo from --repo or paths.repo that is a linked worktree is the base workers branch

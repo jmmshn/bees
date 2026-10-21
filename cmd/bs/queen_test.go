@@ -66,3 +66,24 @@ func TestQueenOutsideItsRepoWantsBSRepos(t *testing.T) {
 		t.Fatalf("queen: exit %d, stderr %q; want exit 1 telling the keeper to set BS_REPOS", code, stderr)
 	}
 }
+
+// A relative BS_LOGBOOK reaches the queen absolute: she runs in her repo, where the same
+// relative path would name another file and split the store (bees-11.3 review).
+func TestQueenGetsAnAbsoluteLogbook(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("BS_PROJECT", "bees")
+	t.Setenv("BS_REPOS", "/src")
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("BS_LOGBOOK", "bees.db")
+	var gotEnv []string
+	execClaude = func(_ string, env []string, _ ...string) error { gotEnv = env; return nil }
+	t.Cleanup(func() { execClaude = execClaudeProcess })
+	if _, stderr, code := bs(t, "queen"); code != 0 {
+		t.Fatalf("queen: exit %d: %s", code, stderr)
+	}
+	want, _ := filepath.Abs("bees.db")
+	if !slices.Contains(gotEnv, "BS_LOGBOOK="+want) || slices.Contains(gotEnv, "BS_LOGBOOK=bees.db") {
+		t.Errorf("queen env BS_LOGBOOK = %q, want %s", slices.DeleteFunc(gotEnv, func(kv string) bool { return !strings.HasPrefix(kv, "BS_LOGBOOK=") }), want)
+	}
+}

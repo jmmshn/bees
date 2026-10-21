@@ -53,11 +53,15 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return err
 	}
 	lb.Close()
-	// No BS_* variables: the queen's bs finds its name from --name and its project from
-	// the repo (R25). Drop inherited ones so they can't override either.
+	// No BS_SESSION or BS_PROJECT: the queen's bs finds its name from --name and its project
+	// from the repo (R25). Drop inherited ones so they can't override either. A BS_LOGBOOK
+	// passes on absolute: relative, it would name another file in her repo.
 	env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
-		return strings.HasPrefix(kv, "BS_SESSION=") || strings.HasPrefix(kv, "BS_PROJECT=")
+		return strings.HasPrefix(kv, "BS_SESSION=") || strings.HasPrefix(kv, "BS_PROJECT=") || strings.HasPrefix(kv, "BS_LOGBOOK=")
 	})
+	if os.Getenv("BS_LOGBOOK") != "" {
+		env = append(env, "BS_LOGBOOK="+p.Logbook)
+	}
 	file, err := prompt.File(prompt.Queen, p.Name)
 	if err != nil {
 		return err

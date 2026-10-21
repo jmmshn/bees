@@ -224,6 +224,9 @@ func cmdSend(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	if err := project.CheckSession(to); err != nil {
 		return err
 	}
+	if err := elsewhere(p, to, stderr); err != nil {
+		return err
+	}
 	fromProject := "" // the logbook's own project
 	if c.inPane && c.Project != p.Name {
 		fromProject = c.Project // cross-project mail: the reply goes back to the pane's project
@@ -249,8 +252,30 @@ func warnStranger(ctx context.Context, lb *logbook.Logbook, p project.Project, t
 	if _, ok, err := lb.LatestSpawn(ctx, to); err != nil || ok {
 		return false, err
 	}
-	fmt.Fprintf(stderr, "bs send: warning: %s is not %s or a worker spawned in project %s, so bs stored the message without ringing it; %s reads this logbook (%s) only if it runs in %s (set BS_PROJECT or pass --project)\n", to, p.Queen(), p.Name, to, p.Logbook, p.Name)
+	fmt.Fprintf(stderr, "bs send: warning: %s is not %s or a worker spawned in project %s, so bs stored the message in %s without ringing it; %s reads it only if it is a session of project %s (else send it with --project <its project>)\n", to, p.Queen(), p.Name, p.Logbook, to, p.Name)
 	return true, nil
+}
+
+// elsewhere refuses (exit 1), storing nothing, a message for another project's session:
+// to is that project's queen or one of its workers by the naming rule (R27: project names
+// have no "-"), and that project's logbook exists beside this one. Stored here it would
+// never be read, while bs send said "sent" (bees-12.38, motifs 4 and 11).
+func elsewhere(p project.Project, to string, stderr io.Writer) error {
+	owner, ok := strings.CutPrefix(to, "queen-")
+	if !ok {
+		owner, _, _ = strings.Cut(to, "-")
+		if !worker.IsWorkerOf(owner, to) {
+			return nil
+		}
+	}
+	if owner == p.Name {
+		return nil
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(p.Logbook), owner+".db")); err != nil {
+		return nil
+	}
+	fmt.Fprintf(stderr, "bs send: %s is a session of project %s, not %s; nothing stored: bs send --project %s %s \"...\"\n", to, owner, p.Name, owner, to)
+	return exitCode(1)
 }
 
 // ring rings to with its unread count. The message is already stored, so a failed ring
@@ -324,6 +349,15 @@ func target(ctx context.Context, lb *logbook.Logbook, to string) (harness.Target
 // doorbell names who the unread messages are from, never what they say:
 // [bs] 3 unread (queen ×2, bees-1-2) — run: bs inbox   (reply with: bs send queen "...")
 func doorbell(unread []logbook.Message, from string) string {
+	reply := from
+	for _, m := range slices.Backward(unread) {
+		if m.From == from {
+			if m.FromProject != "" { // cross-project mail: the reply goes to the sender's logbook
+				reply = "--project " + m.FromProject + " " + from
+			}
+			break
+		}
+	}
 	var senders []string
 	count := map[string]int{}
 	for _, m := range unread {
@@ -337,7 +371,7 @@ func doorbell(unread []logbook.Message, from string) string {
 			senders[i] = fmt.Sprintf("%s ×%d", s, count[s])
 		}
 	}
-	return fmt.Sprintf(`[bs] %d unread (%s) — run: bs inbox   (reply with: bs send %s "...")`, len(unread), strings.Join(senders, ", "), from)
+	return fmt.Sprintf(`[bs] %d unread (%s) — run: bs inbox   (reply with: bs send %s "...")`, len(unread), strings.Join(senders, ", "), reply)
 }
 
 func cmdInbox(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {

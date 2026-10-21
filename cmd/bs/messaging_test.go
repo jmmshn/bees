@@ -342,3 +342,40 @@ func TestAPaneIgnoresAStaleEnv(t *testing.T) {
 		t.Fatalf("status: exit %d, %q, %q; want queen-test's project and both warnings", code, out, stderr)
 	}
 }
+
+// bees-12.38: a message for another project's session (its queen, or one of its workers
+// by the naming rule) is refused, storing nothing, while that project's logbook exists
+// beside this one: stored here it would never be read. A name of no known project is
+// stored with a warning that says how to send it elsewhere, never "set BS_PROJECT".
+func TestSendRefusesAnotherProjectsSession(t *testing.T) {
+	useTempLogbook(t)
+	t.Setenv("BS_LOGBOOK", "")
+	if _, stderr, code := bs(t, "init", "--project", "dotfiles"); code != 0 {
+		t.Fatalf("init dotfiles: exit %d: %s", code, stderr)
+	}
+	for _, to := range []string{"queen-dotfiles", "dotfiles-3", "dotfiles-3-1"} {
+		out, stderr, code := bs(t, "send", "--as", "queen-test", to, "probe")
+		if code != 1 || out != "" || !strings.Contains(stderr, "nothing stored: bs send --project dotfiles "+to) {
+			t.Errorf("send %s: exit %d, %q, %q; want refused naming --project dotfiles", to, code, out, stderr)
+		}
+	}
+	if out, _, _ := bs(t, "inbox", "--as", "queen-dotfiles"); !strings.Contains(out, "no unread") {
+		t.Errorf("a refused message was stored: %q", out)
+	}
+	_, stderr, code := bs(t, "send", "--as", "queen-test", "mac-queen", "hi")
+	if code != 0 || !strings.Contains(stderr, "without ringing it") || strings.Contains(stderr, "BS_PROJECT") {
+		t.Fatalf("send to a name of no project: exit %d, %q; want stored with a warning, no BS_PROJECT advice", code, stderr)
+	}
+}
+
+// bees-12.38: the doorbell's reply hint names the sender's project when the sender wrote
+// from another project's logbook, so following it reaches the sender.
+func TestDoorbellRepliesToACrossProjectSender(t *testing.T) {
+	unread := []logbook.Message{{From: "test-1-1"}, {From: "queen-dotfiles", FromProject: "dotfiles"}}
+	if got, want := doorbell(unread, "queen-dotfiles"), `(reply with: bs send --project dotfiles queen-dotfiles "...")`; !strings.Contains(got, want) {
+		t.Fatalf("doorbell = %q, want %q", got, want)
+	}
+	if got := doorbell(unread, "test-1-1"); !strings.Contains(got, `(reply with: bs send test-1-1 "...")`) {
+		t.Fatalf("doorbell = %q, want a same-project reply", got)
+	}
+}

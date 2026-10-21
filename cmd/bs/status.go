@@ -74,14 +74,15 @@ func cmdStatus(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 			fmt.Fprintf(stderr, "bs status: %s: can't tell whether it runs: %v\n", name, err)
 		}
 		// History is a session that ended (or was never spawned) with nothing waiting. A worker
-		// spawned and not ended always shows, so one that died without bs end reads as not
-		// running, for the queen to restart or end (bees-12.37).
-		if running || counts[name] > 0 || r.Error != "" || spawned && !sp.Ended {
+		// spawned and not ended always shows, and so does a recorded queen, so one that died
+		// reads as not running, to restart or end (bees-12.37).
+		open := spawned && !sp.Ended || name == p.Queen() && known
+		if running || counts[name] > 0 || r.Error != "" || open {
 			rows = append(rows, r)
 		}
 	}
 	if len(unrecorded) > 0 {
-		fmt.Fprintf(stderr, "bs status: no process recorded for %s, so not running; one that runs was started by a bs from before it recorded processes\n", strings.Join(unrecorded, ", "))
+		fmt.Fprintf(stderr, "bs status: no process recorded for %s, so not running: its start was never confirmed, or a bs from before start entries started it\n", strings.Join(unrecorded, ", "))
 	}
 	if unknown {
 		defer func() { err = cmp.Or(err, error(exitCode(1))) }()

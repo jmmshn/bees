@@ -166,4 +166,22 @@ func TestStatusShowsADeadWorkerThatWasNotEnded(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "worker-a  -      not running  0") || strings.Contains(out, "worker-b") {
 		t.Fatalf("exit %d, %q, %q; want worker-a not running and worker-b left out", code, out, stderr)
 	}
+	out, _, _ = bs(t, "status", "--json")
+	if !strings.Contains(out, `{"session":"worker-a","running":false,"unread":0}`) || strings.Contains(out, "worker-b") {
+		t.Fatalf("status --json = %s", out)
+	}
+	// A recorded queen whose process is gone shows too.
+	lb, err = logbook.Open(context.Background(), os.Getenv("BS_LOGBOOK"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, _ := proc.Start(os.Getpid())
+	_, _, err = lb.RecordQueen(context.Background(), logbook.Queen{Name: "queen-test", PID: os.Getpid(), Start: start + "0"}, func(logbook.Queen) (bool, error) { return false, nil })
+	lb.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, _, _ := bs(t, "status"); !strings.Contains(out, "queen-test  -      not running  0") {
+		t.Fatalf("status = %q, want the dead queen not running", out)
+	}
 }

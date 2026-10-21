@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/jmmshn/bees/internal/config"
 )
 
 func configEnv(t *testing.T) string {
@@ -50,6 +52,29 @@ func TestConfigPrintsEveryKeyAsTOMLWithSource(t *testing.T) {
 	var parsed map[string]any
 	if _, err := toml.Decode(out.String(), &parsed); err != nil {
 		t.Errorf("output is not TOML: %v", err)
+	}
+}
+
+// bees-12.25: under harness agy, [worker.agy] reaches bs config and the worker's Role.
+func TestConfigShowsTheWorkerAgyTable(t *testing.T) {
+	dir := configEnv(t)
+	global := filepath.Join(dir, "config.toml")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(global, []byte("harness = \"agy\"\n[worker.agy]\nmodel = \"gemini-3.8-flash-low\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, stderr bytes.Buffer
+	if code := run([]string{"config", "--project", "bees"}, strings.NewReader(""), &out, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	if want := `worker.agy.model = "gemini-3.8-flash-low"  # global ` + global; !strings.Contains(out.String(), want) {
+		t.Errorf("output lacks %q:\n%s", want, out.String())
+	}
+	cfg, err := config.Load("bees")
+	if err != nil || cfg.Worker.Role().Agy.Model != "gemini-3.8-flash-low" {
+		t.Fatalf("Worker.Role().Agy = %+v, %v; want the [worker.agy] model", cfg.Worker.Role().Agy, err)
 	}
 }
 

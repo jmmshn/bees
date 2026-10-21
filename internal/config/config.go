@@ -37,7 +37,7 @@ import (
 // harness. Only the active harness's tables may be set (ADR-0009).
 type Config struct {
 	// Harness is the harness every new queen and worker on this machine starts on.
-	Harness  string   `toml:"harness" scope:"global" default:"claude_code" enum:"claude_code"`
+	Harness  string   `toml:"harness" scope:"global" default:"claude_code" enum:"claude_code|agy"`
 	Paths    Paths    `toml:"paths"`
 	Delivery Delivery `toml:"delivery"`
 	Guards   Guards   `toml:"guards"`
@@ -70,11 +70,13 @@ type Paths struct {
 // Role holds the settings of the queen or of every worker.
 type Role struct {
 	ClaudeCode ClaudeCode `toml:"claude_code"`
+	Agy        Agy        `toml:"agy"`
 }
 
 // Worker holds every worker's settings: its harness's, as in Role, and bs spawn's.
 type Worker struct {
 	ClaudeCode ClaudeCode `toml:"claude_code"`
+	Agy        Agy        `toml:"agy"`
 	// Path is bs spawn --path when the call passes none: dirs put first on the PATH of a
 	// new worker's shell commands, so a live test's toy spawns the build under test
 	// (bees-12.24).
@@ -82,11 +84,16 @@ type Worker struct {
 }
 
 // Role is w's harness tables, for the adapter, without bs spawn's own settings.
-func (w Worker) Role() Role { return Role{ClaudeCode: w.ClaudeCode} }
+func (w Worker) Role() Role { return Role{ClaudeCode: w.ClaudeCode, Agy: w.Agy} }
 
 // ClaudeCode holds the settings bs passes to Claude Code.
 type ClaudeCode struct {
 	Model string `toml:"model" scope:"both"`
+}
+
+// Agy holds the settings bs passes to Antigravity's CLI.
+type Agy struct {
+	Model string `toml:"model" scope:"both"` // an id from agy models; empty: agy's default
 }
 
 // Source says where a value came from.

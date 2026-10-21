@@ -25,6 +25,40 @@ type Rules struct {
 	Environment, Allow []string
 }
 
+// Denies returns the first Deny glob that matches the whole command line cmd, where *
+// matches any text and nothing else is special: the matching every harness's deny list
+// promises. A harness with no deny list of its own (agy) runs it from a hook.
+func (r Rules) Denies(cmd string) (string, bool) {
+	for _, glob := range r.Deny {
+		if match(glob, cmd) {
+			return glob, true
+		}
+	}
+	return "", false
+}
+
+// match is glob over s: each piece between *s must appear in order, the first at the
+// start and the last at the end.
+func match(glob, s string) bool {
+	parts := strings.Split(glob, "*")
+	if !strings.HasPrefix(s, parts[0]) {
+		return false
+	}
+	s = s[len(parts[0]):]
+	last := len(parts) - 1
+	if last == 0 {
+		return s == ""
+	}
+	for _, part := range parts[1:last] {
+		i := strings.Index(s, part)
+		if i < 0 {
+			return false
+		}
+		s = s[i+len(part):]
+	}
+	return strings.HasSuffix(s, parts[last])
+}
+
 // Worker names what one worker's rules are about: its own git worktree on its own branch
 // of Repo. A worker owns its worktree and branch, so it may build, test and push its own
 // branch (bees-1.51).

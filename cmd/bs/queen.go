@@ -40,7 +40,7 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		fmt.Fprintln(stderr, "usage: bs queen [--project <name>]")
 		return errUsage
 	}
-	p, _, err := resolve("queen", *proj, "")
+	p, cfg, err := resolve("queen", *proj, "")
 	if err == nil {
 		err = p.NeedRepo()
 	}
@@ -66,5 +66,9 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if err != nil {
 		return err
 	}
-	return execClaude(p.Repo, env, "--name", p.Queen(), "--append-system-prompt-file", file)
+	argv := []string{"--name", p.Queen(), "--append-system-prompt-file", file}
+	if m := cfg.Queen.ClaudeCode.Model; m != "" {
+		argv = append(argv, "--model="+m) // one argument: a value starting with - stays a value
+	}
+	return execClaude(p.Repo, env, argv...)
 }

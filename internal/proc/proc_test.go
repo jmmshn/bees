@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"testing"
+	"time"
 
 	"github.com/jmmshn/bees/internal/proc"
 )
@@ -53,5 +54,35 @@ func TestAliveChecksTheStartTime(t *testing.T) {
 	}
 	if ok, err := proc.Alive(c.Process.Pid, s); ok || err != nil {
 		t.Fatalf("Alive(exited) = %v, %v", ok, err)
+	}
+}
+
+// Descendants finds a grandchild with its start time, and Name names it.
+func TestDescendantsFindsAGrandchild(t *testing.T) {
+	c := exec.Command("sh", "-c", "sleep 30 & wait")
+	if err := c.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Process.Kill(); _ = c.Wait() })
+	var found proc.Process
+	for deadline := time.Now().Add(5 * time.Second); found.PID == 0 && time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		ds, err := proc.Descendants(c.Process.Pid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range ds {
+			if n, _ := proc.Name(d.PID); n == "sleep" {
+				found = d
+			}
+		}
+	}
+	if found.PID == 0 {
+		t.Fatal("no sleep below sh")
+	}
+	if ok, err := proc.Alive(found.PID, found.Start); !ok || err != nil {
+		t.Fatalf("Alive(%+v) = %v, %v: Descendants' start time must be Start's", found, ok, err)
+	}
+	if ds, err := proc.Descendants(found.PID); err != nil || len(ds) != 0 {
+		t.Fatalf("Descendants(sleep) = %v, %v; want none", ds, err)
 	}
 }

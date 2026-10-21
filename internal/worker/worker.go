@@ -29,9 +29,9 @@ var (
 	ErrRunning = errors.New("worker is already running")
 	ErrOrphan  = errors.New("a herdr workspace is open on this worker's worktree but bs has no record of it")
 	ErrWaiting = errors.New("claude is waiting at a prompt") // started, but needs an answer in its pane
-	// ErrUnconfirmed: herdr stopped waiting for Claude to be ready. Claude may be busy
-	// with its first prompt or may have exited; only Claude's registry can tell.
-	ErrUnconfirmed = errors.New("herdr could not confirm that claude started")
+	// ErrUnconfirmed: herdr stopped waiting for the harness to be ready. It may be busy with
+	// its first prompt or may have exited: only finding its process in the pane can tell.
+	ErrUnconfirmed = errors.New("herdr could not confirm that the harness started")
 	ErrWrongRepo   = errors.New("bead does not belong to this project")
 	ErrNotSpawned  = errors.New("bs has no record of spawning this worker")
 	ErrNoLabel     = errors.New("a first spawn needs a label")
@@ -108,14 +108,12 @@ type Herdr interface {
 	// CloseWorkspace closes a plain workspace, leaving its directory; already gone → nil.
 	// ErrHerdrDown when herdr didn't answer.
 	CloseWorkspace(ctx context.Context, workspace string) error
-}
-
-// Sessions tells whether a Claude session is running, from Claude's own registry
-// (ADR-0004), not from herdr: herdr leaves an agent unnamed when its start times out.
-type Sessions interface {
-	// Alive reports whether a session called name is live, waiting up to wait for one
-	// to appear.
-	Alive(ctx context.Context, name string, wait time.Duration) (bool, error)
+	// ProcessInfo is herdr's process-info for pane: the only thing bs asks herdr about a
+	// running session, and only at start. ErrPaneGone: no such pane. ErrHerdrDown.
+	ProcessInfo(ctx context.Context, pane string) (PaneProcesses, error)
+	// RenameAgent names pane's agent in herdr: the sidebar's name, and a fence against a
+	// twin's launch (agent_name_taken). bs never reads it back.
+	RenameAgent(ctx context.Context, pane, name string) error
 }
 
 // Beads reads beads.
@@ -128,7 +126,7 @@ type Fleet struct {
 	P             project.Project
 	LB            *logbook.Logbook
 	H             Herdr
-	S             Sessions
+	Procs         Procs
 	B             Beads
 	G             GitHub          // nil: End proves a merge from git alone
 	Me            string          // the queen doing the spawning
@@ -221,9 +219,10 @@ func NextEpic(project string, ids []string) string {
 // Started describes a worker Spawn started.
 type Started struct {
 	Name, Label, Workspace string
-	Resumed                bool // restarted in its recorded workspace
-	Continued              bool // resumed with its last conversation (claude --continue)
-	Waiting                bool // Claude is waiting at a prompt (e.g. folder trust) in its pane
+	Resumed                bool  // restarted in its recorded workspace
+	Continued              bool  // resumed with its last conversation (claude --continue)
+	Waiting                bool  // Claude is waiting at a prompt (e.g. folder trust) in its pane
+	Warn                   error // started, but naming it in herdr failed
 }
 
 // Spawn starts a worker for bead with label as its herdr workspace label, or restarts it
@@ -417,8 +416,8 @@ func (f Fleet) check(ctx context.Context, req Request) (plan, error) {
 		if req.Path != nil && !slices.Equal(req.Path, sp.Path) {
 			return p, fmt.Errorf("%s was spawned with --path %q, not %q: %w; spawn it again without --path", name, sp.Path, req.Path, ErrPathChange)
 		}
-		// Fail closed: an unreadable registry must not start a second Claude.
-		if alive, err := f.S.Alive(ctx, name, 0); err != nil {
+		// Fail closed: a process that can't be looked up must not get a twin (motif 7).
+		if alive, _, _, err := SpawnAlive(ctx, f.LB, f.Procs, sp); err != nil {
 			return p, err
 		} else if alive {
 			return p, fmt.Errorf("%s: %w", name, ErrRunning)
@@ -626,23 +625,7 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 		return path, err
 	})
 	if err == nil {
-		err = f.H.StartAgent(ctx, sp.Pane, sp.Name, f.Harness.Kind(), args...)
-	}
-	switch {
-	case errors.Is(err, ErrWaiting):
-		st.Waiting, err = true, nil
-	case errors.Is(err, ErrUnconfirmed):
-		// A worker goes straight to work on its doorbell, so herdr, which waits for an idle
-		// prompt, usually times out on a healthy worker. Ask Claude's registry instead.
-		alive, aerr := f.S.Alive(ctx, sp.Name, confirmWait)
-		switch {
-		case aerr != nil:
-			err = aerr
-		case alive:
-			err = nil
-		default:
-			err = fmt.Errorf("%w: no Claude session named %s appeared within %s; read its pane (herdr pane read %s), then spawn again", err, sp.Name, confirmWait, sp.Pane)
-		}
+		err = f.launch(ctx, sp, &st, args)
 	}
 	if err != nil {
 		for _, path := range made {
@@ -650,6 +633,52 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 		}
 	}
 	return st, err
+}
+
+// launch starts the harness in sp's pane and confirms the start: the harness process shows
+// in the pane within confirmWait (ADR-0007, amended by ADR-0009). herdr's own wait is for
+// an idle prompt, which a worker busy with its doorbell rarely reaches in time, so its
+// timeout alone confirms nothing. A confirmed start records the process and its baseline
+// descendants in a started entry, then names the agent in herdr.
+//
+// A harness already in the pane refuses the start: bs didn't record it, so it may be an
+// earlier start of this worker that was never confirmed, or a spawn from before bs
+// recorded starts; starting another beside it would make a twin (motif 7).
+func (f Fleet) launch(ctx context.Context, sp logbook.Spawn, st *Started, args []string) error {
+	switch p, ok, err := harnessIn(ctx, f.H, f.Procs, sp.Pane, f.Harness.Kind()); {
+	case err != nil:
+		return fmt.Errorf("%s: can't tell whether pane %s already runs %s: %w", sp.Name, sp.Pane, f.Harness.Kind(), err)
+	case ok:
+		return fmt.Errorf("%s: %w: pane %s already runs %s (pid %d), which bs has no start of; read it (herdr pane read %s): end it there, or bs end %s and spawn again", sp.Name, ErrRunning, sp.Pane, f.Harness.Kind(), p.PID, sp.Pane, sp.Name)
+	}
+	wctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	kick := make(chan struct{})
+	seen := watch(wctx, f.H, f.Procs, sp.Pane, f.Harness.Kind(), confirmWait, kick)
+	err := f.H.StartAgent(ctx, sp.Pane, sp.Name, f.Harness.Kind(), args...)
+	close(kick) // herdr is done waiting: look now, not a poll later
+	switch {
+	case errors.Is(err, ErrWaiting):
+		st.Waiting = true
+	case err != nil && !errors.Is(err, ErrUnconfirmed):
+		return err
+	}
+	got := <-seen
+	switch {
+	case got.err != nil:
+		return fmt.Errorf("%s: can't tell whether it started: %w", sp.Name, got.err)
+	case got.p.PID == 0:
+		return fmt.Errorf("%w: no %s process appeared in pane %s within %s; read it (herdr pane read %s), then spawn again", ErrUnconfirmed, f.Harness.Kind(), sp.Pane, confirmWait, sp.Pane)
+	}
+	rec := logbook.Start{Spawn: sp.ID, Name: sp.Name, Process: got.p, Harness: sp.Harness, Exe: got.exe, Baseline: got.baseline}
+	if got.baselineErr != nil {
+		rec.BaselineErr = got.baselineErr.Error()
+	}
+	if _, err := f.LB.RecordStart(ctx, rec); err != nil {
+		return err
+	}
+	st.Warn = f.H.RenameAgent(ctx, sp.Pane, sp.Name)
+	return nil
 }
 
 // startOf is the harness.Start of worker sp, with a doorbell as its first prompt so it
@@ -712,13 +741,14 @@ func (f Fleet) protected(ctx context.Context, sp logbook.Spawn) bool {
 	return err == nil && ok
 }
 
-// confirmWait is how long start waits for Claude's registry after herdr gives up.
-// Claude registers about 3 s after launch (herdr 0.9.3, bees-1.14).
-const confirmWait = 20 * time.Second
+// confirmWait is how long a start waits for the harness process to show in its pane,
+// counted from the launch, herdr's own wait included.
+// Claude's shows within about 3 s of launch (herdr 0.9.3, bees-1.14).
+var confirmWait = 20 * time.Second
 
 // EndOpts says how far ending a worker may go.
 type EndOpts struct {
-	Force bool // remove a worktree with uncommitted or untracked files, discarding them
+	Force bool // remove a worktree with uncommitted or untracked files, discarding them; end a moved worker
 	// Forget records the end of a worker whose recorded workspace herdr has handed to
 	// another worktree, leaving that workspace open: without it ErrNotOurs is a dead end.
 	Forget bool
@@ -790,6 +820,18 @@ func (f Fleet) end(ctx context.Context, sp logbook.Spawn, o EndOpts) Ending {
 	e.Gone = i < 0
 	plain := sp.Kind == NoWorkspace
 	switch {
+	case e.Gone && !o.Force:
+		// Its pane may have moved to another workspace (a new pane id): ending it then
+		// would record ended over a running worker (motif 12).
+		alive, _, st, err := SpawnAlive(ctx, f.LB, f.Procs, sp)
+		switch {
+		case err != nil:
+			e.Err = fmt.Errorf("%s: workspace %s is gone, and bs can't tell whether the worker still runs; nothing recorded (--force ends it anyway): %w", sp.Name, sp.Workspace, err)
+			return e
+		case alive:
+			e.Err = fmt.Errorf("%s: workspace %s is gone, but the worker still runs (pid %d), so its pane moved: %w; close it where it runs now, or end it with --force", sp.Name, sp.Workspace, st.PID, ErrMoved)
+			return e
+		}
 	case e.Gone:
 	case plain && wss[i].Worker != sp.Name:
 		if !o.Forget {

@@ -11,8 +11,6 @@ import (
 	"strings"
 	"time"
 	"unicode"
-
-	"github.com/jmmshn/bees/internal/harness/claude"
 )
 
 // HerdrCLI drives the herdr command line. Every herdr command prints JSON.
@@ -160,6 +158,8 @@ func (HerdrCLI) StartAgent(ctx context.Context, pane, name, kind string, args ..
 		return fmt.Errorf("%w: %w", err, ErrWaiting)
 	case "timeout":
 		return fmt.Errorf("%w: %w", err, ErrUnconfirmed)
+	case "agent_name_taken": // a live agent has the name: herdr started nothing (probed, ADR-0009)
+		return fmt.Errorf("%w: %w", err, ErrRunning)
 	}
 	return err
 }
@@ -224,29 +224,35 @@ func (HerdrCLI) Workspaces(ctx context.Context) ([]Workspace, error) {
 	return out, nil
 }
 
-// ClaudeSessions finds sessions in Claude's registry.
-type ClaudeSessions struct{}
-
-func (ClaudeSessions) Alive(ctx context.Context, name string, wait time.Duration) (bool, error) {
-	deadline := time.Now().Add(wait) // wait 0: one look
-	for {
-		_, err := claude.Find(name)
-		if err == nil {
-			return true, nil
-		}
-		if !errors.Is(err, claude.ErrNotRunning) {
-			return false, err
-		}
-		if time.Now().After(deadline) {
-			return false, nil
-		}
-		// ponytail: polls the registry; watching ~/.claude/sessions would wake sooner.
-		select {
-		case <-ctx.Done():
-			return false, ctx.Err()
-		case <-time.After(250 * time.Millisecond):
-		}
+func (HerdrCLI) ProcessInfo(ctx context.Context, pane string) (PaneProcesses, error) {
+	var r struct {
+		Result struct {
+			Info struct {
+				Shell      int `json:"shell_pid"`
+				Foreground []struct {
+					PID  int    `json:"pid"`
+					Name string `json:"name"`
+				} `json:"foreground_processes"`
+			} `json:"process_info"`
+		} `json:"result"`
 	}
+	code, err := herdr(ctx, &r, "pane", "process-info", "--pane", pane)
+	if code == "pane_not_found" {
+		return PaneProcesses{}, fmt.Errorf("pane %s: %w", pane, ErrPaneGone)
+	}
+	if err != nil {
+		return PaneProcesses{}, down(ctx, code, err)
+	}
+	out := PaneProcesses{Shell: r.Result.Info.Shell}
+	for _, p := range r.Result.Info.Foreground {
+		out.Foreground = append(out.Foreground, PaneProcess{PID: p.PID, Name: p.Name})
+	}
+	return out, nil
+}
+
+func (HerdrCLI) RenameAgent(ctx context.Context, pane, name string) error {
+	code, err := herdr(ctx, nil, "agent", "rename", pane, name)
+	return down(ctx, code, err)
 }
 
 // BeadsCLI reads beads with the bd command line.

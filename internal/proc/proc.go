@@ -1,8 +1,36 @@
-// Package proc reads the two facts bs needs about another process: its parent, and its
-// start time in the form Claude Code records it in ~/.claude/sessions (procStart).
+// Package proc reads what bs needs about another process: its parent, its start time in
+// the form Claude Code records it in ~/.claude/sessions (procStart), its name, and its
+// descendants. A recorded process is the one fact behind a session's liveness (ADR-0009).
 package proc
 
-import "errors"
+import (
+	"errors"
+	"slices"
+)
+
+// Process is a process as bs records it: a pid is only that process while its start time
+// matches, so a reused pid names no one.
+type Process struct {
+	PID   int    `json:"pid"`
+	Start string `json:"start"`
+}
+
+// descendants returns the processes below root in a table of every process and its parent,
+// level by level: children, then grandchildren.
+func descendants(root int, all []Process, parent map[int]int) []Process {
+	var out []Process
+	for level := []int{root}; len(level) > 0; {
+		var next []int
+		for _, p := range all {
+			if slices.Contains(level, parent[p.PID]) && p.PID != root {
+				out = append(out, p)
+				next = append(next, p.PID)
+			}
+		}
+		level = next
+	}
+	return slices.Clip(out)
+}
 
 // ErrGone means the process doesn't exist or is a zombie: Claude counts neither as running.
 var ErrGone = errors.New("no such running process")

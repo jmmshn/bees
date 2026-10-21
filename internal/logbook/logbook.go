@@ -21,6 +21,7 @@ import (
 	sqlite3 "modernc.org/sqlite/lib"
 
 	"github.com/jmmshn/bees/internal/harness"
+	"github.com/jmmshn/bees/internal/proc"
 )
 
 // ID identifies an entry. Message ids sort by creation time.
@@ -537,4 +538,53 @@ func latestQueen(ctx context.Context, db querier, name string) (q Queen, ok bool
 		return Queen{}, false, fmt.Errorf("queen record %s: %w", q.ID, err)
 	}
 	return q, true, nil
+}
+
+// Start records the harness process a confirmed start of a worker found in its pane
+// (ADR-0009 amendment 1): the one fact behind its liveness. Baseline is the process's
+// descendants when it was first seen, for the background-work gate (bees-12.18);
+// BaselineErr says why it couldn't be read, so the gate fails closed.
+type Start struct {
+	ID    ID     `json:"-"`
+	Spawn ID     `json:"-"`
+	Name  string `json:"-"`
+	proc.Process
+	Harness     string         `json:"harness"`
+	Exe         string         `json:"exe,omitempty"`
+	Baseline    []proc.Process `json:"baseline"`
+	BaselineErr string         `json:"baseline_error,omitempty"`
+}
+
+// RecordStart records start s of the worker whose open spawned entry is s.Spawn.
+func (l *Logbook) RecordStart(ctx context.Context, s Start) (ID, error) {
+	now := time.Now().UTC()
+	id := newID(now)
+	if s.Baseline == nil {
+		s.Baseline = []proc.Process{}
+	}
+	data, err := json.Marshal(s)
+	if err != nil {
+		return "", err
+	}
+	_, err = l.db.ExecContext(ctx, `INSERT INTO entries (id, ts, kind, actor, subject, ref, data) VALUES (?, ?, 'started', ?, ?, ?, ?)`,
+		string(id), now.Format(tsLayout), s.Name, s.Name, string(s.Spawn), string(data))
+	return id, err
+}
+
+// LatestStart returns the newest start recorded for spawn; ok is false when the spawn has
+// none (never confirmed, or spawned before bs recorded starts).
+func (l *Logbook) LatestStart(ctx context.Context, spawn ID) (s Start, ok bool, err error) {
+	var data string
+	err = l.db.QueryRowContext(ctx, `SELECT id, subject, data FROM entries WHERE kind = 'started' AND ref = ? ORDER BY rowid DESC LIMIT 1`, string(spawn)).Scan(&s.ID, &s.Name, &data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Start{}, false, nil
+	}
+	if err != nil {
+		return Start{}, false, err
+	}
+	s.Spawn = spawn
+	if err := json.Unmarshal([]byte(data), &s); err != nil {
+		return Start{}, false, fmt.Errorf("start record %s: %w", s.ID, err)
+	}
+	return s, true, nil
 }

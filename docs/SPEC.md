@@ -166,9 +166,15 @@ type Herdr interface {
 	StartAgent(ctx context.Context, pane, name, kind string, args ...string) error // ErrWaiting, ErrUnconfirmed, ErrUnsafeArg
 	RemoveWorktree(ctx context.Context, workspace string) error               // already gone → nil
 	Workspaces(ctx context.Context) ([]Workspace, error)
+	ProcessInfo(ctx context.Context, pane string) (PaneProcesses, error) // at start only; ErrPaneGone
+	RenameAgent(ctx context.Context, pane, name string) error             // a label and a launch fence, never read back
 }
-type Sessions interface { // Claude's registry: ClaudeSessions
-	Alive(ctx context.Context, name string, wait time.Duration) (bool, error)
+type Procs interface { // the process table: SystemProcs (internal/proc)
+	Alive(p proc.Process) (bool, error) // pid alive with its recorded start time
+	Start(pid int) (string, error)
+	Name(pid int) (string, error)
+	Exe(pid int) (string, error)
+	Descendants(pid int) ([]proc.Process, error)
 }
 type Beads interface{ Show(ctx context.Context, id string) (Bead, error) }
 
@@ -178,7 +184,7 @@ type Fleet struct {
 	P  project.Project
 	LB *logbook.Logbook
 	H  Herdr
-	S  Sessions
+	Procs Procs
 	B  Beads
 	Me string
 }
@@ -213,7 +219,7 @@ func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error)           
 
 1. `name = Name(bead)`.
 2. If `LatestSpawn(name)` is open:
-   - Claude's registry has a live session called name → `ErrRunning`; a registry that can't be read is an error, never "not running" (no twins);
+   - the process its newest `started` entry recorded is alive with its start time → `ErrRunning` (a spawn with no `started` entry reads as not running; its start then refuses if the harness already runs in its pane, so no twin starts beside an unrecorded one); a lookup that fails is an error, never "not running" (no twins, ADR-0009);
    - otherwise → restart at step 7 in the recorded workspace. If the worker has read a message since this spawn (`Spawn.Read`), add `--continue` so it keeps its conversation; if not, its first start never got going, and `claude --continue` would exit with "No conversation found to continue", so it starts fresh with the doorbell.
 3. The bead id must be `<project>-<n>[.<m>…]` (`Belongs`), unless `--repo` → else `ErrWrongRepo`.
 4. A first spawn (no live `spawned` entry) needs a label (`ErrNoLabel`); a restart reuses the recorded one and refuses another (`ErrLabelChange`). A label is 1–4 words of `[a-z0-9]`, single spaces, ≤ 32 characters (`CheckLabel`, else `ErrBadLabel`; never rewritten). The queen writes it from the bead; herdr itself stores any label verbatim (`TestHerdrKeepsLabelsVerbatim`).
@@ -223,7 +229,7 @@ func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error)           
 8. `herdr agent start <name> --kind claude --pane <pane> --timeout 10000 -- --name <name> --settings '{"crossSessionInbound":"accept","env":{"BS_PROJECT":"<project>","BS_LOGBOOK_DIR":"<dir>","BS_LOGBOOK":""},…}' --append-system-prompt-file ~/.cache/bees/<project>-worker.md "<doorbell>"`. `env.BS_PROJECT` is the spawner's project and `env.BS_LOGBOOK_DIR` the directory of its logbook (with `BS_LOGBOOK` blanked), so a worker in another repo (`--repo`), or one whose pane inherits another `BS_LOGBOOK`, still reads and writes the spawner's logbook (R46, ADR-0008). With `--path`, the settings also carry a `SessionStart` hook that appends `export PATH="<dirs>:$PATH"` to `$CLAUDE_ENV_FILE`, which Claude's Bash tool sources after the shell profile (bees-8.19). Every argument passes `CheckAgentArgs` first. The doorbell is Claude's first prompt, so spawn doesn't depend on ringing. herdr's outcomes ([ADR-0007](adr/0007-claudes-registry-confirms-a-launch.md)):
    - success → started;
    - `agent_not_ready`: Claude is blocked at a prompt → started with `Waiting`; bs tells the keeper to answer it in the worker's pane;
-   - `timeout` → `ErrUnconfirmed`. herdr waits for an idle prompt, and a worker busy with its doorbell is never idle in time, so this is the usual outcome for a healthy worker; Claude may also have exited. `Sessions.Alive(name, 20s)` decides: live → started; not → an error naming `herdr pane read <pane>`. Before spawning, `bs spawn` warns if `~/.claude.json` shows the repo isn't trusted yet (read only; trust is keyed by the main checkout, so its worktrees share it). No settings file is written (Claude reads `settings.local.json` from the main checkout in a worktree), and the only `BS_*` variables are `BS_PROJECT` and `BS_LOGBOOK_DIR` (with `BS_LOGBOOK` blanked), set through `--settings` (R46, ADR-0008).
+   - `timeout` → `ErrUnconfirmed`. herdr waits for an idle prompt, and a worker busy with its doorbell is never idle in time, so this is the usual outcome for a healthy worker; Claude may also have exited. Whatever herdr says, bs confirms the start itself: from before the launch until 20 s, it polls `herdr pane process-info` for a process named the harness's kind (in the foreground, else below the pane's shell). Found → a `started` entry with its pid, start time, executable and baseline descendants, then `herdr agent rename <pane> <name>`; not → `ErrUnconfirmed`, an error naming `herdr pane read <pane>` (ADR-0009 amendment 1). Before spawning, `bs spawn` warns if `~/.claude.json` shows the repo isn't trusted yet (read only; trust is keyed by the main checkout, so its worktrees share it). No settings file is written (Claude reads `settings.local.json` from the main checkout in a worktree), and the only `BS_*` variables are `BS_PROJECT` and `BS_LOGBOOK_DIR` (with `BS_LOGBOOK` blanked), set through `--settings` (R46, ADR-0008).
 
 `End(name, force)`: read `LatestSpawn`; none → `ErrNotSpawned` (never ask herdr which workspace). Otherwise find the recorded workspace id in `herdr workspace list`: open on another path → `ErrNotOurs`, nothing removed; gone → just `RecordEnd`; else `herdr worktree remove --workspace <recorded id>` (`--force` only with `bs end --force`; a dirty worktree → `ErrDirty`, nothing ended), then `RecordEnd`. The branch is always kept: `bs end` prints `branch <name> kept; bs prune deletes it once merged`.
 
@@ -276,7 +282,7 @@ The doorbell text explains itself, so workers need no setup prompt in v0:
 
 Senders are listed in order of their oldest unread message; "reply with" names whoever just sent.
 
-`bs status` combines `claude.List()` with `lb.UnreadCounts()`. It shows the sessions this project's logbook names (writers, recipients, workers) that are running or have unread messages, with their unread counts. A stopped session with nothing unread is history and is left out. Claude's registry is machine-wide, so a running session this project's logbook has never named (another project's, or one that hasn't used bs yet) is left out too (R30). It writes nothing.
+`bs status` combines the recorded processes (a worker's newest `started` entry, the newest `queen` entry) with `lb.UnreadCounts()`; herdr isn't asked. A session whose process can't be looked up shows as `unknown`, and `bs status` exits 1. It shows the sessions this project's logbook names (writers, recipients, workers) that are running or have unread messages, with their unread counts. A stopped session with nothing unread is history and is left out. Claude's registry is machine-wide, so a running session this project's logbook has never named (another project's, or one that hasn't used bs yet) is left out too (R30). It writes nothing.
 
 ```text
 SESSION      STATE        UNREAD

@@ -57,6 +57,13 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if err != nil {
 		return err
 	}
+	// A guard every spawn would refuse stops the queen too, not her first spawn (bees-12.20).
+	// Only configured guards can fail; the defaults always build.
+	if len(cfg.Guards.Deny) > 0 || len(cfg.Guards.AllowMergeInto) > 0 {
+		if _, err := workerGuards(ctx, p, cfg); err != nil {
+			return fmt.Errorf("%w; bs spawn would refuse every worker", err)
+		}
+	}
 	// Workers find and ring the queen through the pane and process her entry records
 	// (ADR-0009), so a queen outside herdr is one no worker can reach.
 	pane := os.Getenv("HERDR_PANE_ID")

@@ -123,6 +123,7 @@ type Fleet struct {
 	HarnessName string          // its config name, recorded in each spawned entry
 	Delivery    config.Delivery // how work lands; a zero Kind is github_pr
 	Guards      config.Guards   // [guards]: what every worker is denied or granted
+	Path        []string        // worker.path: a new worker's Path when its Request has none
 }
 
 // kind is f's delivery kind; a Fleet built without config is github_pr, the default.
@@ -223,7 +224,7 @@ func (f Fleet) Spawn(ctx context.Context, bead, label string) (Started, error) {
 // Request asks SpawnAll for one worker. Path is put first on the PATH of the worker's
 // shell commands (bs spawn --path), so a live test's workers run the build under test
 // (bees-8.19). Like the label, a nil Path reuses the recorded one, on a restart or after
-// an end; a restart refuses another.
+// an end, else takes Fleet.Path; a restart refuses another.
 type Request struct {
 	Bead, Label string
 	Path        []string
@@ -323,6 +324,9 @@ func (f Fleet) check(ctx context.Context, req Request) (plan, error) {
 	if p.path == nil && ok {
 		p.path = sp.Path
 	}
+	if p.path == nil && (!ok || sp.Ended) { // a live worker keeps what it was recorded with
+		p.path = f.Path
+	}
 	// The recorded dirs too: a build removed since would quietly start the shared bs.
 	for _, d := range p.path {
 		if err := CheckPath(d); err != nil {
@@ -346,7 +350,12 @@ func (f Fleet) check(ctx context.Context, req Request) (plan, error) {
 	if err != nil {
 		return p, fmt.Errorf("%s: %w", name, err)
 	}
-	l, err := f.Harness.Prepare(f.startOf(sp0, filepath.Join(dir, f.P.Name+"-worker.md"), true, nil, r))
+	st := f.startOf(sp0, filepath.Join(dir, f.P.Name+"-worker.md"), true, nil, r)
+	l, err := f.Harness.Prepare(st)
+	if errors.Is(err, harness.ErrNoResume) { // no resume ever starts, so a fresh start's line is the longest
+		st.Continue = false
+		l, err = f.Harness.Prepare(st)
+	}
 	if err != nil {
 		return p, err
 	}

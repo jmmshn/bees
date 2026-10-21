@@ -9,7 +9,7 @@ The codebase a queen and its workers work on, named in one word (`pymatgen-analy
 _Avoid_: repo, rig, workspace
 
 **Workspace**:
-The directory a worker works in and the herdr workspace opened on it, picked by `[workspace] kind`: a git worktree by default, or under `none` the dir the `init` hook makes (a CitC client), else the main checkout.
+The directory a worker works in and the herdr workspace opened on it, picked by `[workspace] kind`: a git worktree by default, or under `none` the project's `paths.repo`, a directory the keeper made (a CitC client, or the main checkout).
 _Avoid_: sandbox, clone. Not the project's own repo (see Project)
 
 **Bead**:

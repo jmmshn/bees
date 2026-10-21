@@ -1,6 +1,6 @@
 # Config: two TOML files, one tagged struct, per-file errors
 
-> Amended by [ADR-0009](0009-core-and-adapters.md): a top-level, global-only `harness` key selects the harness for every queen and worker; only the active harness's tables are valid, and switching it while this project's sessions run on another is refused. `[workspace]`, `[delivery]` and `[guards]` join the layout.
+> Amended by [ADR-0009](0009-core-and-adapters.md): a top-level, global-only `harness` key selects the harness for every queen and worker; only the active harness's tables are valid, and switching it while this project's sessions run on another is refused. `[workspace]`, `[delivery]` and `[guards]` join the layout. Its amendment 1 makes `paths.logbook_dir` global only, ends spawn's `BS_LOGBOOK_DIR` pin (a session finds its logbook from its herdr pane), and keys the skip list on being in a herdr pane: those commands then read only the global file's `paths.logbook_dir`.
 
 bs reads its settings from `$XDG_CONFIG_HOME/bees`, else `~/.config/bees`, on every OS (never `os.UserConfigDir()`, which is `~/Library/Application Support` on macOS). A relative `XDG_CONFIG_HOME` is an error. There are two files, both optional:
 

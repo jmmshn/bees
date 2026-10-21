@@ -25,23 +25,12 @@ var (
 	// ErrHarnessGone: the recorded harness process has exited, so there is nothing to walk:
 	// its children were reparented away. bs end ends the worker; bs done can't check.
 	ErrHarnessGone = errors.New("the worker's recorded process has exited")
+	// ErrNoStart: the spawn has no started entry (unconfirmed, or from a bs before starts).
+	ErrNoStart = errors.New("no start recorded for this spawn (unconfirmed, or started by a bs from before it recorded starts)")
 )
 
 // Background is a process the gate found running below a worker's harness.
-type Background struct {
-	proc.Process
-	Command string `json:"command"`
-	Ports   []int  `json:"ports,omitempty"` // TCP ports it listens on
-}
-
-// String is the process as the refusal lists it.
-func (b Background) String() string {
-	s := fmt.Sprintf("pid %-6d %s", b.PID, b.Command)
-	for _, p := range b.Ports {
-		s += fmt.Sprintf("   listening :%d", p)
-	}
-	return s
-}
+type Background = proc.Background
 
 // BackgroundError is ErrBackground with what was found.
 type BackgroundError struct {
@@ -81,7 +70,7 @@ func CheckBackground(ctx context.Context, lb *logbook.Logbook, ps Procs, sp logb
 	case err != nil:
 		return nil, bad("can't tell whether its process runs: %w", err)
 	case !known:
-		return nil, bad("no start recorded for this spawn (unconfirmed, or started by a bs from before it recorded starts)")
+		return nil, bad("%w", ErrNoStart)
 	case !alive:
 		return nil, bad("pid %d: %w", st.PID, ErrHarnessGone)
 	case st.BaselineErr != "":

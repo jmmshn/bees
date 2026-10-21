@@ -5,6 +5,7 @@ package proc
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 )
 
@@ -13,6 +14,23 @@ import (
 type Process struct {
 	PID   int    `json:"pid"`
 	Start string `json:"start"`
+}
+
+// Background is a process running below a worker's harness that its start didn't see:
+// background work (ADR-0009 amendment 1).
+type Background struct {
+	Process
+	Command string `json:"command"`
+	Ports   []int  `json:"ports,omitempty"` // TCP ports it listens on
+}
+
+// String is the process as bs lists it: pid, command and any listening port.
+func (b Background) String() string {
+	s := fmt.Sprintf("pid %-6d %s", b.PID, b.Command)
+	for _, p := range b.Ports {
+		s += fmt.Sprintf("   listening :%d", p)
+	}
+	return s
 }
 
 // descendants returns the processes below root in a table of every process and its parent,

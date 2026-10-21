@@ -244,7 +244,8 @@ func TestEndAllSaysWhatItKeptAndHealsOnRerun(t *testing.T) {
 	}
 	h.down = false
 	out, _, code = bs(t, end...)
-	if code != 0 || out != "ended test-1-1: workspace w1 was already gone\nended test-1-2: workspace w2 was already gone\nbranches kept; bs prune deletes them once merged\n" {
+	gone := "  no harness process ran for %s, so there was no background work to check\n" // the fake's harness exited with herdr
+	if code != 0 || out != "ended test-1-1: workspace w1 was already gone\n"+fmt.Sprintf(gone, "test-1-1")+"ended test-1-2: workspace w2 was already gone\n"+fmt.Sprintf(gone, "test-1-2")+"branches kept; bs prune deletes them once merged\n" {
 		t.Fatalf("rerun: exit %d, %q", code, out)
 	}
 	if out, _, code = bs(t, end...); code != 0 || !strings.HasPrefix(out, "nothing to end") {

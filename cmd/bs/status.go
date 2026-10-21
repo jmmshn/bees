@@ -22,13 +22,14 @@ type sessionStatus struct {
 	Running bool   `json:"running"`
 	Unread  int    `json:"unread"`
 	Error   string `json:"error,omitempty"` // why bs couldn't tell whether it runs; running is then false
+	Done    string `json:"done,omitempty"`  // a live worker's newest bs done since its spawn: its PR, else "report"
 }
 
 func cmdStatus(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) (err error) {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	proj := fs.String("project", "", "project (default: BS_PROJECT, else the current git repo)")
-	asJSON := fs.Bool("json", false, `print [{"session": "...", "label": "...", "running": true, "unread": 0}, ...], sorted by session`)
+	asJSON := fs.Bool("json", false, `print [{"session": "...", "label": "...", "running": true, "unread": 0, "done": "<pr url>"}, ...], sorted by session`)
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
@@ -69,6 +70,15 @@ func cmdStatus(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 			unrecorded = append(unrecorded, name)
 		}
 		r := sessionStatus{Session: name, Label: sp.Label, Running: running, Unread: counts[name]}
+		if spawned && !sp.Ended {
+			d, ok, derr := lb.LatestDone(ctx, sp.ID)
+			if derr != nil {
+				return derr
+			}
+			if ok {
+				r.Done = cmp.Or(d.PR, "report")
+			}
+		}
 		if err != nil {
 			r.Error, unknown = err.Error(), true
 			fmt.Fprintf(stderr, "bs status: %s: can't tell whether it runs: %v\n", name, err)
@@ -91,7 +101,7 @@ func cmdStatus(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 		return nil
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "SESSION\tLABEL\tSTATE\tUNREAD")
+	fmt.Fprintln(tw, "SESSION\tLABEL\tSTATE\tUNREAD\tDONE")
 	for _, r := range rows {
 		state := "not running"
 		switch {
@@ -100,7 +110,7 @@ func cmdStatus(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 		case r.Running:
 			state = "running"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\n", r.Session, cmp.Or(r.Label, "-"), state, r.Unread)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n", r.Session, cmp.Or(r.Label, "-"), state, r.Unread, cmp.Or(r.Done, "-"))
 	}
 	return tw.Flush()
 }

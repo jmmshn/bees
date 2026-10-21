@@ -7,10 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 
 	"github.com/jmmshn/bees/internal/logbook"
+	"github.com/jmmshn/bees/internal/proc"
 )
 
 func open(t *testing.T) *logbook.Logbook {
@@ -389,5 +391,43 @@ func TestASpawnWithoutAHarnessReadsAsClaudeCode(t *testing.T) {
 	live, err := lb.LiveSpawns(ctx)
 	if err != nil || len(live) != 2 || live[0].Harness != "claude_code" || live[1].Harness != "oh_my_pi" || live[1].Record["profile"] != "p" {
 		t.Fatalf("LiveSpawns = %+v, %v", live, err)
+	}
+}
+
+// A done is unread mail for its queen, and stays unread after its worker has ended, unlike
+// a message to the worker; the newest done of a spawn wins.
+func TestDoneIsUnreadForTheQueenPastTheEnd(t *testing.T) {
+	ctx := context.Background()
+	lb := open(t)
+	id, err := lb.RecordSpawn(ctx, "queen-bees", logbook.Spawn{Name: "bees-8", Bead: "bees-8"}, "brief")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lb.RecordDone(ctx, logbook.Done{Spawn: id, Name: "bees-8", Queen: "queen-bees", Bead: "bees-8", PR: "https://x/pull/1"}); err != nil {
+		t.Fatal(err)
+	}
+	bg := []proc.Background{{Process: proc.Process{PID: 42, Start: "s"}, Command: "python3 -m http.server", Ports: []int{8000}}}
+	if _, err := lb.RecordDone(ctx, logbook.Done{Spawn: id, Name: "bees-8", Queen: "queen-bees", Bead: "bees-8", Report: "amended", Background: bg}); err != nil {
+		t.Fatal(err)
+	}
+	if err := lb.RecordEnd(ctx, "queen-bees", id); err != nil {
+		t.Fatal(err)
+	}
+	unread, err := lb.Unread(ctx, "queen-bees")
+	if err != nil || len(unread) != 2 || unread[0].From != "bees-8" || unread[0].Body != "done: bees-8 PR https://x/pull/1" ||
+		!strings.Contains(unread[1].Body, "amended") || !strings.Contains(unread[1].Body, "pid 42     python3 -m http.server   listening :8000") {
+		t.Fatalf("unread = %+v, %v; want both dones, as text", unread, err)
+	}
+	if counts, _ := lb.UnreadCounts(ctx); counts["queen-bees"] != 2 || counts["bees-8"] != 0 {
+		t.Fatalf("counts = %v, want 2 for the queen; the ended worker's brief retired", counts)
+	}
+	if d, ok, err := lb.LatestDone(ctx, id); !ok || err != nil || d.Report != "amended" || len(d.Background) != 1 || d.Queen != "queen-bees" {
+		t.Fatalf("LatestDone = %+v, %v, %v; want the newest", d, ok, err)
+	}
+	if err := lb.RecordReceipts(ctx, "queen-bees", []logbook.ID{unread[0].ID, unread[1].ID}); err != nil {
+		t.Fatal(err)
+	}
+	if unread, _ := lb.Unread(ctx, "queen-bees"); len(unread) != 0 {
+		t.Fatalf("unread after receipts = %+v", unread)
 	}
 }

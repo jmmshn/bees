@@ -23,6 +23,7 @@ commands:
   bead      list the project's beads (ls) or add one under an epic (new)
   send      store a message for a session, then ring it
   inbox     print your unread messages and record receipts
+  done      report your bead done to your queen (--pr <url> | --report <text>)
   status    list running sessions and unread counts (--json for scripts)
   config    print every setting, its value and where it came from
   guard     agy's tool-call hook: deny a command line matching one of its globs
@@ -34,6 +35,7 @@ var commands = map[string]func(ctx context.Context, args []string, stdin io.Read
 	"init":    cmdInit,
 	"send":    cmdSend,
 	"inbox":   cmdInbox,
+	"done":    cmdDone,
 	"queen":   cmdQueen,
 	"spawn":   cmdSpawn,
 	"end":     cmdEnd,
@@ -70,7 +72,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return 0
 		case errors.Is(err, errUsage):
 			return 2
-		case errors.Is(err, project.ErrNoSession), errors.Is(err, project.ErrNoProject), errors.Is(err, errNoLogbook):
+		case errors.Is(err, project.ErrNoSession), errors.Is(err, project.ErrNoProject), errors.Is(err, errNoLogbook), errors.Is(err, errNotInPane):
 			fmt.Fprintf(stderr, "bs %s: %v\n", args[0], err)
 			return 2
 		case err != nil:

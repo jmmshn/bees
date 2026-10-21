@@ -31,7 +31,7 @@ var errNoLogbook = errors.New("no logbook")
 // project file mid-run can't silence a fleet. A global file they can't read falls back to
 // the defaults, with a warning. Every other command, and every command outside a recorded
 // pane, reads both files.
-var skipsFiles = []string{"send", "inbox", "status", "bead", "epic", "version"}
+var skipsFiles = []string{"send", "inbox", "done", "status", "bead", "epic", "version"}
 
 // settings loads the config for project name (none: "") as command cmd reads it.
 func settings(cmd, name string, c caller, stderr io.Writer) (*config.Loaded, error) {

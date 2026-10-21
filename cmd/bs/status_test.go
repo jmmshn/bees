@@ -47,9 +47,9 @@ func TestStatusShowsRunningAndUnreadForEachSession(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	want := "SESSION   LABEL  STATE        UNREAD\n" + // queen: stopped with nothing unread, so left out
-		"worker-a  -      running      2\n" +
-		"worker-b  -      not running  1\n"
+	want := "SESSION   LABEL  STATE        UNREAD  DONE\n" + // queen: stopped with nothing unread, so left out
+		"worker-a  -      running      2       -\n" +
+		"worker-b  -      not running  1       -\n"
 	if out != want {
 		t.Fatalf("status =\n%s\nwant\n%s", out, want)
 	}
@@ -68,7 +68,7 @@ func TestStatusShowsAWorkersLabel(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, _, _ := bs(t, "status")
-	if !strings.Contains(out, "test-3   role prompts  not running  1\n") {
+	if !strings.Contains(out, "test-3   role prompts  not running  1       -\n") {
 		t.Fatalf("status =\n%s", out)
 	}
 	if out, _, _ := bs(t, "status", "--json"); !strings.Contains(out, `"label":"role prompts"`) {

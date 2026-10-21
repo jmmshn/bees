@@ -188,7 +188,7 @@ func cmdEnd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 	proj := fs.String("project", "", "project (default: BS_PROJECT, else the current git repo; --all needs it)")
 	as := fs.String("as", "", "session doing the ending (default: this Claude session)")
 	var o worker.EndOpts
-	fs.BoolVar(&o.Force, "force", false, "remove the worktree even with uncommitted or untracked files, discarding them")
+	fs.BoolVar(&o.Force, "force", false, "end it even while it runs background work, or with uncommitted or untracked files (discarding them)")
 	fs.BoolVar(&o.Forget, "forget", false, "record the end of a worker whose workspace herdr has handed to another worktree, leaving that workspace open")
 	all := fs.Bool("all", false, "end every worker the project's logbook records as spawned and not yet ended")
 	yes := fs.Bool("yes", false, "with --all: end them even while the project's queen is running, or from the queen itself")
@@ -215,10 +215,18 @@ func cmdEnd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 	if err != nil {
 		return err
 	}
-	if err := f.End(ctx, name, o); err != nil {
+	e, err := f.EndOne(ctx, name, o)
+	if code := gateCode(err); code != 0 {
+		fmt.Fprintf(stderr, "bs end: %v\nbs end --force ends it anyway\n", err)
+		return exitCode(code)
+	}
+	if err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "ended %s\n", name)
+	if e.Exited {
+		fmt.Fprintf(stdout, "no harness process ran for %s, so there was no background work to check\n", name)
+	}
 	if sp, _, err := f.LB.LatestSpawn(ctx, name); err == nil && sp.Branch != "" {
 		fmt.Fprintf(stdout, "branch %s kept; bs prune deletes it once merged\n", sp.Branch)
 	}
@@ -272,9 +280,12 @@ func endAll(ctx context.Context, f worker.Fleet, o worker.EndOpts, stdout, stder
 	code := 0
 	for _, e := range ended {
 		switch {
+		case gateCode(e.Err) != 0:
+			fmt.Fprintf(stderr, "bs end: kept %v\n", e.Err)
+			code = max(code, gateCode(e.Err))
 		case errors.Is(e.Err, worker.ErrHerdrDown):
 			fmt.Fprintf(stderr, "bs end: kept %v\n", e.Err)
-			code = exitEndHerdrDown
+			code = max(code, exitEndHerdrDown)
 		case e.Err != nil:
 			fmt.Fprintf(stderr, "bs end: kept %v\n", e.Err)
 			code = max(code, exitEndKept)
@@ -284,6 +295,9 @@ func endAll(ctx context.Context, f worker.Fleet, o worker.EndOpts, stdout, stder
 			fmt.Fprintf(stdout, "ended %s: workspace %s was already gone\n", e.Name, e.Workspace)
 		default:
 			fmt.Fprintf(stdout, "ended %s: removed workspace %s\n", e.Name, e.Workspace)
+		}
+		if e.Err == nil && e.Exited {
+			fmt.Fprintf(stdout, "  no harness process ran for %s, so there was no background work to check\n", e.Name)
 		}
 		if e.Err == nil && e.Warn != nil {
 			fmt.Fprintf(stderr, "bs end: %s ended, but its settings files may be left: %v\n", e.Name, e.Warn)
@@ -297,6 +311,17 @@ func endAll(ctx context.Context, f worker.Fleet, o worker.EndOpts, stdout, stder
 		fmt.Fprintf(stdout, "branches kept; bs prune deletes them once merged\n")
 	}
 	return nil
+}
+
+// gateCode is bs's exit code for a refusal by the background-work gate, else 0.
+func gateCode(err error) int {
+	switch {
+	case errors.Is(err, worker.ErrBackground):
+		return exitBackground
+	case errors.Is(err, worker.ErrCantCheck):
+		return exitCantCheck
+	}
+	return 0
 }
 
 // Exit codes of bs prune when it keeps a branch.

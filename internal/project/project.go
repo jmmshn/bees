@@ -110,11 +110,15 @@ func Name(flag string) (string, error) {
 // NeedRepo stops what would run in no repo. A flag or c.Repo naming a linked worktree
 // makes it the Base workers branch from, while Repo and Worktrees stay the main checkout's;
 // one that is no git checkout fails only NeedRepo, so messages still flow. Under c.AnyVCS
-// (workspace kind none) c.Repo comes before git and is taken as given, any directory.
+// (workspace kind none) c.Repo comes before git, and it and c.RepoFlag are taken as given:
+// any directory, a linked worktree or subdirectory too.
 func Locate(name string, c Paths) (Project, error) {
 	p := Project{Name: name}
 	git := mainRepo("")
 	switch {
+	case c.RepoFlag != "" && c.AnyVCS: // as paths.repo below: where workers open, as given
+		p.Repo, p.Base, p.repoErr = plainDir("--repo", c.RepoFlag)
+		p.RepoFrom = "--repo"
 	case c.RepoFlag != "":
 		p.Repo, p.Base, p.repoErr = checkout("--repo", c.RepoFlag)
 		p.RepoFrom = "--repo"

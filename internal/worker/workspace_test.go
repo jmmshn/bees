@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jmmshn/bees/internal/config"
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/worker"
 )
@@ -24,6 +25,7 @@ func newPlainRig(t *testing.T) rig {
 	}
 	r.fleet.P.Repo, r.fleet.P.RepoFrom = r.repo, "paths.repo"
 	r.fleet.WorkspaceKind = worker.NoWorkspace
+	r.fleet.Delivery = config.Delivery{Kind: "manual"}
 	return r
 }
 
@@ -64,6 +66,26 @@ func TestNoneRefusesARepoNotNamedByPathsRepo(t *testing.T) {
 		if _, ok, _ := r.lb.LatestSpawn(ctx, "bees-8"); ok || len(r.h.workspaces) != 0 {
 			t.Fatalf("%s: something was opened or recorded", from)
 		}
+	}
+}
+
+// github_pr opens a PR from the worker's branch, and a kind none worker has none
+// (bees-12.29); a fragment of the user's own wording passes.
+func TestNoneRefusesGitHubPRDelivery(t *testing.T) {
+	ctx := context.Background()
+	r := newPlainRig(t)
+	r.fleet.Delivery = config.Delivery{}
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "hg client"); err == nil || !strings.Contains(err.Error(), `delivery.kind = "manual"`) {
+		t.Fatalf("err = %v, want a refusal naming delivery.kind", err)
+	}
+	if _, ok, _ := r.lb.LatestSpawn(ctx, "bees-8"); ok || len(r.h.workspaces) != 0 {
+		t.Fatal("something was opened or recorded")
+	}
+	if err := worker.CheckWorkspace(worker.NoWorkspace, config.Delivery{Fragment: "/cl.md"}); err != nil {
+		t.Errorf("a fragment was refused: %v", err)
+	}
+	if err := worker.CheckWorkspace(worker.GitWorktree, config.Delivery{}); err != nil {
+		t.Errorf("git_worktree with github_pr was refused: %v", err)
 	}
 }
 

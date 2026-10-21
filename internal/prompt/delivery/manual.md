@@ -5,4 +5,4 @@ The keeper reviews a worker's work and lands it by hand, and the keeper closes i
 - Leave `bd close` to the keeper: they close your bead once your work has landed.
 <!-- queen -->
 
-- A worker reports `done: <bead>`; that means "ready for the keeper", and the bead stays open. Tell the keeper what it reported (its branch and commit, or its files). Landing the work and `bd close` are the keeper's; once they say it has landed, `bs end` the worker.
+- A worker reports `done: <bead>`; that means "ready for the keeper", and the bead stays open. Tell the keeper what its report names. Landing the work and `bd close` are the keeper's; once they say it has landed, `bs end` the worker.

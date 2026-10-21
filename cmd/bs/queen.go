@@ -57,6 +57,9 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if err != nil {
 		return err
 	}
+	if err := worker.CheckWorkspace(cfg.Workspace.Kind, cfg.Delivery); err != nil {
+		return err
+	}
 	// A guard every spawn would refuse stops the queen too, not her first spawn (bees-12.20).
 	// Only configured guards can fail, and the check reads the repo's git: the defaults
 	// always build, so they skip it.

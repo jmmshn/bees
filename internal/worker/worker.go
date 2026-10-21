@@ -366,6 +366,9 @@ func (f Fleet) check(ctx context.Context, req Request) (plan, error) {
 	if _, err := Delivery(f.Delivery, f.Guards); err != nil {
 		return p, fmt.Errorf("%s: %w", name, err)
 	}
+	if err := CheckWorkspace(f.WorkspaceKind, f.Delivery); err != nil {
+		return p, fmt.Errorf("%s: %w", name, err)
+	}
 	sp0 := logbook.Spawn{Name: name, Bead: bead, Worktree: f.worktree(name), Branch: name, Repo: f.P.Repo, Path: p.path}
 	if f.WorkspaceKind == NoWorkspace {
 		// Workers share this directory, so only the keeper names it: a repo the chain
@@ -555,6 +558,17 @@ func Rules(ctx context.Context, repo string, d config.Delivery, g config.Guards,
 	}
 	w.DefaultBranches = guards.DefaultBranches(heads...)
 	return guards.Build(d, g, w)
+}
+
+// CheckWorkspace refuses workspace kind with delivery d when the pair can't work: github_pr
+// opens a PR from the worker's own branch, and a kind none worker has none, so its prompt
+// would tell it to make one in the shared directory (bees-12.29). A fragment is the user's
+// own wording, so it passes.
+func CheckWorkspace(kind string, d config.Delivery) error {
+	if kind == NoWorkspace && d.Fragment == "" && cmp.Or(d.Kind, "github_pr") == "github_pr" {
+		return errors.New(`workspace.kind = "none" gives a worker no branch for delivery.kind = "github_pr" (the default) to open a PR from; set delivery.kind = "manual", or delivery.fragment to your own wording`)
+	}
+	return nil
 }
 
 // Delivery is the delivery fragment a role prompt gets under d (its fragment file, read

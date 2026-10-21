@@ -139,8 +139,7 @@ func ancestor(ctx context.Context, repo, a, b string) (bool, error) {
 // branches that exist are returned.
 func defaultBranches(ctx context.Context, repo string) ([]string, error) {
 	cands := []string{"main"}
-	if head, err := gitOut(ctx, repo, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"); err == nil {
-		head = strings.TrimSpace(head)
+	if head, err := symRef(ctx, repo, "refs/remotes/origin/HEAD"); err == nil && head != "" {
 		cands = []string{head, strings.TrimPrefix(head, "origin/")}
 	}
 	var out []string
@@ -153,6 +152,22 @@ func defaultBranches(ctx context.Context, repo string) ([]string, error) {
 		return nil, fmt.Errorf("no default branch (tried %s)", strings.Join(cands, ", "))
 	}
 	return out, nil
+}
+
+// symRef is the short name of what symbolic ref ref points at in repo (origin/develop for
+// refs/remotes/origin/HEAD, main for HEAD), or "" when it is no symbolic ref: no origin, a
+// clone that never set origin/HEAD, a detached HEAD. Any other git failure is an error,
+// so a guard built from it fails closed.
+func symRef(ctx context.Context, repo, ref string) (string, error) {
+	out, err := gitOut(ctx, repo, "symbolic-ref", "--quiet", "--short", ref)
+	var ee *exec.ExitError
+	switch {
+	case errors.As(err, &ee) && ee.ExitCode() == 1:
+		return "", nil
+	case err != nil:
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
 }
 
 // sameContent reports whether every path branch changed since it forked from main is

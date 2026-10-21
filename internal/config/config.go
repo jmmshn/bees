@@ -26,18 +26,37 @@ import (
 //   - default: its value when nothing sets it (absent means "");
 //   - env: the variable that overrides both files (optional);
 //   - enum: its allowed values, separated by | (optional);
-//   - path: a path, checked as ADR-0008 says: "dir", or "{repo}" when the value may
-//     begin with the {repo} placeholder (optional).
+//   - path: a path, checked as ADR-0008 says: "dir" or "file", or "{repo}" when the
+//     value may begin with the {repo} placeholder (optional).
+//
+// A setting is a string or a list of strings; a list's default is empty, it has no env
+// override, and enum and path check each of its items.
 //
 // A harness's own settings nest under its table in the role's ([worker.claude_code]),
 // named by the harness's config name; the role tables themselves say nothing about any
 // harness. Only the active harness's tables may be set (ADR-0009).
 type Config struct {
 	// Harness is the harness every new queen and worker on this machine starts on.
-	Harness string `toml:"harness" scope:"global" default:"claude_code" enum:"claude_code"`
-	Paths   Paths  `toml:"paths"`
-	Queen   Role   `toml:"queen"`
-	Worker  Role   `toml:"worker"`
+	Harness  string   `toml:"harness" scope:"global" default:"claude_code" enum:"claude_code"`
+	Paths    Paths    `toml:"paths"`
+	Delivery Delivery `toml:"delivery"`
+	Guards   Guards   `toml:"guards"`
+	Queen    Role     `toml:"queen"`
+	Worker   Role     `toml:"worker"`
+}
+
+// Delivery says how a worker's work lands (ADR-0009): it picks the role prompts' delivery
+// fragment, the guards' default and which proofs bs prune uses.
+type Delivery struct {
+	Kind     string `toml:"kind" scope:"both" default:"github_pr" enum:"github_pr|manual"`
+	Fragment string `toml:"fragment" scope:"both" path:"file"` // the user's own wording instead of kind's
+}
+
+// Guards are the commands every worker is denied, as harness-neutral shell globs over a
+// command line (* matches any text), plus scoped grants (ADR-0009, bees-12.13).
+type Guards struct {
+	Deny           []string `toml:"deny" scope:"both"`             // empty: the delivery kind's default
+	AllowMergeInto []string `toml:"allow_merge_into" scope:"both"` // base-branch globs a worker may merge a PR into
 }
 
 // Paths says where bs keeps its files and finds repos.
@@ -86,16 +105,25 @@ type Loaded struct {
 	Files    []File
 }
 
-// Field is one setting's dotted key, effective value and scope.
+// Field is one setting's dotted key, effective value and scope. A list setting has
+// List set and its items in Items; Value is then "".
 type Field struct {
 	Key, Value, Scope string
+	List              bool
+	Items             []string
 }
 
 // Fields lists every setting in declaration order.
 func (l *Loaded) Fields() []Field {
 	var out []Field
 	for _, f := range leaves(reflect.ValueOf(&l.Config).Elem(), "") {
-		out = append(out, Field{f.key, f.v.String(), f.tag.Get("scope")})
+		fd := Field{Key: f.key, Scope: f.tag.Get("scope"), List: f.list()}
+		if fd.List {
+			fd.Items = f.items()
+		} else {
+			fd.Value = f.v.String()
+		}
+		out = append(out, fd)
 	}
 	return out
 }
@@ -143,7 +171,11 @@ func loadInto(dir, project string) (*Loaded, error) {
 func load(dst any, src map[string]Source, shadowed map[string][]string, files *[]File, dir, project string) error {
 	root := reflect.ValueOf(dst).Elem()
 	for _, f := range leaves(root, "") {
-		f.v.SetString(f.tag.Get("default"))
+		if f.list() {
+			f.v.SetZero()
+		} else {
+			f.v.SetString(f.tag.Get("default"))
+		}
 		src[f.key] = Source{Kind: "default"}
 	}
 	var paths []File
@@ -236,12 +268,12 @@ func decodeFile(root reflect.Value, src map[string]Source, shadowed map[string][
 			errs = append(errs, fmt.Errorf("%s: %s belongs in the %s file, not the %s one", file.Path, f.key, scope, file.Scope))
 			continue
 		}
-		if err := check(f, f.v.String()); err != nil {
+		if err := checkAll(f); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", file.Path, err))
 			continue
 		}
-		shadowed[f.key] = append(shadowed[f.key], out[i].v.String())
-		out[i].v.SetString(f.v.String())
+		shadowed[f.key] = append(shadowed[f.key], out[i].text())
+		out[i].v.Set(f.v)
 		src[f.key] = Source{Kind: file.Scope, Where: file.Path}
 	}
 	return true, errors.Join(errs...)
@@ -264,6 +296,22 @@ func misnamed(dir, project string) error {
 			errs = append(errs, fmt.Errorf("%s: bs never reads it; rename it to %s",
 				filepath.Join(dir, e.Name()), filepath.Join(dir, project+".toml")))
 		}
+	}
+	return errors.Join(errs...)
+}
+
+// checkAll checks a string setting's value, or each item of a list setting's.
+func checkAll(f leaf) error {
+	if !f.list() {
+		return check(f, f.v.String())
+	}
+	var errs []error
+	for _, it := range f.items() {
+		if it == "" {
+			errs = append(errs, fmt.Errorf("%s: an empty item", f.key)) // unset is an empty list, not [""]
+			continue
+		}
+		errs = append(errs, check(f, it))
 	}
 	return errors.Join(errs...)
 }
@@ -317,8 +365,21 @@ type leaf struct {
 	v   reflect.Value
 }
 
-// leaves walks v's fields in declaration order: a struct is a table, a string a setting.
-// ponytail: settings are strings only; durations and lists come with the keys that need them.
+func (f leaf) list() bool { return f.v.Kind() == reflect.Slice }
+
+func (f leaf) items() []string { return slices.Clone(f.v.Interface().([]string)) }
+
+// text is the value as Shadowed keeps it: a string as is, a list's items joined by ", ".
+func (f leaf) text() string {
+	if f.list() {
+		return strings.Join(f.items(), ", ")
+	}
+	return f.v.String()
+}
+
+// leaves walks v's fields in declaration order: a struct is a table, a string or a list
+// of strings a setting.
+// ponytail: durations come with the keys that need them.
 func leaves(v reflect.Value, prefix string) []leaf {
 	var out []leaf
 	for i := range v.NumField() {
@@ -328,6 +389,11 @@ func leaves(v reflect.Value, prefix string) []leaf {
 		case reflect.Struct:
 			out = append(out, leaves(v.Field(i), key+".")...)
 		case reflect.String:
+			out = append(out, leaf{key, sf.Tag, v.Field(i)})
+		case reflect.Slice:
+			if sf.Type.Elem().Kind() != reflect.String || sf.Tag.Get("env") != "" || sf.Tag.Get("default") != "" {
+				panic("config: " + key + ": a list holds strings, with no env or default")
+			}
 			out = append(out, leaf{key, sf.Tag, v.Field(i)})
 		default:
 			panic("config: " + key + " has unsupported type " + sf.Type.String())

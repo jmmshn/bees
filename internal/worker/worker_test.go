@@ -48,6 +48,7 @@ type fakeHerdr struct {
 	tagErr     error           // herdr can't tag a workspace
 	dirty      map[string]bool // worktree paths with modified or untracked files
 	failStart  error
+	busyStarts int   // the next starts herdr refuses as agent_pane_busy, typing nothing
 	liveAnyway bool  // with failStart: Claude came up all the same, as after herdr's timeout
 	aliveErr   error // the process table can't be read
 	listErr    error // herdr can't be reached
@@ -109,6 +110,10 @@ func (h *fakeHerdr) StartAgent(ctx context.Context, pane, name, kind string, arg
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.busyStarts > 0 { // real herdr refuses before typing: nothing starts
+		h.busyStarts--
+		return fmt.Errorf("herdr agent: agent target pane %s is not an available shell: %w", pane, worker.ErrPaneBusy)
+	}
 	if h.failStart == nil || h.liveAnyway {
 		h.started = append(h.started, append([]string{pane, name}, args...))
 		h.agents[name] = pane
@@ -810,6 +815,32 @@ func TestHerdrTimeoutWithNoClaudeIsAFailure(t *testing.T) {
 	rec, _, _ := r.lb.LatestSpawn(ctx, sp.Name)
 	if _, ok, err := r.lb.LatestStart(ctx, rec.ID); ok || err != nil {
 		t.Fatalf("an unconfirmed start recorded a start: %v, %v", ok, err)
+	}
+}
+
+// bees-12.33: a new pane's shell runs prompt helpers for a moment, and herdr refuses a
+// start then without typing anything; the start tries again and starts exactly one.
+func TestABusyNewPaneIsRetriedUntilItsShellIsFree(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	defer worker.Fast(time.Second)()
+	r.h.busyStarts = 3
+	if st, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil || st.Waiting {
+		t.Fatalf("started = %+v, err = %v; want started", st, err)
+	}
+	if len(r.h.started) != 1 {
+		t.Fatalf("starts = %d, want exactly one", len(r.h.started))
+	}
+}
+
+// A pane that stays busy (the keeper runs something in it) fails after the bound, saying so.
+func TestAPaneThatStaysBusyFailsAfterTheBound(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	defer worker.Fast(20 * time.Millisecond)()
+	r.h.busyStarts = 1 << 30
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); !errors.Is(err, worker.ErrPaneBusy) || len(r.h.started) != 0 {
+		t.Fatalf("err = %v, starts = %d; want ErrPaneBusy and no start", err, len(r.h.started))
 	}
 }
 

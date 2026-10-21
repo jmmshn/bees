@@ -63,9 +63,10 @@ Protect your project's `main` on GitHub (require a pull request). Workers push t
 branches in auto mode; bs's deny rules refuse the obvious pushes to `main`, but branch
 protection is the real guard ([docs/SETUP.md](docs/SETUP.md#worker-permissions)).
 
-Full setup: [docs/SETUP.md](docs/SETUP.md). For a guided setup, open Claude Code in this
-repo and run the [`/setup-bees`](.claude/skills/setup-bees/SKILL.md) skill; it installs
-and checks each piece in turn.
+Full setup: [docs/SETUP.md](docs/SETUP.md). For a guided setup, have any coding agent
+follow [docs/SETUP-AGENT.md](docs/SETUP-AGENT.md) (in Claude Code, the
+[`/setup-bees`](.claude/skills/setup-bees/SKILL.md) skill); it installs and checks each
+piece, writes the config with `bs config init`, and verifies with `bs doctor`.
 
 Details: [docs/SPEC.md](docs/SPEC.md) · decisions: [docs/adr/](docs/adr/) ·
 vocabulary: [GLOSSARY.md](GLOSSARY.md)

@@ -27,7 +27,8 @@ import (
 //   - env: the variable that overrides both files (optional);
 //   - enum: its allowed values, separated by | (optional);
 //   - path: a path, checked as ADR-0008 says: "dir" or "file", or "{repo}" when the
-//     value may begin with the {repo} placeholder (optional).
+//     value may begin with the {repo} placeholder (optional);
+//   - doc: what it means, for bs config init's comments.
 //
 // A setting is a string or a list of strings; a list's default is empty, it has no env
 // override, and enum and path check each of its items.
@@ -37,7 +38,7 @@ import (
 // harness. Only the active harness's tables may be set (ADR-0009).
 type Config struct {
 	// Harness is the harness every new queen and worker on this machine starts on.
-	Harness   string    `toml:"harness" scope:"global" default:"claude_code" enum:"claude_code|agy"`
+	Harness   string    `toml:"harness" scope:"global" default:"claude_code" enum:"claude_code|agy" doc:"the harness every new queen and worker on this machine starts on; agy is staged: bs refuses to start it until its probes land"`
 	Paths     Paths     `toml:"paths"`
 	Workspace Workspace `toml:"workspace"`
 	Delivery  Delivery  `toml:"delivery"`
@@ -49,29 +50,29 @@ type Config struct {
 // Delivery says how a worker's work lands (ADR-0009): it picks the role prompts' delivery
 // fragment, the guards' default and which proofs bs prune uses.
 type Delivery struct {
-	Kind     string `toml:"kind" scope:"both" default:"github_pr" enum:"github_pr|manual"`
-	Fragment string `toml:"fragment" scope:"both" path:"file"` // the user's own wording instead of kind's
+	Kind     string `toml:"kind" scope:"both" default:"github_pr" enum:"github_pr|manual" doc:"how work lands, as the role prompts word it: github_pr, a PR from the worker's own branch (needs workspace.kind = git_worktree); manual, the worker reports with bs done --report and the keeper lands it"`
+	Fragment string `toml:"fragment" scope:"both" path:"file" doc:"a file of your own delivery wording instead of the kind's (a CL flow); the queen judges when such work has landed"`
 }
 
 // Guards are the commands every worker is denied, as harness-neutral shell globs over a
 // command line (* matches any text), plus scoped grants (ADR-0009, bees-12.13).
 type Guards struct {
-	Deny           []string `toml:"deny" scope:"both"`             // empty: the delivery kind's default
-	AllowMergeInto []string `toml:"allow_merge_into" scope:"both"` // base-branch globs a worker may merge a PR into
+	Deny           []string `toml:"deny" scope:"both" doc:"shell globs over a command line every worker is denied (* matches any text); empty: delivery.kind's default"`
+	AllowMergeInto []string `toml:"allow_merge_into" scope:"both" doc:"base-branch globs a worker may merge its own PR into (github_pr only; bs refuses it unless gh says the default branch is protected)"`
 }
 
 // Paths says where bs keeps its files and finds repos.
 type Paths struct {
-	LogbookDir string `toml:"logbook_dir" scope:"global" env:"BS_LOGBOOK_DIR" default:"~/.local/share/bees" path:"dir"`
-	Repos      string `toml:"repos" scope:"global" env:"BS_REPOS" path:"dir"`
-	Repo       string `toml:"repo" scope:"project" path:"dir"`
-	Worktrees  string `toml:"worktrees" scope:"both" default:"{repo}-WT" path:"{repo}"`
+	LogbookDir string `toml:"logbook_dir" scope:"global" env:"BS_LOGBOOK_DIR" default:"~/.local/share/bees" path:"dir" doc:"where each project's logbook, <project>.db, lives; bs finds every session's pane here"`
+	Repos      string `toml:"repos" scope:"global" env:"BS_REPOS" path:"dir" doc:"a directory of repos: naming another project (--project) uses the one in it whose normalised name is the project"`
+	Repo       string `toml:"repo" scope:"project" path:"dir" doc:"the project's directory; under workspace.kind = none, the one every worker shares, which you make (bs never does)"`
+	Worktrees  string `toml:"worktrees" scope:"both" default:"{repo}-WT" path:"{repo}" doc:"where git_worktree workers' worktrees go, as <worktrees>/<worker>; {repo} is the main checkout"`
 }
 
 // Workspace says what a worker's workspace is (ADR-0009): its own git worktree, or none,
 // a plain herdr workspace on paths.repo.
 type Workspace struct {
-	Kind string `toml:"kind" scope:"both" default:"git_worktree" enum:"git_worktree|none"`
+	Kind string `toml:"kind" scope:"both" default:"git_worktree" enum:"git_worktree|none" doc:"git_worktree: each worker gets its own worktree and branch, shown in herdr's sidebar as \"<project> · <label>\" nested under the repo; none: workers share paths.repo with no branch, each in a top-level herdr workspace \"<project> · <label>\""`
 }
 
 // Role holds the settings of the queen or of every worker.
@@ -82,12 +83,12 @@ type Role struct {
 
 // Worker holds every worker's settings: its harness's, as in Role, and bs spawn's.
 type Worker struct {
-	ClaudeCode ClaudeCode `toml:"claude_code"`
-	Agy        Agy        `toml:"agy"`
 	// Path is bs spawn --path when the call passes none: dirs put first on the PATH of a
 	// new worker's shell commands, so a live test's toy spawns the build under test
 	// (bees-12.24).
-	Path []string `toml:"path" scope:"project" path:"dir"`
+	Path       []string   `toml:"path" scope:"project" path:"dir" doc:"dirs put first on the PATH of every worker's shell commands, as bs spawn --path (a live test's build under test)"`
+	ClaudeCode ClaudeCode `toml:"claude_code"`
+	Agy        Agy        `toml:"agy"`
 }
 
 // Role is w's harness tables, for the adapter, without bs spawn's own settings.
@@ -95,12 +96,12 @@ func (w Worker) Role() Role { return Role{ClaudeCode: w.ClaudeCode, Agy: w.Agy} 
 
 // ClaudeCode holds the settings bs passes to Claude Code.
 type ClaudeCode struct {
-	Model string `toml:"model" scope:"both"`
+	Model string `toml:"model" scope:"both" doc:"the model Claude Code starts on (claude --model); empty: Claude Code's default"`
 }
 
 // Agy holds the settings bs passes to Antigravity's CLI.
 type Agy struct {
-	Model string `toml:"model" scope:"both"` // an id from agy models; empty: agy's default
+	Model string `toml:"model" scope:"both" doc:"an id from agy models; empty: agy's default"`
 }
 
 // Source says where a value came from.
@@ -285,10 +286,15 @@ func decodeFile(root reflect.Value, src map[string]Source, shadowed map[string][
 	if err != nil {
 		return true, err // fail closed: an unreadable file is not a missing one
 	}
+	return true, decodeText(root, src, shadowed, file, string(b))
+}
+
+// decodeText is decodeFile on text already read.
+func decodeText(root reflect.Value, src map[string]Source, shadowed map[string][]string, file File, text string) error {
 	read := reflect.New(root.Type())
-	md, err := toml.Decode(string(b), read.Interface())
+	md, err := toml.Decode(text, read.Interface())
 	if err != nil {
-		return true, fmt.Errorf("%s: %w", file.Path, err)
+		return fmt.Errorf("%s: %w", file.Path, err)
 	}
 	var errs []error
 	var unknown []string
@@ -316,7 +322,7 @@ func decodeFile(root reflect.Value, src map[string]Source, shadowed map[string][
 		out[i].v.Set(f.v)
 		src[f.key] = Source{Kind: file.Scope, Where: file.Path}
 	}
-	return true, errors.Join(errs...)
+	return errors.Join(errs...)
 }
 
 // misnamed refuses a file in dir that names project in another spelling

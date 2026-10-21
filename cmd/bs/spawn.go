@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jmmshn/bees/internal/config"
+	"github.com/jmmshn/bees/internal/harness"
 	"github.com/jmmshn/bees/internal/harness/claude"
 	"github.com/jmmshn/bees/internal/worker"
 )
@@ -55,7 +56,8 @@ func fleet(ctx context.Context, cmd, flagProject, flagAs, flagRepo string, start
 		lb.Close()
 		return worker.Fleet{}, err
 	}
-	return newFleet(worker.Fleet{P: p, LB: lb, Me: who, Harness: h, HarnessName: cfg.Harness, Delivery: cfg.Delivery, Guards: cfg.Guards, WorkspaceKind: cfg.Workspace.Kind, DefaultPath: expandAll(cfg.Worker.Path), ForeignRepo: flagRepo != ""}), nil
+	harnessOf := func(name string) (harness.Harness, error) { return adapterFor(cfg, cfg.Worker.Role(), name) }
+	return newFleet(worker.Fleet{P: p, LB: lb, Me: who, Harness: h, HarnessName: cfg.Harness, HarnessOf: harnessOf, Delivery: cfg.Delivery, Guards: cfg.Guards, WorkspaceKind: cfg.Workspace.Kind, DefaultPath: expandAll(cfg.Worker.Path), ForeignRepo: flagRepo != ""}), nil
 }
 
 func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -138,6 +140,9 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return err
 	}
 	defer f.LB.Close()
+	if err := refuseSwitch(ctx, "spawn", f.LB, f.P.Queen(), f.HarnessName, stderr); err != nil {
+		return err
+	}
 	if err := f.P.NeedRepo(); err != nil {
 		return err
 	}

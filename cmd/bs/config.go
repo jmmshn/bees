@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -20,6 +21,9 @@ import (
 // cmdConfig prints every setting as valid TOML, key = "value", with its source and any
 // scope limit in a trailing comment, so a line can be copied into a config file.
 func cmdConfig(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	if len(args) > 0 && args[0] == "init" {
+		return configInit(args[1:], stdout, stderr)
+	}
 	fs := flag.NewFlagSet("config", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	proj := fs.String("project", "", "project (default: BS_PROJECT, else the current git repo; none: the global file only)")
@@ -28,7 +32,7 @@ func cmdConfig(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 		return err
 	}
 	if len(pos) > 0 {
-		fmt.Fprintln(stderr, "usage: bs config [--project p]")
+		fmt.Fprintln(stderr, "usage: bs config [--project p] | bs config init [flags]")
 		return errUsage
 	}
 	name := ""
@@ -80,17 +84,122 @@ func cmdConfig(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 		if f.Scope != "both" {
 			limit = "; " + f.Scope + " file only"
 		}
-		val := tomlString(f.Value)
+		val := config.Quote(f.Value)
 		if f.List {
 			q := make([]string, len(f.Items))
 			for i, it := range f.Items {
-				q[i] = tomlString(it)
+				q[i] = config.Quote(it)
 			}
 			val = "[" + strings.Join(q, ", ") + "]"
 		}
 		fmt.Fprintf(stdout, "%s = %s  # %s%s\n", f.Key, val, l.Sources[f.Key], limit)
 	}
 	return nil
+}
+
+// configInit writes a commented config file, the global one or with --project a project's,
+// setting only the keys its flags name. It never overwrites a file.
+func configInit(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("config init", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	proj := fs.String("project", "", "write projects/<project>.toml instead of the global config.toml")
+	set := map[string]string{}
+	for _, fl := range []struct{ name, key, usage string }{
+		{"harness", "harness", "harness: claude_code | agy (global file only)"},
+		{"workspace", "workspace.kind", "workspace.kind: git_worktree | none"},
+		{"delivery", "delivery.kind", "delivery.kind: github_pr | manual"},
+		{"fragment", "delivery.fragment", "delivery.fragment: a file of your own delivery wording"},
+		{"repo", "paths.repo", "paths.repo: the project's directory, which workspace none shares (project file only)"},
+	} {
+		fs.Func(fl.name, fl.usage, func(v string) error { set[fl.key] = v; return nil })
+	}
+	pos, err := parseFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) > 0 {
+		fmt.Fprintln(stderr, "usage: bs config init [--project p] [--harness h] [--workspace k] [--delivery d] [--fragment file] [--repo dir]")
+		return errUsage
+	}
+	dir, err := config.Dir()
+	if err != nil {
+		return err
+	}
+	scope, path := "global", filepath.Join(dir, "config.toml")
+	if *proj != "" {
+		name, err := project.Name(*proj)
+		if err != nil {
+			return err
+		}
+		scope, path = "project", filepath.Join(dir, "projects", name+".toml")
+	}
+	text, err := config.Template(scope, set)
+	if err == nil {
+		err = initRefusals(scope, set)
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "bs config init: %v\n", err)
+		return errUsage
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	// Written aside, then linked into place, which fails on an existing file: a failed
+	// write leaves no half file that every retry would refuse.
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".config-init-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.WriteString(text); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		return err
+	}
+	if err := os.Link(tmp.Name(), path); errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("%s already exists: edit it, or move it aside to write a fresh one", path)
+	} else if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "wrote %s; bs config shows what bs reads\n", path)
+	return nil
+}
+
+// initRefusals refuses what bs queen and bs spawn would refuse of the file bs config init
+// is about to write, over the global file (a project's) or the defaults: workspace none
+// with github_pr, none with no directory to share, a repo or fragment that isn't there.
+func initRefusals(scope string, set map[string]string) error {
+	base, err := config.Env()
+	if scope == "project" {
+		base, err = config.Load("")
+	}
+	if err != nil {
+		return err
+	}
+	kind := cmp.Or(set["workspace.kind"], base.Workspace.Kind)
+	d := base.Delivery
+	d.Kind = cmp.Or(set["delivery.kind"], d.Kind)
+	d.Fragment = cmp.Or(set["delivery.fragment"], d.Fragment)
+	errs := []error{worker.CheckWorkspace(kind, d)}
+	if scope == "project" && kind == worker.NoWorkspace && set["paths.repo"] == "" {
+		errs = append(errs, errors.New(`workspace.kind = "none" shares paths.repo: make the directory, then pass --repo <dir>`))
+	}
+	if r := set["paths.repo"]; r != "" {
+		if st, err := os.Stat(config.Expand(r)); err != nil || !st.IsDir() {
+			errs = append(errs, fmt.Errorf("paths.repo = %q: no such directory; make it first (bs never does)", r))
+		}
+	}
+	if f := set["delivery.fragment"]; f != "" {
+		if _, err := os.ReadFile(config.Expand(f)); err != nil {
+			errs = append(errs, fmt.Errorf("delivery.fragment: %w", err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // printRepo says which repo the repo chain found for p, from which link, and where
@@ -163,26 +272,6 @@ func workerGuards(ctx context.Context, p project.Project, l *config.Loaded) (gua
 		w.Protected = protected(ctx, p.Repo) // a merge grant holds only on a protected default branch
 	}
 	return worker.Rules(ctx, p.Repo, l.Delivery, l.Guards, w)
-}
-
-// tomlString quotes s as a TOML basic string; Go's %q writes escapes TOML lacks (\a, \v).
-// ponytail: invalid UTF-8 prints as U+FFFD, since TOML strings can't hold it.
-func tomlString(s string) string {
-	var b strings.Builder
-	b.WriteByte('"')
-	for _, r := range strings.ToValidUTF8(s, "\uFFFD") {
-		switch {
-		case r == '"' || r == '\\':
-			b.WriteByte('\\')
-			b.WriteRune(r)
-		case r < 0x20 || r == 0x7f:
-			fmt.Fprintf(&b, `\u%04X`, r)
-		default:
-			b.WriteRune(r)
-		}
-	}
-	b.WriteByte('"')
-	return b.String()
 }
 
 // protected reports GitHub's word that repo's default branch is protected; no GitHub, or

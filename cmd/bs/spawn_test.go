@@ -320,3 +320,46 @@ func TestSpawnPathReachesEveryWorkerInTheCall(t *testing.T) {
 		}
 	}
 }
+
+// bees-12.15: while a session recorded under another harness runs, bs spawn and bs queen
+// refuse (exit 2) a start on the configured one, naming it; once it ended, they go ahead.
+func TestAHarnessSwitchIsRefusedWhileItsSessionsRun(t *testing.T) {
+	useTempLogbook(t)
+	useFakeHive(t)
+	ctx := context.Background()
+	lb, err := logbook.Open(ctx, os.Getenv("BS_LOGBOOK"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := lb.RecordSpawn(ctx, "queen-test", logbook.Spawn{Name: "test-1-9", Bead: "test-1.9", Harness: "agy", Pane: "w9:p1"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, _ := proc.Start(os.Getpid()) // this test's own process: running
+	if _, err := lb.RecordStart(ctx, logbook.Start{Spawn: id, Name: "test-1-9", Process: proc.Process{PID: os.Getpid(), Start: start}}); err != nil {
+		t.Fatal(err)
+	}
+	lb.Close()
+	if _, stderr, code := bs(t, "spawn", "--project", "test", "--as", "queen-test", "--label", "x", "test-1.1"); code != 2 || !strings.Contains(stderr, "test-1-9 (agy)") {
+		t.Fatalf("spawn: exit %d, %q; want exit 2 naming test-1-9 (agy)", code, stderr)
+	}
+	t.Setenv("HERDR_PANE_ID", "w1:p1")
+	execAgent = func(string, []string, string, ...string) error {
+		t.Fatal("started a queen beside an agy worker")
+		return nil
+	}
+	t.Cleanup(func() { execAgent = execAgentProcess })
+	if _, stderr, code := bs(t, "queen", "--project", "test"); code != 2 || !strings.Contains(stderr, "test-1-9 (agy)") {
+		t.Fatalf("queen: exit %d, %q; want exit 2 naming test-1-9 (agy)", code, stderr)
+	}
+	t.Setenv("HERDR_PANE_ID", "")
+	lb, _ = logbook.Open(ctx, os.Getenv("BS_LOGBOOK"))
+	err = lb.RecordEnd(ctx, "queen-test", id)
+	lb.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, stderr, code := bs(t, "spawn", "--project", "test", "--as", "queen-test", "--label", "x", "test-1.1"); code != 0 {
+		t.Fatalf("spawn after the agy worker ended: exit %d, %q", code, stderr)
+	}
+}

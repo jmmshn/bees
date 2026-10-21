@@ -83,6 +83,10 @@ func (h *fakeHive) ProcessInfo(ctx context.Context, pane string) (worker.PanePro
 
 func (h *fakeHive) RenameAgent(ctx context.Context, pane, name string) error { return nil }
 
+func (h *fakeHive) Panes(ctx context.Context, workspace string) ([]string, error) { return nil, nil }
+
+func (h *fakeHive) ClosePane(ctx context.Context, pane string) error { return nil }
+
 // name is the worker whose process pid is.
 func (h *fakeHive) name(pid int) string {
 	for n, p := range h.pids {

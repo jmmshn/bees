@@ -3,6 +3,8 @@ package worker
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jmmshn/bees/internal/logbook"
@@ -165,4 +167,115 @@ func watch(ctx context.Context, h Herdr, ps Procs, pane, kind string, wait time.
 		}
 	}()
 	return out
+}
+
+// ErrGuest: the recorded workspace holds a pane that runs another session's recorded
+// process, moved in from elsewhere (herdr pane move): closing it would end that session.
+var ErrGuest = errors.New("the workspace holds another session's pane")
+
+// guests names the harness processes in sp's workspace outside sp's own recorded pane:
+// another session's pane moved in with herdr pane move (it gets a new id, so it is never
+// sp.Pane), of this project or any other, recorded or not. Closing the workspace would
+// kill them (motif 12). A process this logbook recorded is named by its session. Any
+// lookup that fails is an error, never "none" (motif 7).
+func (f Fleet) guests(ctx context.Context, sp logbook.Spawn) ([]string, error) {
+	panes, err := f.H.Panes(ctx, sp.Workspace)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, pane := range panes {
+		if pane == sp.Pane {
+			continue
+		}
+		ps, err := f.inPane(ctx, pane)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range ps {
+			name, err := f.Procs.Name(p.PID)
+			if errors.Is(err, proc.ErrGone) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			if name != f.Harness.Kind() {
+				continue
+			}
+			g := fmt.Sprintf("a %s process (pid %d, pane %s)", name, p.PID, pane)
+			if who, err := f.recordedAs(ctx, p); err != nil {
+				return nil, err
+			} else if who != "" {
+				g = fmt.Sprintf("%s (pid %d, pane %s)", who, p.PID, pane)
+			}
+			if !slices.Contains(out, g) { // a foreground process is also its shell's descendant
+				out = append(out, g)
+			}
+		}
+	}
+	return out, nil
+}
+
+// recordedAs is the session whose newest start or queen entry recorded p, if any.
+func (f Fleet) recordedAs(ctx context.Context, p proc.Process) (string, error) {
+	q, ok, err := f.LB.LatestQueen(ctx, f.P.Queen())
+	if err != nil {
+		return "", err
+	}
+	if ok && q.PID == p.PID && q.Start == p.Start {
+		return q.Name, nil
+	}
+	for _, ended := range []bool{false, true} {
+		var sps []logbook.Spawn
+		var err error
+		if ended {
+			sps, err = f.LB.EndedSpawns(ctx)
+		} else {
+			sps, err = f.LB.LiveSpawns(ctx)
+		}
+		if err != nil {
+			return "", err
+		}
+		for _, sp := range sps {
+			st, ok, err := f.LB.LatestStart(ctx, sp.ID)
+			if err != nil {
+				return "", err
+			}
+			if ok && st.Process == p {
+				return sp.Name, nil
+			}
+		}
+	}
+	return "", nil
+}
+
+// inPane is every process in pane: its foreground processes and its shell's descendants.
+func (f Fleet) inPane(ctx context.Context, pane string) ([]proc.Process, error) {
+	pi, err := f.H.ProcessInfo(ctx, pane)
+	if errors.Is(err, ErrPaneGone) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []proc.Process
+	for _, fg := range pi.Foreground {
+		start, err := f.Procs.Start(fg.PID)
+		if errors.Is(err, proc.ErrGone) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, proc.Process{PID: fg.PID, Start: start})
+	}
+	if pi.Shell > 0 {
+		ds, err := f.Procs.Descendants(pi.Shell)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ds...)
+	}
+	return out, nil
 }

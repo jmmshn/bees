@@ -252,6 +252,36 @@ func (HerdrCLI) ProcessInfo(ctx context.Context, pane string) (PaneProcesses, er
 	return out, nil
 }
 
+func (HerdrCLI) Panes(ctx context.Context, workspace string) ([]string, error) {
+	var r struct {
+		Result struct {
+			Panes []struct {
+				ID string `json:"pane_id"`
+			} `json:"panes"`
+		} `json:"result"`
+	}
+	code, err := herdr(ctx, &r, "pane", "list", "--workspace", workspace)
+	if code == "workspace_not_found" {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, down(ctx, code, err)
+	}
+	var out []string
+	for _, p := range r.Result.Panes {
+		out = append(out, p.ID)
+	}
+	return out, nil
+}
+
+func (HerdrCLI) ClosePane(ctx context.Context, pane string) error {
+	code, err := herdr(ctx, nil, "pane", "close", pane)
+	if code == "pane_not_found" {
+		return nil
+	}
+	return down(ctx, code, err)
+}
+
 func (HerdrCLI) RenameAgent(ctx context.Context, pane, name string) error {
 	code, err := herdr(ctx, nil, "agent", "rename", pane, name)
 	return down(ctx, code, err)

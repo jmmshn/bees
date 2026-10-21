@@ -117,6 +117,11 @@ type Herdr interface {
 	// RenameAgent names pane's agent in herdr: the sidebar's name, and a fence against a
 	// twin's launch (agent_name_taken). bs never reads it back.
 	RenameAgent(ctx context.Context, pane, name string) error
+	// Panes lists the panes now in workspace, any moved in from elsewhere included; a
+	// workspace that is gone has none. ErrHerdrDown when herdr didn't answer.
+	Panes(ctx context.Context, workspace string) ([]string, error)
+	// ClosePane closes pane, ending what runs in it; already gone → nil.
+	ClosePane(ctx context.Context, pane string) error
 }
 
 // Beads reads beads.
@@ -837,6 +842,26 @@ func (f Fleet) end(ctx context.Context, sp logbook.Spawn, o EndOpts) Ending {
 	i := slices.IndexFunc(wss, func(w Workspace) bool { return w.ID == sp.Workspace })
 	e.Gone = i < 0
 	plain := sp.Kind == NoWorkspace
+	// A pane moved in from another session's workspace dies with this one when it closes
+	// (bees-12.36): check every pane in it, not just the worker's own.
+	guest := false
+	if !e.Gone {
+		g, err := f.guests(ctx, sp)
+		switch {
+		case err != nil:
+			e.Err = fmt.Errorf("%s: can't tell whether workspace %s holds another session's pane; nothing closed: %w", sp.Name, sp.Workspace, err)
+			return e
+		case len(g) > 0 && !o.Forget:
+			e.Err = fmt.Errorf("%s: %w: workspace %s also holds %s, which closing it would end; nothing closed: move that pane out (herdr pane move), or end %s with --forget to close only its own pane and leave the workspace open", sp.Name, ErrGuest, sp.Workspace, strings.Join(g, ", "), sp.Name)
+			return e
+		case len(g) > 0: // --forget: stop this worker, keep its guest
+			if err := f.H.ClosePane(ctx, sp.Pane); err != nil {
+				e.Err = fmt.Errorf("%s: closing its own pane %s: %w", sp.Name, sp.Pane, err)
+				return e
+			}
+		}
+		guest = len(g) > 0
+	}
 	switch {
 	case e.Gone && !o.Force:
 		// Its pane may have moved to another workspace (a new pane id): ending it then
@@ -851,6 +876,8 @@ func (f Fleet) end(ctx context.Context, sp logbook.Spawn, o EndOpts) Ending {
 			return e
 		}
 	case e.Gone:
+	case guest: // --forget: its own pane closed, the end recorded, the workspace left open for its guest
+		e.Forgot = true
 	case plain && wss[i].Worker != sp.Name:
 		if !o.Forget {
 			e.Err = fmt.Errorf("%s: workspace %s is tagged %q, not as this worker's: %w; nothing closed (--forget records the end and leaves it open)", sp.Name, sp.Workspace, wss[i].Worker, ErrNotOurs)

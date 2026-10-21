@@ -12,14 +12,17 @@ import (
 	"github.com/jmmshn/bees/internal/worker"
 )
 
-// newPlainRig is a rig whose first spawns get workspace kind none, on a repo that exists.
+// newPlainRig is a rig whose first spawns get workspace kind none, on a repo that is no
+// git checkout (a stand-in for an hg or jj one).
 func newPlainRig(t *testing.T) rig {
 	t.Helper()
 	r := newRig(t)
-	if err := os.MkdirAll(r.repo, 0o755); err != nil {
+	r.repo = filepath.Join(filepath.Dir(r.repo), "hgrepo")
+	if err := os.MkdirAll(filepath.Join(r.repo, ".hg"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	r.fleet.Kind = worker.NoWorkspace
+	r.fleet.P.Repo = r.repo
+	r.fleet.WorkspaceKind = worker.NoWorkspace
 	return r
 }
 
@@ -49,8 +52,8 @@ func TestNoneOpensATaggedPlainWorkspaceOnTheRepo(t *testing.T) {
 
 func TestNoneRefusesAMissingRepoBeforeOpeningAnything(t *testing.T) {
 	ctx := context.Background()
-	r := newRig(t) // r.repo was never made: herdr would open $HOME
-	r.fleet.Kind = worker.NoWorkspace
+	r := newPlainRig(t)
+	r.fleet.P.Repo = filepath.Join(r.repo, "gone") // herdr would open $HOME
 	if _, err := r.fleet.Spawn(ctx, "bees-8", "hg client"); err == nil || !strings.Contains(err.Error(), "not a directory") {
 		t.Fatalf("err = %v", err)
 	}
@@ -153,7 +156,7 @@ func TestRecordedKindBeatsTheConfig(t *testing.T) {
 	if _, err := r.fleet.Spawn(ctx, "bees-8", "hg client"); err != nil {
 		t.Fatal(err)
 	}
-	r.fleet.Kind = worker.GitWorktree // the keeper switched kinds since
+	r.fleet.WorkspaceKind = worker.GitWorktree // the keeper switched kinds since
 	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{}); err != nil || len(r.h.closed) != 1 || len(r.h.removed) != 0 {
 		t.Fatalf("end = %v, closed = %v, removed = %v; want the recorded kind's teardown", err, r.h.closed, r.h.removed)
 	}

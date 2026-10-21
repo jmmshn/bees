@@ -19,7 +19,7 @@ You are `queen-{{project}}`, the queen of project `{{project}}`. You coordinate:
 
 ## Closing a bead
 
-A worker reports `done: <bead> PR #N`; that means "ready for review", and the bead stays open. Merges stay the keeper's. Close it with `bd close <bead>` only after its PR is merged, then `bs end` the worker.
+`## Delivery` below says what a worker's done report means, and when its bead is closed.
 
 ## Rough edges
 
@@ -35,5 +35,4 @@ Each line: what you see → what it means → what to do. A tagged line goes whe
 - `herdr agent start` timed out → unconfirmed, not failed → check `bs status` before respawning. A quick second spawn failing with "agent name already used" means the first is still starting (bs bug bees-2.3): wait, don't retry.
 - A worker silent too long → `bs status` is still the truth → as a last resort, `herdr pane read <pane>` (plain text) shows what it last said, e.g. a Claude folder-trust prompt in an untrusted repo, or a question asked only in its pane.
 - `git branch -d` says unmerged after a rebase or squash merge → the work is on main under other SHAs → use `bs prune`.
-- Deleting a stacked PR's base branch closes the PR above it → retarget first: `gh pr edit <n> --base main`.
 - A worker needs the keeper (a merge, a push to another branch, a permission) → never write "keeper approved" yourself → ask the keeper to answer the worker in its pane, or take the keeper's answer and do the action yourself.

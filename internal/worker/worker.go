@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jmmshn/bees/internal/config"
 	"github.com/jmmshn/bees/internal/guards"
 	"github.com/jmmshn/bees/internal/harness"
 	"github.com/jmmshn/bees/internal/logbook"
@@ -110,17 +111,30 @@ type Beads interface {
 
 // Fleet spawns and ends the workers of one project.
 type Fleet struct {
-	P           project.Project
-	LB          *logbook.Logbook
-	H           Herdr
-	S           Sessions
-	B           Beads
-	G           GitHub          // nil: End proves a merge from git alone
-	Me          string          // the queen doing the spawning
-	ForeignRepo bool            // skip the check that the bead belongs to P (--repo)
-	Harness     harness.Harness // every start's, built from the worker role's config
-	HarnessName string          // its config name, recorded in each spawned entry
-	Kind        string          // the workspace kind of a first spawn: GitWorktree ("" too) or NoWorkspace
+	P             project.Project
+	LB            *logbook.Logbook
+	H             Herdr
+	S             Sessions
+	B             Beads
+	G             GitHub          // nil: End proves a merge from git alone
+	Me            string          // the queen doing the spawning
+	ForeignRepo   bool            // skip the check that the bead belongs to P (--repo)
+	Harness       harness.Harness // every start's, built from the worker role's config
+	HarnessName   string          // its config name, recorded in each spawned entry
+	WorkspaceKind string          // the workspace kind of a first spawn: GitWorktree ("" too) or NoWorkspace
+	Delivery      config.Delivery // how work lands; a zero Kind is github_pr
+	Guards        config.Guards   // [guards]: what every worker is denied or granted
+}
+
+// kind is f's delivery kind; a Fleet built without config is github_pr, the default.
+func (f Fleet) kind() string { return cmp.Or(f.Delivery.Kind, "github_pr") }
+
+// gh is GitHub when the delivery kind uses it: manual never asks GitHub anything.
+func (f Fleet) gh() GitHub {
+	if f.kind() != "github_pr" {
+		return nil
+	}
+	return f.G
 }
 
 // Workspace kinds (ADR-0009). A spawn recorded with no kind is a git worktree.
@@ -306,8 +320,21 @@ func (f Fleet) check(ctx context.Context, bead, label string) (plan, error) {
 	if err != nil {
 		return p, err
 	}
+	// An unreadable delivery fragment or a bad guard refuses the spawn here too; start
+	// checks both again at launch, against the spawn's recorded repo.
+	if _, err := Delivery(f.Delivery, f.Guards); err != nil {
+		return p, fmt.Errorf("%s: %w", name, err)
+	}
 	sp0 := logbook.Spawn{Name: name, Bead: bead, Worktree: f.worktree(name), Branch: name, Repo: f.P.Repo}
-	l, err := f.Harness.Prepare(f.startOf(sp0, filepath.Join(dir, f.P.Name+"-worker.md"), true, nil, false))
+	if f.WorkspaceKind == NoWorkspace {
+		sp0 = logbook.Spawn{Name: name, Bead: bead, Kind: NoWorkspace, Dir: f.P.Repo, Repo: f.P.Repo}
+	}
+	protected := len(f.Guards.AllowMergeInto) > 0 && f.protected(ctx, sp0) // only a merge grant needs GitHub's word before anything is made
+	r, err := f.rules(ctx, sp0, protected)
+	if err != nil {
+		return p, fmt.Errorf("%s: %w", name, err)
+	}
+	l, err := f.Harness.Prepare(f.startOf(sp0, filepath.Join(dir, f.P.Name+"-worker.md"), true, nil, r))
 	if err != nil {
 		return p, err
 	}
@@ -360,7 +387,7 @@ func (f Fleet) check(ctx context.Context, bead, label string) (plan, error) {
 	if err != nil {
 		return p, err
 	}
-	if f.Kind == NoWorkspace {
+	if f.WorkspaceKind == NoWorkspace {
 		// Workers may share paths.repo, so find an orphan by the worker token bs tags a
 		// plain workspace with.
 		if i := slices.IndexFunc(wss, func(w Workspace) bool { return w.Worker == name }); i >= 0 {
@@ -391,7 +418,7 @@ func (f Fleet) open(ctx context.Context, p plan) (logbook.Spawn, error) {
 	if p.resume {
 		return p.sp, nil
 	}
-	if f.Kind == NoWorkspace {
+	if f.WorkspaceKind == NoWorkspace {
 		return f.openPlain(ctx, p)
 	}
 	base := ""
@@ -443,6 +470,47 @@ func (f Fleet) openPlain(ctx context.Context, p plan) (logbook.Spawn, error) {
 // parses a herdr label back (motif 3), and the logbook records only the words.
 func (f Fleet) herdrLabel(label string) string { return f.P.Name + " · " + label }
 
+// rules builds sp's guards; protected is GitHub's word on the default branch (f.protected).
+func (f Fleet) rules(ctx context.Context, sp logbook.Spawn, protected bool) (guards.Rules, error) {
+	repo := cmp.Or(sp.Repo, f.P.Repo)
+	if sp.Kind == NoWorkspace {
+		return Rules(ctx, repo, config.Delivery{Kind: f.kind()}, f.Guards, guards.Worker{Repo: sp.Repo, Dir: sp.Dir, Protected: protected})
+	}
+	return Rules(ctx, repo, config.Delivery{Kind: f.kind()}, f.Guards, guards.Worker{Branch: cmp.Or(sp.Branch, sp.Name), Worktree: sp.Worktree, Repo: sp.Repo, Protected: protected})
+}
+
+// Rules builds the guards of worker w in repo, against the repo's real default branch
+// (bees-11.7): w.DefaultBranches is filled from origin/HEAD and from the branch repo, the
+// main checkout, has checked out, since origin/HEAD is unset in a repo that was never cloned.
+func Rules(ctx context.Context, repo string, d config.Delivery, g config.Guards, w guards.Worker) (guards.Rules, error) {
+	var heads []string
+	if w.Dir != "" && gitRun(ctx, repo, "rev-parse", "--git-dir") != nil {
+		// Kind none on a jj or hg checkout: no git default branch to read, so the guards
+		// cover main and master.
+		w.DefaultBranches = guards.DefaultBranches()
+		return guards.Build(d, g, w)
+	}
+	for _, ref := range []string{"refs/remotes/origin/HEAD", "HEAD"} {
+		h, err := symRef(ctx, repo, ref)
+		if err != nil {
+			return guards.Rules{}, fmt.Errorf("finding the default branch to guard: %w", err)
+		}
+		heads = append(heads, strings.TrimPrefix(h, "origin/"))
+	}
+	w.DefaultBranches = guards.DefaultBranches(heads...)
+	return guards.Build(d, g, w)
+}
+
+// Delivery is the delivery fragment a role prompt gets under d (its fragment file, read
+// now, else the kind's own), with g's merge grant if any.
+func Delivery(d config.Delivery, g config.Guards) (string, error) {
+	text, err := prompt.Delivery(cmp.Or(d.Kind, "github_pr"), config.Expand(d.Fragment))
+	if err != nil {
+		return "", err
+	}
+	return text + guards.Note(d, g), nil
+}
+
 // start starts the worker's harness with a doorbell as its first prompt, so the worker
 // reads its unread messages without needing a ring. A resumed worker continues its last
 // conversation in the worktree instead of starting its task over, if it has one: a worker
@@ -454,7 +522,16 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 	if err != nil {
 		return st, err
 	}
-	file, err := prompt.File(prompt.Worker, f.P.Name)
+	// Read the delivery fragment before anything is made: an unreadable one stops the start.
+	delivery, err := Delivery(f.Delivery, f.Guards)
+	if err != nil {
+		return st, err
+	}
+	r, err := f.rules(ctx, sp, f.protected(ctx, sp))
+	if err != nil {
+		return st, err
+	}
+	file, err := prompt.File(prompt.Worker, f.P.Name, delivery)
 	if err != nil {
 		return st, err
 	}
@@ -462,7 +539,7 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 	// inherits from herdr blanked: else a queen and her workers could split the store
 	// (bees-11.3).
 	env := map[string]string{"BS_PROJECT": f.P.Name, "BS_LOGBOOK_DIR": lbDir, "BS_LOGBOOK": ""}
-	l, err := f.Harness.Prepare(f.startOf(sp, file, st.Continued, env, f.protected(ctx, sp)))
+	l, err := f.Harness.Prepare(f.startOf(sp, file, st.Continued, env, r))
 	if err != nil {
 		return st, err
 	}
@@ -507,21 +584,12 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 
 // startOf is the harness.Start of worker sp, with a doorbell as its first prompt so it
 // reads its unread messages without needing a ring.
-func (f Fleet) startOf(sp logbook.Spawn, promptFile string, cont bool, env map[string]string, protected bool) harness.Start {
+func (f Fleet) startOf(sp logbook.Spawn, promptFile string, cont bool, env map[string]string, r guards.Rules) harness.Start {
 	return harness.Start{
 		Role: prompt.Worker, Name: sp.Name, Dir: cmp.Or(sp.Worktree, sp.Dir), PromptFile: promptFile, Continue: cont, Env: env,
 		Doorbell: fmt.Sprintf("[bs] you are %s, working on %s — run: bs inbox   (reply with: bs send %s \"...\")", sp.Name, sp.Bead, f.Me),
-		Guards:   f.guards(sp, protected),
+		Guards:   r,
 	}
-}
-
-// guards are worker sp's rules: in its worktree on its branch, or under kind none in its
-// directory with no branch.
-func (f Fleet) guards(sp logbook.Spawn, protected bool) guards.Rules {
-	if sp.Kind == NoWorkspace {
-		return guards.Worker(sp.Dir, "", sp.Repo, protected)
-	}
-	return guards.Worker(sp.Worktree, cmp.Or(sp.Branch, sp.Name), sp.Repo, protected)
 }
 
 // filePattern names worker name's files for Launch.Files key, for prompt.Private:
@@ -563,12 +631,14 @@ func fill(l harness.Launch, path func(key string) (string, error)) ([]string, er
 }
 
 // protected reports whether GitHub protects the default branch of sp's repo. Without
-// GitHub, or when gh fails, it says no: the worker is then told nothing about merges.
+// GitHub (or under manual delivery), or when gh fails, it says no: the worker is then
+// told nothing about merges.
 func (f Fleet) protected(ctx context.Context, sp logbook.Spawn) bool {
-	if f.G == nil {
+	gh := f.gh()
+	if gh == nil {
 		return false
 	}
-	ok, err := f.G.Protected(ctx, cmp.Or(sp.Repo, f.P.Repo))
+	ok, err := gh.Protected(ctx, cmp.Or(sp.Repo, f.P.Repo))
 	return err == nil && ok
 }
 
@@ -708,7 +778,7 @@ func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error) {
 			continue
 		}
 		p := Pruned{Branch: sp.Branch, Repo: repo}
-		p.Merge, p.Why = merged(ctx, f.G, repo, sp.Branch)
+		p.Merge, p.Why = merged(ctx, f.gh(), repo, sp.Branch)
 		if p.InUse, p.Prunable, err = checkedOut(ctx, repo, sp.Branch); err != nil {
 			p.Merge, p.Why = Unknown, err.Error()
 		}

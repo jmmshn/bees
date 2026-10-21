@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -200,5 +201,64 @@ func TestConfigShowsTheRepoAndWorktrees(t *testing.T) {
 		if code != 0 || !strings.Contains(out, want) {
 			t.Errorf("exit %d (%s), output lacks %q:\n%s", code, stderr, want, out)
 		}
+	}
+}
+
+// bs config shows the delivery kind and the guards every worker gets: the kind's default
+// against the repo's real default branch, or the configured list (ADR-0009).
+func TestConfigShowsDeliveryAndTheEffectiveGuards(t *testing.T) {
+	dir := configEnv(t)
+	t.Chdir(t.TempDir())
+	repos := t.TempDir()
+	t.Setenv("BS_REPOS", repos)
+	repo := filepath.Join(repos, "bees")
+	for _, args := range [][]string{{"init", "-q", repo}, {"-C", repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop"}} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %q: %v: %s", args, err, out)
+		}
+	}
+	out, stderr, code := bs(t, "config", "--project", "bees")
+	for _, want := range []string{
+		`delivery.kind = "github_pr"  # default`,
+		`guards.deny = []  # default`,
+		"# guards: a worker is denied (the default for delivery.kind github_pr):\n",
+		"#   git push develop*\n",
+		"#   gh pr merge*\n",
+		"# and its harness may allow, judged by intent:\n",
+		"own branch <worker>",
+	} {
+		if code != 0 || !strings.Contains(out, want) {
+			t.Errorf("exit %d (%s), output lacks %q:\n%s", code, stderr, want, out)
+		}
+	}
+	proj := filepath.Join(dir, "projects", "bees.toml")
+	if err := os.MkdirAll(filepath.Dir(proj), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(proj, []byte("[delivery]\nkind = \"manual\"\n[guards]\ndeny = [\"g4 submit*\"]\nallow_merge_into = [\"dev*\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, _ = bs(t, "config", "--project", "bees")
+	for _, want := range []string{
+		`delivery.kind = "manual"  # project ` + proj,
+		`guards.deny = ["g4 submit*"]  # project ` + proj,
+		`# guards: unusable, so bs spawn refuses: guards.allow_merge_into: delivery.kind manual has no pull requests to merge`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	var parsed map[string]any
+	if _, err := toml.Decode(out, &parsed); err != nil {
+		t.Errorf("output is not TOML: %v", err)
+	}
+	// Under github_pr a merge grant holds only where GitHub protects the default branch.
+	useFakeHive(t) // no GitHub
+	if err := os.WriteFile(proj, []byte("[guards]\nallow_merge_into = [\"pilot/*\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, _ = bs(t, "config", "--project", "bees")
+	if want := "# guards: unusable, so bs spawn refuses: guards.allow_merge_into: GitHub doesn't confirm the repo's default branch is protected"; !strings.Contains(out, want) {
+		t.Errorf("output lacks %q:\n%s", want, out)
 	}
 }

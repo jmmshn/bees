@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/jmmshn/bees/internal/config"
+	"github.com/jmmshn/bees/internal/guards"
 	"github.com/jmmshn/bees/internal/project"
 	"github.com/jmmshn/bees/internal/prompt"
 	"github.com/jmmshn/bees/internal/worker"
@@ -66,6 +68,7 @@ func cmdConfig(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 		}
 		fmt.Fprintf(stdout, "# logbook: %s (%s)\n", p.Logbook, from)
 		printRepo(stdout, p, l)
+		printGuards(ctx, stdout, p, l)
 	}
 	if dir, err := prompt.Dir(); err == nil {
 		fmt.Fprintf(stdout, "# cache (launch prompts, worker settings): %s\n", dir)
@@ -77,7 +80,15 @@ func cmdConfig(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 		if f.Scope != "both" {
 			limit = "; " + f.Scope + " file only"
 		}
-		fmt.Fprintf(stdout, "%s = %s  # %s%s\n", f.Key, tomlString(f.Value), l.Sources[f.Key], limit)
+		val := tomlString(f.Value)
+		if f.List {
+			q := make([]string, len(f.Items))
+			for i, it := range f.Items {
+				q[i] = tomlString(it)
+			}
+			val = "[" + strings.Join(q, ", ") + "]"
+		}
+		fmt.Fprintf(stdout, "%s = %s  # %s%s\n", f.Key, val, l.Sources[f.Key], limit)
 	}
 	return nil
 }
@@ -111,6 +122,39 @@ func printRepo(stdout io.Writer, p project.Project, l *config.Loaded) {
 	fmt.Fprintf(stdout, "# worker worktrees: %s/<worker>\n", p.Worktrees)
 }
 
+// printGuards prints the guards every worker of p gets: the deny globs, and the intents
+// a harness's classifier may allow, with <worker> for a worker's branch.
+func printGuards(ctx context.Context, stdout io.Writer, p project.Project, l *config.Loaded) {
+	from := "guards.deny, " + l.Sources["guards.deny"].String()
+	if len(l.Guards.Deny) == 0 {
+		from = "the default for delivery.kind " + l.Delivery.Kind
+	}
+	if p.RepoErr() != nil || p.Repo == "" {
+		fmt.Fprintln(stdout, "# guards: unknown until bs finds the repo, whose default branch they guard")
+		return
+	}
+	w := guards.Worker{Branch: "<worker>", Worktree: filepath.Join(p.Worktrees, "<worker>"), Repo: p.Repo}
+	if l.Workspace.Kind == worker.NoWorkspace {
+		w = guards.Worker{Repo: p.Repo, Dir: p.Repo}
+	}
+	if len(l.Guards.AllowMergeInto) > 0 && l.Delivery.Kind != "manual" {
+		w.Protected = protected(ctx, p.Repo) // a merge grant holds only on a protected default branch
+	}
+	r, err := worker.Rules(ctx, p.Repo, l.Delivery, l.Guards, w)
+	if err != nil {
+		fmt.Fprintf(stdout, "# guards: unusable, so bs spawn refuses: %v\n", err)
+		return
+	}
+	fmt.Fprintf(stdout, "# guards: a worker is denied (%s):\n", from)
+	for _, d := range r.Deny {
+		fmt.Fprintf(stdout, "#   %s\n", d)
+	}
+	fmt.Fprintln(stdout, "# and its harness may allow, judged by intent:")
+	for _, a := range r.Allow {
+		fmt.Fprintf(stdout, "#   %s\n", a)
+	}
+}
+
 // tomlString quotes s as a TOML basic string; Go's %q writes escapes TOML lacks (\a, \v).
 // ponytail: invalid UTF-8 prints as U+FFFD, since TOML strings can't hold it.
 func tomlString(s string) string {
@@ -129,4 +173,15 @@ func tomlString(s string) string {
 	}
 	b.WriteByte('"')
 	return b.String()
+}
+
+// protected reports GitHub's word that repo's default branch is protected; no GitHub, or
+// a gh failure, is no.
+func protected(ctx context.Context, repo string) bool {
+	g := newFleet(worker.Fleet{}).G
+	if g == nil {
+		return false
+	}
+	ok, err := g.Protected(ctx, repo)
+	return err == nil && ok
 }

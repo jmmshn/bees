@@ -763,6 +763,10 @@ func (f Fleet) EndAll(ctx context.Context, o EndOpts) ([]Ending, error) {
 // end removes live spawn sp's workspace and records the end.
 func (f Fleet) end(ctx context.Context, sp logbook.Spawn, o EndOpts) Ending {
 	e := Ending{Name: sp.Name, Workspace: sp.Workspace, Branch: sp.Branch}
+	if sp.Kind != "" && sp.Kind != GitWorktree && sp.Kind != NoWorkspace { // a newer bs's: never guess, even to --forget
+		e.Err = fmt.Errorf("%s: recorded with workspace kind %q, which this bs doesn't know; nothing removed: end it with the bs that spawned it", sp.Name, sp.Kind)
+		return e
+	}
 	wss, err := f.H.Workspaces(ctx)
 	if err != nil {
 		e.Err = fmt.Errorf("%s: can't tell whether workspace %s is open; nothing removed: %w", sp.Name, sp.Workspace, err)

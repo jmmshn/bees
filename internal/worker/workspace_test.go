@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/worker"
 )
 
@@ -196,5 +197,23 @@ func TestNoneRecordsTheWorkersPath(t *testing.T) {
 	}
 	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); !slices.Equal(sp.Path, []string{bin}) {
 		t.Fatalf("spawn record path = %q, want %q", sp.Path, bin)
+	}
+}
+
+// A spawn recorded with a workspace kind this bs doesn't know is never ended, --forget or
+// not: a pre-none bs read a none record as "another worktree" and --forget left its
+// workspace and Claude running with the end recorded (bees-12.31).
+func TestEndRefusesAWorkspaceKindItDoesntKnow(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	if _, err := r.lb.RecordSpawn(ctx, "queen-bees", logbook.Spawn{Name: "bees-8", Bead: "bees-8", Kind: "citc", Workspace: "w9", Pane: "w9:p1"}, "brief"); err != nil {
+		t.Fatal(err)
+	}
+	r.h.workspaces = append(r.h.workspaces, worker.Workspace{ID: "w9"})
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{Force: true, Forget: true}); err == nil || !strings.Contains(err.Error(), `"citc"`) {
+		t.Fatalf("err = %v, want a refusal naming the kind", err)
+	}
+	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); sp.Ended || len(r.h.closed)+len(r.h.removed) != 0 {
+		t.Fatalf("ended = %v, closed %v, removed %v; want nothing touched", sp.Ended, r.h.closed, r.h.removed)
 	}
 }

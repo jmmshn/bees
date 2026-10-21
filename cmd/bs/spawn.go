@@ -41,12 +41,12 @@ func fleet(ctx context.Context, cmd, flagProject, flagAs, flagRepo string, start
 		lb.Close()
 		return worker.Fleet{}, err
 	}
-	h, err := adapter(cfg, cfg.Worker)
+	h, err := adapter(cfg, cfg.Worker.Role())
 	if err != nil {
 		lb.Close()
 		return worker.Fleet{}, err
 	}
-	return newFleet(worker.Fleet{P: p, LB: lb, Me: me, Harness: h, HarnessName: cfg.Harness, Delivery: cfg.Delivery, Guards: cfg.Guards, ForeignRepo: flagRepo != ""}), nil
+	return newFleet(worker.Fleet{P: p, LB: lb, Me: me, Harness: h, HarnessName: cfg.Harness, Delivery: cfg.Delivery, Guards: cfg.Guards, Path: expandAll(cfg.Worker.Path), ForeignRepo: flagRepo != ""}), nil
 }
 
 func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -350,4 +350,13 @@ func cmdPrune(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return exitCode(code)
 	}
 	return nil
+}
+
+// expandAll is config.Expand of each of paths; nil stays nil, so no default is no --path.
+func expandAll(paths []string) []string {
+	var out []string
+	for _, p := range paths {
+		out = append(out, config.Expand(p))
+	}
+	return out
 }

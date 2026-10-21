@@ -81,7 +81,7 @@ del() {
 	done
 	rm -rf -- "$@"
 }
-del "$repo" "$repo-WT" || fail "couldn't remove $repo"
+del "$repo" "$repo-WT" "$run/xdg" || fail "couldn't remove $repo"
 # Claude's transcripts of the toy's sessions: kept as the run's record, moved out of ~/.claude.
 for t in "$projects/$enc"-*; do
 	[ -d "$t" ] || continue
@@ -100,7 +100,7 @@ if ! panes=$(herdr pane list); then
 elif jq -e --arg d "$run/" 'any(.result.panes[]; (.cwd // "") + "/" | startswith($d))' <<<"$panes" >/dev/null; then
 	leak "a herdr pane is still open in $run"
 fi
-left=$(ls -d "$store/$toy".db* "$cache/$toy"-* "$repo" "$projects/$enc"-* 2>/dev/null | tr '\n' ' ')
+left=$(ls -d "$store/$toy".db* "$cache/$toy"-* "$repo" "$run/xdg" "$projects/$enc"-* 2>/dev/null | tr '\n' ' ')
 [ -z "$left" ] || leak "files left: $left"
 
 # 7. Leftovers outside the toy: noted, never an exit code, and left for a later cleanup.

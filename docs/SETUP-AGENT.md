@@ -30,7 +30,7 @@ Settle the harness, the workspace and the delivery with the keeper (plus an opti
 | `delivery.kind` | `github_pr` (default), `manual` | `github_pr`: a worker opens a PR from its branch and the keeper merges it. `manual`: a worker reports with `bs done --report`, and the keeper lands the work. |
 | `delivery.fragment` (optional) | a file path | The keeper's own wording of how work lands (a CL flow), instead of the kind's. |
 
-`github_pr` needs the repo to have a GitHub remote (`git remote -v`); nothing checks that before a worker's first PR fails. `none` has no branch to open a PR from, so it takes `manual` or a `fragment`; `bs queen` and `bs spawn` refuse `none` with `github_pr`. Workspace and delivery may differ per project; the harness is one per machine. To switch harness later, `bs end` every session first: `bs queen` and `bs spawn` refuse to start beside one still running on the old harness, and `bs doctor` names it.
+`github_pr` needs the repo to have a GitHub remote (`git remote -v`); `bs doctor` warns when the repo has no remote at all. `none` has no branch to open a PR from, so it takes `manual` or a `fragment`; `bs queen` and `bs spawn` refuse `none` with `github_pr`. Workspace and delivery may differ per project; the harness is one per machine. To switch harness later, `bs end` every session first: `bs queen` and `bs spawn` refuse to start beside one still running on the old harness, and `bs doctor` names it.
 
 The keeper sees each worker in herdr's sidebar as `<project> · <label>`: nested under its repo for `git_worktree`, at the top level for `none`.
 
@@ -70,7 +70,7 @@ bs config init --project notes --workspace none --delivery manual --repo ~/work/
 
 A project's name is its git repo's directory name, lowercased with `-` and `_` dropped (**Names** in [`SETUP.md`](SETUP.md)). bs finds a git project from the directory it runs in, so run its commands inside the repo. A non-git project has no repo to find it from: pass `--project <name>` to every bs command you run by hand. `--fragment <file>` sets the keeper's own delivery wording. A key with no flag (such as `worker.path`, project file only) is in the written file, commented out: uncomment it there.
 
-**Check:** for each project, `bs config` run inside its repo (git) or `bs config --project <name>` (non-git) exits 0, shows the step 2 answers with the file each came from (in the last block of `key = value  # source` lines, after the `# guards:` listing), and a `# repo:` line naming the project's directory. `# repo: none` means bs ran outside a git project's repo, or a non-git project's `paths.repo` is unset.
+**Check:** for each project, `bs config` run inside its repo (git) or `bs config --project <name>` (non-git) exits 0, shows the step 2 answers with the file each came from (the `key = value  # source` lines, before the `# guards:` listing), and a `# repo:` line naming the project's directory. `# repo: none` means bs ran outside a git project's repo, or a non-git project's `paths.repo` is unset.
 
 ## 5. Harness setup
 

@@ -187,6 +187,9 @@ func (d *doctor) herdr(ctx context.Context) {
 		d.line("FAIL", "herdr", "server "+st+": start herdr in a terminal and run bs inside it")
 	case field("endpoint_compatible") == "no":
 		d.line("FAIL", "herdr", fmt.Sprintf("client %s can't talk to server %s: restart the herdr server", v, field("version")))
+	case semver.MatchString(field("version")) && older(semver.FindString(field("version")), v):
+		// bs's herdr probes ran against the client's version; an old server can disagree (bees-12.44).
+		d.line("warn", "herdr", fmt.Sprintf("%s, but server %s is older, still running the binary it started from: restart the herdr server", v, field("version")))
 	default:
 		d.line("ok", "herdr", fmt.Sprintf("%s, server %s running", v, field("version")))
 	}
@@ -324,6 +327,12 @@ func (d *doctor) project(ctx context.Context, p project.Project, err error, cfg 
 			d.line("FAIL", "git", err.Error())
 		} else {
 			d.line("ok", "git", v)
+		}
+	}
+	if cfg.Delivery.Kind == "github_pr" && !none && p.RepoErr() == nil && p.Repo != "" {
+		// Nothing else notices until a worker's first push (bees-12.44).
+		if out, err := output(ctx, "git", "-C", p.Repo, "remote"); err == nil && strings.TrimSpace(out) == "" {
+			d.line("warn", "git remote", "none in "+p.Repo+": under delivery github_pr a worker can't push its branch or open a PR; add one (git remote add origin <url>), or set delivery.kind = \"manual\"")
 		}
 	}
 	if cfg.Delivery.Kind == "github_pr" {

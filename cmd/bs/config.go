@@ -12,6 +12,7 @@ import (
 	"github.com/jmmshn/bees/internal/config"
 	"github.com/jmmshn/bees/internal/project"
 	"github.com/jmmshn/bees/internal/prompt"
+	"github.com/jmmshn/bees/internal/worker"
 )
 
 // cmdConfig prints every setting as valid TOML, key = "value", with its source and any
@@ -54,7 +55,6 @@ func cmdConfig(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 	if os.Getenv("BS_LOGBOOK_DIR") != "" {
 		fmt.Fprintf(stdout, "# BS_LOGBOOK_DIR is set, so %s and %s skip both files\n", strings.Join(skipsFiles[:len(skipsFiles)-1], ", "), skipsFiles[len(skipsFiles)-1])
 	}
-	fmt.Fprintln(stdout, "# the queen and every worker run on claude_code: bs's only harness, so no key selects one yet")
 	if name != "" {
 		p, err := locate(name, l, "")
 		if err != nil {
@@ -103,6 +103,10 @@ func printRepo(stdout io.Writer, p project.Project, l *config.Loaded) {
 	fmt.Fprintf(stdout, "# repo: %s (%s)\n", p.Repo, from)
 	if p.Base != "" {
 		fmt.Fprintf(stdout, "# base: %s (a linked worktree: workers branch from its HEAD)\n", p.Base)
+	}
+	if l.Workspace.Kind == worker.NoWorkspace {
+		fmt.Fprintf(stdout, "# workers: each in a herdr workspace on the repo, no worktree (workspace.kind = none)\n")
+		return
 	}
 	fmt.Fprintf(stdout, "# worker worktrees: %s/<worker>\n", p.Worktrees)
 }

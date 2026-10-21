@@ -1,5 +1,7 @@
 # One append-only `entries` table, unread computed as a set
 
+> Amended by [ADR-0009](0009-core-and-adapters.md) (amendment 1): the `kind` CHECK widens once, in one table rebuild, for `queen`, `started` and `done`; unread is messages and `done` entries addressed to me with no receipt from me.
+
 The logbook is a single table, `entries`, that is only ever inserted into. Unread is "messages to me with no receipt from me", computed by a query every time. There is no cursor, no time window and no mutable inbox. Every field that is filtered or joined on is a real column (`kind`, `actor`, `subject`, `ref`), and receipts use deterministic ids so a duplicate is a no-op.
 
 ## Considered Options

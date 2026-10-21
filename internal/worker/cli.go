@@ -6,9 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"os/exec"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -74,7 +72,7 @@ func (HerdrCLI) CreateWorktree(ctx context.Context, repo, base, branch, path, la
 	return Workspace{ID: r.Result.Workspace.ID, Label: label, Pane: r.Result.RootPane.ID, Path: r.Result.Worktree.Path}, nil
 }
 
-func (HerdrCLI) CreateWorkspace(ctx context.Context, dir, label string, env map[string]string) (Workspace, error) {
+func (HerdrCLI) CreateWorkspace(ctx context.Context, dir, label string) (Workspace, error) {
 	var r struct {
 		Result struct {
 			Workspace struct {
@@ -85,11 +83,7 @@ func (HerdrCLI) CreateWorkspace(ctx context.Context, dir, label string, env map[
 			} `json:"root_pane"`
 		} `json:"result"`
 	}
-	args := []string{"workspace", "create", "--cwd", dir, "--label", label, "--no-focus"}
-	for _, k := range slices.Sorted(maps.Keys(env)) {
-		args = append(args, "--env", k+"="+env[k])
-	}
-	if _, err := herdr(ctx, &r, args...); err != nil {
+	if _, err := herdr(ctx, &r, "workspace", "create", "--cwd", dir, "--label", label, "--no-focus"); err != nil {
 		return Workspace{}, err
 	}
 	if r.Result.Workspace.ID == "" || r.Result.RootPane.ID == "" {
@@ -152,11 +146,11 @@ func CheckAgentArgs(args []string) error {
 	return nil
 }
 
-func (HerdrCLI) StartClaude(ctx context.Context, pane, name string, args ...string) error {
+func (HerdrCLI) StartAgent(ctx context.Context, pane, name, kind string, args ...string) error {
 	if err := CheckAgentArgs(args); err != nil {
 		return err
 	}
-	code, err := herdr(ctx, nil, append([]string{"agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", strconv.FormatInt(herdrStartTimeout.Milliseconds(), 10), "--"}, args...)...)
+	code, err := herdr(ctx, nil, append([]string{"agent", "start", name, "--kind", kind, "--pane", pane, "--timeout", strconv.FormatInt(herdrStartTimeout.Milliseconds(), 10), "--"}, args...)...)
 	// Codes seen with herdr 0.9.3 (bees-1.14). agent_not_ready: blocked during startup,
 	// e.g. at Claude's folder-trust prompt, reported about 3 s in. timeout: Claude never
 	// sat idle at its prompt in time, either busy with its first prompt or exited (as

@@ -34,7 +34,7 @@ func (h *fakeHive) CreateWorktree(ctx context.Context, repo, base, branch, path,
 	return worker.Workspace{ID: fmt.Sprintf("w%d", h.next), Label: label, Pane: fmt.Sprintf("w%d:p1", h.next), Path: path}, nil
 }
 
-func (h *fakeHive) StartClaude(ctx context.Context, pane, name string, args ...string) error {
+func (h *fakeHive) StartAgent(ctx context.Context, pane, name, kind string, args ...string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.live[name] = true
@@ -45,13 +45,11 @@ func (h *fakeHive) StartClaude(ctx context.Context, pane, name string, args ...s
 func (h *fakeHive) RemoveWorktree(ctx context.Context, workspace string, force bool) error {
 	return nil
 }
-func (h *fakeHive) CreateWorkspace(ctx context.Context, dir, label string, env map[string]string) (worker.Workspace, error) {
+func (h *fakeHive) CreateWorkspace(ctx context.Context, dir, label string) (worker.Workspace, error) {
 	return worker.Workspace{}, fmt.Errorf("fakeHive opens no plain workspace")
 }
-func (h *fakeHive) TagWorkspace(ctx context.Context, workspace, worker, path string) error {
-	return nil
-}
-func (h *fakeHive) CloseWorkspace(ctx context.Context, workspace string) error { return nil }
+func (h *fakeHive) TagWorkspace(ctx context.Context, workspace, name, path string) error { return nil }
+func (h *fakeHive) CloseWorkspace(ctx context.Context, workspace string) error           { return nil }
 func (h *fakeHive) Workspaces(ctx context.Context) ([]worker.Workspace, error) {
 	if h.down {
 		return nil, fmt.Errorf("%w: herdr workspace list: no herdr server is running", worker.ErrHerdrDown) // as HerdrCLI labels it

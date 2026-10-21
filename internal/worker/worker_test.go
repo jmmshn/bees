@@ -15,6 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jmmshn/bees/internal/config"
+	"github.com/jmmshn/bees/internal/harness"
+	"github.com/jmmshn/bees/internal/harness/claude"
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/project"
 	"github.com/jmmshn/bees/internal/prompt"
@@ -27,7 +30,8 @@ import (
 // It is also the fake Claude registry (worker.Sessions), so a start shows up there.
 type fakeHerdr struct {
 	mu         sync.Mutex // SpawnAll starts workers concurrently
-	together   int        // >0: StartClaude waits until this many starts are in flight, else fails
+	together   int        // >0: StartAgent waits until this many starts are in flight, else fails
+	kind       string     // the last start's herdr kind
 	inFlight   int
 	next       int
 	workspaces []worker.Workspace
@@ -36,8 +40,7 @@ type fakeHerdr struct {
 	cuts       [][2]string       // the repo and base ref each worktree was cut from
 	removed    []string
 	closed     []string
-	env        map[string]map[string]string // plain workspace id → the env it was opened with
-	dirty      map[string]bool              // worktree paths with modified or untracked files
+	dirty      map[string]bool // worktree paths with modified or untracked files
 	failStart  error
 	liveAnyway bool  // with failStart: Claude came up all the same, as after herdr's timeout
 	aliveErr   error // the registry can't be read
@@ -59,44 +62,7 @@ func (h *fakeHerdr) CreateWorktree(ctx context.Context, repo, base, branch, path
 	return ws, nil
 }
 
-// CreateWorkspace opens on $HOME for a dir that doesn't exist, as herdr 0.9.5 does
-// (exit 0), and lists no path until the workspace is tagged.
-func (h *fakeHerdr) CreateWorkspace(ctx context.Context, dir, label string, env map[string]string) (worker.Workspace, error) {
-	if _, err := os.Stat(dir); err != nil {
-		dir = os.Getenv("HOME")
-	}
-	h.next++
-	ws := worker.Workspace{ID: fmt.Sprintf("w%d", h.next), Label: label, Pane: fmt.Sprintf("w%d:p1", h.next)}
-	h.workspaces = append(h.workspaces, ws)
-	if h.env == nil {
-		h.env = map[string]map[string]string{}
-	}
-	h.env[ws.ID] = env
-	ws.Path = dir
-	return ws, nil
-}
-
-// TagWorkspace cuts each value to 80 characters, as herdr 0.9.5 does without a word.
-func (h *fakeHerdr) TagWorkspace(ctx context.Context, workspace, name, path string) error {
-	i := slices.IndexFunc(h.workspaces, func(w worker.Workspace) bool { return w.ID == workspace })
-	if i < 0 {
-		return fmt.Errorf("herdr workspace report-metadata: workspace %s not found", workspace)
-	}
-	cut := func(s string) string { return s[:min(len(s), 80)] }
-	h.workspaces[i].Worker, h.workspaces[i].Path = cut(name), cut(path)
-	return nil
-}
-
-func (h *fakeHerdr) CloseWorkspace(ctx context.Context, workspace string) error {
-	if h.listErr != nil {
-		return h.listErr
-	}
-	h.closed = append(h.closed, workspace)
-	h.workspaces = slices.DeleteFunc(h.workspaces, func(w worker.Workspace) bool { return w.ID == workspace })
-	return nil
-}
-
-func (h *fakeHerdr) StartClaude(ctx context.Context, pane, name string, args ...string) error {
+func (h *fakeHerdr) StartAgent(ctx context.Context, pane, name, kind string, args ...string) error {
 	if err := worker.CheckAgentArgs(args); err != nil { // herdr's own rule, held to real herdr
 		return err
 	}
@@ -108,6 +74,7 @@ func (h *fakeHerdr) StartClaude(ctx context.Context, pane, name string, args ...
 	if h.failStart == nil || h.liveAnyway {
 		h.started = append(h.started, append([]string{pane, name}, args...))
 		h.agents[name] = pane
+		h.kind = kind
 	}
 	return h.failStart
 }
@@ -150,6 +117,39 @@ func (h *fakeHerdr) RemoveWorktree(ctx context.Context, workspace string, force 
 	return nil
 }
 
+// CreateWorkspace opens on $HOME for a dir that doesn't exist, as herdr 0.9.5 does
+// (exit 0), and lists no path or worker until the workspace is tagged.
+func (h *fakeHerdr) CreateWorkspace(ctx context.Context, dir, label string) (worker.Workspace, error) {
+	if _, err := os.Stat(dir); err != nil {
+		dir = os.Getenv("HOME")
+	}
+	h.next++
+	ws := worker.Workspace{ID: fmt.Sprintf("w%d", h.next), Label: label, Pane: fmt.Sprintf("w%d:p1", h.next)}
+	h.workspaces = append(h.workspaces, ws)
+	ws.Path = dir
+	return ws, nil
+}
+
+// TagWorkspace cuts each value to 80 characters, as herdr 0.9.5 does without a word.
+func (h *fakeHerdr) TagWorkspace(ctx context.Context, workspace, name, path string) error {
+	i := slices.IndexFunc(h.workspaces, func(w worker.Workspace) bool { return w.ID == workspace })
+	if i < 0 {
+		return fmt.Errorf("herdr workspace report-metadata: workspace %s not found", workspace)
+	}
+	cut := func(s string) string { return s[:min(len(s), 80)] }
+	h.workspaces[i].Worker, h.workspaces[i].Path = cut(name), cut(path)
+	return nil
+}
+
+func (h *fakeHerdr) CloseWorkspace(ctx context.Context, workspace string) error {
+	if h.listErr != nil {
+		return h.listErr
+	}
+	h.closed = append(h.closed, workspace)
+	h.workspaces = slices.DeleteFunc(h.workspaces, func(w worker.Workspace) bool { return w.ID == workspace })
+	return nil
+}
+
 func (h *fakeHerdr) Workspaces(ctx context.Context) ([]worker.Workspace, error) {
 	return h.workspaces, h.listErr
 }
@@ -188,6 +188,7 @@ func newRig(t *testing.T) rig {
 	h := &fakeHerdr{agents: map[string]string{}}
 	beads := fakeBeads{
 		"bees-8":     {ID: "bees-8", Title: "spawn and end bees", Description: "Build bs spawn."},
+		"bees-8.1":   {ID: "bees-8.1", Title: "child of bees-8"},
 		"bees-9":     {ID: "bees-9", Title: "second worker"},
 		"bees-10":    {ID: "bees-10", Title: "third worker"},
 		"dotfiles-3": {ID: "dotfiles-3", Title: "dotfiles thing"},
@@ -195,7 +196,7 @@ func newRig(t *testing.T) rig {
 	}
 	repo := filepath.Join(dir, "bees")
 	p := project.Project{Name: "bees", Repo: repo, Worktrees: repo + "-WT", Logbook: filepath.Join(dir, "bees.db")}
-	return rig{fleet: worker.Fleet{P: p, LB: lb, H: h, S: h, B: beads, Me: "queen-bees"}, h: h, lb: lb, repo: repo}
+	return rig{fleet: worker.Fleet{P: p, LB: lb, H: h, S: h, B: beads, Me: "queen-bees", Harness: claude.New(config.ClaudeCode{})}, h: h, lb: lb, repo: repo}
 }
 
 func TestName(t *testing.T) {
@@ -988,7 +989,7 @@ func TestSpawnRefusesALongLaunchBeforeTouchingAnything(t *testing.T) {
 func TestSpawnCountsTheModelInTheLaunchBudget(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	r.fleet.Model = strings.Repeat("m", 768)
+	r.fleet.Harness = claude.New(config.ClaudeCode{Model: strings.Repeat("m", 768)})
 	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); !errors.Is(err, worker.ErrLongLaunch) {
 		t.Fatalf("err = %v, want ErrLongLaunch", err)
 	}
@@ -1379,7 +1380,7 @@ func TestAnOrphanAtTheRecordedWorktreeIsFound(t *testing.T) {
 func TestWorkersStartWithTheConfiguredModel(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	r.fleet.Model = "claude-sonnet-5-5"
+	r.fleet.Harness = claude.New(config.ClaudeCode{Model: "claude-sonnet-5-5"})
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	r.h.exit("bees-8")
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
@@ -1396,5 +1397,80 @@ func TestWorkersStartWithTheConfiguredModel(t *testing.T) {
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	if slices.ContainsFunc(r.h.started[0], func(a string) bool { return strings.HasPrefix(a, "--model") }) {
 		t.Errorf("start = %q, want no --model when none is configured", r.h.started[0])
+	}
+}
+
+// fakeHarness is a harness.Harness whose launch is files: one per key in files, each
+// passed as --<key> {{key}}.
+type fakeHarness struct{ files map[string]string }
+
+func (fakeHarness) Kind() string { return "fake" }
+
+func (h fakeHarness) Prepare(st harness.Start) (harness.Launch, error) {
+	l := harness.Launch{Files: h.files, Record: map[string]string{"profile": st.Name}}
+	for k := range h.files {
+		l.Args = append(l.Args, "--"+k, "{{"+k+"}}")
+	}
+	return l, nil
+}
+
+func (fakeHarness) Ring(harness.Target, string, harness.Priority) error { return nil }
+
+// bees-12.6: the core writes a harness's files, fills their paths into its argv, starts
+// herdr's kind for it and records its name and Record in the spawned entry.
+func TestSpawnWritesTheHarnessFilesAndRecordsTheHarness(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	r.fleet.Harness, r.fleet.HarnessName = fakeHarness{map[string]string{"overlay.yml": "a: 1", "ext": "x"}}, "fake_harness"
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil {
+		t.Fatal(err)
+	}
+	start := r.h.started[0]
+	path := start[slices.Index(start, "--overlay.yml")+1]
+	if b, err := os.ReadFile(path); err != nil || string(b) != "a: 1" || !strings.HasPrefix(filepath.Base(path), "bees-8-overlay-") || filepath.Ext(path) != ".yml" {
+		t.Fatalf("overlay %s = %q, %v", path, b, err)
+	}
+	if r.h.kind != "fake" {
+		t.Errorf("herdr kind = %q, want the harness's Kind", r.h.kind)
+	}
+	sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8")
+	if sp.Harness != "fake_harness" || sp.Record["profile"] != "bees-8" {
+		t.Errorf("spawned entry = %+v, want harness fake_harness and its Record", sp)
+	}
+}
+
+// bees-12.6: a harness file key that breaks harness.FileKey is refused before anything is
+// made, since bs end's cleanup glob relies on it.
+func TestABadHarnessFileKeyIsRefusedBeforeTouchingAnything(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	r.fleet.Harness = fakeHarness{map[string]string{"1x": ""}}
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err == nil || !strings.Contains(err.Error(), `"1x"`) {
+		t.Fatalf("err = %v, want the bad key refused", err)
+	}
+	if _, ok, _ := r.lb.LatestSpawn(ctx, "bees-8"); ok || len(r.h.workspaces) != 0 {
+		t.Fatalf("recorded = %v, workspaces = %v; want nothing", ok, r.h.workspaces)
+	}
+}
+
+// bees-12.6: ending bees-8 removes its files and leaves those of bees-8-1, whose name
+// extends it, and the project's prompt file.
+func TestEndingAWorkerLeavesTheFilesOfAWorkerWhoseNameExtendsIt(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	for _, b := range []string{"bees-8", "bees-8.1"} {
+		if _, err := r.fleet.Spawn(ctx, b, "spawn and end"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	child := r.h.started[1][slices.Index(r.h.started[1], "--settings")+1]
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(child); err != nil {
+		t.Fatalf("bees-8-1's settings %s after ending bees-8: %v", child, err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(child), "bees-worker.md")); err != nil {
+		t.Fatalf("the project's prompt file after ending bees-8: %v", err)
 	}
 }

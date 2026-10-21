@@ -29,9 +29,12 @@ import (
 //   - path: a path, checked as ADR-0008 says: "dir", or "{repo}" when the value may
 //     begin with the {repo} placeholder (optional).
 //
-// A harness's own settings nest under its table in the role's ([worker.claude_code]);
-// the role tables themselves say nothing about any harness.
+// A harness's own settings nest under its table in the role's ([worker.claude_code]),
+// named by the harness's config name; the role tables themselves say nothing about any
+// harness. Only the active harness's tables may be set (ADR-0009).
 type Config struct {
+	// Harness is the harness every new queen and worker on this machine starts on.
+	Harness   string    `toml:"harness" scope:"global" default:"claude_code" enum:"claude_code"`
 	Paths     Paths     `toml:"paths"`
 	Workspace Workspace `toml:"workspace"`
 	Queen     Role      `toml:"queen"`
@@ -46,11 +49,10 @@ type Paths struct {
 	Worktrees  string `toml:"worktrees" scope:"both" default:"{repo}-WT" path:"{repo}"`
 }
 
-// Workspace says what a worker's workspace is and how bs makes and removes it (ADR-0009).
+// Workspace says what a worker's workspace is (ADR-0009): its own git worktree, or none,
+// a plain herdr workspace on paths.repo.
 type Workspace struct {
-	Kind     string `toml:"kind" scope:"both" default:"git_worktree" enum:"git_worktree|none"`
-	Init     string `toml:"init" scope:"both"`     // a command bs runs before a first start; under none it prints the worker's dir
-	Finalize string `toml:"finalize" scope:"both"` // a command bs end runs at teardown
+	Kind string `toml:"kind" scope:"both" default:"git_worktree" enum:"git_worktree|none"`
 }
 
 // Role holds the settings of the queen or of every worker.
@@ -180,7 +182,32 @@ func load(dst any, src map[string]Source, shadowed map[string][]string, files *[
 		f.v.SetString(val)
 		src[f.key] = Source{Kind: "env", Where: env}
 	}
+	// A harness off its enum already has its error; every table would be inactive under it.
+	sf, _ := root.Type().FieldByName("Harness")
+	if h := root.FieldByName("Harness").String(); check(leaf{key: "harness", tag: sf.Tag}, h) == nil {
+		errs = append(errs, inactive(root, src, h)...)
+	}
 	return errors.Join(errs...)
+}
+
+// inactive refuses a value set in a role's table for a harness other than the active one:
+// bs would never read it. A role's tables are named by harness config names.
+func inactive(root reflect.Value, src map[string]Source, harness string) []error {
+	var errs []error
+	seen := map[string]bool{}
+	for _, f := range leaves(root, "") {
+		parts := strings.Split(f.key, ".")
+		if len(parts) != 3 || parts[0] != "queen" && parts[0] != "worker" || parts[1] == harness {
+			continue
+		}
+		s := src[f.key]
+		table := parts[0] + "." + parts[1]
+		if (s.Kind == "global" || s.Kind == "project") && !seen[s.Where+table] {
+			seen[s.Where+table] = true
+			errs = append(errs, fmt.Errorf("%s: [%s] is for harness %s, but the harness key says %s, so bs never reads it", s.Where, table, parts[1], harness))
+		}
+	}
+	return errs
 }
 
 // decodeFile lays one file's keys over root and records them in src. It reports

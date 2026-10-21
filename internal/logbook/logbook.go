@@ -72,7 +72,7 @@ func Open(ctx context.Context, path string) (*Logbook, error) {
 		return nil, err
 	}
 	q := url.Values{}
-	q.Add("_pragma", "busy_timeout(5000)") // first, so the WAL switch below waits instead of failing
+	q.Add("_pragma", "busy_timeout(5000)") // writes wait; a new file's WAL switch can still fail: see below
 	q.Add("_pragma", "journal_mode(WAL)")
 	q.Add("_pragma", "foreign_keys(1)")
 	q.Set("_txlock", "immediate")
@@ -87,9 +87,11 @@ func Open(ctx context.Context, path string) (*Logbook, error) {
 	for err = migrate(ctx, db, abs); busy(err) && time.Now().Before(deadline); err = migrate(ctx, db, abs) {
 		select {
 		case <-ctx.Done():
-			return nil, errors.Join(db.Close(), fmt.Errorf("open logbook %s: %w", path, ctx.Err()))
-		case <-time.After(time.Duration(10+mrand.IntN(40)) * time.Millisecond):
+			err = errors.Join(err, ctx.Err())
+		case <-time.After(time.Duration(10+mrand.IntN(40)) * time.Millisecond): // jitter: contenders don't retry in step
+			continue
 		}
+		break
 	}
 	if err != nil {
 		db.Close()
@@ -98,7 +100,8 @@ func Open(ctx context.Context, path string) (*Logbook, error) {
 	return &Logbook{db: db}, nil
 }
 
-// openWait bounds Open's retries on SQLITE_BUSY, like busy_timeout bounds a write's wait.
+// openWait bounds when Open starts a retry on SQLITE_BUSY; one attempt may also wait out
+// busy_timeout, so Open gives up within about openWait plus 5 s.
 const openWait = 5 * time.Second
 
 // busy reports whether err is SQLite's SQLITE_BUSY, extended codes included.

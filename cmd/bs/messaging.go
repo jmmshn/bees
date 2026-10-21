@@ -40,8 +40,8 @@ func settings(cmd, name string) (*config.Loaded, error) {
 }
 
 // resolve resolves the project, then loads its config as command cmd reads it and
-// locates the project's files from that.
-func resolve(cmd, flagProject string) (project.Project, *config.Loaded, error) {
+// locates the project's files from that and flagRepo (--repo; "" if none).
+func resolve(cmd, flagProject, flagRepo string) (project.Project, *config.Loaded, error) {
 	name, err := project.Name(flagProject)
 	if err != nil {
 		return project.Project{}, nil, err
@@ -50,26 +50,29 @@ func resolve(cmd, flagProject string) (project.Project, *config.Loaded, error) {
 	if err != nil {
 		return project.Project{Name: name}, nil, err
 	}
-	p, err := locate(name, cfg)
+	p, err := locate(name, cfg, flagRepo)
 	return p, cfg, err
 }
 
-// locate finds project name's files from its loaded config.
-func locate(name string, cfg *config.Loaded) (project.Project, error) {
+// locate finds project name's files from its loaded config and flagRepo.
+func locate(name string, cfg *config.Loaded, flagRepo string) (project.Project, error) {
 	return project.Locate(name, project.Paths{
 		LogbookDir: config.Expand(cfg.Paths.LogbookDir),
+		RepoFlag:   flagRepo,
+		Repo:       config.Expand(cfg.Paths.Repo),
 		Repos:      config.Expand(cfg.Paths.Repos),
+		Worktrees:  config.Expand(cfg.Paths.Worktrees),
 	})
 }
 
-// scope resolves the project as command cmd does and opens its logbook. Callers close
+// scope resolves the project as command cmd does (with --repo flagRepo) and opens its logbook. Callers close
 // the logbook. Only a command that starts a project (init, queen, spawn) passes starts,
 // where a new logbook is announced; with nil a missing logbook is refused, since opening
 // one creates it and a deleted logbook would silently come back empty (bees-8.12, motif
 // 14). A missing logbook is refused either way when paths.logbook_dir moved away from one
 // that exists: starting afresh would split the store.
-func scope(ctx context.Context, cmd, flagProject string, starts io.Writer) (project.Project, *logbook.Logbook, error) {
-	p, cfg, err := resolve(cmd, flagProject)
+func scope(ctx context.Context, cmd, flagProject, flagRepo string, starts io.Writer) (project.Project, *logbook.Logbook, error) {
+	p, cfg, err := resolve(cmd, flagProject, flagRepo)
 	if err != nil {
 		return p, nil, err
 	}
@@ -147,7 +150,7 @@ func cmdInit(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		fmt.Fprintln(stderr, "usage: bs init [--project <name>]")
 		return errUsage
 	}
-	_, lb, err := scope(ctx, "init", *proj, stderr)
+	_, lb, err := scope(ctx, "init", *proj, "", stderr)
 	if err != nil {
 		return err
 	}
@@ -180,7 +183,7 @@ func cmdSend(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		}
 		body = strings.TrimRight(string(b), "\n")
 	}
-	p, lb, err := scope(ctx, "send", *proj, nil)
+	p, lb, err := scope(ctx, "send", *proj, "", nil)
 	if err != nil {
 		return err
 	}
@@ -282,7 +285,7 @@ func cmdInbox(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if err != nil {
 		return err
 	}
-	_, lb, err := scope(ctx, "inbox", *proj, nil)
+	_, lb, err := scope(ctx, "inbox", *proj, "", nil)
 	if err != nil {
 		return err
 	}

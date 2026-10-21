@@ -252,20 +252,22 @@ func check(f leaf, val string) error {
 		return nil
 	}
 	rest := val
-	if after, ok := strings.CutPrefix(val, RepoPlaceholder); ok && kind == RepoPlaceholder {
+	if after, ok := strings.CutPrefix(val, pr.RepoPlaceholder); ok && kind == pr.RepoPlaceholder {
 		rest = "/" + after // {repo} is a main checkout: always absolute
 	}
+	_, homeErr := os.UserHomeDir()
 	switch {
-	case strings.Contains(rest, RepoPlaceholder):
-		return fmt.Errorf("%s = %q: %s is only allowed at the start of paths.worktrees", f.key, val, RepoPlaceholder)
+	case strings.Contains(rest, pr.RepoPlaceholder) && kind == pr.RepoPlaceholder:
+		return fmt.Errorf("%s = %q: %s is only allowed at its start", f.key, val, pr.RepoPlaceholder)
+	case strings.Contains(rest, pr.RepoPlaceholder):
+		return fmt.Errorf("%s = %q: %s is only allowed at the start of a worktrees path", f.key, val, pr.RepoPlaceholder)
+	case strings.HasPrefix(rest, "~") && homeErr != nil:
+		return fmt.Errorf("%s = %q: can't expand ~: %w", f.key, val, homeErr)
 	case !filepath.IsAbs(Expand(rest)):
 		return fmt.Errorf("%s = %q: not an absolute path (only ~ is expanded)", f.key, val)
 	}
 	return nil
 }
-
-// RepoPlaceholder stands for the main checkout of the repo a worker's worktree is cut from.
-const RepoPlaceholder = "{repo}"
 
 // Expand replaces a leading ~ (alone or before /) with the home directory: the only
 // expansion bs does in a path, never $VAR or ~user.

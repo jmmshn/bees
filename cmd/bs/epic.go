@@ -22,7 +22,7 @@ func cmdEpic(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		fmt.Fprintln(stderr, "usage: bs epic <title>")
 		return errUsage
 	}
-	p, _, err := resolve("epic", *proj)
+	p, _, err := resolve("epic", *proj, "")
 	if err != nil {
 		return err
 	}

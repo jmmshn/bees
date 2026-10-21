@@ -27,7 +27,7 @@ var newFleet = func(f worker.Fleet) worker.Fleet {
 // fleet resolves the project, the calling session and the logbook into a Fleet; starts is
 // as for scope. The caller closes the returned Fleet's logbook.
 func fleet(ctx context.Context, cmd, flagProject, flagAs, flagRepo string, starts io.Writer) (worker.Fleet, error) {
-	p, lb, err := scope(ctx, cmd, flagProject, starts)
+	p, lb, err := scope(ctx, cmd, flagProject, flagRepo, starts)
 	if err != nil {
 		return worker.Fleet{}, err
 	}
@@ -41,11 +41,7 @@ func fleet(ctx context.Context, cmd, flagProject, flagAs, flagRepo string, start
 		lb.Close()
 		return worker.Fleet{}, err
 	}
-	f := worker.Fleet{P: p, LB: lb, Me: me, Model: cfg.Worker.ClaudeCode.Model}
-	if flagRepo != "" {
-		f.P.Repo, f.ForeignRepo = flagRepo, true
-	}
-	return newFleet(f), nil
+	return newFleet(worker.Fleet{P: p, LB: lb, Me: me, Model: cfg.Worker.ClaudeCode.Model, ForeignRepo: flagRepo != ""}), nil
 }
 
 func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -290,7 +286,7 @@ func cmdPrune(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		fmt.Fprintln(stderr, "usage: bs prune [--dry-run]")
 		return errUsage
 	}
-	p, lb, err := scope(ctx, "prune", *proj, nil)
+	p, lb, err := scope(ctx, "prune", *proj, "", nil)
 	if err != nil {
 		return err
 	}

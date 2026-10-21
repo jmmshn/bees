@@ -174,3 +174,31 @@ func TestConfigShowsTheLogbookAndTheSkipList(t *testing.T) {
 		}
 	}
 }
+
+// bs config names the repo, which link of the chain gave it, and where workers' worktrees go.
+func TestConfigShowsTheRepoAndWorktrees(t *testing.T) {
+	dir := configEnv(t)
+	t.Chdir(t.TempDir())
+	if out, _, _ := bs(t, "config", "--project", "bees"); !strings.Contains(out, "# repo: none: bs queen and bs spawn need one; set paths.repo in "+filepath.Join(dir, "projects", "bees.toml")+", or paths.repos\n") {
+		t.Errorf("no repo:\n%s", out)
+	}
+	repos := t.TempDir()
+	t.Setenv("BS_REPOS", repos)
+	proj := filepath.Join(dir, "projects", "bees.toml")
+	if err := os.MkdirAll(filepath.Dir(proj), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(proj, []byte("[paths]\nworktrees = \"/trees\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, stderr, code := bs(t, "config", "--project", "bees")
+	for _, want := range []string{
+		"# repo: " + filepath.Join(repos, "bees") + " (paths.repos, env BS_REPOS)\n",
+		"# worker worktrees: /trees/<worker>\n",
+		"# cache (launch prompts, worker settings): ",
+	} {
+		if code != 0 || !strings.Contains(out, want) {
+			t.Errorf("exit %d (%s), output lacks %q:\n%s", code, stderr, want, out)
+		}
+	}
+}

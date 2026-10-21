@@ -9,7 +9,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/jmmshn/bees/internal/config"
 	"github.com/jmmshn/bees/internal/project"
+	"github.com/jmmshn/bees/internal/prompt"
 )
 
 // cmdConfig prints every setting as valid TOML, key = "value", with its source and any
@@ -54,7 +56,7 @@ func cmdConfig(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 	}
 	fmt.Fprintln(stdout, "# the queen and every worker run on claude_code: bs's only harness, so no key selects one yet")
 	if name != "" {
-		p, err := locate(name, l)
+		p, err := locate(name, l, "")
 		if err != nil {
 			return err
 		}
@@ -63,6 +65,12 @@ func cmdConfig(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 			from = "env BS_LOGBOOK"
 		}
 		fmt.Fprintf(stdout, "# logbook: %s (%s)\n", p.Logbook, from)
+		printRepo(stdout, p, l)
+	}
+	if dir, err := prompt.Dir(); err == nil {
+		fmt.Fprintf(stdout, "# cache (launch prompts, worker settings): %s\n", dir)
+	} else {
+		fmt.Fprintf(stdout, "# cache: unusable: %v\n", err)
 	}
 	for _, f := range l.Fields() {
 		limit := ""
@@ -72,6 +80,31 @@ func cmdConfig(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 		fmt.Fprintf(stdout, "%s = %s  # %s%s\n", f.Key, tomlString(f.Value), l.Sources[f.Key], limit)
 	}
 	return nil
+}
+
+// printRepo says which repo the repo chain found for p, from which link, and where
+// workers' worktrees go.
+func printRepo(stdout io.Writer, p project.Project, l *config.Loaded) {
+	if err := p.RepoErr(); err != nil {
+		fmt.Fprintf(stdout, "# repo: unusable (%s): %v\n", p.RepoFrom, err)
+		return
+	}
+	if p.Repo == "" {
+		fmt.Fprintf(stdout, "# repo: none: bs queen and bs spawn need one; set paths.repo in %s, or paths.repos\n", l.Files[len(l.Files)-1].Path)
+		return
+	}
+	from := p.RepoFrom
+	switch from {
+	case "git":
+		from = "the git repo you are in"
+	case "paths.repo", "paths.repos":
+		from += ", " + l.Sources[from].String()
+	}
+	fmt.Fprintf(stdout, "# repo: %s (%s)\n", p.Repo, from)
+	if p.Base != "" {
+		fmt.Fprintf(stdout, "# base: %s (a linked worktree: workers branch from its HEAD)\n", p.Base)
+	}
+	fmt.Fprintf(stdout, "# worker worktrees: %s/<worker>\n", p.Worktrees)
 }
 
 // tomlString quotes s as a TOML basic string; Go's %q writes escapes TOML lacks (\a, \v).

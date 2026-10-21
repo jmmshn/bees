@@ -244,8 +244,8 @@ func TestPathsExpandTildeOnlyAndMustBeAbsolute(t *testing.T) {
 		`logbook_dir = "$HOME/logs"`: `paths.logbook_dir = "$HOME/logs": not an absolute path`,
 		`logbook_dir = "~bob/logs"`:  `paths.logbook_dir = "~bob/logs": not an absolute path`,
 		`logbook_dir = ""`:           `paths.logbook_dir = "": not an absolute path`,
-		`logbook_dir = "/x/{repo}"`:  `paths.logbook_dir = "/x/{repo}": {repo} is only allowed at the start of paths.worktrees`,
-		`worktrees = "/wt/{repo}"`:   `paths.worktrees = "/wt/{repo}": {repo} is only allowed at the start of paths.worktrees`,
+		`logbook_dir = "/x/{repo}"`:  `paths.logbook_dir = "/x/{repo}": {repo} is only allowed at the start of a worktrees path`,
+		`worktrees = "/wt/{repo}"`:   `paths.worktrees = "/wt/{repo}": {repo} is only allowed at its start`,
 		`worktrees = "wt"`:           `paths.worktrees = "wt": not an absolute path`,
 	} {
 		write(t, global, "[paths]\n"+body+"\n")

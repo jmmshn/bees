@@ -98,7 +98,7 @@ func warn(stderr io.Writer) io.Writer {
 // projectFor is the project command cmd acts in. Inside a recorded pane it is the pane's,
 // and an inherited BS_PROJECT that disagrees is ignored, with a warning. A --project
 // naming another project is the recipient's logbook for send and is read by the
-// read-only commands, but inbox acts only in the pane's own project.
+// read-only commands, but inbox and done act only in the pane's own project.
 func (c caller) projectFor(cmd, flag string, stderr io.Writer) (string, error) {
 	if !c.inPane {
 		return project.Name(flag)
@@ -109,8 +109,11 @@ func (c caller) projectFor(cmd, flag string, stderr io.Writer) (string, error) {
 	if flag == "" || project.Normalise(flag) == c.Project {
 		return c.Project, nil
 	}
-	if cmd == "inbox" {
+	switch cmd {
+	case "inbox":
 		return "", fmt.Errorf("--project %s: %s reads only its own project's inbox (%s); drop --project", flag, c.Name, c.Project)
+	case "done":
+		return "", fmt.Errorf("--project %s: %s reports done only in its own project (%s); drop --project", flag, c.Name, c.Project)
 	}
 	return project.Name(flag)
 }

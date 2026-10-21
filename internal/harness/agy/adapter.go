@@ -26,14 +26,15 @@ import (
 // Name is this harness's config name.
 const Name = "agy"
 
-// ErrUnguarded is Prepare's refusal while bs has no proven place to load its guard hook and
-// role prompt from.
-var ErrUnguarded = errors.New("agy: bs has no proven place yet to load its guard hook and role prompt from, and won't start agy without them (bees-12.12)")
+// ErrUnguarded is Prepare's first refusal while bs has no proven place to load its guard
+// hook and role prompt from: it blocks every start, so no later check hides it.
+var ErrUnguarded = errors.New(`harness agy is staged: bs won't start agy sessions until it has a proven place to load its guard hook and role prompt from (bees-12.12's probes); to start sessions now, set harness = "claude_code" in the global config`)
 
 // Adapter is the agy harness, built per role from its config table.
 type Adapter struct {
 	cfg     config.Agy
 	trusted func(dir string) (bool, error) // nil: Trusted
+	guarded bool                           // a home for the guard hook is proven; false until bees-12.12's probes land
 }
 
 // New builds the adapter from one role's [<role>.agy] table.
@@ -48,17 +49,21 @@ func (Adapter) Kind() string { return "agy" }
 // first prompt (-i). Never --dangerously-skip-permissions. Files holds the custom agent
 // and, for a worker, the hooks.json that runs bs guard before each command.
 //
-// It refuses a resume: the conversation id agy gives a session is known only after it
+// Until a home for those files is proven it refuses every start with ErrUnguarded, before
+// any other check. Then it refuses a resume: the conversation id agy gives a session is known only after it
 // starts, and -c falls back to another conversation instead of saying there is none. It
 // refuses a dir agy hasn't trusted, since agy loads hooks only in a folder trusted at
 // startup; bs reads agy's trusted list and never writes it.
 func (a Adapter) Prepare(st harness.Start) (harness.Launch, error) {
 	var l harness.Launch
+	if !a.guarded {
+		return l, ErrUnguarded
+	}
 	if st.Continue {
 		return l, fmt.Errorf("agy: %w (bees-12.12); bs end the worker and spawn it again to start fresh", harness.ErrNoResume)
 	}
 	if len(st.Path) > 0 {
-		return l, errors.New("agy: bs spawn --path isn't supported yet: agy has no per-session way to put a dir on its commands' PATH that bs has proven (bees-12.12)")
+		return l, fmt.Errorf("agy: bs can't put %s first on agy's commands' PATH yet (no per-session way is proven: bees-12.12); drop bs spawn --path, and worker.path from the config", strings.Join(st.Path, ", "))
 	}
 	trusted := a.trusted
 	if trusted == nil {
@@ -69,7 +74,7 @@ func (a Adapter) Prepare(st harness.Start) (harness.Launch, error) {
 		return l, err
 	}
 	if !ok {
-		return l, fmt.Errorf("agy hasn't trusted %s, and it loads bs's guard hook only in a folder trusted at startup, so bs won't start agy there (whether trusting a parent folder covers it is unprobed: bees-12.12)", st.Dir)
+		return l, fmt.Errorf("agy hasn't trusted %s, and it loads bs's guard hook only in a folder trusted at startup: start agy once in that folder, answer Yes to its trust prompt, quit it, then try again (a worktree bs hasn't made yet can't be trusted first: bees-12.12)", st.Dir)
 	}
 	agent := "bs-" + string(st.Role)
 	l.Files = map[string]string{"agent.md": agentFile(agent, st.PromptFile)}
@@ -83,7 +88,7 @@ func (a Adapter) Prepare(st harness.Start) (harness.Launch, error) {
 	if st.Doorbell != "" {
 		l.Args = append(l.Args, "-i", st.Doorbell)
 	}
-	return l, ErrUnguarded
+	return l, nil
 }
 
 // Ring has no way in yet: agy agentapi send-message needs the session's language-server

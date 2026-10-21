@@ -143,7 +143,7 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if err := refuseSwitch(ctx, "spawn", f.LB, f.P.Queen(), f.HarnessName, stderr); err != nil {
 		return err
 	}
-	if err := f.P.NeedRepo(); err != nil {
+	if err := needRepo(ctx, f.P); err != nil {
 		return err
 	}
 	trusted := claude.Trusted(f.P.Repo) // before spawning: starting a worker can't change it

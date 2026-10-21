@@ -137,6 +137,16 @@ func Locate(name string, c Paths) (Project, error) {
 	return p, err
 }
 
+// InGit is the project of the git repo containing the working directory, "" outside git:
+// what Name would pick with no --project and no BS_PROJECT.
+func InGit() string {
+	git := mainRepo("")
+	if git == "" {
+		return ""
+	}
+	return Normalise(filepath.Base(git))
+}
+
 // RepoNamed reports whether the keeper named the repo (--repo or paths.repo) rather than
 // bs finding it: workspace kind none opens workers only on a named one (bees-12.28).
 func (p Project) RepoNamed() bool { return p.RepoFrom == "--repo" || p.RepoFrom == "paths.repo" }

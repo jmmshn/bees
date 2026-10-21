@@ -389,3 +389,21 @@ func TestADoorbellFromTwoProjectsGivesNoSingleReply(t *testing.T) {
 		t.Fatalf("doorbell = %q, want both senders and no single reply command", got)
 	}
 }
+
+// bees-12.43: in a recorded pane the pane's project wins over the repo bs runs in; when
+// that leaves no repo, the refusal says why and which --project acts on the cwd's repo,
+// rather than "run bs inside it".
+func TestAPaneInAnotherProjectsRepoSaysWhichProject(t *testing.T) {
+	useTempLogbook(t)
+	inQueenPane(t)
+	t.Setenv("BS_REPOS", "")
+	other := filepath.Join(t.TempDir(), "otherproj")
+	if out, err := exec.Command("git", "init", "-q", other).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	t.Chdir(other)
+	_, stderr, code := bs(t, "spawn", "--label", "probe", "test-1.3")
+	if code == 0 || !strings.Contains(stderr, "this herdr pane is queen-test's, in project test, though you are in project otherproj's repo: pass --project otherproj") {
+		t.Fatalf("spawn: exit %d, %q; want the pane named and --project otherproj suggested", code, stderr)
+	}
+}

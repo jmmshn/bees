@@ -28,7 +28,7 @@ Settle three choices with the keeper, one batch of questions. Each is a key in b
 | `delivery.kind` | `github_pr` (default), `manual` | `github_pr`: a worker opens a PR from its branch and the keeper merges it. `manual`: a worker reports with `bs done --report`, and the keeper lands the work. |
 | `delivery.fragment` | a file path | The keeper's own wording of how work lands (a CL flow), instead of the kind's. |
 
-`none` has no branch to open a PR from, so it takes `manual` or a `fragment`; `bs queen` and `bs spawn` refuse `none` with `github_pr`. Workspace and delivery may differ per project; the harness is one per machine.
+`none` has no branch to open a PR from, so it takes `manual` or a `fragment`; `bs queen` and `bs spawn` refuse `none` with `github_pr`. Workspace and delivery may differ per project; the harness is one per machine. To switch harness later, `bs end` every session first: `bs queen` and `bs spawn` refuse to start beside one still running on the old harness, and `bs doctor` names it.
 
 The keeper sees each worker in herdr's sidebar as `<project> · <label>`: nested under its repo for `git_worktree`, at the top level for `none`.
 

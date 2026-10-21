@@ -308,14 +308,14 @@ type plan struct {
 }
 
 // check decides whether bead can be spawned, without touching herdr or the logbook.
-func (f Fleet) check(ctx context.Context, r Request) (plan, error) {
-	bead, label := r.Bead, r.Label
+func (f Fleet) check(ctx context.Context, req Request) (plan, error) {
+	bead, label := req.Bead, req.Label
 	name, err := Name(bead)
 	if err != nil {
 		return plan{}, err
 	}
-	p := plan{name: name, bead: bead, label: label, path: r.Path}
-	for _, d := range r.Path {
+	p := plan{name: name, bead: bead, label: label, path: req.Path}
+	for _, d := range req.Path {
 		if err := CheckPath(d); err != nil {
 			return p, err
 		}
@@ -364,8 +364,8 @@ func (f Fleet) check(ctx context.Context, r Request) (plan, error) {
 		if label != "" && label != sp.Label {
 			return p, fmt.Errorf("%s is labelled %q, not %q: %w; spawn it again without --label", name, sp.Label, label, ErrLabelChange)
 		}
-		if r.Path != nil && !slices.Equal(r.Path, sp.Path) {
-			return p, fmt.Errorf("%s was spawned with --path %q, not %q: %w; spawn it again without --path", name, sp.Path, r.Path, ErrPathChange)
+		if req.Path != nil && !slices.Equal(req.Path, sp.Path) {
+			return p, fmt.Errorf("%s was spawned with --path %q, not %q: %w; spawn it again without --path", name, sp.Path, req.Path, ErrPathChange)
 		}
 		// Fail closed: an unreadable registry must not start a second Claude.
 		if alive, err := f.S.Alive(ctx, name, 0); err != nil {

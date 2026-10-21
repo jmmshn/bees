@@ -310,7 +310,12 @@ func (f Fleet) check(ctx context.Context, bead, label string) (plan, error) {
 	if err != nil {
 		return p, fmt.Errorf("%s: %w", name, err)
 	}
-	l, err := f.Harness.Prepare(f.startOf(sp0, filepath.Join(dir, f.P.Name+"-worker.md"), true, nil, r))
+	st := f.startOf(sp0, filepath.Join(dir, f.P.Name+"-worker.md"), true, nil, r)
+	l, err := f.Harness.Prepare(st)
+	if errors.Is(err, harness.ErrNoResume) { // no resume ever starts, so a fresh start's line is the longest
+		st.Continue = false
+		l, err = f.Harness.Prepare(st)
+	}
 	if err != nil {
 		return p, err
 	}

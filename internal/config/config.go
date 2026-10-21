@@ -37,7 +37,7 @@ import (
 // harness. Only the active harness's tables may be set (ADR-0009).
 type Config struct {
 	// Harness is the harness every new queen and worker on this machine starts on.
-	Harness  string   `toml:"harness" scope:"global" default:"claude_code" enum:"claude_code"`
+	Harness  string   `toml:"harness" scope:"global" default:"claude_code" enum:"claude_code|agy"`
 	Paths    Paths    `toml:"paths"`
 	Delivery Delivery `toml:"delivery"`
 	Guards   Guards   `toml:"guards"`
@@ -70,11 +70,17 @@ type Paths struct {
 // Role holds the settings of the queen or of every worker.
 type Role struct {
 	ClaudeCode ClaudeCode `toml:"claude_code"`
+	Agy        Agy        `toml:"agy"`
 }
 
 // ClaudeCode holds the settings bs passes to Claude Code.
 type ClaudeCode struct {
 	Model string `toml:"model" scope:"both"`
+}
+
+// Agy holds the settings bs passes to Antigravity's CLI.
+type Agy struct {
+	Model string `toml:"model" scope:"both"` // an id from agy models; empty: agy's default
 }
 
 // Source says where a value came from.

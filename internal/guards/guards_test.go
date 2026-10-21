@@ -150,3 +150,15 @@ func TestAllowMergeIntoGrantsScopedMergesOnly(t *testing.T) {
 		}
 	}
 }
+
+// Denies matches the way the test's own regexp does, so every harness rendering the same
+// globs denies the same commands.
+func TestDeniesAgreesWithTheGlobOracle(t *testing.T) {
+	r := build(t, "github_pr", config.Guards{Deny: []string{"git push *main*", "gh pr merge*", "a*b*a", "exact", "x**y"}})
+	for _, cmd := range []string{"git push origin main", "git push main", "gh pr merge", "gh pr merge 4", "aba", "abba", "ab", "exact", "exactly", "xy", "x y", "", "git push origin web"} {
+		glob, got := r.Denies(cmd)
+		if want := denied(r, cmd); got != want {
+			t.Errorf("Denies(%q) = %v (%q), oracle says %v", cmd, got, glob, want)
+		}
+	}
+}

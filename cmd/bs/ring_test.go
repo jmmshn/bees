@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/jmmshn/bees/internal/harness/claude/claudetest"
+	"github.com/jmmshn/bees/internal/logbook"
 )
 
 func TestSendRingsTheRecipientWithItsUnreadCount(t *testing.T) {
@@ -78,5 +81,24 @@ func TestSendNeverRingsAStranger(t *testing.T) {
 	}
 	if inbox, _, _ := bs(t, "inbox", "--as", "other-1"); !strings.Contains(inbox, "hello") {
 		t.Fatalf("inbox = %q", inbox)
+	}
+}
+
+// An agy worker has no ring: the message is stored and bs send says when it will be read.
+func TestSendToAHarnessWithNoRingSaysSo(t *testing.T) {
+	useTempLogbook(t)
+	ctx := context.Background()
+	lb, err := logbook.Open(ctx, os.Getenv("BS_LOGBOOK"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = lb.RecordSpawn(ctx, "queen-test", logbook.Spawn{Name: "worker-a", Bead: "worker-a", Harness: "agy"}, "")
+	lb.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, stderr, code := bs(t, "send", "--as", "queen-test", "worker-a", "hello")
+	if code != 0 || !strings.Contains(out, "stored; worker-a's harness has no ring yet") || stderr != "" {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, out, stderr)
 	}
 }

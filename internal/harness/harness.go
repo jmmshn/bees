@@ -18,6 +18,14 @@ const Default = "claude_code"
 // ErrNotRunning means no live session has the name rung.
 var ErrNotRunning = errors.New("not running")
 
+// ErrNoResume means the harness can't resume a conversation, so a start that would
+// continue one is refused rather than started fresh silently.
+var ErrNoResume = errors.New("its harness can't resume a conversation yet")
+
+// ErrNoRing means the harness has no way to ring a running session yet: the message waits
+// for the session's next bs inbox.
+var ErrNoRing = errors.New("its harness has no ring yet")
+
 // Priority is when the receiving session acts on a ring.
 type Priority string
 
@@ -61,7 +69,7 @@ type Target struct {
 
 // Harness is one agent program bs can start and ring.
 type Harness interface {
-	Kind() string                                 // herdr --kind (claude), also the binary bs queen execs
+	Kind() string                                 // herdr --kind (claude, agy), also the binary bs queen execs
 	Prepare(st Start) (Launch, error)             // pure: render guards, files and argv
-	Ring(t Target, text string, p Priority) error // the doorbell; ErrNotRunning when t isn't running
+	Ring(t Target, text string, p Priority) error // the doorbell; ErrNotRunning when t isn't running, ErrNoRing when the harness can't ring
 }

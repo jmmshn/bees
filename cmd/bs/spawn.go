@@ -14,7 +14,6 @@ import (
 
 	"github.com/jmmshn/bees/internal/config"
 	"github.com/jmmshn/bees/internal/harness/claude"
-	"github.com/jmmshn/bees/internal/project"
 	"github.com/jmmshn/bees/internal/worker"
 )
 
@@ -29,12 +28,19 @@ var newFleet = func(f worker.Fleet) worker.Fleet {
 
 // fleet resolves the project, the calling session and the logbook into a Fleet; starts is
 // as for scope. The caller closes the returned Fleet's logbook.
-func fleet(ctx context.Context, cmd, flagProject, flagAs, flagRepo string, starts io.Writer) (worker.Fleet, error) {
-	p, lb, err := scope(ctx, cmd, flagProject, flagRepo, starts)
+func fleet(ctx context.Context, cmd, flagProject, flagAs, flagRepo string, starts, stderr io.Writer) (worker.Fleet, error) {
+	if cmd == "spawn" { // before scope, which starts a missing logbook
+		if p, _, err := resolve(ctx, cmd, flagProject, flagRepo, nil); err == nil { // scope warns
+			if err := atFleetLogbook(cmd, p, stderr); err != nil {
+				return worker.Fleet{}, err
+			}
+		}
+	}
+	p, lb, err := scope(ctx, cmd, flagProject, flagRepo, starts, stderr)
 	if err != nil {
 		return worker.Fleet{}, err
 	}
-	me, err := project.Me(flagAs)
+	who, _, err := me(ctx, flagAs, stderr)
 	if err != nil {
 		lb.Close()
 		return worker.Fleet{}, err
@@ -49,7 +55,7 @@ func fleet(ctx context.Context, cmd, flagProject, flagAs, flagRepo string, start
 		lb.Close()
 		return worker.Fleet{}, err
 	}
-	return newFleet(worker.Fleet{P: p, LB: lb, Me: me, Harness: h, HarnessName: cfg.Harness, Delivery: cfg.Delivery, Guards: cfg.Guards, WorkspaceKind: cfg.Workspace.Kind, DefaultPath: expandAll(cfg.Worker.Path), ForeignRepo: flagRepo != ""}), nil
+	return newFleet(worker.Fleet{P: p, LB: lb, Me: who, Harness: h, HarnessName: cfg.Harness, Delivery: cfg.Delivery, Guards: cfg.Guards, WorkspaceKind: cfg.Workspace.Kind, DefaultPath: expandAll(cfg.Worker.Path), ForeignRepo: flagRepo != ""}), nil
 }
 
 func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -127,7 +133,7 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 			}
 		}
 	}
-	f, err := fleet(ctx, "spawn", *proj, *as, repo, stderr)
+	f, err := fleet(ctx, "spawn", *proj, *as, repo, stderr, stderr)
 	if err != nil {
 		return err
 	}
@@ -194,7 +200,7 @@ func cmdEnd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 		fmt.Fprintln(stderr, "usage: bs end [--force] [--forget] <worker | bead>\n       bs end --all --project <project> [--force] [--forget] [--yes]")
 		return errUsage
 	}
-	f, err := fleet(ctx, "end", *proj, *as, "", nil)
+	f, err := fleet(ctx, "end", *proj, *as, "", nil, stderr)
 	if err != nil {
 		return err
 	}
@@ -312,7 +318,7 @@ func cmdPrune(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		fmt.Fprintln(stderr, "usage: bs prune [--dry-run]")
 		return errUsage
 	}
-	p, lb, err := scope(ctx, "prune", *proj, "", nil)
+	p, lb, err := scope(ctx, "prune", *proj, "", nil, stderr)
 	if err != nil {
 		return err
 	}

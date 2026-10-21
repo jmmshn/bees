@@ -26,32 +26,59 @@ var errUsage = errors.New("usage")
 // errNoLogbook means the project's logbook is missing and the command may not start one.
 var errNoLogbook = errors.New("no logbook")
 
-// skipsFiles lists the commands that read only the environment, never the config files,
-// while BS_LOGBOOK_DIR is set: a keeper editing config.toml mid-run can't silence a fleet
-// whose workers carry the store in their env (ADR-0008). Every other command reads them.
+// skipsFiles lists the commands that, in a recorded herdr pane, read only the global
+// file and skip the project's (ADR-0008, ADR-0009 amendment 1): a keeper editing a
+// project file mid-run can't silence a fleet. A global file they can't read falls back to
+// the defaults, with a warning. Every other command, and every command outside a recorded
+// pane, reads both files.
 var skipsFiles = []string{"send", "inbox", "status", "bead", "epic", "version"}
 
 // settings loads the config for project name (none: "") as command cmd reads it.
-func settings(cmd, name string) (*config.Loaded, error) {
-	if slices.Contains(skipsFiles, cmd) && os.Getenv("BS_LOGBOOK_DIR") != "" {
+func settings(cmd, name string, c caller, stderr io.Writer) (*config.Loaded, error) {
+	if !c.inPane || !slices.Contains(skipsFiles, cmd) {
+		return config.Load(name)
+	}
+	l, err := config.Load("")
+	if err != nil {
+		fmt.Fprintf(warn(stderr), "bs %s: warning: %v; using the defaults\n", cmd, err)
 		return config.Env()
 	}
-	return config.Load(name)
+	return l, nil
 }
 
-// resolve resolves the project, then loads its config as command cmd reads it and
-// locates the project's files from that and flagRepo (--repo; "" if none).
-func resolve(cmd, flagProject, flagRepo string) (project.Project, *config.Loaded, error) {
-	name, err := project.Name(flagProject)
+// resolve resolves the project, from the caller's herdr pane when an entry recorded it,
+// then loads its config as command cmd reads it and locates the project's files from that
+// and flagRepo (--repo; "" if none).
+func resolve(ctx context.Context, cmd, flagProject, flagRepo string, stderr io.Writer) (project.Project, *config.Loaded, error) {
+	c, err := whoCalls(ctx, stderr)
 	if err != nil {
 		return project.Project{}, nil, err
 	}
-	cfg, err := settings(cmd, name)
+	name, err := c.projectFor(cmd, flagProject, stderr)
+	if err != nil {
+		return project.Project{}, nil, err
+	}
+	cfg, err := settings(cmd, name, c, stderr)
 	if err != nil {
 		return project.Project{Name: name}, nil, err
 	}
 	p, err := locate(name, cfg, flagRepo)
+	c.setLogbook(&p, stderr)
 	return p, cfg, err
+}
+
+// atFleetLogbook refuses (exit 2) a project whose logbook is not <global
+// paths.logbook_dir>/<project>.db: its sessions' panes would never be found there.
+func atFleetLogbook(cmd string, p project.Project, stderr io.Writer) error {
+	dir, err := globalLogbookDir()
+	if err != nil {
+		return err
+	}
+	if want := filepath.Join(dir, p.Name+".db"); filepath.Clean(p.Logbook) != want {
+		fmt.Fprintf(stderr, "bs %s: project %s's logbook is %s, not %s: the sessions bs starts are found by their herdr pane in the global paths.logbook_dir only; unset BS_LOGBOOK and BS_LOGBOOK_DIR, or set paths.logbook_dir in the global config\n", cmd, p.Name, p.Logbook, want)
+		return exitCode(2)
+	}
+	return nil
 }
 
 // locate finds project name's files from its loaded config and flagRepo.
@@ -72,8 +99,8 @@ func locate(name string, cfg *config.Loaded, flagRepo string) (project.Project, 
 // one creates it and a deleted logbook would silently come back empty (bees-8.12, motif
 // 14). A missing logbook is refused either way when paths.logbook_dir moved away from one
 // that exists: starting afresh would split the store.
-func scope(ctx context.Context, cmd, flagProject, flagRepo string, starts io.Writer) (project.Project, *logbook.Logbook, error) {
-	p, cfg, err := resolve(cmd, flagProject, flagRepo)
+func scope(ctx context.Context, cmd, flagProject, flagRepo string, starts, stderr io.Writer) (project.Project, *logbook.Logbook, error) {
+	p, cfg, err := resolve(ctx, cmd, flagProject, flagRepo, stderr)
 	if err != nil {
 		return p, nil, err
 	}
@@ -151,7 +178,7 @@ func cmdInit(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		fmt.Fprintln(stderr, "usage: bs init [--project <name>]")
 		return errUsage
 	}
-	_, lb, err := scope(ctx, "init", *proj, "", stderr)
+	_, lb, err := scope(ctx, "init", *proj, "", stderr, stderr)
 	if err != nil {
 		return err
 	}
@@ -172,7 +199,7 @@ func cmdSend(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		fmt.Fprintln(stderr, "usage: bs send [--as <session>] [--now] <to> <body | ->")
 		return errUsage
 	}
-	from, err := project.Me(*as)
+	from, c, err := me(ctx, *as, stderr)
 	if err != nil {
 		return err
 	}
@@ -184,7 +211,7 @@ func cmdSend(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		}
 		body = strings.TrimRight(string(b), "\n")
 	}
-	p, lb, err := scope(ctx, "send", *proj, "", nil)
+	p, lb, err := scope(ctx, "send", *proj, "", nil, stderr)
 	if err != nil {
 		return err
 	}
@@ -195,7 +222,11 @@ func cmdSend(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	if err := project.CheckSession(to); err != nil {
 		return err
 	}
-	id, err := lb.Send(ctx, from, to, body)
+	fromProject := "" // the logbook's own project
+	if c.inPane && c.Project != p.Name {
+		fromProject = c.Project // cross-project mail: the reply goes back to the pane's project
+	}
+	id, err := lb.SendFrom(ctx, from, fromProject, to, body)
 	if err != nil {
 		return err
 	}
@@ -292,11 +323,11 @@ func cmdInbox(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		fmt.Fprintln(stderr, "usage: bs inbox [--as <session>] [--peek]")
 		return errUsage
 	}
-	session, err := project.Me(*as)
+	session, _, err := me(ctx, *as, stderr)
 	if err != nil {
 		return err
 	}
-	_, lb, err := scope(ctx, "inbox", *proj, "", nil)
+	_, lb, err := scope(ctx, "inbox", *proj, "", nil, stderr)
 	if err != nil {
 		return err
 	}
@@ -313,6 +344,9 @@ func cmdInbox(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	for i, m := range msgs {
 		ids[i] = m.ID
 		fmt.Fprintf(stdout, "── %s from %s · %s\n%s\n\n", m.ID, m.From, m.TS.Local().Format(time.DateTime), m.Body)
+		if m.FromProject != "" { // cross-project mail: the sender reads its own project's logbook
+			fmt.Fprintf(stdout, "   (reply with: bs send --project %s %s \"...\")\n\n", m.FromProject, m.From)
+		}
 	}
 	if *peek {
 		return nil

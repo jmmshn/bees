@@ -103,8 +103,8 @@ func Build(d config.Delivery, g config.Guards, w Worker) (Rules, error) {
 	r := Rules{Deny: slices.Clone(g.Deny), Environment: []string{env}, Allow: []string{
 		fmt.Sprintf("Running this repository's own build, lint and test commands (such as go vet, go test, go build -o into the worktree, pre-commit) inside the worktree %s.", w.Worktree),
 	}}
-	switch {
-	case d.Kind == "manual":
+	switch d.Kind {
+	case "manual":
 		if len(r.Deny) == 0 {
 			r.Deny = pushes(w.DefaultBranches, false)
 		}

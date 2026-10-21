@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jmmshn/bees/internal/config"
 	"github.com/jmmshn/bees/internal/harness/claude"
 	"github.com/jmmshn/bees/internal/project"
 	"github.com/jmmshn/bees/internal/worker"
@@ -35,7 +36,12 @@ func fleet(ctx context.Context, flagProject, flagAs, flagRepo string, starts io.
 		lb.Close()
 		return worker.Fleet{}, err
 	}
-	f := worker.Fleet{P: p, LB: lb, Me: me}
+	cfg, err := config.Load(p.Name)
+	if err != nil {
+		lb.Close()
+		return worker.Fleet{}, err
+	}
+	f := worker.Fleet{P: p, LB: lb, Me: me, Model: cfg.Worker.ClaudeCode.Model}
 	if flagRepo != "" {
 		f.P.Repo, f.ForeignRepo = flagRepo, true
 	}

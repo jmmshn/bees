@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/jmmshn/bees/internal/config"
 	"github.com/jmmshn/bees/internal/project"
 	"github.com/jmmshn/bees/internal/prompt"
 )
@@ -48,6 +49,10 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if err != nil {
 		return err
 	}
+	cfg, err := config.Load(p.Name)
+	if err != nil {
+		return err
+	}
 	// The queen starts the project, so her bs commands find a logbook.
 	_, lb, err := scope(ctx, *proj, stderr)
 	if err != nil {
@@ -63,5 +68,9 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if err != nil {
 		return err
 	}
-	return execClaude(p.Repo, env, "--name", p.Queen(), "--append-system-prompt-file", file)
+	argv := []string{"--name", p.Queen(), "--append-system-prompt-file", file}
+	if m := cfg.Queen.ClaudeCode.Model; m != "" {
+		argv = append(argv, "--model="+m) // one argument: a value starting with - stays a value
+	}
+	return execClaude(p.Repo, env, argv...)
 }

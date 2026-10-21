@@ -99,6 +99,7 @@ type Fleet struct {
 	G           GitHub // nil: End proves a merge from git alone
 	Me          string // the queen doing the spawning
 	ForeignRepo bool   // skip the check that the bead belongs to P (--repo)
+	Model       string // claude --model for every start; "" leaves Claude's own default
 }
 
 var herdrName = project.SessionName
@@ -456,6 +457,11 @@ func settingsPattern(name string) string { return name + "-settings-*.json" }
 func (f Fleet) launch(name, bead, settings, promptFile string, cont bool) []string {
 	doorbell := fmt.Sprintf("[bs] you are %s, working on %s — run: bs inbox   (reply with: bs send %s \"...\")", name, bead, f.Me)
 	args := []string{"--name", name, "--settings", settings, "--append-system-prompt-file", promptFile, doorbell}
+	if f.Model != "" {
+		// On the line, not in --settings: --model beats ANTHROPIC_MODEL and settings files.
+		// One argument, so a value starting with - can't become a flag of its own.
+		args = append([]string{"--model=" + f.Model}, args...)
+	}
 	if cont {
 		args = append([]string{"--continue"}, args...)
 	}

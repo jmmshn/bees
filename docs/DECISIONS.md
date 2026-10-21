@@ -113,7 +113,7 @@ Status: **accepted**, **superseded** (replaced by a later decision), or **open**
 
 | Id | Decision | Status | Recorded in |
 |---|---|---|---|
-| R49 | Config (bees-11.2): `$XDG_CONFIG_HOME/bees` (else `~/.config/bees`) holds a global `config.toml` and `projects/<project>.toml`, filled default → global → project → env into one tagged struct, `internal/config.Config`. v1 keys: `paths.logbook_dir`, `paths.repos`, `paths.repo`, `paths.worktrees`, `[queen.claude_code] model`, `[worker.claude_code] model`. Errors are per file and name the file and key path; a misnamed project file names the right one. `bs config` prints every key as TOML with its source. Amends R23, R25, R46. | accepted | ADR-0008 |
+| R49 | Config (bees-11.2): `$XDG_CONFIG_HOME/bees` (else `~/.config/bees`) holds a global `config.toml` and `projects/<project>.toml`, filled default → global → project → env into one tagged struct, `internal/config.Config`. v1 keys: `paths.logbook_dir`, `paths.repos`, `paths.repo`, `paths.worktrees`, `[queen.claude_code] model`, `[worker.claude_code] model`. Errors are per file and name the file and key path; a misnamed project file names the right one. `bs config` prints every key as TOML with its source. A non-empty model is passed as `--model=<value>` on the queen's exec line and every worker launch (bees-11.4). Amends R23, R25, R46. | accepted | ADR-0008 |
 
 ## Prior art for handoff (bees-1.1)
 

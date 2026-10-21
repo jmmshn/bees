@@ -227,6 +227,8 @@ func ring(ctx context.Context, lb *logbook.Logbook, from, to string, now bool, s
 	switch {
 	case errors.Is(err, harness.ErrNotRunning):
 		fmt.Fprintf(stdout, "queued; %s is not running\n", to)
+	case errors.Is(err, harness.ErrNoRing):
+		fmt.Fprintf(stdout, "stored; %s's harness has no ring yet, so it reads this at its next bs inbox\n", to)
 	case err != nil:
 		fmt.Fprintf(stderr, "bs send: couldn't ring %s (the message is stored): %v\n", to, err)
 	}

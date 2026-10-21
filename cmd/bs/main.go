@@ -25,6 +25,7 @@ commands:
   inbox     print your unread messages and record receipts
   status    list running sessions and unread counts (--json for scripts)
   config    print every setting, its value and where it came from
+  guard     agy's tool-call hook: deny a command line matching one of its globs
   version   print the commit bs was built from
 `
 
@@ -41,6 +42,7 @@ var commands = map[string]func(ctx context.Context, args []string, stdin io.Read
 	"bead":    cmdBead,
 	"status":  cmdStatus,
 	"config":  cmdConfig,
+	"guard":   cmdGuard,
 	"version": cmdVersion,
 }
 

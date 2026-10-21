@@ -331,17 +331,17 @@ func TestHarnessIsAGlobalEnum(t *testing.T) {
 	if l, err := Load("bees"); err != nil || l.Harness != "claude_code" {
 		t.Fatalf("default harness = %v, %v; want claude_code", l, err)
 	}
-	write(t, global, "harness = \"agy\"\n[worker.claude_code]\nmodel = \"m\"\n")
+	write(t, global, "harness = \"oh_my_pi\"\n[worker.claude_code]\nmodel = \"m\"\n")
 	write(t, proj, "harness = \"claude_code\"\n")
 	_, err := Load("bees")
-	wantErr(t, err, global+`: harness = "agy": must be one of claude_code`, proj+": harness belongs in the global file, not the project one")
+	wantErr(t, err, global+`: harness = "oh_my_pi": must be one of claude_code, agy`, proj+": harness belongs in the global file, not the project one")
 	if strings.Contains(err.Error(), "is for harness") {
 		t.Errorf("error %q also calls every table inactive under a harness that isn't one", err)
 	}
 }
 
 // bees-12.6: a table for a harness other than the active one is an error naming the file,
-// the table and the harness key. Only claude_code exists, so the active one is forced.
+// the table and the harness key.
 func TestAnInactiveHarnessTableIsAnError(t *testing.T) {
 	dir := setup(t)
 	proj := filepath.Join(dir, "projects", "bees.toml")
@@ -355,4 +355,18 @@ func TestAnInactiveHarnessTableIsAnError(t *testing.T) {
 		t.Fatalf("errs = %v, want one per table", errs)
 	}
 	wantErr(t, errs[1], proj+": [worker.claude_code] is for harness claude_code, but the harness key says oh_my_pi")
+}
+
+// bees-12.12: harness = "agy" reads the [<role>.agy] tables, and a claude_code one is inactive.
+func TestAgyReadsItsOwnTables(t *testing.T) {
+	dir := setup(t)
+	global := filepath.Join(dir, "config.toml")
+	write(t, global, "harness = \"agy\"\n[worker.agy]\nmodel = \"gemini-3.8-flash-low\"\n")
+	l, err := Load("bees")
+	if err != nil || l.Harness != "agy" || l.Worker.Agy.Model != "gemini-3.8-flash-low" {
+		t.Fatalf("Load = %+v, %v; want harness agy and its worker model", l, err)
+	}
+	write(t, global, "harness = \"agy\"\n[worker.claude_code]\nmodel = \"m\"\n")
+	_, err = Load("bees")
+	wantErr(t, err, global+": [worker.claude_code] is for harness claude_code, but the harness key says agy")
 }

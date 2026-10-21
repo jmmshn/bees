@@ -1575,12 +1575,18 @@ func TestFragmentAndMergeGrantReachTheWorker(t *testing.T) {
 }
 
 // fakeHarness is a harness.Harness whose launch is files: one per key in files, each
-// passed as --<key> {{key}}.
-type fakeHarness struct{ files map[string]string }
+// passed as --<key> {{key}}. With noResume it refuses a start that would continue.
+type fakeHarness struct {
+	files    map[string]string
+	noResume bool
+}
 
 func (fakeHarness) Kind() string { return "fake" }
 
 func (h fakeHarness) Prepare(st harness.Start) (harness.Launch, error) {
+	if h.noResume && st.Continue {
+		return harness.Launch{}, harness.ErrNoResume
+	}
 	l := harness.Launch{Files: h.files, Record: map[string]string{"profile": st.Name}}
 	for k := range h.files {
 		l.Args = append(l.Args, "--"+k, "{{"+k+"}}")
@@ -1595,7 +1601,7 @@ func (fakeHarness) Ring(harness.Target, string, harness.Priority) error { return
 func TestSpawnWritesTheHarnessFilesAndRecordsTheHarness(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	r.fleet.Harness, r.fleet.HarnessName = fakeHarness{map[string]string{"overlay.yml": "a: 1", "ext": "x"}}, "fake_harness"
+	r.fleet.Harness, r.fleet.HarnessName = fakeHarness{files: map[string]string{"overlay.yml": "a: 1", "ext": "x"}}, "fake_harness"
 	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil {
 		t.Fatal(err)
 	}
@@ -1613,12 +1619,23 @@ func TestSpawnWritesTheHarnessFilesAndRecordsTheHarness(t *testing.T) {
 	}
 }
 
+// bees-12.12: the launch check measures a resumed start, which a harness that can't resume
+// (agy) refuses; a first spawn never resumes, so it goes ahead on the fresh start's line.
+func TestAHarnessThatCantResumeStillSpawnsFresh(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	r.fleet.Harness = fakeHarness{noResume: true}
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil {
+		t.Fatalf("err = %v, want a fresh spawn", err)
+	}
+}
+
 // bees-12.6: a harness file key that breaks harness.FileKey is refused before anything is
 // made, since bs end's cleanup glob relies on it.
 func TestABadHarnessFileKeyIsRefusedBeforeTouchingAnything(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	r.fleet.Harness = fakeHarness{map[string]string{"1x": ""}}
+	r.fleet.Harness = fakeHarness{files: map[string]string{"1x": ""}}
 	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err == nil || !strings.Contains(err.Error(), `"1x"`) {
 		t.Fatalf("err = %v, want the bad key refused", err)
 	}

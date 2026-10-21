@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -32,7 +33,7 @@ func fakeBins(t *testing.T, bins map[string]map[string]string) {
 
 // Real outputs: herdr 0.9.5, Claude Code 2.1.306, bd 1.1.0.
 var (
-	herdrUp     = map[string]string{"--version": "herdr 0.9.5", "status": "client:\n  version: 0.9.5\n  channel: stable\n\nserver:\n  status: running\n  version: 0.9.3\n  endpoint_compatible: yes"}
+	herdrUp     = map[string]string{"--version": "herdr 0.9.5", "status": "client:\n  version: 0.9.5\n  channel: stable\n\nserver:\n  status: running\n  version: 0.9.5\n  endpoint_compatible: yes"}
 	claudeOK    = map[string]string{"--version": "2.1.306 (Claude Code)"}
 	bdOK        = map[string]string{"--version": "bd version 1.1.2 (dev)", "where": "/home/x/.local/share/beads/.beads\n  database: /home/x/.local/share/beads/.beads/dolt"}
 	goodMachine = map[string]map[string]string{"herdr": herdrUp, "claude": claudeOK, "bd": bdOK}
@@ -59,7 +60,7 @@ func TestDoctorAllGood(t *testing.T) {
 	for _, want := range []string{
 		"ok    config: ",
 		"ok    harness claude_code: claude 2.1.306",
-		"ok    herdr: 0.9.5, server 0.9.3 running",
+		"ok    herdr: 0.9.5, server 0.9.5 running",
 		"ok    herdr pane: this shell runs in w1:p1",
 		"ok    logbook dir: ",
 		"ok    bd: 1.1.2, store /home/x/.local/share/beads/.beads\n",
@@ -209,5 +210,53 @@ func TestDoctorHarnessSwitch(t *testing.T) {
 	}
 	if want := "FAIL  harness switch: toy-1-9 (agy) still runs"; !strings.Contains(out.String(), want) {
 		t.Errorf("output lacks %q:\n%s", want, out.String())
+	}
+}
+
+// bees-12.44: a herdr server older than its client still answers, but bs's probes ran on
+// the client's version, so doctor warns rather than passing it.
+func TestDoctorWarnsOnAnOlderHerdrServer(t *testing.T) {
+	doctorEnv(t)
+	fakeBins(t, map[string]map[string]string{
+		"herdr":  {"--version": "herdr 0.9.5", "status": "client:\n  version: 0.9.5\n\nserver:\n  status: running\n  version: 0.9.3\n  endpoint_compatible: yes"},
+		"claude": claudeOK, "bd": bdOK,
+	})
+	var out, stderr bytes.Buffer
+	if code := run([]string{"doctor"}, strings.NewReader(""), &out, &stderr); code != 0 {
+		t.Fatalf("exit %d, want 0 (a warn):\n%s%s", code, out.String(), stderr.String())
+	}
+	if want := "warn  herdr: 0.9.5, but server 0.9.3 is older"; !strings.Contains(out.String(), want) {
+		t.Errorf("output lacks %q:\n%s", want, out.String())
+	}
+}
+
+// bees-12.44: under github_pr, a repo with no git remote passes every other check, then
+// fails at a worker's first push; doctor warns, and stops once a remote exists.
+func TestDoctorWarnsOnGitHubPRWithNoRemote(t *testing.T) {
+	doctorEnv(t)
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("no git")
+	}
+	repo := filepath.Join(t.TempDir(), "toy")
+	if out, err := exec.Command(git, "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	t.Chdir(repo)
+	fakeBins(t, goodMachine)
+	t.Setenv("PATH", os.Getenv("PATH")+string(os.PathListSeparator)+filepath.Dir(git))
+	want := "warn  git remote: none in "
+	var out, stderr bytes.Buffer
+	run([]string{"doctor"}, strings.NewReader(""), &out, &stderr)
+	if !strings.Contains(out.String(), want) {
+		t.Errorf("no remote: output lacks %q:\n%s%s", want, out.String(), stderr.String())
+	}
+	if out, err := exec.Command(git, "-C", repo, "remote", "add", "origin", "https://github.com/o/toy").CombinedOutput(); err != nil {
+		t.Fatalf("git remote add: %v: %s", err, out)
+	}
+	out.Reset()
+	run([]string{"doctor"}, strings.NewReader(""), &out, &stderr)
+	if strings.Contains(out.String(), want) {
+		t.Errorf("with origin: output still has %q:\n%s", want, out.String())
 	}
 }

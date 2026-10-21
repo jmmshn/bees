@@ -280,6 +280,10 @@ func TestConfigShowsDeliveryAndTheEffectiveGuards(t *testing.T) {
 			t.Errorf("exit %d (%s), output lacks %q:\n%s", code, stderr, want, out)
 		}
 	}
+	// The keys come before the long deny list, so it doesn't bury them (bees-12.44).
+	if k, g := strings.Index(out, "\ndelivery.kind = "), strings.Index(out, "\n# guards: "); k < 0 || g < k {
+		t.Errorf("keys at %d, guards at %d: want the keys first:\n%s", k, g, out)
+	}
 	proj := filepath.Join(dir, "projects", "bees.toml")
 	if err := os.MkdirAll(filepath.Dir(proj), 0o755); err != nil {
 		t.Fatal(err)

@@ -72,7 +72,6 @@ func cmdConfig(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 		}
 		fmt.Fprintf(stdout, "# logbook: %s (%s)\n", p.Logbook, from)
 		printRepo(stdout, p, l)
-		printGuards(ctx, stdout, p, l)
 	}
 	if dir, err := prompt.Dir(); err == nil {
 		fmt.Fprintf(stdout, "# cache (launch prompts, worker settings): %s\n", dir)
@@ -93,6 +92,14 @@ func cmdConfig(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 			val = "[" + strings.Join(q, ", ") + "]"
 		}
 		fmt.Fprintf(stdout, "%s = %s  # %s%s\n", f.Key, val, l.Sources[f.Key], limit)
+	}
+	// Last, so the long deny list doesn't bury the keys above (bees-12.44).
+	if name != "" {
+		p, err := locate(name, l, "")
+		if err != nil {
+			return err
+		}
+		printGuards(ctx, stdout, p, l)
 	}
 	return nil
 }

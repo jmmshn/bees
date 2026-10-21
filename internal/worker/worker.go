@@ -65,7 +65,9 @@ type Bead struct{ ID, Title, Description string }
 
 // Herdr is the slice of herdr bs drives.
 type Herdr interface {
-	CreateWorktree(ctx context.Context, repo, branch, path, label string) (Workspace, error)
+	// CreateWorktree cuts branch at path from base (a ref; "": repo's HEAD). repo must be a
+	// main checkout: herdr 0.9.5 refuses a linked worktree as --cwd.
+	CreateWorktree(ctx context.Context, repo, base, branch, path, label string) (Workspace, error)
 	// StartClaude runs claude with args in pane. ErrWaiting: blocked at a startup prompt.
 	// ErrUnconfirmed: herdr gave up waiting. ErrUnsafeArg: an argument herdr can't pass.
 	StartClaude(ctx context.Context, pane, name string, args ...string) error
@@ -322,28 +324,41 @@ func (f Fleet) check(ctx context.Context, bead, label string) (plan, error) {
 		return p, err
 	}
 	// Find an orphan by its worktree, never its label: the path is built forward from
-	// the name, while a label is free text.
-	wt := f.worktree(name)
-	if i := slices.IndexFunc(wss, func(w Workspace) bool { return w.Path != "" && filepath.Clean(w.Path) == wt }); i >= 0 {
+	// the name, while a label is free text. The latest spawn's recorded worktree counts
+	// too, since paths.worktrees may have moved since it ended.
+	wts := []string{f.worktree(name)}
+	if ok && sp.Worktree != "" {
+		wts = append(wts, filepath.Clean(sp.Worktree))
+	}
+	if i := slices.IndexFunc(wss, func(w Workspace) bool { return w.Path != "" && slices.Contains(wts, filepath.Clean(w.Path)) }); i >= 0 {
 		return p, fmt.Errorf("%s: %w; check it, then remove it with: herdr worktree remove --workspace %s --force", name, ErrOrphan, wss[i].ID)
 	}
 	_, err = f.P.LogbookDir()
 	return p, err
 }
 
-func (f Fleet) worktree(name string) string { return filepath.Join(f.P.Repo+"-WT", name) }
+// worktree is where worker name's worktree goes: <paths.worktrees>/<name>.
+func (f Fleet) worktree(name string) string { return filepath.Join(f.P.Worktrees, name) }
 
 // open opens a first spawn's worktree and records the spawn; a resume has both already.
 func (f Fleet) open(ctx context.Context, p plan) (logbook.Spawn, error) {
 	if p.resume {
 		return p.sp, nil
 	}
-	ws, err := f.H.CreateWorktree(ctx, f.P.Repo, p.name, f.worktree(p.name), p.label)
+	base := ""
+	if f.P.Base != "" { // a linked worktree: herdr cuts from its HEAD, run from the main checkout
+		out, err := gitOut(ctx, f.P.Base, "rev-parse", "HEAD")
+		if err != nil {
+			return logbook.Spawn{}, err
+		}
+		base = strings.TrimSpace(out)
+	}
+	ws, err := f.H.CreateWorktree(ctx, f.P.Repo, base, p.name, f.worktree(p.name), p.label)
 	if err != nil {
 		return logbook.Spawn{}, err
 	}
 	// Record straight away: any failure after this point is healed by spawning again.
-	sp := logbook.Spawn{Name: p.name, Bead: p.bead, Label: p.label, Workspace: ws.ID, Pane: ws.Pane, Worktree: ws.Path, Branch: p.name, Repo: f.P.Repo}
+	sp := logbook.Spawn{Name: p.name, Bead: p.bead, Label: p.label, Workspace: ws.ID, Pane: ws.Pane, Worktree: ws.Path, Branch: p.name, Repo: f.P.Repo, Base: f.P.BaseRepo()}
 	sp.ID, err = f.LB.RecordSpawn(ctx, f.Me, sp, brief(p.b))
 	return sp, err
 }

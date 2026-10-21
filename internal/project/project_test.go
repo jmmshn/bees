@@ -339,3 +339,71 @@ func TestRepoPathFromNameFindsTheDirWhoseNormalisedNameMatches(t *testing.T) {
 		}
 	}
 }
+
+// The repo chain (ADR-0008): --repo > the git repo you are in, when it is the project's >
+// paths.repo > paths.repos. Each project.Project says which link won.
+func TestRepoChain(t *testing.T) {
+	clearEnv(t)
+	own, other, configured := gitRepo(t, "bees"), gitRepo(t, "dotfiles"), gitRepo(t, "bees")
+	repos := t.TempDir()
+	locate := func(c project.Paths) project.Project {
+		t.Helper()
+		c.LogbookDir, c.Worktrees = "/lb", "{repo}-WT"
+		p, err := project.Locate("bees", c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	t.Chdir(own)
+	for _, c := range []struct {
+		paths      project.Paths
+		repo, from string
+	}{
+		{project.Paths{RepoFlag: other, Repo: configured, Repos: repos}, other, "--repo"},
+		{project.Paths{Repo: configured, Repos: repos}, own, "git"},
+	} {
+		if p := locate(c.paths); p.Repo != c.repo || p.RepoFrom != c.from || p.Worktrees != c.repo+"-WT" {
+			t.Errorf("%+v: got %+v, want repo %s from %s", c.paths, p, c.repo, c.from)
+		}
+	}
+	t.Chdir(t.TempDir())
+	if p := locate(project.Paths{Repo: configured, Repos: repos}); p.Repo != configured || p.RepoFrom != "paths.repo" {
+		t.Errorf("outside git: got %+v, want paths.repo %s", p, configured)
+	}
+	if p := locate(project.Paths{Repos: repos}); p.Repo != filepath.Join(repos, "bees") || p.RepoFrom != "paths.repos" {
+		t.Errorf("only repos: got %+v", p)
+	}
+	if p := locate(project.Paths{}); p.Repo != "" || p.RepoFrom != "" || p.Worktrees != "" {
+		t.Errorf("nothing: got %+v, want no repo", p)
+	}
+	// A non-repo fails only what needs a repo: messages need only the logbook.
+	for _, c := range []project.Paths{{RepoFlag: repos}, {Repo: repos}} {
+		c.LogbookDir = "/lb"
+		p, err := project.Locate("bees", c)
+		if err != nil || p.NeedRepo() == nil || !strings.Contains(p.NeedRepo().Error(), "not a git checkout") {
+			t.Errorf("%+v: Locate err = %v, NeedRepo = %v; want only NeedRepo to refuse a non-repo", c, err, p.NeedRepo())
+		}
+	}
+}
+
+// A repo from --repo or paths.repo that is a linked worktree is the base workers branch
+// from, never where their worktrees live: that stays under the main checkout's -WT.
+func TestAWorktreeRepoIsTheBaseNotTheLocation(t *testing.T) {
+	clearEnv(t)
+	main := gitRepo(t, "bees")
+	wt := filepath.Join(filepath.Dir(main), "bees-WT", "bees-1-2")
+	git(t, main, "worktree", "add", "-q", "-b", "bees-1-2", wt)
+	t.Chdir(t.TempDir())
+	for _, c := range []project.Paths{{RepoFlag: wt}, {RepoFlag: filepath.Join(wt, ".")}, {Repo: wt}} {
+		c.LogbookDir, c.Worktrees = "/lb", "{repo}-WT"
+		p, err := project.Locate("bees", c)
+		if err != nil || p.Repo != main || p.Base != wt || p.Worktrees != main+"-WT" {
+			t.Errorf("%+v: got %+v, %v; want repo %s, base %s", c, p, err, main, wt)
+		}
+	}
+	p, _ := project.Locate("bees", project.Paths{LogbookDir: "/lb", Repo: main, Worktrees: "/trees"})
+	if p.Base != "" || p.BaseRepo() != main || p.Worktrees != "/trees" {
+		t.Errorf("main checkout: got %+v, want no separate base", p)
+	}
+}

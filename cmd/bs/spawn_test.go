@@ -87,6 +87,8 @@ func (h *fakeHive) Panes(ctx context.Context, workspace string) ([]string, error
 
 func (h *fakeHive) ClosePane(ctx context.Context, pane string) error { return nil }
 
+func (h *fakeHive) PanesUnder(ctx context.Context, dir string) ([]string, error) { return nil, nil }
+
 // name is the worker whose process pid is.
 func (h *fakeHive) name(pid int) string {
 	for n, p := range h.pids {

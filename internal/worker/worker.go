@@ -748,7 +748,7 @@ var confirmWait = 20 * time.Second
 
 // EndOpts says how far ending a worker may go.
 type EndOpts struct {
-	Force bool // remove a worktree with uncommitted or untracked files, discarding them; end a moved worker
+	Force bool // remove a worktree with uncommitted or untracked files, discarding them; end a moved worker; skip the background-work gate
 	// Forget records the end of a worker whose recorded workspace herdr has handed to
 	// another worktree, leaving that workspace open: without it ErrNotOurs is a dead end.
 	Forget bool
@@ -759,22 +759,30 @@ type EndOpts struct {
 // worker's (open on the recorded worktree, or for kind none tagged with the worker), so a
 // reused workspace id can't take another worktree with it (bees-7.4). A worktree with
 // uncommitted or untracked files is kept unless o.Force: ErrDirty. Under kind none, End
-// only closes the workspace: the directory is the keeper's.
+// only closes the workspace: the directory is the keeper's. Unless o.Force, the
+// background-work gate comes first: a *BackgroundError, or ErrCantCheck (a recorded
+// process that has exited passes: there is nothing to walk).
 // Ending an ended worker is a no-op. The worker's branch is always kept, with its
 // committed work: Prune deletes it once merged.
 func (f Fleet) End(ctx context.Context, name string, o EndOpts) error {
+	_, err := f.EndOne(ctx, name, o)
+	return err
+}
+
+// EndOne is End, also returning what it did; a zero Ending when name had already ended.
+func (f Fleet) EndOne(ctx context.Context, name string, o EndOpts) (Ending, error) {
 	sp, ok, err := f.LB.LatestSpawn(ctx, name)
 	if err != nil {
-		return err
+		return Ending{}, err
 	}
 	if !ok {
-		return fmt.Errorf("%s: %w", name, ErrNotSpawned)
+		return Ending{}, fmt.Errorf("%s: %w", name, ErrNotSpawned)
 	}
 	if sp.Ended {
-		return nil
+		return Ending{}, nil
 	}
 	e := f.end(ctx, sp, o)
-	return cmp.Or(e.Err, e.Warn)
+	return e, cmp.Or(e.Err, e.Warn)
 }
 
 // Ending is what EndAll did with one worker.
@@ -782,6 +790,7 @@ type Ending struct {
 	Name, Workspace string
 	Branch          string // the worker's branch, kept; "" under kind none
 	Gone            bool   // herdr no longer had the workspace, so only the end was recorded
+	Exited          bool   // its recorded process had exited: no background work to check
 	Forgot          bool   // the workspace is no longer the worker's: the end was recorded, the workspace left open
 	Err             error  // the worker was kept: still live in the logbook
 	Warn            error  // the worker was ended, but removing its per-start files failed
@@ -810,6 +819,15 @@ func (f Fleet) end(ctx context.Context, sp logbook.Spawn, o EndOpts) Ending {
 	if sp.Kind != "" && sp.Kind != GitWorktree && sp.Kind != NoWorkspace { // a newer bs's: never guess, even to --forget
 		e.Err = fmt.Errorf("%s: recorded with workspace kind %q, which this bs doesn't know; nothing removed: end it with the bs that spawned it", sp.Name, sp.Kind)
 		return e
+	}
+	if !o.Force {
+		switch err := gate(ctx, f.LB, f.Procs, sp); {
+		case errors.Is(err, ErrHarnessGone):
+			e.Exited = true
+		case err != nil:
+			e.Err = err
+			return e
+		}
 	}
 	wss, err := f.H.Workspaces(ctx)
 	if err != nil {

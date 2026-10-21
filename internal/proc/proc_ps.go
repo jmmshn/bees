@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -120,4 +121,44 @@ func cut3(line string) ([]string, string) {
 		f, rest = append(f, rest[:i]), rest[i:]
 	}
 	return f, strings.TrimSpace(rest)
+}
+
+// Command is pid's command line as ps prints it.
+func Command(pid int) (string, error) { return ps(pid, "command=") }
+
+// lsofPath is lsof by absolute path, as psPath is.
+const lsofPath = "/usr/sbin/lsof"
+
+// Listening returns the TCP ports each of pids listens on, from lsof's field output
+// (p<pid>, then n<addr>:<port> per socket). lsof exits 1 with no output when none does.
+func Listening(ctx context.Context, pids []int) (map[int][]int, error) {
+	out := map[int][]int{}
+	if len(pids) == 0 {
+		return out, nil
+	}
+	list := make([]string, len(pids))
+	for i, p := range pids {
+		list[i] = strconv.Itoa(p)
+	}
+	cmd := exec.CommandContext(ctx, lsofPath, "-nP", "-a", "-iTCP", "-sTCP:LISTEN", "-p", strings.Join(list, ","), "-F", "pn")
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	b, err := cmd.Output()
+	if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 1 && len(b) == 0 && ctx.Err() == nil {
+		return out, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("lsof: %w", err)
+	}
+	pid := 0
+	for _, line := range strings.Split(string(b), "\n") {
+		switch {
+		case strings.HasPrefix(line, "p"):
+			pid, _ = strconv.Atoi(line[1:])
+		case strings.HasPrefix(line, "n"):
+			i := strings.LastIndexByte(line, ':')
+			if n, err := strconv.Atoi(line[i+1:]); i > 0 && err == nil && !slices.Contains(out[pid], n) {
+				out[pid] = append(out[pid], n)
+			}
+		}
+	}
+	return out, nil
 }

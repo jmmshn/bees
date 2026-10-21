@@ -50,6 +50,8 @@ type fakeHerdr struct {
 	failStart  error
 	liveAnyway bool  // with failStart: Claude came up all the same, as after herdr's timeout
 	aliveErr   error // the process table can't be read
+	walkErr    error // the descendants can't be read
+	portsErr   error // the listening ports can't be read
 	listErr    error // herdr can't be reached
 	procs      map[int]*fakeProc
 	pids       map[string]int // agent name → its process
@@ -62,6 +64,7 @@ type fakeProc struct {
 	name, start string
 	parent      int
 	alive       bool
+	ports       []int
 }
 
 // spawnProc runs a process named name under parent and returns its pid. Callers hold mu.
@@ -180,6 +183,9 @@ func (h *fakeHerdr) Exe(pid int) (string, error) { return "/fake/" + fmt.Sprint(
 func (h *fakeHerdr) Descendants(pid int) ([]proc.Process, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.walkErr != nil {
+		return nil, h.walkErr
+	}
 	var out []proc.Process
 	for level := []int{pid}; len(level) > 0; {
 		var next []int
@@ -190,6 +196,40 @@ func (h *fakeHerdr) Descendants(pid int) ([]proc.Process, error) {
 			}
 		}
 		level = next
+	}
+	return out, nil
+}
+
+func (h *fakeHerdr) Parent(pid int) (int, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if pr := h.procs[pid]; pr != nil && pr.alive {
+		return pr.parent, nil
+	}
+	return 0, proc.ErrGone
+}
+
+func (h *fakeHerdr) Command(pid int) (string, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if pr := h.procs[pid]; pr != nil && pr.alive {
+		return pr.name, nil
+	}
+	return "", proc.ErrGone
+}
+
+// Listening is each pid's ports, set on its fakeProc.
+func (h *fakeHerdr) Listening(ctx context.Context, pids []int) (map[int][]int, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.portsErr != nil {
+		return nil, h.portsErr
+	}
+	out := map[int][]int{}
+	for _, p := range pids {
+		if pr := h.procs[p]; pr != nil && pr.alive && len(pr.ports) > 0 {
+			out[p] = pr.ports
+		}
 	}
 	return out, nil
 }

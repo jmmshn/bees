@@ -117,6 +117,11 @@ func (h *fakeHive) Start(pid int) (string, error) {
 func (h *fakeHive) Name(pid int) (string, error)                { return "claude", nil }
 func (h *fakeHive) Exe(pid int) (string, error)                 { return "/fake/claude", nil }
 func (h *fakeHive) Descendants(pid int) ([]proc.Process, error) { return nil, nil }
+func (h *fakeHive) Parent(pid int) (int, error)                 { return 0, proc.ErrGone }
+func (h *fakeHive) Command(pid int) (string, error)             { return "claude", nil }
+func (h *fakeHive) Listening(ctx context.Context, pids []int) (map[int][]int, error) {
+	return nil, nil
+}
 
 func useFakeHive(t *testing.T) *fakeHive {
 	t.Helper()

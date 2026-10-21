@@ -1,6 +1,6 @@
 # Claude's registry, not herdr, says whether a worker started
 
-> Amended by [ADR-0009](0009-core-and-adapters.md): herdr's `timeout` still means unconfirmed, but the deciding source is now herdr's report on the recorded pane (`agent` equal to the harness's kind), for every harness. A recorded pane id avoids the unnamed-agent problem below. Claude's registry is read only to ring.
+> Amended by [ADR-0009](0009-core-and-adapters.md): herdr's `timeout` still means unconfirmed, but the deciding source is now `herdr pane process-info` showing the harness process in the recorded pane within the wait, whose pid and start time bs then records (amendment 1), for every harness. A recorded pane id avoids the unnamed-agent problem below. Claude's registry is read only to ring.
 
 `herdr agent start` reports whether Claude reached an *idle* prompt in time, which is not the same as "Claude started". A worker's first prompt is its doorbell, so a healthy worker goes straight to work and herdr times out on it (`timeout`, herdr 0.9.3, probed in bees-1.14). The same code comes back when Claude exits at once, as `claude --continue` does when there is no conversation. After a timeout herdr also leaves the agent unnamed, so `herdr agent get <name>` says "not found" while the worker runs.
 

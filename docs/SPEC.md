@@ -326,4 +326,4 @@ Manual worker (no herdr): `claude --name worker-a --settings '{"crossSessionInbo
 - **Hook:** `bs hook` on UserPromptSubmit writes a `rang`/landed entry for `[bs]` prompts; hooks and herdr agent status are the attention facts for `Plan`, never screen scraping (R38).
 - **Questions and answers** (R35, R36): message `data` gains `bead` and `needs` (`none` | `answer` | `approval`); `bs send --needs … --bead … --re <id>`; an answer is a message whose `ref` is the question, and the first one wins; `bs status` counts open questions.
 - **Keeper** (R13, R37): a message to `keeper` with `needs` set is something that needs the human; `bs status` lists them first. Desk only, no push (S3).
-- **Adapters** ([ADR-0009](adr/0009-core-and-adapters.md)): `Harness` (seven methods, superseding `{Launch, Ring, Alive}`), `Workspace` and `Delivery`, picked by `harness`, `[workspace]` and `[delivery]` in config.
+- **Harness port** ([ADR-0009](adr/0009-core-and-adapters.md)): `Kind`, `Prepare`, `Ring`, superseding `{Launch, Ring, Alive}`; liveness and identity from the recorded herdr pane; `[workspace]` and `[delivery]` are config switches, `[guards]` rendered per harness.

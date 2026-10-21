@@ -9,7 +9,7 @@ The codebase a queen and its workers work on, named in one word (`pymatgen-analy
 _Avoid_: repo, rig, workspace
 
 **Workspace**:
-The directory a worker works in and the herdr workspace opened on it, made by the workspace adapter: a git worktree by default, a script's directory (a CitC client), or the main checkout.
+The directory a worker works in and the herdr workspace opened on it, picked by `[workspace] kind`: a git worktree by default, or the main checkout (`none`), where the worker makes whatever its prompt asks for, such as a CitC client.
 _Avoid_: sandbox, clone. Not the project's own repo (see Project)
 
 **Bead**:
@@ -23,7 +23,7 @@ _Avoid_: milestone, story
 ## People and sessions
 
 **Harness**:
-The coding-agent program a session runs in (Claude Code, omp, agy). One per machine, picked by the global `harness` key; bs reaches it only through its harness adapter (ADR-0009).
+The coding-agent program a session runs in (Claude Code, omp, agy). One per machine, picked by the global `harness` key; bs reaches it only through its harness adapter; herdr reports whether it runs (ADR-0009).
 _Avoid_: agent, model, runtime
 
 **Keeper**:

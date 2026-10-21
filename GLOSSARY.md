@@ -10,7 +10,7 @@ _Avoid_: repo, rig, workspace
 
 **Workspace**:
 The directory a worker works in and the herdr workspace opened on it, made by the workspace adapter: a git worktree by default, a script's directory (a CitC client), or the main checkout.
-_Avoid_: sandbox, checkout (for the adapter's output)
+_Avoid_: sandbox, clone. Not the project's own repo (see Project)
 
 **Bead**:
 One unit of work in the shared tracker, named `<project>-N[.M…]`.

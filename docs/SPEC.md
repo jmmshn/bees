@@ -1,6 +1,6 @@
 # bs spec
 
-`bs` lets Claude Code sessions in herdr panes send each other messages through a shared logbook, and wakes an idle session when it has mail. Vocabulary is in [GLOSSARY.md](../GLOSSARY.md); the reasons behind the shape are in [docs/adr/](adr/); every decision is indexed in [DECISIONS.md](DECISIONS.md).
+`bs` lets coding-agent sessions (Claude Code today; [ADR-0009](adr/0009-core-and-adapters.md)) in herdr panes send each other messages through a shared logbook, and wakes an idle session when it has mail. Vocabulary is in [GLOSSARY.md](../GLOSSARY.md); the reasons behind the shape are in [docs/adr/](adr/); every decision is indexed in [DECISIONS.md](DECISIONS.md).
 
 This spec covers **v0**, the walking skeleton, plus **spawn**, which v0 grows into for dogfooding. [v1](#v1-outline) is outlined at the end and gets its own spec pass.
 
@@ -14,7 +14,7 @@ v0 proves the core loop: the queen sends a message, an idle worker wakes, reads 
 | `entries` table; writes `message`, `received`, `spawned`, `ended` | `rang` entries |
 | Claude adapter: find, ring; herdr and bd adapters | reconciler |
 | Ring every unread message on every send | `Plan` reconciler, coalescing, re-ring, flag the queen, watchdog |
-| `--now` | Keeper inbox, disk warning, omp adapter |
+| `--now` | Keeper inbox, disk warning, more harnesses (ADR-0009) |
 
 Platform: Linux and macOS (R47).
 

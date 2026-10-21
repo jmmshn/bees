@@ -90,7 +90,7 @@ type Worker struct {
 	Path []string `toml:"path" scope:"project" path:"dir"`
 }
 
-// Role is w's harness settings, the ones a Role holds.
+// Role is w's harness tables, for the adapter, without bs spawn's own settings.
 func (w Worker) Role() Role { return Role{ClaudeCode: w.ClaudeCode, Agy: w.Agy} }
 
 // ClaudeCode holds the settings bs passes to Claude Code.

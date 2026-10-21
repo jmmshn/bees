@@ -215,11 +215,73 @@ func TestEnumIsChecked(t *testing.T) {
 	global := filepath.Join(dir, "config.toml")
 	write(t, global, "[worker]\nmode = \"yolo\"\n")
 	var c enumConfig
-	err := load(&c, map[string]Source{}, &[]File{}, dir, "")
+	err := load(&c, map[string]Source{}, map[string][]string{}, &[]File{}, dir, "")
 	wantErr(t, err, global+`: worker.mode = "yolo": must be one of auto, accept_edits`)
 
 	write(t, global, "[worker]\nmode = \"accept_edits\"\n")
 	t.Setenv("BS_TEST_MODE", "nope")
-	err = load(&c, map[string]Source{}, &[]File{}, dir, "")
+	err = load(&c, map[string]Source{}, map[string][]string{}, &[]File{}, dir, "")
 	wantErr(t, err, `env BS_TEST_MODE: worker.mode = "nope"`)
+}
+
+func TestPathsExpandTildeOnlyAndMustBeAbsolute(t *testing.T) {
+	dir := setup(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	global := filepath.Join(dir, "config.toml")
+	write(t, global, "[paths]\nlogbook_dir = \"~/logs\"\nrepos = \"~\"\nworktrees = \"{repo}-trees\"\n")
+	l, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for got, want := range map[string]string{Expand(l.Paths.LogbookDir): home + "/logs", Expand(l.Paths.Repos): home} {
+		if got != want {
+			t.Errorf("expanded %q, want %q", got, want)
+		}
+	}
+	for body, why := range map[string]string{
+		`logbook_dir = "logs"`:       `paths.logbook_dir = "logs": not an absolute path`,
+		`logbook_dir = "$HOME/logs"`: `paths.logbook_dir = "$HOME/logs": not an absolute path`,
+		`logbook_dir = "~bob/logs"`:  `paths.logbook_dir = "~bob/logs": not an absolute path`,
+		`logbook_dir = ""`:           `paths.logbook_dir = "": not an absolute path`,
+		`logbook_dir = "/x/{repo}"`:  `paths.logbook_dir = "/x/{repo}": {repo} is only allowed at the start of paths.worktrees`,
+		`worktrees = "/wt/{repo}"`:   `paths.worktrees = "/wt/{repo}": {repo} is only allowed at the start of paths.worktrees`,
+		`worktrees = "wt"`:           `paths.worktrees = "wt": not an absolute path`,
+	} {
+		write(t, global, "[paths]\n"+body+"\n")
+		_, err := Load("")
+		wantErr(t, err, global+": "+why)
+	}
+	write(t, global, "")
+	t.Setenv("BS_REPOS", "rel/repos")
+	_, err = Load("")
+	wantErr(t, err, `env BS_REPOS: paths.repos = "rel/repos": not an absolute path`)
+}
+
+// Shadowed lists the values a setting held before the one that won, so bs can tell a moved
+// logbook_dir from a new one.
+func TestShadowedListsTheLowerValues(t *testing.T) {
+	dir := setup(t)
+	write(t, filepath.Join(dir, "config.toml"), "[paths]\nlogbook_dir = \"/g\"\n")
+	write(t, filepath.Join(dir, "projects", "bees.toml"), "[paths]\nlogbook_dir = \"/p\"\n")
+	t.Setenv("BS_LOGBOOK_DIR", "/e")
+	l, err := Load("bees")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := l.Shadowed["paths.logbook_dir"], []string{"~/.local/share/bees", "/g", "/p"}; !slices.Equal(got, want) {
+		t.Errorf("shadowed = %q, want %q", got, want)
+	}
+}
+
+// Env skips both files: the fixed list of commands reads only the environment once
+// BS_LOGBOOK_DIR is set, so a broken file can't silence a running fleet.
+func TestEnvSkipsTheFiles(t *testing.T) {
+	dir := setup(t)
+	write(t, filepath.Join(dir, "config.toml"), "broken = [\n")
+	t.Setenv("BS_LOGBOOK_DIR", "/e")
+	l, err := Env()
+	if err != nil || l.Paths.LogbookDir != "/e" || len(l.Files) != 0 {
+		t.Fatalf("Env() = %+v, %v", l, err)
+	}
 }

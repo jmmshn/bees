@@ -25,7 +25,9 @@ import (
 //   - scope: which file may set it, global, project or both;
 //   - default: its value when nothing sets it (absent means "");
 //   - env: the variable that overrides both files (optional);
-//   - enum: its allowed values, separated by | (optional).
+//   - enum: its allowed values, separated by | (optional);
+//   - path: a path, checked as ADR-0008 says: "dir", or "{repo}" when the value may
+//     begin with the {repo} placeholder (optional).
 //
 // A harness's own settings nest under its table in the role's ([worker.claude_code]);
 // the role tables themselves say nothing about any harness.
@@ -37,10 +39,10 @@ type Config struct {
 
 // Paths says where bs keeps its files and finds repos.
 type Paths struct {
-	LogbookDir string `toml:"logbook_dir" scope:"both" env:"BS_LOGBOOK_DIR" default:"~/.local/share/bees"`
-	Repos      string `toml:"repos" scope:"global" env:"BS_REPOS"`
-	Repo       string `toml:"repo" scope:"project"`
-	Worktrees  string `toml:"worktrees" scope:"both" default:"{repo}-WT"`
+	LogbookDir string `toml:"logbook_dir" scope:"both" env:"BS_LOGBOOK_DIR" default:"~/.local/share/bees" path:"dir"`
+	Repos      string `toml:"repos" scope:"global" env:"BS_REPOS" path:"dir"`
+	Repo       string `toml:"repo" scope:"project" path:"dir"`
+	Worktrees  string `toml:"worktrees" scope:"both" default:"{repo}-WT" path:"{repo}"`
 }
 
 // Role holds the settings of the queen or of every worker.
@@ -76,8 +78,9 @@ type File struct {
 // Loaded is the effective config: the values, each one's source, and the files read.
 type Loaded struct {
 	Config
-	Sources map[string]Source // by dotted key, e.g. "worker.claude_code.model"
-	Files   []File
+	Sources  map[string]Source   // by dotted key, e.g. "worker.claude_code.model"
+	Shadowed map[string][]string // by dotted key: the values lower layers set, lowest first
+	Files    []File
 }
 
 // Field is one setting's dotted key, effective value and scope.
@@ -118,27 +121,39 @@ func Load(project string) (*Loaded, error) {
 	if err != nil {
 		return nil, err
 	}
-	l := &Loaded{Sources: map[string]Source{}}
-	if err := load(&l.Config, l.Sources, &l.Files, dir, project); err != nil {
+	return loadInto(dir, project)
+}
+
+// Env is Load with neither file read: defaults, then env. The commands that skip the
+// files while BS_LOGBOOK_DIR is set load this (ADR-0008).
+func Env() (*Loaded, error) { return loadInto("", "") }
+
+func loadInto(dir, project string) (*Loaded, error) {
+	l := &Loaded{Sources: map[string]Source{}, Shadowed: map[string][]string{}}
+	if err := load(&l.Config, l.Sources, l.Shadowed, &l.Files, dir, project); err != nil {
 		return nil, err
 	}
 	return l, nil
 }
 
-func load(dst any, src map[string]Source, files *[]File, dir, project string) error {
+// load fills dst default → global → project → env; dir "" reads no file.
+func load(dst any, src map[string]Source, shadowed map[string][]string, files *[]File, dir, project string) error {
 	root := reflect.ValueOf(dst).Elem()
 	for _, f := range leaves(root, "") {
 		f.v.SetString(f.tag.Get("default"))
 		src[f.key] = Source{Kind: "default"}
 	}
-	paths := []File{{Scope: "global", Path: filepath.Join(dir, "config.toml")}}
+	var paths []File
 	var errs []error
-	if project != "" {
+	if dir != "" {
+		paths = append(paths, File{Scope: "global", Path: filepath.Join(dir, "config.toml")})
+	}
+	if dir != "" && project != "" {
 		paths = append(paths, File{Scope: "project", Path: filepath.Join(dir, "projects", project+".toml")})
 		errs = append(errs, misnamed(filepath.Join(dir, "projects"), project))
 	}
 	for _, file := range paths {
-		ok, err := decodeFile(root, src, file)
+		ok, err := decodeFile(root, src, shadowed, file)
 		file.Exists = ok
 		*files = append(*files, file)
 		errs = append(errs, err)
@@ -149,10 +164,11 @@ func load(dst any, src map[string]Source, files *[]File, dir, project string) er
 			continue
 		}
 		val := os.Getenv(env)
-		if err := checkEnum(f, val); err != nil {
+		if err := check(f, val); err != nil {
 			errs = append(errs, fmt.Errorf("env %s: %w", env, err))
 			continue
 		}
+		shadowed[f.key] = append(shadowed[f.key], f.v.String())
 		f.v.SetString(val)
 		src[f.key] = Source{Kind: "env", Where: env}
 	}
@@ -161,7 +177,7 @@ func load(dst any, src map[string]Source, files *[]File, dir, project string) er
 
 // decodeFile lays one file's keys over root and records them in src. It reports
 // whether the file exists; a missing file sets nothing and is not an error.
-func decodeFile(root reflect.Value, src map[string]Source, file File) (bool, error) {
+func decodeFile(root reflect.Value, src map[string]Source, shadowed map[string][]string, file File) (bool, error) {
 	b, err := os.ReadFile(file.Path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return false, nil
@@ -192,10 +208,11 @@ func decodeFile(root reflect.Value, src map[string]Source, file File) (bool, err
 			errs = append(errs, fmt.Errorf("%s: %s belongs in the %s file, not the %s one", file.Path, f.key, scope, file.Scope))
 			continue
 		}
-		if err := checkEnum(f, f.v.String()); err != nil {
+		if err := check(f, f.v.String()); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", file.Path, err))
 			continue
 		}
+		shadowed[f.key] = append(shadowed[f.key], out[i].v.String())
 		out[i].v.SetString(f.v.String())
 		src[f.key] = Source{Kind: file.Scope, Where: file.Path}
 	}
@@ -223,12 +240,44 @@ func misnamed(dir, project string) error {
 	return errors.Join(errs...)
 }
 
-func checkEnum(f leaf, val string) error {
-	enum := f.tag.Get("enum")
-	if enum == "" || slices.Contains(strings.Split(enum, "|"), val) {
+// check refuses a value off its enum, or a path ADR-0008 doesn't allow: after Expand it
+// must be absolute, and {repo} may only begin a "{repo}" path. An empty value passes only
+// where it is the default, meaning unset.
+func check(f leaf, val string) error {
+	if enum := f.tag.Get("enum"); enum != "" && !slices.Contains(strings.Split(enum, "|"), val) {
+		return fmt.Errorf("%s = %q: must be one of %s", f.key, val, strings.ReplaceAll(enum, "|", ", "))
+	}
+	kind := f.tag.Get("path")
+	if kind == "" || val == "" && f.tag.Get("default") == "" {
 		return nil
 	}
-	return fmt.Errorf("%s = %q: must be one of %s", f.key, val, strings.ReplaceAll(enum, "|", ", "))
+	rest := val
+	if after, ok := strings.CutPrefix(val, RepoPlaceholder); ok && kind == RepoPlaceholder {
+		rest = "/" + after // {repo} is a main checkout: always absolute
+	}
+	switch {
+	case strings.Contains(rest, RepoPlaceholder):
+		return fmt.Errorf("%s = %q: %s is only allowed at the start of paths.worktrees", f.key, val, RepoPlaceholder)
+	case !filepath.IsAbs(Expand(rest)):
+		return fmt.Errorf("%s = %q: not an absolute path (only ~ is expanded)", f.key, val)
+	}
+	return nil
+}
+
+// RepoPlaceholder stands for the main checkout of the repo a worker's worktree is cut from.
+const RepoPlaceholder = "{repo}"
+
+// Expand replaces a leading ~ (alone or before /) with the home directory: the only
+// expansion bs does in a path, never $VAR or ~user.
+func Expand(path string) string {
+	if path != "~" && !strings.HasPrefix(path, "~/") {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path // left relative, so check refuses it
+	}
+	return filepath.Join(home, path[1:])
 }
 
 // leaf is one setting found by walking a config struct.

@@ -33,6 +33,7 @@ type fakeHerdr struct {
 	workspaces []worker.Workspace
 	agents     map[string]string // live Claude sessions: name → pane
 	started    [][]string        // pane, name, args...
+	bases      []string          // the repo each worktree was cut from
 	removed    []string
 	dirty      map[string]bool // worktree paths with modified or untracked files
 	failStart  error
@@ -42,6 +43,7 @@ type fakeHerdr struct {
 }
 
 func (h *fakeHerdr) CreateWorktree(ctx context.Context, repo, branch, path, label string) (worker.Workspace, error) {
+	h.bases = append(h.bases, repo)
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		return worker.Workspace{}, err
 	}
@@ -149,7 +151,7 @@ func newRig(t *testing.T) rig {
 		"beads-x7q":  {ID: "beads-x7q", Title: "flat id"},
 	}
 	repo := filepath.Join(dir, "bees")
-	p := project.Project{Name: "bees", Repo: repo, Logbook: filepath.Join(dir, "bees.db")}
+	p := project.Project{Name: "bees", Repo: repo, Worktrees: repo + "-WT", Logbook: filepath.Join(dir, "bees.db")}
 	return rig{fleet: worker.Fleet{P: p, LB: lb, H: h, S: h, B: beads, Me: "queen-bees"}, h: h, lb: lb, repo: repo}
 }
 
@@ -1271,5 +1273,39 @@ func TestSpawnPinsTheLogbookDir(t *testing.T) {
 	}
 	if _, ok, _ := r.lb.LatestSpawn(ctx, "bees-9"); ok || len(r.h.started) != 1 {
 		t.Errorf("a refused spawn was recorded or started (%d starts)", len(r.h.started))
+	}
+}
+
+// A worker's worktree lives under paths.worktrees, cut from the base (a linked worktree
+// named by --repo or paths.repo), and its spawn records both (bees-11.3).
+func TestSpawnCutsFromTheBaseUnderTheWorktreesDir(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	trees, base := t.TempDir(), r.repo+"-WT/bees-1"
+	r.fleet.P.Worktrees, r.fleet.P.Base = trees, base
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil {
+		t.Fatal(err)
+	}
+	sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8")
+	if want := filepath.Join(trees, "bees-8"); sp.Worktree != want || sp.Base != base || sp.Repo != r.repo || !slices.Equal(r.h.bases, []string{base}) {
+		t.Errorf("spawn %+v cut from %q; want worktree %s cut from base %s, repo %s", sp, r.h.bases, want, base, r.repo)
+	}
+}
+
+// An orphan is a workspace on the worker's current worktree path, or on the one its
+// latest spawn recorded: paths.worktrees may have moved since it ended.
+func TestAnOrphanAtTheRecordedWorktreeIsFound(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	r.h.workspaces = []worker.Workspace{{ID: "w9", Path: r.repo + "-WT/bees-8"}} // reopened by hand
+	r.fleet.P.Worktrees = t.TempDir()
+	if _, err := r.fleet.Spawn(ctx, "bees-8", ""); !errors.Is(err, worker.ErrOrphan) || !strings.Contains(err.Error(), "w9") {
+		t.Fatalf("err = %v, want ErrOrphan naming w9", err)
 	}
 }

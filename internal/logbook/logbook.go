@@ -195,7 +195,8 @@ type Spawn struct {
 	Pane      string `json:"pane"`
 	Worktree  string `json:"worktree"`
 	Branch    string `json:"branch"`
-	Repo      string `json:"repo"` // where the branch lives, for bs end
+	Repo      string `json:"repo"`           // where the branch lives, for bs end
+	Base      string `json:"base,omitempty"` // the linked worktree the branch was cut from; empty: Repo
 	Ended     bool   `json:"-"`
 	Read      bool   `json:"-"` // the worker has read a message since this spawn, so it has a conversation
 }

@@ -1,6 +1,6 @@
 # bs spec
 
-`bs` lets Claude Code sessions in herdr panes send each other messages through a shared logbook, and wakes an idle session when it has mail. Vocabulary is in [GLOSSARY.md](../GLOSSARY.md); the reasons behind the shape are in [docs/adr/](adr/); every decision is indexed in [DECISIONS.md](DECISIONS.md).
+`bs` lets coding-agent sessions (Claude Code today; [ADR-0009](adr/0009-core-and-adapters.md)) in herdr panes send each other messages through a shared logbook, and wakes an idle session when it has mail. Vocabulary is in [GLOSSARY.md](../GLOSSARY.md); the reasons behind the shape are in [docs/adr/](adr/); every decision is indexed in [DECISIONS.md](DECISIONS.md).
 
 This spec covers **v0**, the walking skeleton, plus **spawn**, which v0 grows into for dogfooding. [v1](#v1-outline) is outlined at the end and gets its own spec pass.
 
@@ -14,7 +14,7 @@ v0 proves the core loop: the queen sends a message, an idle worker wakes, reads 
 | `entries` table; writes `message`, `received`, `spawned`, `ended` | `rang` entries |
 | Claude adapter: find, ring; herdr and bd adapters | reconciler |
 | Ring every unread message on every send | `Plan` reconciler, coalescing, re-ring, flag the queen, watchdog |
-| `--now` | Keeper inbox, disk warning, omp adapter |
+| `--now` | Keeper inbox, disk warning, more harnesses (ADR-0009) |
 
 Platform: Linux and macOS (R47).
 
@@ -326,4 +326,4 @@ Manual worker (no herdr): `claude --name worker-a --settings '{"crossSessionInbo
 - **Hook:** `bs hook` on UserPromptSubmit writes a `rang`/landed entry for `[bs]` prompts; hooks and herdr agent status are the attention facts for `Plan`, never screen scraping (R38).
 - **Questions and answers** (R35, R36): message `data` gains `bead` and `needs` (`none` | `answer` | `approval`); `bs send --needs … --bead … --re <id>`; an answer is a message whose `ref` is the question, and the first one wins; `bs status` counts open questions.
 - **Keeper** (R13, R37): a message to `keeper` with `needs` set is something that needs the human; `bs status` lists them first. Desk only, no push (S3).
-- **Harness seam:** `Harness{Launch, Ring, Alive}`, with an omp adapter in v1.1.
+- **Harness port** ([ADR-0009](adr/0009-core-and-adapters.md)): `Kind`, `Prepare`, `Ring`, superseding `{Launch, Ring, Alive}`; liveness and identity from the recorded herdr pane; `[workspace]` and `[delivery]` are config switches, `[guards]` rendered per harness.

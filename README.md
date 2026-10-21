@@ -74,10 +74,10 @@ vocabulary: [GLOSSARY.md](GLOSSARY.md)
 
 ## Trade-offs
 
-Unlike subagents, a worker is a full Claude Code session that outlives the queen that
+Unlike subagents, a worker is a full harness session (a Claude Code session today) that outlives the queen that
 spawned it and wakes when a message arrives.
 
-The price: Linux or macOS, Claude Code sessions only, one machine. The doorbell rides on
+The price: Linux or macOS, one harness at a time (Claude Code today; [ADR-0009](docs/adr/0009-core-and-adapters.md) makes it an adapter), one machine. The doorbell rides on
 Claude's own cross-session socket, which keeps nothing after a session exits and drops
 identical repeats ([ADR-0001](docs/adr/0001-logbook-is-the-only-truth.md)).
 So bs uses it only to say "you have messages" and keeps every message in the logbook:

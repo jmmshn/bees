@@ -366,6 +366,13 @@ func doorbell(unread []logbook.Message, from string) string {
 			break
 		}
 	}
+	// Senders from more than one project need more than one reply command: bs inbox
+	// prints each message's (bees-12.41).
+	projects := map[string]bool{}
+	for _, m := range unread {
+		projects[m.FromProject] = true
+	}
+	mixed := len(projects) > 1
 	var senders []string
 	count := map[string]int{}
 	for _, m := range unread {
@@ -378,6 +385,9 @@ func doorbell(unread []logbook.Message, from string) string {
 		if count[s] > 1 {
 			senders[i] = fmt.Sprintf("%s ×%d", s, count[s])
 		}
+	}
+	if mixed {
+		return fmt.Sprintf(`[bs] %d unread (%s) — run: bs inbox   (it shows how to reply to each)`, len(unread), strings.Join(senders, ", "))
 	}
 	return fmt.Sprintf(`[bs] %d unread (%s) — run: bs inbox   (reply with: bs send %s "...")`, len(unread), strings.Join(senders, ", "), reply)
 }

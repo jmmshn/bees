@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -270,6 +271,32 @@ func (HerdrCLI) Panes(ctx context.Context, workspace string) ([]string, error) {
 	var out []string
 	for _, p := range r.Result.Panes {
 		out = append(out, p.ID)
+	}
+	return out, nil
+}
+
+func (HerdrCLI) PanesUnder(ctx context.Context, dir string) ([]string, error) {
+	var r struct {
+		Result struct {
+			Panes []struct {
+				ID            string `json:"pane_id"`
+				Cwd           string `json:"cwd"`
+				ForegroundCwd string `json:"foreground_cwd"`
+			} `json:"panes"`
+		} `json:"result"`
+	}
+	if code, err := herdr(ctx, &r, "pane", "list"); err != nil {
+		return nil, down(ctx, code, err)
+	}
+	under := func(p string) bool {
+		rel, err := filepath.Rel(dir, p)
+		return p != "" && err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
+	}
+	var out []string
+	for _, p := range r.Result.Panes {
+		if under(p.Cwd) || under(p.ForegroundCwd) {
+			out = append(out, p.ID)
+		}
 	}
 	return out, nil
 }

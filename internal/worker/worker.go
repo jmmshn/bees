@@ -125,6 +125,9 @@ type Herdr interface {
 	Panes(ctx context.Context, workspace string) ([]string, error)
 	// ClosePane closes pane, ending what runs in it; already gone → nil.
 	ClosePane(ctx context.Context, pane string) error
+	// PanesUnder lists the panes, in any workspace, whose shell or foreground process
+	// works inside dir. ErrHerdrDown when herdr didn't answer.
+	PanesUnder(ctx context.Context, dir string) ([]string, error)
 }
 
 // Beads reads beads.
@@ -843,6 +846,7 @@ type Ending struct {
 	Gone            bool   // herdr no longer had the workspace, so only the end was recorded
 	Exited          bool   // no harness process ran for it (exited, or none in its pane): no background work to check
 	Forgot          bool   // the workspace is no longer the worker's: the end was recorded, the workspace left open
+	Left            string // the worktree left on disk (its workspace gone or left open): bs prune frees it
 	Err             error  // the worker was kept: still live in the logbook
 	Warn            error  // the worker was ended, but removing its per-start files failed
 }
@@ -972,6 +976,11 @@ func (f Fleet) end(ctx context.Context, sp logbook.Spawn, o EndOpts) Ending {
 		e.Err = err
 		return e
 	}
+	if (e.Gone || e.Forgot) && !plain && sp.Worktree != "" {
+		if _, err := os.Stat(sp.Worktree); err == nil {
+			e.Left = sp.Worktree
+		}
+	}
 	e.Warn = removeFiles(sp.Name)
 	return e
 }
@@ -984,7 +993,64 @@ type Pruned struct {
 	InUse        string // the worktree that has the branch in use; kept, whatever Merge says
 	Prunable     bool   // InUse's directory is gone: git worktree prune frees the branch
 	Deleted      bool
-	DeleteErr    error // proven merged, but git branch -D failed
+	DeleteErr    error  // proven merged, but git branch -D failed
+	Freed        bool   // its recorded worktree was removed (dry: would be), freeing the branch
+	KeptWhy      string // why its recorded worktree, which has the branch in use, was kept
+}
+
+// freeWorktree removes ended spawn sp's recorded worktree (dry: only checks it could), and
+// returns why it kept it instead: the worker still runs, a herdr workspace is open on it,
+// it has uncommitted or untracked files, or a lookup or the removal failed. Never --force.
+func (f Fleet) freeWorktree(ctx context.Context, sp logbook.Spawn, repo string, dry bool) string {
+	if f.Procs == nil || f.H == nil { // fail closed (motif 7)
+		return "bs can't check whether anything uses it here"
+	}
+	switch alive, known, st, err := SpawnAlive(ctx, f.LB, f.Procs, sp); {
+	case err != nil:
+		return "can't tell whether its worker still runs: " + err.Error()
+	case !known:
+		return "no process was recorded for its worker, so bs can't tell whether it still runs; remove it with git worktree remove " + sp.Worktree
+	case alive:
+		return fmt.Sprintf("its ended worker still runs (pid %d): stop that process, then prune again", st.PID)
+	}
+	wss, err := f.H.Workspaces(ctx)
+	if err != nil {
+		return "can't tell whether a herdr workspace is open on it: " + err.Error()
+	}
+	if i := slices.IndexFunc(wss, func(w Workspace) bool { return w.Path != "" && samePath(w.Path, sp.Worktree) }); i >= 0 {
+		return fmt.Sprintf("herdr workspace %s is open on it", wss[i].ID)
+	}
+	// Any pane working inside it: a shell, a hand-run session, a pane moved elsewhere.
+	panes, err := f.H.PanesUnder(ctx, sp.Worktree)
+	if err != nil {
+		return "can't tell whether a herdr pane works in it: " + err.Error()
+	}
+	if len(panes) > 0 {
+		return "herdr pane " + strings.Join(panes, ", ") + " works in it"
+	}
+	switch out, err := gitOut(ctx, sp.Worktree, "status", "--porcelain"); {
+	case err != nil:
+		return "can't tell whether it is clean: " + err.Error()
+	case strings.TrimSpace(out) != "":
+		return "it has uncommitted or untracked files; commit or move them, or remove it with git worktree remove --force " + sp.Worktree
+	}
+	if dry {
+		return ""
+	}
+	if err := gitRun(ctx, repo, "worktree", "remove", sp.Worktree); err != nil {
+		return "git worktree remove failed: " + err.Error()
+	}
+	return ""
+}
+
+// samePath reports whether a and b name the same directory, symlinks resolved (motif 3).
+func samePath(a, b string) bool {
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	if errA != nil || errB != nil {
+		return filepath.Clean(a) == filepath.Clean(b)
+	}
+	return ra == rb
 }
 
 // Prune deletes the branch of each ended worker once its work is proven merged; dry only
@@ -1006,6 +1072,20 @@ func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error) {
 		p.Merge, p.Why = merged(ctx, f.gh(), repo, sp.Branch)
 		if p.InUse, p.Prunable, err = checkedOut(ctx, repo, sp.Branch); err != nil {
 			p.Merge, p.Why = Unknown, err.Error()
+		}
+		// bs end --force or --forget can leave the worktree behind (a moved pane, a guest):
+		// nothing else removes it, so free it here while it is safe (bees-12.41, motif 5).
+		if p.InUse != "" && !p.Prunable && sp.Worktree != "" && samePath(p.InUse, sp.Worktree) {
+			if p.KeptWhy = f.freeWorktree(ctx, sp, repo, dry); p.KeptWhy == "" {
+				p.Freed = true
+				if !dry {
+					if p.InUse, p.Prunable, err = checkedOut(ctx, repo, sp.Branch); err != nil {
+						p.Merge, p.Why = Unknown, err.Error()
+					}
+				} else {
+					p.InUse = ""
+				}
+			}
 		}
 		if p.Merge == Merged && p.InUse == "" && !dry {
 			p.DeleteErr = gitRun(ctx, repo, "branch", "-D", sp.Branch)

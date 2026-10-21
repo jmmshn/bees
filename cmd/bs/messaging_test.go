@@ -371,11 +371,21 @@ func TestSendRefusesAnotherProjectsSession(t *testing.T) {
 // bees-12.38: the doorbell's reply hint names the sender's project when the sender wrote
 // from another project's logbook, so following it reaches the sender.
 func TestDoorbellRepliesToACrossProjectSender(t *testing.T) {
-	unread := []logbook.Message{{From: "test-1-1"}, {From: "queen-dotfiles", FromProject: "dotfiles"}}
+	unread := []logbook.Message{{From: "queen-dotfiles", FromProject: "dotfiles"}}
 	if got, want := doorbell(unread, "queen-dotfiles"), `(reply with: bs send --project dotfiles queen-dotfiles "...")`; !strings.Contains(got, want) {
 		t.Fatalf("doorbell = %q, want %q", got, want)
 	}
-	if got := doorbell(unread, "test-1-1"); !strings.Contains(got, `(reply with: bs send test-1-1 "...")`) {
+	if got := doorbell([]logbook.Message{{From: "test-1-1"}}, "test-1-1"); !strings.Contains(got, `(reply with: bs send test-1-1 "...")`) {
 		t.Fatalf("doorbell = %q, want a same-project reply", got)
+	}
+}
+
+// bees-12.41: a doorbell naming senders from more than one project gives no single reply
+// command, which would be wrong for one of them; bs inbox prints each message's.
+func TestADoorbellFromTwoProjectsGivesNoSingleReply(t *testing.T) {
+	unread := []logbook.Message{{From: "test-1-1"}, {From: "queen-dotfiles", FromProject: "dotfiles"}}
+	got := doorbell(unread, "test-1-1")
+	if strings.Contains(got, "reply with") || !strings.Contains(got, "2 unread (test-1-1, queen-dotfiles)") || !strings.Contains(got, "bs inbox") {
+		t.Fatalf("doorbell = %q, want both senders and no single reply command", got)
 	}
 }

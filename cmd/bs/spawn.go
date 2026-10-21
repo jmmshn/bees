@@ -232,6 +232,9 @@ func cmdEnd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 	if e.Exited {
 		fmt.Fprintf(stdout, noHarness+"\n", name)
 	}
+	if e.Left != "" {
+		fmt.Fprintf(stdout, leftWorktree+"\n", e.Left)
+	}
 	if sp, _, err := f.LB.LatestSpawn(ctx, name); err == nil && sp.Branch != "" {
 		fmt.Fprintf(stdout, "branch %s kept; bs prune deletes it once merged\n", sp.Branch)
 	}
@@ -264,6 +267,9 @@ func mayEndAll(ctx context.Context, f worker.Fleet, yes bool) error {
 	}
 	return nil
 }
+
+// leftWorktree says where an ended worker's worktree stayed, and what frees it.
+const leftWorktree = "its worktree %s stays; bs prune removes it once nothing has it open"
 
 // Exit codes of bs end --all when it keeps a worker.
 const (
@@ -300,6 +306,9 @@ func endAll(ctx context.Context, f worker.Fleet, o worker.EndOpts, stdout, stder
 			fmt.Fprintf(stdout, "ended %s: workspace %s was already gone\n", e.Name, e.Workspace)
 		default:
 			fmt.Fprintf(stdout, "ended %s: removed workspace %s\n", e.Name, e.Workspace)
+		}
+		if e.Err == nil && e.Left != "" {
+			fmt.Fprintf(stdout, "  "+leftWorktree+"\n", e.Left)
 		}
 		if e.Err == nil && e.Exited {
 			fmt.Fprintf(stdout, "  "+noHarness+"\n", e.Name)
@@ -371,8 +380,17 @@ func cmdPrune(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	code := 0
 	for _, r := range pruned {
 		switch {
+		case r.Freed && *dry:
+			fmt.Fprintf(stdout, "would remove the ended worker's worktree of %s: no changes, and nothing has it open (its git-ignored files would go with it)\n", r.Branch)
+		case r.Freed:
+			fmt.Fprintf(stdout, "removed the ended worker's worktree of %s: no changes, and nothing had it open (its git-ignored files went with it)\n", r.Branch)
+		}
+		switch {
 		case r.InUse != "":
 			fmt.Fprintf(stdout, "kept %s: in use in worktree %s", r.Branch, r.InUse)
+			if r.KeptWhy != "" {
+				fmt.Fprintf(stdout, ", left there because %s", r.KeptWhy)
+			}
 			if r.Prunable {
 				fmt.Fprint(stdout, ", which is gone; git worktree prune frees it")
 			}

@@ -23,15 +23,17 @@ if [ "$(uname)" = Darwin ]; then cache=$HOME/Library/Caches/bees; else cache=${X
 projects=$HOME/.claude/projects enc=$(sed 's/[^A-Za-z0-9]/-/g' <<<"$run") # Claude's name for a project dir
 fail() { echo "teardown: $*; fix it and run teardown.sh $run again" >&2; exit 1; }
 
-# The shared bs, unless it predates bs end --forget: then the build under test. Run from /,
-# outside any checkout, so bs neither resolves a project from the cwd nor nags about staleness.
-bs=$(command -v bs || true)
-if [ -z "$bs" ] || ! (cd / && "$bs" end -h 2>&1 | grep -q -- -forget); then
-	# The build setup recorded, else (no live.json yet) this checkout's, as setup.sh defaults to.
-	bin=$(jq -r '.bin // empty' "$run/live.json" 2>/dev/null) || bin=
-	bs=${bin:-$(cd "$here/../../.." && pwd)/bin}/bs
+# The build setup recorded, which wrote the toy's records: an older shared bs misreads a
+# record kind it predates (a workspace kind none spawn read as "another worktree", then
+# --forget left its workspace and Claude running; bs bug bees-12.31). Else (no live.json
+# yet) this checkout's, as setup.sh defaults to; else the shared bs. Run from /, outside
+# any checkout, so bs neither resolves a project from the cwd nor nags about staleness.
+bin=$(jq -r '.bin // empty' "$run/live.json" 2>/dev/null) || bin=
+bs=${bin:-$(cd "$here/../../.." && pwd)/bin}/bs
+if [ ! -x "$bs" ] || ! (cd / && "$bs" end -h 2>&1 | grep -q -- -forget); then
+	bs=$(command -v bs || true)
 fi
-[ -x "$bs" ] || fail "no bs with end --forget (the shared one is older; build one in the checkout under test)"
+[ -x "$bs" ] || fail "no bs with end --forget (build one in the checkout under test)"
 endall() {
 	[ -f "$store/$toy.db" ] || return 0
 	# Only the workers the toy's logbook recorded (motif 12). --forget leaves a workspace herdr

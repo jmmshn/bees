@@ -366,8 +366,16 @@ func (f Fleet) check(ctx context.Context, req Request) (plan, error) {
 	if _, err := Delivery(f.Delivery, f.Guards); err != nil {
 		return p, fmt.Errorf("%s: %w", name, err)
 	}
+	if err := CheckWorkspace(f.WorkspaceKind, f.Delivery); err != nil {
+		return p, fmt.Errorf("%s: %w", name, err)
+	}
 	sp0 := logbook.Spawn{Name: name, Bead: bead, Worktree: f.worktree(name), Branch: name, Repo: f.P.Repo, Path: p.path}
 	if f.WorkspaceKind == NoWorkspace {
+		// Workers share this directory, so only the keeper names it: a repo the chain
+		// found by git is the checkout bs runs in, the queen's own (bees-12.28).
+		if !f.P.RepoNamed() {
+			return p, fmt.Errorf("%s: workspace kind none opens workers on paths.repo, which is unset; set it in the project's config file to the directory they share (bs config shows the repo it found: %s, from %s)", name, f.P.Repo, f.P.RepoFrom)
+		}
 		sp0 = logbook.Spawn{Name: name, Bead: bead, Kind: NoWorkspace, Dir: f.P.Repo, Repo: f.P.Repo, Path: p.path}
 		if fi, err := os.Stat(f.P.Repo); err != nil || !fi.IsDir() { // herdr would open $HOME without a word
 			return p, fmt.Errorf("%s: workspace directory %s is not a directory", name, f.P.Repo)
@@ -552,6 +560,17 @@ func Rules(ctx context.Context, repo string, d config.Delivery, g config.Guards,
 	return guards.Build(d, g, w)
 }
 
+// CheckWorkspace refuses workspace kind with delivery d when the pair can't work: github_pr
+// opens a PR from the worker's own branch, and a kind none worker has none, so its prompt
+// would tell it to make one in the shared directory (bees-12.29). A fragment is the user's
+// own wording, so it passes.
+func CheckWorkspace(kind string, d config.Delivery) error {
+	if kind == NoWorkspace && d.Fragment == "" && cmp.Or(d.Kind, "github_pr") == "github_pr" {
+		return errors.New(`workspace.kind = "none" gives a worker no branch for delivery.kind = "github_pr" (the default) to open a PR from; set delivery.kind = "manual", or delivery.fragment to your own wording`)
+	}
+	return nil
+}
+
 // Delivery is the delivery fragment a role prompt gets under d (its fragment file, read
 // now, else the kind's own), with g's merge grant if any.
 func Delivery(d config.Delivery, g config.Guards) (string, error) {
@@ -582,7 +601,7 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 	if err != nil {
 		return st, err
 	}
-	file, err := prompt.File(prompt.Worker, f.P.Name, delivery)
+	file, err := prompt.File(prompt.Worker, f.P.Name, sp.Kind, delivery)
 	if err != nil {
 		return st, err
 	}
@@ -758,6 +777,10 @@ func (f Fleet) EndAll(ctx context.Context, o EndOpts) ([]Ending, error) {
 // end removes live spawn sp's workspace and records the end.
 func (f Fleet) end(ctx context.Context, sp logbook.Spawn, o EndOpts) Ending {
 	e := Ending{Name: sp.Name, Workspace: sp.Workspace, Branch: sp.Branch}
+	if sp.Kind != "" && sp.Kind != GitWorktree && sp.Kind != NoWorkspace { // a newer bs's: never guess, even to --forget
+		e.Err = fmt.Errorf("%s: recorded with workspace kind %q, which this bs doesn't know; nothing removed: end it with the bs that spawned it", sp.Name, sp.Kind)
+		return e
+	}
 	wss, err := f.H.Workspaces(ctx)
 	if err != nil {
 		e.Err = fmt.Errorf("%s: can't tell whether workspace %s is open; nothing removed: %w", sp.Name, sp.Workspace, err)

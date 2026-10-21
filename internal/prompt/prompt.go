@@ -1,11 +1,13 @@
 // Package prompt holds the role prompts bs appends to the sessions it launches:
 // QUEEN.md for the queen, WORKER.md for workers, each followed by PITFALLS.md (the
 // Known pitfalls lines both roles hit, continuing the role's list), BEADS.md (the
-// bead rules both share) and a delivery fragment (how work lands: delivery/<kind>.md,
-// or the user's own file; ADR-0009). The text is tracked in the repo (R32, R40).
+// bead rules both share), a workspace fragment (where a worker works:
+// workspace/<kind>.md) and a delivery fragment (how work lands: delivery/<kind>.md, or the
+// user's own file; ADR-0009). The text is tracked in the repo (R32, R40).
 package prompt
 
 import (
+	"cmp"
 	"embed"
 	"fmt"
 	"os"
@@ -32,6 +34,8 @@ var (
 	beads string
 	//go:embed delivery/*.md
 	deliveries embed.FS
+	//go:embed workspace/*.md
+	workspaces embed.FS
 )
 
 // Delivery is the delivery fragment: the file fragment names when it is set, read now so
@@ -51,16 +55,23 @@ func Delivery(kind, fragment string) (string, error) {
 	return string(b), nil
 }
 
-// Text is r's prompt followed by PITFALLS.md, BEADS.md and r's part of the delivery
-// fragment under a "## Delivery" heading (the roles point to it), with {{project}} filled
-// in. A fragment line "<!-- queen -->" or "<!-- worker -->" starts a part only that role
-// reads, up to the next such line; text before the first one goes to both.
-func Text(r Role, project, delivery string) string {
+// Text is r's prompt followed by PITFALLS.md, BEADS.md, r's part of the workspace
+// fragment of kind workspace (git_worktree when "") under "## Workspace" and r's part of
+// the delivery fragment under "## Delivery" (the roles point to both), with {{project}}
+// filled in. A fragment line "<!-- queen -->" or "<!-- worker -->" starts a part only that
+// role reads, up to the next such line; text before the first one goes to both. An
+// unknown workspace kind is an error: config's enum and the spawn record allow no other.
+func Text(r Role, project, workspace, delivery string) (string, error) {
+	ws, err := workspaces.ReadFile("workspace/" + cmp.Or(workspace, "git_worktree") + ".md")
+	if err != nil {
+		return "", fmt.Errorf("workspace.kind %q: no built-in fragment", workspace)
+	}
 	role := worker
 	if r == Queen {
 		role = queen
 	}
-	return strings.ReplaceAll(role+pitfalls+"\n"+beads+"\n## Delivery\n\n"+part(r, delivery), "{{project}}", project)
+	text := role + pitfalls + "\n" + beads + "\n## Workspace\n\n" + part(r, string(ws)) + "\n## Delivery\n\n" + part(r, delivery)
+	return strings.ReplaceAll(text, "{{project}}", project), nil
 }
 
 // part is r's share of a delivery fragment: the shared lead, then r's own sections.
@@ -82,13 +93,17 @@ func part(r Role, delivery string) string {
 	return b.String()
 }
 
-// File writes Text(r, project, delivery) to <user cache dir>/bees/<project>-<role>.md and
+// File writes Text(r, project, workspace, delivery) to <user cache dir>/bees/<project>-<role>.md and
 // returns its path, for claude --append-system-prompt-file. Queen and workers both launch
 // with a file, because herdr refuses agent arguments containing newlines
 // (worker.CheckAgentArgs). It is rewritten at every launch, through a rename so a
 // concurrent launch never reads half a file, and Claude reads it only at startup.
-func File(r Role, project, delivery string) (string, error) {
-	return Cache(project+"-"+string(r)+".md", Text(r, project, delivery))
+func File(r Role, project, workspace, delivery string) (string, error) {
+	text, err := Text(r, project, workspace, delivery)
+	if err != nil {
+		return "", err
+	}
+	return Cache(project+"-"+string(r)+".md", text)
 }
 
 // Dir is <cache dir>/bees, where bs keeps the files it launches Claude with. The cache

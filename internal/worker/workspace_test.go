@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jmmshn/bees/internal/config"
+	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/worker"
 )
 
@@ -21,8 +23,9 @@ func newPlainRig(t *testing.T) rig {
 	if err := os.MkdirAll(filepath.Join(r.repo, ".hg"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	r.fleet.P.Repo = r.repo
+	r.fleet.P.Repo, r.fleet.P.RepoFrom = r.repo, "paths.repo"
 	r.fleet.WorkspaceKind = worker.NoWorkspace
+	r.fleet.Delivery = config.Delivery{Kind: "manual"}
 	return r
 }
 
@@ -47,6 +50,42 @@ func TestNoneOpensATaggedPlainWorkspaceOnTheRepo(t *testing.T) {
 	settings, err := os.ReadFile(start[slices.Index(start, "--settings")+1])
 	if err != nil || !strings.Contains(string(settings), "working in the directory "+r.repo) || strings.Contains(string(settings), "branch") {
 		t.Fatalf("settings = %s, %v; want the directory and no branch", settings, err)
+	}
+}
+
+// Kind none opens on paths.repo: a repo found any other way is the checkout bs runs in
+// (the queen's), and workers sharing it would move it (bees-12.28).
+func TestNoneRefusesARepoNotNamedByPathsRepo(t *testing.T) {
+	ctx := context.Background()
+	for _, from := range []string{"git", "paths.repos"} {
+		r := newPlainRig(t)
+		r.fleet.P.RepoFrom = from
+		if _, err := r.fleet.Spawn(ctx, "bees-8", "hg client"); err == nil || !strings.Contains(err.Error(), "paths.repo") {
+			t.Fatalf("%s: err = %v, want a refusal naming paths.repo", from, err)
+		}
+		if _, ok, _ := r.lb.LatestSpawn(ctx, "bees-8"); ok || len(r.h.workspaces) != 0 {
+			t.Fatalf("%s: something was opened or recorded", from)
+		}
+	}
+}
+
+// github_pr opens a PR from the worker's branch, and a kind none worker has none
+// (bees-12.29); a fragment of the user's own wording passes.
+func TestNoneRefusesGitHubPRDelivery(t *testing.T) {
+	ctx := context.Background()
+	r := newPlainRig(t)
+	r.fleet.Delivery = config.Delivery{}
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "hg client"); err == nil || !strings.Contains(err.Error(), `delivery.kind = "manual"`) {
+		t.Fatalf("err = %v, want a refusal naming delivery.kind", err)
+	}
+	if _, ok, _ := r.lb.LatestSpawn(ctx, "bees-8"); ok || len(r.h.workspaces) != 0 {
+		t.Fatal("something was opened or recorded")
+	}
+	if err := worker.CheckWorkspace(worker.NoWorkspace, config.Delivery{Fragment: "/cl.md"}); err != nil {
+		t.Errorf("a fragment was refused: %v", err)
+	}
+	if err := worker.CheckWorkspace(worker.GitWorktree, config.Delivery{}); err != nil {
+		t.Errorf("git_worktree with github_pr was refused: %v", err)
 	}
 }
 
@@ -180,5 +219,23 @@ func TestNoneRecordsTheWorkersPath(t *testing.T) {
 	}
 	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); !slices.Equal(sp.Path, []string{bin}) {
 		t.Fatalf("spawn record path = %q, want %q", sp.Path, bin)
+	}
+}
+
+// A spawn recorded with a workspace kind this bs doesn't know is never ended, --forget or
+// not: a pre-none bs read a none record as "another worktree" and --forget left its
+// workspace and Claude running with the end recorded (bees-12.31).
+func TestEndRefusesAWorkspaceKindItDoesntKnow(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	if _, err := r.lb.RecordSpawn(ctx, "queen-bees", logbook.Spawn{Name: "bees-8", Bead: "bees-8", Kind: "citc", Workspace: "w9", Pane: "w9:p1"}, "brief"); err != nil {
+		t.Fatal(err)
+	}
+	r.h.workspaces = append(r.h.workspaces, worker.Workspace{ID: "w9"})
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{Force: true, Forget: true}); err == nil || !strings.Contains(err.Error(), `"citc"`) {
+		t.Fatalf("err = %v, want a refusal naming the kind", err)
+	}
+	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); sp.Ended || len(r.h.closed)+len(r.h.removed) != 0 {
+		t.Fatalf("ended = %v, closed %v, removed %v; want nothing touched", sp.Ended, r.h.closed, r.h.removed)
 	}
 }

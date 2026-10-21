@@ -227,7 +227,11 @@ func queenPrompt(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return prompt.Text(prompt.Queen, "bees", d)
+	text, err := prompt.Text(prompt.Queen, "bees", "", d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return text
 }
 
 // The queen's delivery fragment is read at every launch: an unreadable one stops bs queen

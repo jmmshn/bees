@@ -14,7 +14,7 @@ func TestEachRoleNamesTheProjectAndItsJob(t *testing.T) {
 	shared := []string{"## Known pitfalls", "auto-mode permission denial", "control characters", "bs bead ls", "bs epic", "bs bead new --parent web2-N"}
 	for role, want := range map[prompt.Role][]string{
 		prompt.Queen:  {"queen-web2", "bs spawn --label", "--repo", "bs status", "bs end", "only after its PR is merged", "capture-pitfall", "never write \"keeper approved\"", "a push to another branch", "never edit, commit", "answer them yourself", "end your turn", "Never sleep-loop", "LABEL column of `bs status`", "never by a workspace id"},
-		prompt.Worker: {"bd show <bead>", "run: bs inbox", "bs send queen-web2", "done: <bead> PR #N", "Leave `bd close` to the queen", "Your branch is yours", "never force-push", "Never install anything onto PATH from your branch", "\"this pane\", never a workspace id"},
+		prompt.Worker: {"bd show <bead>", "run: bs inbox", "bs send queen-web2", "done: <bead> PR #N", "Leave `bd close` to the queen", "Your branch is yours", "never force-push", "Never install anything onto PATH from your work", "\"this pane\", never a workspace id"},
 	} {
 		got := text(t, role)
 		for _, w := range append(shared, want...) {
@@ -43,7 +43,7 @@ func TestFileHoldsTheRolePromptInBsCache(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	for _, role := range []prompt.Role{prompt.Queen, prompt.Worker} {
 		for range 2 { // rewritten, not appended, at every launch
-			path, err := prompt.File(role, "web2", github(t))
+			path, err := prompt.File(role, "web2", "", github(t))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -110,7 +110,17 @@ func github(t *testing.T) string {
 }
 
 // text is role's prompt for project web2 under the default delivery, github_pr.
-func text(t *testing.T, r prompt.Role) string { return prompt.Text(r, "web2", github(t)) }
+func text(t *testing.T, r prompt.Role) string { return must(t, r, "", github(t)) }
+
+// must is prompt.Text for project web2, failing t on an error.
+func must(t *testing.T, r prompt.Role, workspace, delivery string) string {
+	t.Helper()
+	got, err := prompt.Text(r, "web2", workspace, delivery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
 
 // github_pr's fragment is the PR wording QUEEN.md and WORKER.md held before ADR-0009, word
 // for word, each line still in its own role's prompt only (bees-12.3).
@@ -149,7 +159,7 @@ func TestGitHubPRDeliveryHoldsTheOldPRWording(t *testing.T) {
 func TestManualDeliveryMentionsNoPR(t *testing.T) {
 	pr := regexp.MustCompile(`\bPRs?\b|gh pr|pull request`)
 	for _, role := range []prompt.Role{prompt.Queen, prompt.Worker} {
-		if got := prompt.Text(role, "web2", ""); pr.MatchString(got) {
+		if got := must(t, role, "", ""); pr.MatchString(got) {
 			t.Errorf("%s prompt without a delivery fragment mentions %q:\n%s", role, pr.FindString(got), got)
 		}
 	}
@@ -158,7 +168,7 @@ func TestManualDeliveryMentionsNoPR(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, role := range []prompt.Role{prompt.Queen, prompt.Worker} {
-		got := prompt.Text(role, "web2", d)
+		got := must(t, role, "", d)
 		if pr.MatchString(got) {
 			t.Errorf("manual %s prompt mentions %q", role, pr.FindString(got))
 		}
@@ -181,7 +191,7 @@ func TestDeliveryFragmentIsTheUsersOwnFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := prompt.Text(prompt.Worker, "web2", d); !strings.Contains(got, "## Delivery\n\nMail a CL to web2-reviewers.") || strings.Contains(got, "PR #N") {
+	if got := must(t, prompt.Worker, "", d); !strings.Contains(got, "## Delivery\n\nMail a CL to web2-reviewers.") || strings.Contains(got, "PR #N") {
 		t.Errorf("worker prompt with a fragment:\n%s", got)
 	}
 	os.Remove(f)
@@ -190,5 +200,36 @@ func TestDeliveryFragmentIsTheUsersOwnFile(t *testing.T) {
 	}
 	if _, err := prompt.Delivery("carrier_pigeon", ""); err == nil {
 		t.Error("an unknown kind had a fragment")
+	}
+}
+
+// Under workspace kind none no git wording reaches a worker: no branch to commit on, no
+// worktree to make, and the queen hears that workers share the directory (bees-12.28,
+// bees-12.29). Under git_worktree, the default, the branch wording is still there.
+func TestNoneWorkspaceMentionsNoBranchOrWorktree(t *testing.T) {
+	manual, err := prompt.Delivery("manual", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	git := regexp.MustCompile(`your own branch|on this branch|this worktree|branch name|its last commit|bs prune`)
+	for role, want := range map[prompt.Role][]string{
+		prompt.Worker: {"## Workspace\n\nWorkers have no worktree and no branch", "Never switch branches, make a worktree", "lists the files you made or changed", "done: <bead>"},
+		prompt.Queen:  {"workers share it", "touches no file", "leaving its files in the directory"},
+	} {
+		got := must(t, role, "none", manual)
+		if git.MatchString(got) {
+			t.Errorf("none %s prompt says %q:\n%s", role, git.FindString(got), got)
+		}
+		for _, w := range want {
+			if !strings.Contains(got, w) {
+				t.Errorf("none %s prompt lacks %q", role, w)
+			}
+		}
+		if got := must(t, role, "git_worktree", manual); !strings.Contains(got, "own branch") {
+			t.Errorf("git_worktree %s prompt lost its branch wording:\n%s", role, got)
+		}
+	}
+	if _, err := prompt.Text(prompt.Worker, "web2", "carrier_pigeon", manual); err == nil {
+		t.Error("an unknown workspace kind had a fragment")
 	}
 }

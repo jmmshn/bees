@@ -1322,7 +1322,11 @@ func workerPrompt(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return prompt.Text(prompt.Worker, "bees", d)
+	text, err := prompt.Text(prompt.Worker, "bees", "", d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return text
 }
 
 func gitRun(t *testing.T, dir string, args ...string) {

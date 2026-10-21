@@ -15,6 +15,7 @@ import (
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/proc"
 	"github.com/jmmshn/bees/internal/prompt"
+	"github.com/jmmshn/bees/internal/worker"
 )
 
 // execAgent replaces bs with the harness binary program, run in dir with env. Tests swap
@@ -48,6 +49,11 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if err == nil {
 		err = p.NeedRepo()
 	}
+	if err != nil {
+		return err
+	}
+	// Read the delivery fragment first: an unreadable one starts nothing, not even a logbook.
+	delivery, err := worker.Delivery(cfg.Delivery, cfg.Guards)
 	if err != nil {
 		return err
 	}
@@ -86,7 +92,7 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if os.Getenv("BS_LOGBOOK") != "" {
 		env = append(env, "BS_LOGBOOK="+p.Logbook)
 	}
-	file, err := prompt.File(prompt.Queen, p.Name)
+	file, err := prompt.File(prompt.Queen, p.Name, delivery)
 	if err != nil {
 		return err
 	}

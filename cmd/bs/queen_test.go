@@ -50,7 +50,7 @@ func TestQueenStartsClaudeNamedForTheProject(t *testing.T) {
 	if len(gotArgs) != 4 || !slices.Equal(gotArgs[:3], []string{"--name", "queen-bees", "--append-system-prompt-file"}) {
 		t.Fatalf("args = %q", gotArgs)
 	}
-	if b, err := os.ReadFile(gotArgs[3]); err != nil || string(b) != prompt.Text(prompt.Queen, "bees") {
+	if b, err := os.ReadFile(gotArgs[3]); err != nil || string(b) != queenPrompt(t) {
 		t.Errorf("system prompt file %s: %v\n%s", gotArgs[3], err, b)
 	}
 	for _, kv := range gotEnv {
@@ -216,5 +216,45 @@ func TestQueenRefusesOutsideHerdr(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".local/share/bees/bees.db")); !os.IsNotExist(err) {
 		t.Fatalf("logbook made outside herdr: %v", err)
+	}
+}
+
+// queenPrompt is the queen prompt under the default delivery, github_pr.
+func queenPrompt(t *testing.T) string {
+	t.Helper()
+	d, err := prompt.Delivery("github_pr", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return prompt.Text(prompt.Queen, "bees", d)
+}
+
+// The queen's delivery fragment is read at every launch: an unreadable one stops bs queen
+// before Claude starts, naming the key.
+func TestQueenRefusesAnUnreadableFragment(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	t.Setenv("BS_PROJECT", "bees")
+	t.Setenv("BS_LOGBOOK", "")
+	t.Setenv("BS_LOGBOOK_DIR", "")
+	t.Setenv("BS_REPOS", "/src")
+	t.Chdir(t.TempDir())
+	if err := os.MkdirAll(filepath.Join(xdg, "bees"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(xdg, "bees", "config.toml"), []byte("[delivery]\nfragment = \"/nonexistent/cl.md\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	execAgent = func(string, []string, string, ...string) error {
+		t.Fatal("started Claude without its delivery fragment")
+		return nil
+	}
+	t.Cleanup(func() { execAgent = execAgentProcess })
+	if _, stderr, code := bs(t, "queen"); code != 1 || !strings.Contains(stderr, "delivery.fragment") {
+		t.Fatalf("queen: exit %d, stderr %q; want exit 1 naming delivery.fragment", code, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".local/share/bees/bees.db")); err == nil {
+		t.Error("a refused queen started a logbook")
 	}
 }

@@ -113,19 +113,33 @@ func github(t *testing.T) string {
 func text(t *testing.T, r prompt.Role) string { return prompt.Text(r, "web2", github(t)) }
 
 // github_pr's fragment is the PR wording QUEEN.md and WORKER.md held before ADR-0009, word
-// for word, so prompts don't change for today's users (bees-12.3).
+// for word, each line still in its own role's prompt only (bees-12.3).
 func TestGitHubPRDeliveryHoldsTheOldPRWording(t *testing.T) {
-	for _, line := range []string{
-		"Done: open a PR from your own branch (follow AGENTS.md's push rules), `bs send queen-web2 \"done: <bead> PR #N\"`, then stop.",
-		"Leave `bd close` to the queen: it closes your bead once the PR is merged.",
-		"Your branch is yours: push to it whenever the work needs it, including new commits to your open PR, with no approval. Never push to main or any other branch, never force-push (merge main in instead), never merge or approve a PR.",
-		"A worker reports `done: <bead> PR #N`; that means \"ready for review\", and the bead stays open. Merges stay the keeper's. Close it with `bd close <bead>` only after its PR is merged, then `bs end` the worker.",
-		"Deleting a stacked PR's base branch closes the PR above it → retarget first: `gh pr edit <n> --base main`.",
+	for role, lines := range map[prompt.Role][]string{
+		prompt.Worker: {
+			"Done: open a PR from your own branch (follow AGENTS.md's push rules), `bs send queen-web2 \"done: <bead> PR #N\"`, then stop.",
+			"Leave `bd close` to the queen: it closes your bead once the PR is merged.",
+			"Your branch is yours: push to it whenever the work needs it, including new commits to your open PR, with no approval. Never push to main or any other branch, never force-push (merge main in instead), never merge or approve a PR.",
+		},
+		prompt.Queen: {
+			"A worker reports `done: <bead> PR #N`; that means \"ready for review\", and the bead stays open. Merges stay the keeper's. Close it with `bd close <bead>` only after its PR is merged, then `bs end` the worker.",
+			"Deleting a stacked PR's base branch closes the PR above it → retarget first: `gh pr edit <n> --base main`.",
+		},
 	} {
-		for _, role := range []prompt.Role{prompt.Queen, prompt.Worker} {
-			if got := text(t, role); !strings.Contains(got, line) {
+		other := prompt.Queen
+		if role == prompt.Queen {
+			other = prompt.Worker
+		}
+		for _, line := range lines {
+			if !strings.Contains(text(t, role), line) {
 				t.Errorf("%s prompt lacks %q", role, line)
 			}
+			if strings.Contains(text(t, other), line) {
+				t.Errorf("%s prompt holds the %s's %q", other, role, line)
+			}
+		}
+		if got := text(t, role); strings.Contains(got, "<!--") || !strings.Contains(got, "## Delivery\n\nWork lands as a pull request") {
+			t.Errorf("%s prompt's delivery section:\n%s", role, got)
 		}
 	}
 }
@@ -148,7 +162,7 @@ func TestManualDeliveryMentionsNoPR(t *testing.T) {
 		if pr.MatchString(got) {
 			t.Errorf("manual %s prompt mentions %q", role, pr.FindString(got))
 		}
-		for _, w := range []string{"## Delivery", "done: <bead>", "Leave `bd close` to the keeper"} {
+		for _, w := range []string{"## Delivery", "done: <bead>", "`bd close`"} {
 			if !strings.Contains(got, w) {
 				t.Errorf("manual %s prompt lacks %q", role, w)
 			}

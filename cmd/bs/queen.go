@@ -11,8 +11,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/jmmshn/bees/internal/guards"
 	"github.com/jmmshn/bees/internal/prompt"
+	"github.com/jmmshn/bees/internal/worker"
 )
 
 // execClaude replaces bs with claude, run in dir with env. Tests swap it out.
@@ -49,7 +49,7 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return err
 	}
 	// Read the delivery fragment first: an unreadable one starts nothing, not even a logbook.
-	delivery, err := prompt.Delivery(cfg.Delivery.Kind, cfg.Delivery.Fragment)
+	delivery, err := worker.Delivery(cfg.Delivery, cfg.Guards)
 	if err != nil {
 		return err
 	}
@@ -68,7 +68,7 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if os.Getenv("BS_LOGBOOK") != "" {
 		env = append(env, "BS_LOGBOOK="+p.Logbook)
 	}
-	file, err := prompt.File(prompt.Queen, p.Name, delivery+guards.Note(cfg.Guards))
+	file, err := prompt.File(prompt.Queen, p.Name, delivery)
 	if err != nil {
 		return err
 	}

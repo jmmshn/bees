@@ -106,7 +106,7 @@ type Fleet struct {
 	ForeignRepo bool            // skip the check that the bead belongs to P (--repo)
 	Model       string          // claude --model for every start; "" leaves Claude's own default
 	Delivery    config.Delivery // how work lands; a zero Kind is github_pr
-	Guards      config.Guards
+	Guards      config.Guards   // [guards]: what every worker is denied or granted
 }
 
 // kind is f's delivery kind; a Fleet built without config is github_pr, the default.
@@ -311,7 +311,7 @@ func (f Fleet) check(ctx context.Context, bead, label string) (plan, error) {
 	}
 	// An unreadable delivery fragment or a bad guard refuses the spawn before anything is
 	// made; start checks both again at launch.
-	if _, err := prompt.Delivery(f.kind(), f.Delivery.Fragment); err != nil {
+	if _, err := Delivery(f.Delivery, f.Guards); err != nil {
 		return p, fmt.Errorf("%s: %w", name, err)
 	}
 	at := logbook.Spawn{Name: name}
@@ -411,6 +411,8 @@ func (f Fleet) open(ctx context.Context, p plan) (logbook.Spawn, error) {
 //
 // The guards (guards.Build, from [delivery] and [guards]) become permissions.deny, which
 // runs before the classifier, and autoMode.allow (claude.Permissions).
+// ponytail: the core calls claude_code's renderer directly until the Harness port's
+// Prepare takes it over (bees-12.6, ADR-0009).
 func workerSettings(project, logbookDir string, sp logbook.Spawn, protected bool, r guards.Rules) (string, error) {
 	branch := cmp.Or(sp.Branch, sp.Name)
 	env := fmt.Sprintf("Host containment: a bees worker, working in its own git worktree %s on its own branch %s of the repository %s.", sp.Worktree, branch, sp.Repo)
@@ -433,14 +435,29 @@ func (f Fleet) rules(ctx context.Context, sp logbook.Spawn) (guards.Rules, error
 }
 
 // Rules builds the guards of worker w in repo, against the repo's real default branch
-// (bees-11.7): w.Defaults is filled from origin/HEAD.
+// (bees-11.7): w.DefaultBranches is filled from origin/HEAD and from the branch repo, the
+// main checkout, has checked out, since origin/HEAD is unset in a repo that was never cloned.
 func Rules(ctx context.Context, repo string, d config.Delivery, g config.Guards, w guards.Worker) (guards.Rules, error) {
-	head, err := originHead(ctx, repo)
-	if err != nil {
-		return guards.Rules{}, fmt.Errorf("finding the default branch to guard: %w", err)
+	var heads []string
+	for _, ref := range []string{"refs/remotes/origin/HEAD", "HEAD"} {
+		h, err := symRef(ctx, repo, ref)
+		if err != nil {
+			return guards.Rules{}, fmt.Errorf("finding the default branch to guard: %w", err)
+		}
+		heads = append(heads, strings.TrimPrefix(h, "origin/"))
 	}
-	w.Defaults = guards.Defaults(head)
+	w.DefaultBranches = guards.DefaultBranches(heads...)
 	return guards.Build(d, g, w)
+}
+
+// Delivery is the delivery fragment a role prompt gets under d (its fragment file, read
+// now, else the kind's own), with g's merge grant if any.
+func Delivery(d config.Delivery, g config.Guards) (string, error) {
+	text, err := prompt.Delivery(cmp.Or(d.Kind, "github_pr"), config.Expand(d.Fragment))
+	if err != nil {
+		return "", err
+	}
+	return text + guards.Note(d, g), nil
 }
 
 // start starts Claude with a doorbell as its first prompt, so the worker reads its unread
@@ -455,7 +472,7 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 		return st, err
 	}
 	// Read the delivery fragment before anything is made: an unreadable one stops the start.
-	delivery, err := prompt.Delivery(f.kind(), f.Delivery.Fragment)
+	delivery, err := Delivery(f.Delivery, f.Guards)
 	if err != nil {
 		return st, err
 	}
@@ -475,7 +492,7 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 	if err != nil {
 		return st, err
 	}
-	file, err := prompt.File(prompt.Worker, f.P.Name, delivery+guards.Note(f.Guards))
+	file, err := prompt.File(prompt.Worker, f.P.Name, delivery)
 	if err != nil {
 		os.Remove(settingsFile)
 		return st, err

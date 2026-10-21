@@ -23,7 +23,7 @@ func denied(r guards.Rules, cmd string) bool {
 	return slices.ContainsFunc(r.Deny, func(g string) bool { return matches(g, cmd) })
 }
 
-var w = guards.Worker{Branch: "web2-3", Worktree: "/wt/web2-3", Defaults: guards.Defaults("develop")}
+var w = guards.Worker{Branch: "web2-3", Worktree: "/wt/web2-3", DefaultBranches: guards.DefaultBranches("develop")}
 
 func build(t *testing.T, kind string, g config.Guards) guards.Rules {
 	t.Helper()
@@ -72,7 +72,7 @@ func TestGitHubPRDefaultForMainIsTheOldMatrix(t *testing.T) {
 		}
 	}
 	old = append(old, "gh pr merge*", "gh * pr merge*", "gh pr review* --approve*", "gh pr review* -a*", "gh api *merge*")
-	r, err := guards.Build(config.Delivery{Kind: "github_pr"}, config.Guards{}, guards.Worker{Defaults: guards.Defaults("main")})
+	r, err := guards.Build(config.Delivery{Kind: "github_pr"}, config.Guards{}, guards.Worker{DefaultBranches: guards.DefaultBranches("main")})
 	if err != nil || !slices.Equal(r.Deny, old) {
 		t.Errorf("deny = %q, %v; want the old matrix %q", r.Deny, err, old)
 	}
@@ -122,11 +122,19 @@ func TestAllowMergeIntoGrantsScopedMergesOnly(t *testing.T) {
 	if allow := strings.Join(r.Allow, " "); !strings.Contains(allow, "pilot/*") || !strings.Contains(allow, "never a pull request into main or master or develop") {
 		t.Errorf("allow = %q, want the grant and the default branches it never covers", r.Allow)
 	}
-	if note := guards.Note(config.Guards{AllowMergeInto: []string{"pilot/*"}}); !strings.Contains(note, "`pilot/*`") {
+	pilot, gh := config.Guards{AllowMergeInto: []string{"pilot/*"}}, config.Delivery{Kind: "github_pr"}
+	if note := guards.Note(gh, pilot); !strings.Contains(note, "`pilot/*`") {
 		t.Errorf("note = %q", note)
 	}
-	if note := guards.Note(config.Guards{}); note != "" {
+	if note := guards.Note(gh, config.Guards{}); note != "" {
 		t.Errorf("note without a grant = %q", note)
+	}
+	// manual has no PRs: a merge grant there is a mistake, never a line telling workers to merge.
+	if _, err := guards.Build(config.Delivery{Kind: "manual"}, pilot, w); err == nil {
+		t.Error("allow_merge_into accepted under manual")
+	}
+	if note := guards.Note(config.Delivery{Kind: "manual"}, pilot); note != "" {
+		t.Errorf("manual note = %q", note)
 	}
 	for _, glob := range []string{"*", "dev*", "main", "[", "ma?ter"} {
 		if _, err := guards.Build(config.Delivery{Kind: "github_pr"}, config.Guards{AllowMergeInto: []string{glob}}, w); err == nil {

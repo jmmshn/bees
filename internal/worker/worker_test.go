@@ -1420,6 +1420,29 @@ func TestGuardsDenyPushesToTheReposRealDefaultBranch(t *testing.T) {
 	}
 }
 
+// A repo that was never cloned has no origin/HEAD: the branch its main checkout has out
+// is guarded too, so a trunk-based repo isn't left open (bees-11.7 review).
+func TestGuardsDenyPushesToTheMainCheckoutsBranch(t *testing.T) {
+	r := newRig(t)
+	gitRun(t, r.repo, "symbolic-ref", "HEAD", "refs/heads/trunk")
+	deny, _, _ := spawnSettings(t, r)
+	if !deniedBy(deny, "git push origin trunk") {
+		t.Errorf("deny rules let through a push to the checked-out trunk: %q", deny)
+	}
+}
+
+// A fragment path may start with ~, like every path in bs's config.
+func TestFragmentPathExpandsTilde(t *testing.T) {
+	r := newRig(t)
+	if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), "cl.md"), []byte("Mail a CL.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.fleet.Delivery.Fragment = "~/cl.md"
+	if _, _, text := spawnSettings(t, r); !strings.Contains(text, "Mail a CL.") {
+		t.Errorf("worker prompt:\n%s", text)
+	}
+}
+
 // Under manual delivery a worker gets the manual fragment and guards, and bs never asks
 // GitHub anything: not whether main is protected, not whether a PR merged.
 func TestManualDeliveryNeverAsksGitHub(t *testing.T) {

@@ -51,14 +51,35 @@ func Delivery(kind, fragment string) (string, error) {
 	return string(b), nil
 }
 
-// Text is r's prompt followed by PITFALLS.md, BEADS.md and the delivery fragment under a
-// "## Delivery" heading (the roles point to it), with {{project}} filled in.
+// Text is r's prompt followed by PITFALLS.md, BEADS.md and r's part of the delivery
+// fragment under a "## Delivery" heading (the roles point to it), with {{project}} filled
+// in. A fragment line "<!-- queen -->" or "<!-- worker -->" starts a part only that role
+// reads, up to the next such line; text before the first one goes to both.
 func Text(r Role, project, delivery string) string {
 	role := worker
 	if r == Queen {
 		role = queen
 	}
-	return strings.ReplaceAll(role+pitfalls+"\n"+beads+"\n## Delivery\n\n"+delivery, "{{project}}", project)
+	return strings.ReplaceAll(role+pitfalls+"\n"+beads+"\n## Delivery\n\n"+part(r, delivery), "{{project}}", project)
+}
+
+// part is r's share of a delivery fragment: the shared lead, then r's own sections.
+func part(r Role, delivery string) string {
+	var b strings.Builder
+	mine := true
+	for line := range strings.SplitAfterSeq(delivery, "\n") {
+		switch strings.TrimSpace(line) {
+		case "<!-- queen -->":
+			mine = r == Queen
+		case "<!-- worker -->":
+			mine = r == Worker
+		default:
+			if mine {
+				b.WriteString(line)
+			}
+		}
+	}
+	return b.String()
 }
 
 // File writes Text(r, project, delivery) to <user cache dir>/bees/<project>-<role>.md and

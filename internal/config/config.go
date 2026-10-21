@@ -279,6 +279,10 @@ func checkAll(f leaf) error {
 	}
 	var errs []error
 	for _, it := range f.items() {
+		if it == "" {
+			errs = append(errs, fmt.Errorf("%s: an empty item", f.key)) // unset is an empty list, not [""]
+			continue
+		}
 		errs = append(errs, check(f, it))
 	}
 	return errors.Join(errs...)

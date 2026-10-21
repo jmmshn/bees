@@ -316,6 +316,7 @@ func TestDeliveryAndGuards(t *testing.T) {
 		"[delivery]\nfragment = \"cl.md\"\n": `delivery.fragment = "cl.md": not an absolute path`,
 		"[guards]\ndeny = \"git push*\"\n":   "deny",
 		"[guards]\nallow_merge_into = [1]\n": "allow_merge_into",
+		"[guards]\ndeny = [\"\"]\n":          "guards.deny: an empty item",
 	} {
 		write(t, proj, body)
 		_, err := Load("bees")

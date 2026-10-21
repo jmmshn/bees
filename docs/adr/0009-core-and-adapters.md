@@ -113,6 +113,8 @@ What `claude_code` does, and the code that moves behind it (bees-12.6):
 - **Leftovers outside `Launch.Files`** (omp's transcripts, `~/.omp/logs/http-*`) are the harness's own state. A new spawn never continues them, since `Continue` needs a receipt since that spawn.
 - **Shared harness state** across concurrent workers (omp's profile databases) is unprobed; bees-12.8 probes it before claiming more than one worker.
 - Never a flag that skips the harness's own permission checks (agy's `--dangerously-skip-permissions`).
+- **Guards must be loaded, or the start refused.** agy loads its hooks (where its guards live) only in a folder it trusted at startup, so agy's `Prepare` returns an error for a folder missing from agy's trusted list (read only; bs never writes it): the keeper trusts it once by hand, then spawns again.
+- **herdr reports `agent` before the start returns.** In the probe, a Claude busy on its first prompt was `agent: claude` within 3 s, while `herdr agent start` timed out at 10 s and `herdr agent get <name>` then said `agent_not_found` (ADR-0007's case); `agent_status` also took the value `done`. The core keys on `agent` only.
 
 **The harness key** (amends ADR-0008's "no selector until a second harness"):
 

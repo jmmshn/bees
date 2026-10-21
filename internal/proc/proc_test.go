@@ -3,6 +3,7 @@ package proc_test
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"testing"
 
 	"github.com/jmmshn/bees/internal/proc"
@@ -31,5 +32,26 @@ func TestStartIsStableAndFailsForADeadPid(t *testing.T) {
 	}
 	if p, err := proc.Parent(1 << 22); !errors.Is(err, proc.ErrGone) {
 		t.Fatalf("Parent(dead) = %d, %v; want ErrGone", p, err)
+	}
+}
+
+// Alive is this process with its own start time, not with another, and not an exited pid.
+func TestAliveChecksTheStartTime(t *testing.T) {
+	s, err := proc.Start(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := proc.Alive(os.Getpid(), s); !ok || err != nil {
+		t.Fatalf("Alive(self) = %v, %v", ok, err)
+	}
+	if ok, err := proc.Alive(os.Getpid(), s+"0"); ok || err != nil {
+		t.Fatalf("Alive(self, other start) = %v, %v; want a reused pid read as gone", ok, err)
+	}
+	c := exec.Command("true")
+	if err := c.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := proc.Alive(c.Process.Pid, s); ok || err != nil {
+		t.Fatalf("Alive(exited) = %v, %v", ok, err)
 	}
 }

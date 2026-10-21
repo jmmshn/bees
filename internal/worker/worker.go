@@ -951,7 +951,45 @@ type Pruned struct {
 	InUse        string // the worktree that has the branch in use; kept, whatever Merge says
 	Prunable     bool   // InUse's directory is gone: git worktree prune frees the branch
 	Deleted      bool
-	DeleteErr    error // proven merged, but git branch -D failed
+	DeleteErr    error  // proven merged, but git branch -D failed
+	Freed        bool   // its recorded worktree was removed (dry: would be), freeing the branch
+	KeptWhy      string // why its recorded worktree, which has the branch in use, was kept
+}
+
+// freeWorktree removes ended spawn sp's recorded worktree (dry: only checks it could), and
+// returns why it kept it instead: the worker still runs, a herdr workspace is open on it,
+// it has uncommitted or untracked files, or a lookup or the removal failed. Never --force.
+func (f Fleet) freeWorktree(ctx context.Context, sp logbook.Spawn, repo string, dry bool) string {
+	if f.Procs != nil {
+		switch alive, _, st, err := SpawnAlive(ctx, f.LB, f.Procs, sp); {
+		case err != nil:
+			return "can't tell whether its worker still runs: " + err.Error()
+		case alive:
+			return fmt.Sprintf("its ended worker still runs (pid %d): stop that process, then prune again", st.PID)
+		}
+	}
+	if f.H != nil {
+		wss, err := f.H.Workspaces(ctx)
+		if err != nil {
+			return "can't tell whether a herdr workspace is open on it: " + err.Error()
+		}
+		if i := slices.IndexFunc(wss, func(w Workspace) bool { return w.Path != "" && filepath.Clean(w.Path) == filepath.Clean(sp.Worktree) }); i >= 0 {
+			return fmt.Sprintf("herdr workspace %s is open on it", wss[i].ID)
+		}
+	}
+	switch out, err := gitOut(ctx, sp.Worktree, "status", "--porcelain"); {
+	case err != nil:
+		return "can't tell whether it is clean: " + err.Error()
+	case strings.TrimSpace(out) != "":
+		return "it has uncommitted or untracked files; commit or move them, or remove it with git worktree remove --force " + sp.Worktree
+	}
+	if dry {
+		return ""
+	}
+	if err := gitRun(ctx, repo, "worktree", "remove", sp.Worktree); err != nil {
+		return "git worktree remove failed: " + err.Error()
+	}
+	return ""
 }
 
 // Prune deletes the branch of each ended worker once its work is proven merged; dry only
@@ -973,6 +1011,20 @@ func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error) {
 		p.Merge, p.Why = merged(ctx, f.gh(), repo, sp.Branch)
 		if p.InUse, p.Prunable, err = checkedOut(ctx, repo, sp.Branch); err != nil {
 			p.Merge, p.Why = Unknown, err.Error()
+		}
+		// bs end --force or --forget can leave the worktree behind (a moved pane, a guest):
+		// nothing else removes it, so free it here while it is safe (bees-12.41, motif 5).
+		if p.InUse != "" && !p.Prunable && sp.Worktree != "" && filepath.Clean(p.InUse) == filepath.Clean(sp.Worktree) {
+			if p.KeptWhy = f.freeWorktree(ctx, sp, repo, dry); p.KeptWhy == "" {
+				p.Freed = true
+				if !dry {
+					if p.InUse, p.Prunable, err = checkedOut(ctx, repo, sp.Branch); err != nil {
+						p.Merge, p.Why = Unknown, err.Error()
+					}
+				} else {
+					p.InUse = ""
+				}
+			}
 		}
 		if p.Merge == Merged && p.InUse == "" && !dry {
 			p.DeleteErr = gitRun(ctx, repo, "branch", "-D", sp.Branch)

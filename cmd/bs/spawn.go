@@ -366,8 +366,17 @@ func cmdPrune(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	code := 0
 	for _, r := range pruned {
 		switch {
+		case r.Freed && *dry:
+			fmt.Fprintf(stdout, "would remove the ended worker's clean worktree of %s, which nothing has open\n", r.Branch)
+		case r.Freed:
+			fmt.Fprintf(stdout, "removed the ended worker's clean worktree of %s, which nothing had open\n", r.Branch)
+		}
+		switch {
 		case r.InUse != "":
 			fmt.Fprintf(stdout, "kept %s: in use in worktree %s", r.Branch, r.InUse)
+			if r.KeptWhy != "" {
+				fmt.Fprintf(stdout, " (kept: %s)", r.KeptWhy)
+			}
 			if r.Prunable {
 				fmt.Fprint(stdout, ", which is gone; git worktree prune frees it")
 			}

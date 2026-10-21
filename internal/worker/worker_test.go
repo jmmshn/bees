@@ -2418,3 +2418,55 @@ func TestEndAllGatesEachWorker(t *testing.T) {
 		t.Fatal("bees-9 recorded ended")
 	}
 }
+
+// bees-12.41: bs end --force or --forget can leave an ended worker's worktree behind, which
+// kept its branch "in use" forever. Prune removes it when it is clean, its worker is gone
+// and no herdr workspace is open on it, then judges the branch; else it says why it kept it.
+func TestPruneFreesAnEndedWorkersLeftoverWorktree(t *testing.T) {
+	for _, c := range []struct {
+		name, kept string
+		setup      func(r rig, wt string)
+	}{
+		{name: "clean and unowned"},
+		{name: "dirty", kept: "uncommitted or untracked files", setup: func(r rig, wt string) {
+			if err := os.WriteFile(filepath.Join(wt, "wip.txt"), []byte("x"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "a workspace open on it", kept: "herdr workspace w9 is open on it", setup: func(r rig, wt string) {
+			r.h.workspaces = append(r.h.workspaces, worker.Workspace{ID: "w9", Pane: "w9:p1", Path: wt})
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := context.Background()
+			r := newRig(t)
+			gitRun(t, "", "init", "-q", "-b", "main", r.repo)
+			gitCommit(t, r.repo, "init", map[string]string{"a.txt": "A"})
+			_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+			sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8")
+			r.h.closeWorkspaces(func(worker.Workspace) bool { return true }) // its pane moved, its workspace closed
+			if err := r.lb.RecordEnd(ctx, "queen-bees", sp.ID); err != nil { // as bs end --force recorded it
+				t.Fatal(err)
+			}
+			gitRun(t, r.repo, "worktree", "add", "-q", "-b", "bees-8", sp.Worktree) // the worktree herdr made, still there
+			if c.setup != nil {
+				c.setup(r, sp.Worktree)
+			}
+			pruned, err := r.fleet.Prune(ctx, false)
+			if err != nil || len(pruned) != 1 {
+				t.Fatalf("prune: %+v, %v", pruned, err)
+			}
+			p := pruned[0]
+			_, statErr := os.Stat(sp.Worktree)
+			if c.kept == "" {
+				if !p.Freed || !p.Deleted || !os.IsNotExist(statErr) {
+					t.Fatalf("%+v, worktree %v; want it removed and the merged branch deleted", p, statErr)
+				}
+				return
+			}
+			if p.Freed || p.Deleted || !strings.Contains(p.KeptWhy, c.kept) || statErr != nil {
+				t.Fatalf("%+v, worktree %v; want it kept because %s", p, statErr, c.kept)
+			}
+		})
+	}
+}

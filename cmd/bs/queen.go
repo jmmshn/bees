@@ -70,7 +70,7 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	}
 	argv := []string{"--name", p.Queen(), "--append-system-prompt-file", file}
 	if m := cfg.Queen.ClaudeCode.Model; m != "" {
-		argv = append(argv, "--model", m)
+		argv = append(argv, "--model="+m) // one argument: a value starting with - stays a value
 	}
 	return execClaude(p.Repo, env, argv...)
 }

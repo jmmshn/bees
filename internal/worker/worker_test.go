@@ -938,6 +938,20 @@ func TestSpawnRefusesALongLaunchBeforeTouchingAnything(t *testing.T) {
 	}
 }
 
+// bees-11.4: the launch check counts --model, so a model too long to type is refused
+// before anything is made, like a deep cache dir.
+func TestSpawnCountsTheModelInTheLaunchBudget(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	r.fleet.Model = strings.Repeat("m", 768)
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); !errors.Is(err, worker.ErrLongLaunch) {
+		t.Fatalf("err = %v, want ErrLongLaunch", err)
+	}
+	if _, ok, _ := r.lb.LatestSpawn(ctx, "bees-8"); ok || len(r.h.workspaces) != 0 {
+		t.Fatalf("recorded = %v, workspaces = %v; want nothing", ok, r.h.workspaces)
+	}
+}
+
 // The settings file gets a fresh private name per start, not a fixed one another process
 // could swap before Claude reads it, and goes away with the worker (bees-8.3 review).
 func TestSettingsFileIsPrivateAndGoesWithTheWorker(t *testing.T) {
@@ -1258,14 +1272,14 @@ func TestWorkersStartWithTheConfiguredModel(t *testing.T) {
 		t.Fatalf("started = %q, want a start and a restart", r.h.started)
 	}
 	for _, start := range r.h.started {
-		if i := slices.Index(start, "--model"); i < 0 || start[i+1] != "claude-sonnet-5-5" {
-			t.Errorf("start = %q, want --model claude-sonnet-5-5", start)
+		if !slices.Contains(start, "--model=claude-sonnet-5-5") {
+			t.Errorf("start = %q, want --model=claude-sonnet-5-5", start)
 		}
 	}
 
 	r = newRig(t)
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
-	if slices.Contains(r.h.started[0], "--model") {
+	if slices.ContainsFunc(r.h.started[0], func(a string) bool { return strings.HasPrefix(a, "--model") }) {
 		t.Errorf("start = %q, want no --model when none is configured", r.h.started[0])
 	}
 }

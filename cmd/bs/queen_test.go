@@ -15,6 +15,7 @@ func TestQueenStartsClaudeNamedForTheProject(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("BS_PROJECT", "bees")
 	t.Setenv("BS_LOGBOOK", "")
+	t.Setenv("BS_LOGBOOK_DIR", "")
 	t.Setenv("BS_REPOS", "/src")
 	t.Setenv("BS_SESSION", "stale")
 	t.Chdir(t.TempDir()) // not this repo: its own checkout would beat BS_REPOS
@@ -57,6 +58,7 @@ func TestQueenStartsClaudeNamedForTheProject(t *testing.T) {
 
 func TestQueenOutsideItsRepoWantsBSRepos(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("BS_PROJECT", "bees")
 	t.Setenv("BS_REPOS", "")
 	t.Chdir(t.TempDir())
@@ -85,20 +87,27 @@ func TestQueenStartsOnTheConfiguredModel(t *testing.T) {
 	if _, stderr, code := bs(t, "queen"); code != 0 {
 		t.Fatalf("queen: exit %d: %s", code, stderr)
 	}
-	if slices.Contains(gotArgs, "--model") {
+	if slices.ContainsFunc(gotArgs, func(a string) bool { return strings.HasPrefix(a, "--model") }) {
 		t.Errorf("args = %q, want no --model when none is configured", gotArgs)
 	}
-	cfg := filepath.Join(xdg, "bees", "projects", "bees.toml")
+	writeModels(t, xdg, "bees")
+	if _, stderr, code := bs(t, "queen"); code != 0 {
+		t.Fatalf("queen: exit %d: %s", code, stderr)
+	}
+	if !slices.Contains(gotArgs, "--model=claude-opus-5-5") {
+		t.Errorf("args = %q, want --model=claude-opus-5-5 (the queen's, not the workers')", gotArgs)
+	}
+}
+
+// writeModels writes project's config file under xdg with a model for each role: the
+// queen's claude-opus-5-5, the workers' claude-haiku-5-5.
+func writeModels(t *testing.T, xdg, project string) {
+	t.Helper()
+	cfg := filepath.Join(xdg, "bees", "projects", project+".toml")
 	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(cfg, []byte("[queen.claude_code]\nmodel = \"claude-opus-5-5\"\n[worker.claude_code]\nmodel = \"claude-haiku-5-5\"\n"), 0o644); err != nil {
 		t.Fatal(err)
-	}
-	if _, stderr, code := bs(t, "queen"); code != 0 {
-		t.Fatalf("queen: exit %d: %s", code, stderr)
-	}
-	if i := slices.Index(gotArgs, "--model"); i < 0 || gotArgs[i+1] != "claude-opus-5-5" {
-		t.Errorf("args = %q, want --model claude-opus-5-5 (the queen's, not the workers')", gotArgs)
 	}
 }

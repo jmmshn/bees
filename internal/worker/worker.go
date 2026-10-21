@@ -459,7 +459,8 @@ func (f Fleet) launch(name, bead, settings, promptFile string, cont bool) []stri
 	args := []string{"--name", name, "--settings", settings, "--append-system-prompt-file", promptFile, doorbell}
 	if f.Model != "" {
 		// On the line, not in --settings: --model beats ANTHROPIC_MODEL and settings files.
-		args = append([]string{"--model", f.Model}, args...)
+		// One argument, so a value starting with - can't become a flag of its own.
+		args = append([]string{"--model=" + f.Model}, args...)
 	}
 	if cont {
 		args = append([]string{"--continue"}, args...)

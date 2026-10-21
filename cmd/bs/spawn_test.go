@@ -102,19 +102,13 @@ func TestSpawnStartsWorkersOnTheConfiguredModel(t *testing.T) {
 	h := useFakeHive(t)
 	xdg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", xdg)
-	cfg := filepath.Join(xdg, "bees", "projects", "test.toml")
-	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(cfg, []byte("[queen.claude_code]\nmodel = \"claude-opus-5-5\"\n[worker.claude_code]\nmodel = \"claude-haiku-5-5\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeModels(t, xdg, "test")
 	if _, stderr, code := bs(t, "spawn", "--project", "test", "--as", "queen-test", "--label", "sort fruits", "test-1.1"); code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
 	args := h.args["test-1-1"]
-	if i := slices.Index(args, "--model"); i < 0 || args[i+1] != "claude-haiku-5-5" {
-		t.Fatalf("launch = %q, want --model claude-haiku-5-5 (the workers', not the queen's)", args)
+	if !slices.Contains(args, "--model=claude-haiku-5-5") {
+		t.Fatalf("launch = %q, want --model=claude-haiku-5-5 (the workers', not the queen's)", args)
 	}
 }
 

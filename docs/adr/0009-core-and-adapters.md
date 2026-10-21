@@ -126,6 +126,7 @@ type Workspace interface {
 	Remove(ctx context.Context, m Made, force bool) error                    // already gone → nil; ErrDirty without force
 	Dirty(ctx context.Context, m Made) (bool, error)
 	List(ctx context.Context) ([]Made, error) // workspaces this kind made, for orphans and ErrNotOurs
+	Release(ctx context.Context, m Made) error // after Landed: drop the kind's handle (git_worktree: git branch -D m.Ref); ErrInUse if a checkout holds it
 }
 ```
 
@@ -133,10 +134,12 @@ type Workspace interface {
 - **`command`** runs the user's `create`, `remove` and `dirty` scripts with the name, base and project; `create` prints the absolute directory on stdout, and bs opens it with `herdr workspace create`. This is the CitC case.
 - **`none`** opens a workspace on the main checkout, one live worker per project.
 
+`bs prune` asks `Delivery.Landed`, then calls `Workspace.Release` on what landed, so the core runs no `git` itself: `git_worktree` deletes the branch (refusing one a checkout still holds, today's in-use check), `command` runs an optional `release` script, `none` does nothing.
+
 herdr constraints the adapters encode (bees-12.4, herdr 0.9.5):
 
 - `workspace create` with a missing `--cwd` exits 0 and opens in `$HOME`, so `Create` checks the directory exists first.
-- `workspace list` shows no directory for a plain workspace, and the root pane's reported cwd is an early sample. So `command` and `none` tag the workspace (`herdr workspace report-metadata <id> --source bs --token path=<dir>`), and `List` reads the tag. Orphans and `ErrNotOurs` are matched by that recorded path, never by label or by a live cwd that moves on `cd`. A workspace with no tag (made by hand, or before the tag existed) has no known path: that is *unknown*, reported and never removed, not a mismatch.
+- `workspace list` shows no directory for a plain workspace, and the root pane's reported cwd is an early sample. So `command` and `none` tag the workspace (`herdr workspace report-metadata <id> --token path=<dir> --source bs`; herdr 0.9.5 refuses `--source` before `--token` with "unknown option"), and `List` reads the tag. Orphans and `ErrNotOurs` are matched by that recorded path, never by label or by a live cwd that moves on `cd`. A workspace with no tag (made by hand, or before the tag existed) has no known path: that is *unknown*, reported and never removed, not a mismatch.
 - `workspace close` leaves the directory alone, and a second close fails with `workspace_not_found`, which `Remove` reads as "already gone".
 
 ## Delivery
@@ -152,13 +155,13 @@ type Delivery interface {
 	// Landed has no error return: a probe that fails is Unknown, and why says what failed
 	// (motif 11: one spelling for "could not check").
 	Landed(ctx context.Context, sp logbook.Spawn) (v Verdict, why string)
-	Guards(ctx context.Context, m workspace.Made) (guards.Rules, error) // deny patterns and allow intents for this worker
+	Guards(ctx context.Context, repo, ref string) (guards.Rules, error) // deny patterns and allow intents; bs config passes ref "<worker>"
 	Prompt(role prompt.Role) string                                     // the role prompts' delivery fragment
 }
 ```
 
 - **`github_pr`** (default): `Landed` is today's three proofs (ancestry, a merged PR on the branch tip, identical paths: R42); `Guards` is today's push and merge matrix, against the repo's real default branch, which it looks up itself (bees-11.7); `Prompt` is today's PR wording, moved word for word out of `QUEEN.md` and `WORKER.md` (bees-12.3).
-- **`manual`**: the worker reports `done: <bead>`, the keeper closes the bead, `Landed` is `NotChecked`, so `bs prune` deletes no branch and only reports what it skipped (`bs end` already removed the workspace).
+- **`manual`**: the worker reports `done: <bead>`, the keeper closes the bead, `Landed` is `NotChecked`, so `bs prune` releases nothing and only reports what it skipped (`bs end` already removed the workspace).
 - **`command`**: a user script answers `Landed`. Named now so the enum is stable; bees-12.3 builds it only if it is trivial.
 
 `[guards] deny` is harness-neutral: shell-glob patterns over a command line. Its default is the delivery's `Guards`. Each harness renders the rules in its own syntax: Claude's `permissions.deny` and autoMode allow prose, omp's `bash.patterns`. Guards stay a speed bump (SPEC); branch protection, or the VCS's own review gate, is the real one.
@@ -172,7 +175,7 @@ The name is still one forward function of the bead (`bees-12.3` → `bees-12-3`)
 Every harness adapter, the claude_code extraction (bees-12.6) and the omp adapter (bees-12.8) included, must meet these before it ships. Same-uid processes can't be fenced from each other (bees-8.8), so the bar is: nothing another user or another machine can reach, and nothing weaker than Claude Code's own path.
 
 - **SEC-1, ring authentication.** The ring endpoint is a unix socket mode 0600 in a directory mode 0700 (no TCP, no abstract socket). A bs-owned endpoint also requires a random per-session token of at least 128 bits, kept in a 0600 file beside the registry entry, and drops a connection without it; bs never rings a bs-owned session with no token. Claude Code (2.1.306, T1 below) meets the file-mode half and no more: sockets 0600 under `/run/user/<uid>/cc-socks` (0700), registry `~/.claude/sessions` 0700, `.key` files 0600, but it acted on a ring with no auth line and on one with a wrong token, though the session had a key file. Its boundary is the uid, and bs sending the token adds nothing. That is no weaker than bees-8.8's same-uid limit, so `claude_code` ships as it is (bees-12.6 changes no behaviour), and the gap is Claude's to close.
-- **SEC-2, no stale registry entry.** `List` and `Self` keep an entry only when its pid is alive and its start time, read by `proc.Start`, equals the one recorded at registration; anything else is skipped, never deleted on a guess. An unreadable registry is an error (motif 7). A bs-owned registry entry records the start time when the harness process writes it, and is removed on clean shutdown; a crash leaves an entry SEC-2 already ignores.
+- **SEC-2, no stale registry entry.** `List` and `Self` keep an entry only when its pid is alive and its start time, read by `proc.Start`, equals the one recorded at registration; anything else is skipped, never deleted on a guess. An unreadable registry is an error (motif 7). `claude.List` misses this today: `filepath.Glob` drops I/O errors and an unreadable file is skipped as if its session had exited, so an unreadable `~/.claude/sessions` reads as "nothing running". bees-12.6 fixes that (stat the directory, skip only files that are gone): the one behaviour change it makes. A bs-owned registry entry records the start time when the harness process writes it, and is removed on clean shutdown; a crash leaves an entry SEC-2 already ignores.
 - **SEC-3, a trust step.** A launch either goes through the harness's own trust step (Claude's folder-trust prompt, which `Preflight` warns about), or disables the repo's ambient extensions, hooks and config (omp: `--trusted-extension <bs extension>`, plus a per-start `--config` overlay above the project layer). Deny rules sit in a layer the repo's own files can't override. A harness that can do neither is refused at spawn.
 - **SEC-4, no secrets in bees** (added here; not one of bees-12.2's three findings, but the bees-11.11 key rules are the same kind of requirement). API keys and OAuth tokens stay in the harness's own auth (omp login or its models file; agy's Google login). bs never writes them to config, the logbook, a pinned env var, a per-start file or herdr.
 
@@ -199,7 +202,7 @@ Test plan, run by the bead that builds each adapter:
 
 ## Consequences
 
-- `internal/harness/claude` becomes the `claude_code` adapter behind `Harness`; the core packages stop importing it (bees-12.6). Existing tests must pass unchanged.
+- `internal/harness/claude` becomes the `claude_code` adapter behind `Harness`; the core packages stop importing it (bees-12.6). Existing tests must pass unchanged, apart from SEC-2's unreadable registry.
 - The `spawned` entry's data gains `harness`, `workspace` (kind) and the kind's `Made` fields and the harness's `Launch.Files` and `Record`; `Branch` becomes `git_worktree`'s `Ref`, and old entries read as `claude_code` and `git_worktree`. A `queen` entry kind records the queen's harness.
 - `QUEEN.md` and `WORKER.md` lose their PR wording to `internal/prompt/delivery/<kind>.md`; the role prompts the bake-off replays are unchanged for `github_pr` (bees-12.3).
 - `bs config`'s fixed header line about the only harness goes; the `harness` key now says it.

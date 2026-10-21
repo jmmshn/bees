@@ -258,8 +258,10 @@ func warnStranger(ctx context.Context, lb *logbook.Logbook, p project.Project, t
 
 // elsewhere refuses (exit 1), storing nothing, a message for another project's session:
 // to is that project's queen or one of its workers by the naming rule (R27: project names
-// have no "-"), and that project's logbook exists beside this one. Stored here it would
-// never be read, while bs send said "sent" (bees-12.38, motifs 4 and 11).
+// have no "-"), and that project's logbook, in the global paths.logbook_dir where every
+// recorded session's is, exists and isn't this one. Stored here it would never be read,
+// while bs send said "sent" (bees-12.38, motifs 4 and 11). A name of no known project (a
+// keeper's own session) is stored with a warning, as before.
 func elsewhere(p project.Project, to string, stderr io.Writer) error {
 	owner, ok := strings.CutPrefix(to, "queen-")
 	if !ok {
@@ -271,7 +273,13 @@ func elsewhere(p project.Project, to string, stderr io.Writer) error {
 	if owner == p.Name {
 		return nil
 	}
-	if _, err := os.Stat(filepath.Join(filepath.Dir(p.Logbook), owner+".db")); err != nil {
+	dir, err := globalLogbookDir()
+	if err != nil {
+		return nil // the warning after the store still says how to send it elsewhere
+	}
+	if other := filepath.Join(dir, owner+".db"); other == filepath.Clean(p.Logbook) {
+		return nil // one file for every project (a BS_LOGBOOK): --project wouldn't move it
+	} else if _, err := os.Stat(other); err != nil {
 		return nil
 	}
 	fmt.Fprintf(stderr, "bs send: %s is a session of project %s, not %s; nothing stored: bs send --project %s %s \"...\"\n", to, owner, p.Name, owner, to)

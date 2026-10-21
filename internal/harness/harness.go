@@ -37,6 +37,7 @@ type Start struct {
 	Continue   bool              // resume the last conversation in Dir
 	Env        map[string]string // pinned for every process the session starts; nil for the queen, whose env is bs queen's
 	Guards     guards.Rules      // built by the core; zero for the queen
+	Path       []string          // dirs put first on the PATH of the session's shell commands (bs spawn --path); checked by the core
 }
 
 // Launch is what Prepare returns. Prepare is pure: the core writes each of Files (0600,

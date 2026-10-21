@@ -36,6 +36,8 @@ var (
 	ErrNoLabel     = errors.New("a first spawn needs a label")
 	ErrBadLabel    = errors.New("not a valid label")
 	ErrLabelChange = errors.New("the worker is recorded with another label")
+	ErrBadPath     = errors.New("not a --path dir")
+	ErrPathChange  = errors.New("the worker is recorded with another --path")
 	ErrTwice       = errors.New("named twice in one spawn")
 	ErrNotStarted  = errors.New("not started: another worker in this spawn was refused")
 	ErrDirty       = errors.New("the worktree has modified or untracked files")
@@ -55,6 +57,18 @@ var labelRule = regexp.MustCompile(`^[a-z0-9]+( [a-z0-9]+){0,3}$`)
 func CheckLabel(label string) error {
 	if len(label) > 32 || !labelRule.MatchString(label) {
 		return fmt.Errorf("%q: %w", label, ErrBadLabel)
+	}
+	return nil
+}
+
+// CheckPath refuses a --path dir that isn't an absolute path to a directory, or that holds
+// a character the claude_code adapter's PATH export can't quote: ' " $ \ ` : or a newline.
+func CheckPath(dir string) error {
+	if !filepath.IsAbs(dir) || strings.ContainsAny(dir, "'\"$\\`:\n") {
+		return fmt.Errorf("%q: %w: want an absolute path with no quote, $, backslash, backtick, colon or newline", dir, ErrBadPath)
+	}
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		return fmt.Errorf("%q: %w: not a directory", dir, ErrBadPath)
 	}
 	return nil
 }
@@ -181,7 +195,7 @@ type Started struct {
 // label: label may be empty, and any other label is refused. Respawning an ended
 // worker with an empty label reuses its recorded one.
 func (f Fleet) Spawn(ctx context.Context, bead, label string) (Started, error) {
-	p, err := f.check(ctx, bead, label)
+	p, err := f.check(ctx, Request{Bead: bead, Label: label})
 	if err != nil {
 		return Started{}, err
 	}
@@ -192,8 +206,13 @@ func (f Fleet) Spawn(ctx context.Context, bead, label string) (Started, error) {
 	return f.start(ctx, sp, p.resume)
 }
 
-// Request asks SpawnAll for one worker.
-type Request struct{ Bead, Label string }
+// Request asks SpawnAll for one worker. Path is put first on the PATH of the worker's
+// shell commands (bs spawn --path), so a live test's workers run the build under test
+// (bees-8.19). A restart reuses the recorded Path; a fresh spawn after an end does not.
+type Request struct {
+	Bead, Label string
+	Path        []string
+}
 
 // Result is what SpawnAll did for one Request.
 type Result struct {
@@ -206,7 +225,8 @@ type Result struct {
 // Refused reports whether err is a mistake in the spawn request itself (a bad,
 // missing or changed label, a worker named twice): fix the command and run it again.
 func Refused(err error) bool {
-	return errors.Is(err, ErrBadLabel) || errors.Is(err, ErrNoLabel) || errors.Is(err, ErrLabelChange) || errors.Is(err, ErrTwice)
+	return errors.Is(err, ErrBadLabel) || errors.Is(err, ErrNoLabel) || errors.Is(err, ErrLabelChange) || errors.Is(err, ErrTwice) ||
+		errors.Is(err, ErrBadPath) || errors.Is(err, ErrPathChange)
 }
 
 // SpawnAll spawns a worker for each request, as Spawn does, and returns one Result per
@@ -227,7 +247,7 @@ func (f Fleet) SpawnAll(ctx context.Context, reqs []Request) []Result {
 		if name, err := Name(r.Bead); err == nil && seen[name] {
 			out[i].Err = fmt.Errorf("%s: %w", name, ErrTwice)
 		} else {
-			plans[i], out[i].Err = f.check(ctx, r.Bead, r.Label)
+			plans[i], out[i].Err = f.check(ctx, r)
 			seen[plans[i].name] = out[i].Err == nil // a refused first try doesn't block a corrected repeat
 		}
 		out[i].Took = time.Since(t0)
@@ -266,6 +286,7 @@ func (f Fleet) SpawnAll(ctx context.Context, reqs []Request) []Result {
 // plan is a checked spawn; nothing has been touched yet.
 type plan struct {
 	name, bead, label string
+	path              []string          // a first spawn's --path
 	sp                logbook.Spawn     // resume: the recorded spawn
 	resume            bool              // the worker is recorded and its session has died
 	b                 Bead              // a first spawn's bead, for its brief
@@ -273,12 +294,18 @@ type plan struct {
 }
 
 // check decides whether bead can be spawned, without touching herdr or the logbook.
-func (f Fleet) check(ctx context.Context, bead, label string) (plan, error) {
+func (f Fleet) check(ctx context.Context, r Request) (plan, error) {
+	bead, label := r.Bead, r.Label
 	name, err := Name(bead)
 	if err != nil {
 		return plan{}, err
 	}
-	p := plan{name: name, bead: bead, label: label}
+	p := plan{name: name, bead: bead, label: label, path: r.Path}
+	for _, d := range r.Path {
+		if err := CheckPath(d); err != nil {
+			return p, err
+		}
+	}
 	// Check the launch line before anything is made, so a launch too long to type leaves
 	// no worktree or record behind. Prepare is pure, and a file's * is at most 10 digits.
 	dir, err := prompt.Dir()
@@ -312,6 +339,9 @@ func (f Fleet) check(ctx context.Context, bead, label string) (plan, error) {
 	if ok && !sp.Ended {
 		if label != "" && label != sp.Label {
 			return p, fmt.Errorf("%s is labelled %q, not %q: %w; spawn it again without --label", name, sp.Label, label, ErrLabelChange)
+		}
+		if r.Path != nil && !slices.Equal(r.Path, sp.Path) {
+			return p, fmt.Errorf("%s was spawned with --path %q, not %q: %w; spawn it again without --path", name, sp.Path, r.Path, ErrPathChange)
 		}
 		// Fail closed: an unreadable registry must not start a second Claude.
 		if alive, err := f.S.Alive(ctx, name, 0); err != nil {
@@ -374,7 +404,7 @@ func (f Fleet) open(ctx context.Context, p plan) (logbook.Spawn, error) {
 		return logbook.Spawn{}, err
 	}
 	// Record straight away: any failure after this point is healed by spawning again.
-	sp := logbook.Spawn{Name: p.name, Bead: p.bead, Label: p.label, Workspace: ws.ID, Pane: ws.Pane, Worktree: ws.Path, Branch: p.name, Repo: f.P.Repo, Base: f.P.BaseRepo(), Harness: cmp.Or(f.HarnessName, harness.Default), Record: p.record}
+	sp := logbook.Spawn{Name: p.name, Bead: p.bead, Label: p.label, Workspace: ws.ID, Pane: ws.Pane, Worktree: ws.Path, Branch: p.name, Repo: f.P.Repo, Base: f.P.BaseRepo(), Harness: cmp.Or(f.HarnessName, harness.Default), Record: p.record, Path: p.path}
 	sp.ID, err = f.LB.RecordSpawn(ctx, f.Me, sp, brief(p.b))
 	return sp, err
 }
@@ -445,7 +475,7 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 // reads its unread messages without needing a ring.
 func (f Fleet) startOf(sp logbook.Spawn, promptFile string, cont bool, env map[string]string, protected bool) harness.Start {
 	return harness.Start{
-		Role: prompt.Worker, Name: sp.Name, Dir: sp.Worktree, PromptFile: promptFile, Continue: cont, Env: env,
+		Role: prompt.Worker, Name: sp.Name, Dir: sp.Worktree, PromptFile: promptFile, Continue: cont, Env: env, Path: sp.Path,
 		Doorbell: fmt.Sprintf("[bs] you are %s, working on %s — run: bs inbox   (reply with: bs send %s \"...\")", sp.Name, sp.Bead, f.Me),
 		Guards:   guards.Worker(sp.Worktree, cmp.Or(sp.Branch, sp.Name), sp.Repo, protected),
 	}

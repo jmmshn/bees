@@ -2,6 +2,7 @@ package claude
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/jmmshn/bees/internal/config"
 	"github.com/jmmshn/bees/internal/harness"
@@ -81,7 +82,7 @@ func workerSettings(st harness.Start) (string, error) {
 	for i, d := range st.Guards.Deny {
 		deny[i] = "Bash(" + d + ")"
 	}
-	b, err := json.Marshal(map[string]any{
+	s := map[string]any{
 		"crossSessionInbound": "accept",
 		"env":                 st.Env,
 		"autoMode": map[string][]string{
@@ -89,6 +90,21 @@ func workerSettings(st harness.Start) (string, error) {
 			"allow":       append([]string{"$defaults"}, st.Guards.Allow...),
 		},
 		"permissions": map[string][]string{"deny": deny},
-	})
+	}
+	if len(st.Path) > 0 {
+		s["hooks"] = map[string]any{"SessionStart": []any{map[string]any{"hooks": []any{pathHook(st.Path)}}}}
+	}
+	b, err := json.Marshal(s)
 	return string(b), err
+}
+
+// pathHook puts dirs first on the PATH of the worker's Bash tool. Not env.PATH: Claude
+// sets that literally, without expanding $PATH, and bs can't know the pane's PATH. The
+// Bash tool sources CLAUDE_ENV_FILE after the shell profile, so the export builds on the
+// pane's PATH at each call (shape C of bees-8.19's probe, Claude Code 2.1.306). Hooks
+// themselves keep the pane's PATH. The core has checked each dir is absolute and holds no
+// quote, $, backslash, backtick, colon or newline, so it is safe inside both quotings.
+func pathHook(dirs []string) map[string]string {
+	export := `export PATH="` + strings.Join(dirs, ":") + `:$PATH"`
+	return map[string]string{"type": "command", "command": `echo '` + export + `' >> "$CLAUDE_ENV_FILE"`}
 }

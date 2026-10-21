@@ -63,6 +63,14 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		repo = s
 		return nil
 	})
+	var path []string
+	fs.Func("path", "put this dir first on the PATH of every worker's shell commands, e.g. a live test's build (repeatable; absolute); before the first bead", func(s string) error {
+		if len(reqs) > 0 {
+			return errors.New("--path goes before the first bead: it applies to every worker of the call")
+		}
+		path = append(path, s)
+		return nil
+	})
 	label, labelled := "", false // the --label waiting for its bead
 	fs.Func("label", "the herdr workspace label of the bead after it: 1-4 lowercase words naming the work (required on a first spawn)", func(s string) error {
 		if labelled {
@@ -75,7 +83,7 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		if err != nil {
 			fmt.Fprintf(stderr, "bs spawn: %v\n", err)
 		}
-		fmt.Fprintf(stderr, "usage: bs spawn --label \"<words>\" <bead> [--label \"<words>\" <bead> ...] [--repo <path>]\n%s\n", worker.LabelRules)
+		fmt.Fprintf(stderr, "usage: bs spawn --label \"<words>\" <bead> [--label \"<words>\" <bead> ...] [--repo <path>] [--path <dir> ...]\n%s\n", worker.LabelRules)
 		return errUsage
 	}
 	// Like parseFlags, but each --label goes with the bead after it.
@@ -84,7 +92,7 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		args, tail = args[:i], args[i+1:]
 	}
 	addBead := func(b string) {
-		reqs = append(reqs, worker.Request{Bead: b, Label: label})
+		reqs = append(reqs, worker.Request{Bead: b, Label: label, Path: path})
 		label, labelled = "", false
 	}
 	for {

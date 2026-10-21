@@ -1,6 +1,6 @@
 # Whether a session is alive is derived, never stored
 
-> Amended by [ADR-0009](0009-core-and-adapters.md): still derived, never stored, but from herdr's report on the pane the logbook recorded, for every harness, not from Claude's registry.
+> Amended by [ADR-0009](0009-core-and-adapters.md): still derived, never stored, but from the harness process recorded at start (pid alive with its recorded start time), for every harness, not from Claude's registry or herdr's agent report (amendment 1).
 
 bs never records whether a session is running. It works that out each time:
 

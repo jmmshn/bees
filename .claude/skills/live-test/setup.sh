@@ -11,6 +11,7 @@ if [ "${1:-}" = --config ]; then
 	cfg=$(realpath -e "${2:?--config needs a file}") && [ -f "$cfg" ] || { echo "--config $2: no such file" >&2; exit 1; }
 	shift 2
 	# worker.path goes in as a dotted key on top, which a [worker] table would redefine.
+	# ponytail: a line grep, blind to an inline worker = {…}; a TOML parse would see it.
 	! grep -Eq '^[[:space:]]*\[worker\]|^[[:space:]]*worker\.path' "$cfg" || { echo "--config $cfg: setup sets worker.path; write worker settings as [worker.claude_code], without worker.path" >&2; exit 1; }
 fi
 bin=$(cd "${1:-$here/../../../bin}" 2>/dev/null && pwd) || bin=

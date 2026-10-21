@@ -131,7 +131,7 @@ func printGuards(ctx context.Context, stdout io.Writer, p project.Project, l *co
 	}
 	r, err := workerGuards(ctx, p, l)
 	if err != nil {
-		fmt.Fprintf(stdout, "# guards: unusable, so bs spawn refuses: %v\n", err)
+		fmt.Fprintf(stdout, "# guards: unusable, so bs queen and bs spawn refuse: %v\n", err)
 		return
 	}
 	fmt.Fprintf(stdout, "# guards: a worker is denied (%s):\n", from)

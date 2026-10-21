@@ -242,7 +242,7 @@ func TestConfigShowsDeliveryAndTheEffectiveGuards(t *testing.T) {
 	for _, want := range []string{
 		`delivery.kind = "manual"  # project ` + proj,
 		`guards.deny = ["g4 submit*"]  # project ` + proj,
-		`# guards: unusable, so bs spawn refuses: guards.allow_merge_into: delivery.kind manual has no pull requests to merge`,
+		`# guards: unusable, so bs queen and bs spawn refuse: guards.allow_merge_into: delivery.kind manual has no pull requests to merge`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
@@ -258,7 +258,7 @@ func TestConfigShowsDeliveryAndTheEffectiveGuards(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, _, _ = bs(t, "config", "--project", "bees")
-	if want := "# guards: unusable, so bs spawn refuses: guards.allow_merge_into: GitHub doesn't confirm the repo's default branch is protected"; !strings.Contains(out, want) {
+	if want := "# guards: unusable, so bs queen and bs spawn refuse: guards.allow_merge_into: GitHub doesn't confirm the repo's default branch is protected"; !strings.Contains(out, want) {
 		t.Errorf("output lacks %q:\n%s", want, out)
 	}
 }

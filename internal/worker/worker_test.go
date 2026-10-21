@@ -33,7 +33,7 @@ type fakeHerdr struct {
 	workspaces []worker.Workspace
 	agents     map[string]string // live Claude sessions: name → pane
 	started    [][]string        // pane, name, args...
-	bases      []string          // the repo each worktree was cut from
+	cuts       [][2]string       // the repo and base ref each worktree was cut from
 	removed    []string
 	dirty      map[string]bool // worktree paths with modified or untracked files
 	failStart  error
@@ -42,8 +42,12 @@ type fakeHerdr struct {
 	listErr    error // herdr can't be reached
 }
 
-func (h *fakeHerdr) CreateWorktree(ctx context.Context, repo, branch, path, label string) (worker.Workspace, error) {
-	h.bases = append(h.bases, repo)
+func (h *fakeHerdr) CreateWorktree(ctx context.Context, repo, base, branch, path, label string) (worker.Workspace, error) {
+	// Like herdr 0.9.5: "New and open worktree actions start from the repo parent workspace".
+	if fi, err := os.Stat(filepath.Join(repo, ".git")); err == nil && !fi.IsDir() {
+		return worker.Workspace{}, fmt.Errorf("herdr worktree: %s is a linked worktree", repo)
+	}
+	h.cuts = append(h.cuts, [2]string{repo, base})
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		return worker.Workspace{}, err
 	}
@@ -1276,19 +1280,26 @@ func TestSpawnPinsTheLogbookDir(t *testing.T) {
 	}
 }
 
-// A worker's worktree lives under paths.worktrees, cut from the base (a linked worktree
-// named by --repo or paths.repo), and its spawn records both (bees-11.3).
+// A worker's worktree lives under paths.worktrees, cut from the HEAD of the base (a
+// linked worktree named by --repo or paths.repo) but run from the main checkout, since
+// herdr refuses a linked worktree as --cwd; its spawn records both (bees-11.3).
 func TestSpawnCutsFromTheBaseUnderTheWorktreesDir(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
-	trees, base := t.TempDir(), r.repo+"-WT/bees-1"
+	gitRun(t, "", "init", "-q", "-b", "main", r.repo)
+	gitCommit(t, r.repo, "init", nil)
+	base := filepath.Join(t.TempDir(), "bees-1")
+	gitRun(t, r.repo, "worktree", "add", "-q", "-b", "bees-1", base)
+	gitCommit(t, base, "base only", nil)
+	trees := t.TempDir()
 	r.fleet.P.Worktrees, r.fleet.P.Base = trees, base
 	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil {
 		t.Fatal(err)
 	}
 	sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8")
-	if want := filepath.Join(trees, "bees-8"); sp.Worktree != want || sp.Base != base || sp.Repo != r.repo || !slices.Equal(r.h.bases, []string{base}) {
-		t.Errorf("spawn %+v cut from %q; want worktree %s cut from base %s, repo %s", sp, r.h.bases, want, base, r.repo)
+	cut := [][2]string{{r.repo, gitTip(t, base, "HEAD")}}
+	if want := filepath.Join(trees, "bees-8"); sp.Worktree != want || sp.Base != base || sp.Repo != r.repo || !slices.Equal(r.h.cuts, cut) {
+		t.Errorf("spawn %+v cut %q; want worktree %s, base %s, cut %q", sp, r.h.cuts, want, base, cut)
 	}
 }
 

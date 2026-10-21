@@ -45,7 +45,7 @@ func herdr(ctx context.Context, out any, args ...string) (code string, err error
 	return "", nil
 }
 
-func (HerdrCLI) CreateWorktree(ctx context.Context, repo, branch, path, label string) (Workspace, error) {
+func (HerdrCLI) CreateWorktree(ctx context.Context, repo, base, branch, path, label string) (Workspace, error) {
 	var r struct {
 		Result struct {
 			Workspace struct {
@@ -59,7 +59,11 @@ func (HerdrCLI) CreateWorktree(ctx context.Context, repo, branch, path, label st
 			} `json:"worktree"`
 		} `json:"result"`
 	}
-	if _, err := herdr(ctx, &r, "worktree", "create", "--cwd", repo, "--branch", branch, "--path", path, "--label", label, "--no-focus"); err != nil {
+	args := []string{"worktree", "create", "--cwd", repo, "--branch", branch, "--path", path, "--label", label, "--no-focus"}
+	if base != "" {
+		args = append(args, "--base", base)
+	}
+	if _, err := herdr(ctx, &r, args...); err != nil {
 		return Workspace{}, err
 	}
 	if r.Result.Workspace.ID == "" || r.Result.RootPane.ID == "" {

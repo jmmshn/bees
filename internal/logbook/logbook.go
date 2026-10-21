@@ -196,7 +196,7 @@ type Spawn struct {
 	Worktree  string `json:"worktree"`
 	Branch    string `json:"branch"`
 	Repo      string `json:"repo"`           // where the branch lives, for bs end
-	Base      string `json:"base,omitempty"` // the linked worktree the branch was cut from; empty: Repo
+	Base      string `json:"base,omitempty"` // the checkout the branch was cut from (Repo, or a linked worktree); empty before bees-11.3
 	Ended     bool   `json:"-"`
 	Read      bool   `json:"-"` // the worker has read a message since this spawn, so it has a conversation
 }

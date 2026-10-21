@@ -65,7 +65,9 @@ type Bead struct{ ID, Title, Description string }
 
 // Herdr is the slice of herdr bs drives.
 type Herdr interface {
-	CreateWorktree(ctx context.Context, repo, branch, path, label string) (Workspace, error)
+	// CreateWorktree cuts branch at path from base (a ref; "": repo's HEAD). repo must be a
+	// main checkout: herdr 0.9.5 refuses a linked worktree as --cwd.
+	CreateWorktree(ctx context.Context, repo, base, branch, path, label string) (Workspace, error)
 	// StartClaude runs claude with args in pane. ErrWaiting: blocked at a startup prompt.
 	// ErrUnconfirmed: herdr gave up waiting. ErrUnsafeArg: an argument herdr can't pass.
 	StartClaude(ctx context.Context, pane, name string, args ...string) error
@@ -342,12 +344,20 @@ func (f Fleet) open(ctx context.Context, p plan) (logbook.Spawn, error) {
 	if p.resume {
 		return p.sp, nil
 	}
-	ws, err := f.H.CreateWorktree(ctx, f.P.BaseRepo(), p.name, f.worktree(p.name), p.label)
+	base := ""
+	if f.P.Base != "" { // a linked worktree: herdr cuts from its HEAD, run from the main checkout
+		out, err := gitOut(ctx, f.P.Base, "rev-parse", "HEAD")
+		if err != nil {
+			return logbook.Spawn{}, err
+		}
+		base = strings.TrimSpace(out)
+	}
+	ws, err := f.H.CreateWorktree(ctx, f.P.Repo, base, p.name, f.worktree(p.name), p.label)
 	if err != nil {
 		return logbook.Spawn{}, err
 	}
 	// Record straight away: any failure after this point is healed by spawning again.
-	sp := logbook.Spawn{Name: p.name, Bead: p.bead, Label: p.label, Workspace: ws.ID, Pane: ws.Pane, Worktree: ws.Path, Branch: p.name, Repo: f.P.Repo, Base: f.P.Base}
+	sp := logbook.Spawn{Name: p.name, Bead: p.bead, Label: p.label, Workspace: ws.ID, Pane: ws.Pane, Worktree: ws.Path, Branch: p.name, Repo: f.P.Repo, Base: f.P.BaseRepo()}
 	sp.ID, err = f.LB.RecordSpawn(ctx, f.Me, sp, brief(p.b))
 	return sp, err
 }

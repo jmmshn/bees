@@ -24,7 +24,7 @@ type fakeHive struct {
 	down   bool // herdr doesn't answer
 }
 
-func (h *fakeHive) CreateWorktree(ctx context.Context, repo, branch, path, label string) (worker.Workspace, error) {
+func (h *fakeHive) CreateWorktree(ctx context.Context, repo, base, branch, path, label string) (worker.Workspace, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.next++

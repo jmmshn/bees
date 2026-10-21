@@ -1,12 +1,16 @@
 # bees
 
-bees coordinates several Claude Code sessions working on one codebase: a queen hands out work to workers and they report back, all through a shared logbook.
+bees coordinates several coding-agent sessions (Claude Code today) working on one codebase: a queen hands out work to workers and they report back, all through a shared logbook.
 
 ## Work
 
 **Project**:
 The codebase a queen and its workers work on, named in one word (`pymatgen-analysis-defects` → `pymatgenanalysisdefects`).
 _Avoid_: repo, rig, workspace
+
+**Workspace**:
+The directory a worker works in and the herdr workspace opened on it, made by the workspace adapter: a git worktree by default, a script's directory (a CitC client), or the main checkout.
+_Avoid_: sandbox, checkout (for the adapter's output)
 
 **Bead**:
 One unit of work in the shared tracker, named `<project>-N[.M…]`.
@@ -18,20 +22,24 @@ _Avoid_: milestone, story
 
 ## People and sessions
 
+**Harness**:
+The coding-agent program a session runs in (Claude Code, omp, agy). One per machine, picked by the global `harness` key; bs reaches it only through its harness adapter (ADR-0009).
+_Avoid_: agent, model, runtime
+
 **Keeper**:
 The human who directs the work and talks to the queen; tends the hive and harvests its work. Replaces the earlier term "captain".
 _Avoid_: captain, beekeeper, user, operator, admin
 
 **Queen**:
-The one coordinating Claude Code session that assigns work to workers and reports to the keeper.
+The one coordinating session that assigns work to workers and reports to the keeper.
 _Avoid_: orchestrator, manager, lead, coordinator
 
 **Worker**:
-A Claude Code session the queen starts to own one worktree and one bead. Replaces the earlier term "bee"; the tool keeps the name bees (worker bees).
+A session the queen starts to own one workspace and one bead. Replaces the earlier term "bee"; the tool keeps the name bees (worker bees).
 _Avoid_: bee (as a role), agent, subagent, crew member
 
 **Session**:
-One running Claude Code process, known by its name (`queen-<project>`, or for a worker its bead id with `.` → `-`: `bees-2-1`).
+One running harness process, known by its name (`queen-<project>`, or for a worker its bead id with `.` → `-`: `bees-2-1`).
 _Avoid_: pane, agent, instance
 
 ## The logbook
@@ -76,4 +84,7 @@ _Avoid_: notify, wake, poke
 The author's earlier, private multi-session tool that bees replaces. Docs cite its commits (`crew 4f65cd8`) as the incidents a design or bake-off card came from; the repo isn't public.
 
 **omp**:
-Another coding-agent harness the author uses; v1 plans a bs adapter for it beside Claude Code.
+Another coding-agent harness the author uses (oh-my-pi); its bs adapter is bees-12.8.
+
+**agy**:
+Google Antigravity's CLI, a harness the keeper uses; probed against the harness seams in bees-12.7.

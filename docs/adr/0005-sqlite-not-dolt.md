@@ -1,6 +1,8 @@
 # The logbook is a SQLite file, not a Dolt database
 
-The logbook is `~/.local/share/bees/logbook.db`, opened in WAL mode through the pure-Go `modernc.org/sqlite` driver (the same choice as crew). Writes use `BEGIN IMMEDIATE` with a busy timeout. All sessions run on one Linux machine, and bs uses none of what makes Dolt worth having (branch, diff, merge, clone). What remained was a plain table plus the costs of a server.
+> Amended by [ADR-0006](0006-spawn-and-naming.md) (one logbook per project), [ADR-0008](0008-config-files-one-tagged-struct.md) (its directory is `paths.logbook_dir`) and R47 (macOS too).
+
+The logbook is `<paths.logbook_dir>/<project>.db` (default `~/.local/share/bees/<project>.db`), one file per project, opened in WAL mode through the pure-Go `modernc.org/sqlite` driver (the same choice as crew). Writes use `BEGIN IMMEDIATE` with a busy timeout. All sessions run on one machine (Linux or macOS), and bs uses none of what makes Dolt worth having (branch, diff, merge, clone). What remained was a plain table plus the costs of a server.
 
 ## Considered Options
 

@@ -1,6 +1,8 @@
 # Spawn the crew way: one name per bead, project as scope, herdr behind a port
 
 > Amended by [ADR-0008](0008-config-files-one-tagged-struct.md): the worktree parent and the repo lookup come from config, and a `--repo` that is a linked worktree is the base, not the location.
+>
+> Amended by [ADR-0009](0009-core-and-adapters.md): the name is the git branch and the `-WT` worktree directory only under the `git_worktree` workspace kind; a spawn records what its workspace kind made, and teardown uses that record.
 
 A bee's name is a function of its bead. Bead ids are Jira-style, `<project>-<n>` with children `<project>-<n>.<m>` (`bs epic` assigns the next top-level number), and the name is the id with `.` turned into `-` (`bees-12.3` → `bees-12-3`). Project names are lowercased with `-` and `_` dropped and match `^[a-z][a-z0-9]{0,24}$` (R27⁶), so a name's first `-` always ends the project, and `bd query`'s id wildcard (a SQL LIKE, where `_` matches any character) selects exactly one project's beads.
 

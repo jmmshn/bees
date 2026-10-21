@@ -41,6 +41,9 @@ type Procs interface {
 	Name(pid int) (string, error)
 	Exe(pid int) (string, error)
 	Descendants(pid int) ([]proc.Process, error)
+	Parent(pid int) (int, error)
+	Command(pid int) (string, error)
+	Listening(ctx context.Context, pids []int) (map[int][]int, error)
 }
 
 // SystemProcs is internal/proc.
@@ -51,6 +54,11 @@ func (SystemProcs) Start(pid int) (string, error)               { return proc.St
 func (SystemProcs) Name(pid int) (string, error)                { return proc.Name(pid) }
 func (SystemProcs) Exe(pid int) (string, error)                 { return proc.Exe(pid) }
 func (SystemProcs) Descendants(pid int) ([]proc.Process, error) { return proc.Descendants(pid) }
+func (SystemProcs) Parent(pid int) (int, error)                 { return proc.Parent(pid) }
+func (SystemProcs) Command(pid int) (string, error)             { return proc.Command(pid) }
+func (SystemProcs) Listening(ctx context.Context, pids []int) (map[int][]int, error) {
+	return proc.Listening(ctx, pids)
+}
 
 // SpawnAlive reports whether open spawn sp's worker runs: its newest start's process is
 // alive with its start time (SEC-2). known is false when sp has no start recorded: spawned

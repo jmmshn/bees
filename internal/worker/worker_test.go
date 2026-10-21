@@ -2,6 +2,7 @@ package worker_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,11 +52,14 @@ type fakeHerdr struct {
 	busyStarts int   // the next starts herdr refuses as agent_pane_busy, typing nothing
 	liveAnyway bool  // with failStart: Claude came up all the same, as after herdr's timeout
 	aliveErr   error // the process table can't be read
+	walkErr    error // the descendants can't be read
+	portsErr   error // the listening ports can't be read
 	listErr    error // herdr can't be reached
 	procs      map[int]*fakeProc
 	pids       map[string]int // agent name → its process
 	nextPID    int
 	renamed    []string // pane=name, one per RenameAgent
+	helpers    []string // processes each harness starts with, so its baseline holds them
 }
 
 // fakeProc is a process: a pid with a start time, a name and a parent, alive until it exits.
@@ -63,6 +67,7 @@ type fakeProc struct {
 	name, start string
 	parent      int
 	alive       bool
+	ports       []int
 }
 
 // spawnProc runs a process named name under parent and returns its pid. Callers hold mu.
@@ -123,6 +128,9 @@ func (h *fakeHerdr) StartAgent(ctx context.Context, pane, name, kind string, arg
 	if h.failStart == nil || h.liveAnyway || errors.Is(h.failStart, worker.ErrWaiting) {
 		h.pids[name] = h.spawnProc(kind, shell(pane))
 		h.agents[name] = pane
+		for _, c := range h.helpers {
+			h.spawnProc(c, h.pids[name])
+		}
 	}
 	return h.failStart
 }
@@ -185,6 +193,9 @@ func (h *fakeHerdr) Exe(pid int) (string, error) { return "/fake/" + fmt.Sprint(
 func (h *fakeHerdr) Descendants(pid int) ([]proc.Process, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.walkErr != nil {
+		return nil, h.walkErr
+	}
 	var out []proc.Process
 	for level := []int{pid}; len(level) > 0; {
 		var next []int
@@ -195,6 +206,40 @@ func (h *fakeHerdr) Descendants(pid int) ([]proc.Process, error) {
 			}
 		}
 		level = next
+	}
+	return out, nil
+}
+
+func (h *fakeHerdr) Parent(pid int) (int, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if pr := h.procs[pid]; pr != nil && pr.alive {
+		return pr.parent, nil
+	}
+	return 0, proc.ErrGone
+}
+
+func (h *fakeHerdr) Command(pid int) (string, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if pr := h.procs[pid]; pr != nil && pr.alive {
+		return pr.name, nil
+	}
+	return "", proc.ErrGone
+}
+
+// Listening is each pid's ports, set on its fakeProc.
+func (h *fakeHerdr) Listening(ctx context.Context, pids []int) (map[int][]int, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.portsErr != nil {
+		return nil, h.portsErr
+	}
+	out := map[int][]int{}
+	for _, p := range pids {
+		if pr := h.procs[p]; pr != nil && pr.alive && len(pr.ports) > 0 {
+			out[p] = pr.ports
+		}
 	}
 	return out, nil
 }
@@ -2102,5 +2147,128 @@ func TestALateHarnessBelowTheShellIsConfirmed(t *testing.T) {
 	sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8")
 	if st, ok, _ := r.lb.LatestStart(ctx, sp.ID); !ok || st.PID != r.h.pids["bees-8"] {
 		t.Fatalf("start = %+v, %v; want the late grandchild", st, ok)
+	}
+}
+
+// child runs a process named name under worker's harness and returns its pid.
+func (h *fakeHerdr) child(worker, name string, ports ...int) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	pid := h.spawnProc(name, h.pids[worker])
+	h.procs[pid].ports = ports
+	return pid
+}
+
+// T10: a child the start didn't see refuses bs end, naming its pid, command and port; the
+// worker stays live with its workspace; --force ends it.
+func TestEndRefusesBackgroundWork(t *testing.T) {
+	defer worker.FastGate(time.Millisecond)()
+	ctx := context.Background()
+	r := newRig(t)
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	pid := r.h.child("bees-8", "python3 -m http.server 8000", 8000)
+	err := r.fleet.End(ctx, "bees-8", worker.EndOpts{})
+	var bg *worker.BackgroundError
+	if !errors.As(err, &bg) || !errors.Is(err, worker.ErrBackground) || len(bg.Procs) != 1 || bg.Procs[0].PID != pid {
+		t.Fatalf("err = %v, want ErrBackground naming pid %d", err, pid)
+	}
+	if want := fmt.Sprintf("pid %-6d python3 -m http.server 8000   listening :8000", pid); !strings.Contains(err.Error(), want) {
+		t.Fatalf("err = %q, want a line %q", err, want)
+	}
+	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); sp.Ended || len(r.h.removed) > 0 {
+		t.Fatalf("ended %v, removed %v: want the worker kept", sp.Ended, r.h.removed)
+	}
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// T10: the baseline's helpers, this bs and its ancestors, and a child gone by the second
+// look are not background work.
+func TestEndPassesBaselineCallerAndShortLivedChildren(t *testing.T) {
+	defer worker.FastGate(50 * time.Millisecond)()
+	ctx := context.Background()
+	r := newRig(t)
+	r.h.helpers = []string{"mcp-server"}
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	r.h.mu.Lock()
+	shellPID := r.h.spawnProc("zsh", r.h.pids["bees-8"]) // a Bash tool call running this bs
+	r.h.procs[os.Getpid()] = &fakeProc{name: "bs", start: "self", parent: shellPID, alive: true}
+	r.h.mu.Unlock()
+	hook := r.h.child("bees-8", "statusline")
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		r.h.mu.Lock()
+		r.h.procs[hook].alive = false
+		r.h.mu.Unlock()
+	}()
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{}); err != nil {
+		t.Fatalf("err = %v, want the end to pass the gate", err)
+	}
+}
+
+// T10: a walk that fails refuses with ErrCantCheck, never as "no background work".
+func TestEndFailsClosedWhenTheWalkFails(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	r.h.walkErr = errors.New("read /proc: too many open files")
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{}); !errors.Is(err, worker.ErrCantCheck) || errors.Is(err, worker.ErrBackground) {
+		t.Fatalf("err = %v, want ErrCantCheck", err)
+	}
+	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); sp.Ended {
+		t.Fatal("ended a worker the gate couldn't check")
+	}
+}
+
+// A worker whose recorded process has exited has nothing to walk: bs end says so and ends it.
+func TestEndOfAnExitedWorkerSkipsTheGate(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	r.h.child("bees-8", "orphan")
+	r.h.mu.Lock()
+	r.h.procs[r.h.pids["bees-8"]].alive = false
+	r.h.mu.Unlock()
+	e, err := r.fleet.EndOne(ctx, "bees-8", worker.EndOpts{})
+	if err != nil || !e.Exited {
+		t.Fatalf("ending = %+v, err = %v; want ended, noted as exited", e, err)
+	}
+}
+
+// A spawn with no start recorded can't be checked while its pane runs the harness.
+func TestEndOfAnUnrecordedHarnessFailsClosed(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8")
+	db, err := sql.Open("sqlite", r.fleet.P.Logbook) // as a bs from before starts left it
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.ExecContext(ctx, `DELETE FROM entries WHERE kind = 'started' AND ref = ?`, string(sp.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{}); !errors.Is(err, worker.ErrCantCheck) || !errors.Is(err, worker.ErrNoStart) {
+		t.Fatalf("err = %v, want ErrCantCheck: no start, and the pane runs claude", err)
+	}
+}
+
+// T10: bs end --all gates each worker on its own: it ends those that pass and keeps the
+// one running background work, live in the logbook.
+func TestEndAllGatesEachWorker(t *testing.T) {
+	defer worker.FastGate(time.Millisecond)()
+	ctx := context.Background()
+	r := newRig(t)
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	_, _ = r.fleet.Spawn(ctx, "bees-9", "second worker")
+	r.h.child("bees-9", "go test ./...")
+	ended, err := r.fleet.EndAll(ctx, worker.EndOpts{})
+	if err != nil || len(ended) != 2 || ended[0].Err != nil || !errors.Is(ended[1].Err, worker.ErrBackground) {
+		t.Fatalf("ended = %+v, %v; want bees-8 ended, bees-9 kept for background work", ended, err)
+	}
+	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-9"); sp.Ended {
+		t.Fatal("bees-9 recorded ended")
 	}
 }

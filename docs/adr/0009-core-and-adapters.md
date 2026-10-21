@@ -10,7 +10,9 @@ bees-12's north star (the same as bees-11's): a new user on another harness (Gem
 harness = "claude_code"   # top level, global file only: every queen and worker on the machine
 
 [workspace]
-kind = "git_worktree"     # git_worktree | none
+kind     = "git_worktree" # git_worktree | none
+init     = ""             # optional command bs runs before launch (prints the worker's dir under none)
+finalize = ""             # optional command bs end runs at teardown
 
 [delivery]
 kind = "github_pr"        # github_pr | manual: picks the role prompts' delivery fragment
@@ -125,6 +127,17 @@ What `claude_code` does, and the code that moves behind it (bees-12.6):
 
 - **`git_worktree`** (default) is today's path: branch `<name>`, directory `<paths.worktrees>/<name>`, orphans matched by herdr's `checkout_path`, `bs end` refusing a dirty worktree without `--force`, `bs prune` deleting merged branches (R42).
 - **`none`** opens a herdr workspace on `paths.repo` (`herdr workspace create --cwd --env`, after checking the directory exists: a missing `--cwd` exits 0 and opens `$HOME`). bs makes and removes no directory, and the worker does whatever its prompt says, such as making its own CitC client. The queen decides how many workers share it. bs tags the workspace with its path (`herdr workspace report-metadata <id> --token path=<dir> --source bs`; herdr 0.9.5 refuses `--source` before `--token`), since `workspace list` shows no directory for a plain workspace; an untagged one is *unknown*, reported and never removed.
+
+**Init and finalize are formal lifecycle steps** (keeper, round 3), run by bs, never by the worker, and recorded in the logbook:
+
+| step | when | git_worktree | none | hook contract |
+|---|---|---|---|---|
+| **init** | `bs spawn`, first start only, before the workspace is opened | built in: `herdr worktree create`; then `init`, if set, in the new worktree (`npm install`) | `init`, if set, makes the dir (a CitC client) and prints it; unset: `paths.repo` | env `BS_NAME`, `BS_PROJECT`, `BS_REPO`, `BS_BASE`; cwd the repo; stdout one absolute existing dir (none only); exit 0 or the spawn fails |
+| **finalize** | `bs end`, after the agent is gone, before the workspace is closed | `finalize`, if set; then built in: `herdr worktree remove`, refusing a dirty tree without `--force` | `finalize`, if set (delete the client); then `herdr workspace close` | same env plus `BS_DIR` and `BS_FORCE=1` under `--force`; exit 0 done, 3 dirty (refuse without `--force`), other fails and leaves the entry open |
+
+- Both hooks must be idempotent: a failed spawn is healed by spawning again, and a failed end by ending again, each rerunning its step (motif 8).
+- The `spawned` entry records the dir `init` printed, so `finalize` and every later step use that record, never a dir rebuilt from config (motif 12). A spawn that fails after `init` succeeded runs `finalize` before reporting, so it leaves no client behind.
+- Each hook runs in its own process group with a bounded wait (5 min) and is killed as a group on timeout (motif 15); its outcome (exit code, first stderr line) goes into the `spawned` or `ended` entry, so a failure shows in the logbook, not only on a terminal (motif 11).
 
 **Delivery** is the role prompts' delivery fragment, `internal/prompt/delivery/<kind>.md`, assembled like `BEADS.md`:
 

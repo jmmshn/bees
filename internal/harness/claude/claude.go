@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -18,7 +19,7 @@ import (
 	"github.com/jmmshn/bees/internal/proc"
 )
 
-// ErrNotRunning means no live session has that name.
+// ErrNotRunning means the session rung is not running.
 var ErrNotRunning = harness.ErrNotRunning
 
 // Session is a live Claude Code session that accepts cross-session messages.
@@ -28,70 +29,69 @@ type Session struct {
 	ProcStart string // process start time as Claude records it (proc.Start)
 	Socket    string
 	Token     string // empty when the session has no key file
-	startedAt int64
 }
 
-// List returns every live, compatible session in ~/.claude/sessions: peerProtocol 1, a
-// socket, and a pid whose start time still matches (so a reused pid isn't mistaken for it).
-func List() ([]Session, error) {
+// AtPID reads the registry entry of the Claude process pid, the one a start or queen
+// entry recorded (ADR-0009), and checks it is session name. It fails closed (SEC-2): a
+// missing or unreadable entry, a reused pid (its procStart differs from the process's
+// start time), another name or no messaging socket is an error, so a ring never goes to a
+// session the core didn't find. Nothing else in ~/.claude/sessions is read.
+func AtPID(pid int, name string) (Session, error) {
+	if pid <= 0 {
+		return Session{}, fmt.Errorf("%s: no process recorded: %w", name, ErrNotRunning)
+	}
 	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-	dir := filepath.Join(home, ".claude", "sessions")
-	files, err := filepath.Glob(filepath.Join(dir, "*.json"))
-	if err != nil {
-		return nil, err
-	}
-	var out []Session
-	for _, f := range files {
-		b, err := os.ReadFile(f)
-		if err != nil {
-			continue // the session exited between glob and read
-		}
-		var e struct {
-			PID                 int
-			ProcStart           string
-			PeerProtocol        int
-			MessagingSocketPath string
-			Name                string
-			StartedAt           int64
-		}
-		if json.Unmarshal(b, &e) != nil || e.PeerProtocol != 1 || e.MessagingSocketPath == "" {
-			continue
-		}
-		if start, err := proc.Start(e.PID); err != nil || start != e.ProcStart {
-			continue
-		}
-		s := Session{Name: e.Name, PID: e.PID, ProcStart: e.ProcStart, Socket: e.MessagingSocketPath, startedAt: e.StartedAt}
-		sum := sha256.Sum256([]byte(s.Socket))
-		if b, err := os.ReadFile(filepath.Join(dir, fmt.Sprintf("%d.%s.key", e.PID, hex.EncodeToString(sum[:])))); err == nil {
-			var k struct{ PeerToken string }
-			if json.Unmarshal(b, &k) == nil {
-				s.Token = k.PeerToken
-			}
-		}
-		out = append(out, s)
-	}
-	return out, nil
-}
-
-// Find returns the live session called name, the newest if several share it.
-func Find(name string) (Session, error) {
-	ss, err := List()
 	if err != nil {
 		return Session{}, err
 	}
-	var found Session
-	for _, s := range ss {
-		if s.Name == name && (found.Name == "" || s.startedAt > found.startedAt) {
-			found = s
+	dir := filepath.Join(home, ".claude", "sessions")
+	b, err := os.ReadFile(filepath.Join(dir, fmt.Sprintf("%d.json", pid)))
+	if errors.Is(err, os.ErrNotExist) {
+		if _, serr := proc.Start(pid); errors.Is(serr, proc.ErrGone) {
+			return Session{}, fmt.Errorf("%s exited (pid %d): %w", name, pid, ErrNotRunning) // Claude removed its entry on exit
 		}
 	}
-	if found.Name == "" {
-		return Session{}, fmt.Errorf("%s: %w", name, ErrNotRunning)
+	if err != nil {
+		return Session{}, fmt.Errorf("claude registry for %s (pid %d): %w", name, pid, err)
 	}
-	return found, nil
+	var e struct {
+		PID                 int
+		ProcStart           string
+		PeerProtocol        int
+		MessagingSocketPath string
+		Name                string
+	}
+	if err := json.Unmarshal(b, &e); err != nil {
+		return Session{}, fmt.Errorf("claude registry for %s (pid %d): %w", name, pid, err)
+	}
+	start, err := proc.Start(pid)
+	switch {
+	case errors.Is(err, proc.ErrGone):
+		return Session{}, fmt.Errorf("%s exited (pid %d): %w", name, pid, ErrNotRunning)
+	case err != nil:
+		return Session{}, fmt.Errorf("claude session %s (pid %d): %w", name, pid, err)
+	case e.PID != pid:
+		return Session{}, fmt.Errorf("claude registry file of pid %d names pid %d", pid, e.PID)
+	case start != e.ProcStart:
+		return Session{}, fmt.Errorf("claude registry entry for pid %d is stale: the pid was reused", pid)
+	case e.Name != name:
+		return Session{}, fmt.Errorf("the claude session at pid %d is %q, not %s", pid, e.Name, name)
+	case e.PeerProtocol != 1 || e.MessagingSocketPath == "":
+		return Session{}, fmt.Errorf("claude session %s (pid %d) takes no cross-session messages", name, pid)
+	}
+	s := Session{Name: e.Name, PID: pid, ProcStart: e.ProcStart, Socket: e.MessagingSocketPath}
+	sum := sha256.Sum256([]byte(s.Socket))
+	switch b, err := os.ReadFile(filepath.Join(dir, fmt.Sprintf("%d.%s.key", pid, hex.EncodeToString(sum[:])))); {
+	case err == nil:
+		var k struct{ PeerToken string }
+		if err := json.Unmarshal(b, &k); err != nil {
+			return Session{}, fmt.Errorf("claude session %s key file: %w", name, err)
+		}
+		s.Token = k.PeerToken
+	case !errors.Is(err, os.ErrNotExist): // no key file: the session takes rings without one
+		return Session{}, fmt.Errorf("claude session %s key file: %w", name, err)
+	}
+	return s, nil
 }
 
 // Trusted reports whether Claude has accepted its folder-trust dialog for dir, the main

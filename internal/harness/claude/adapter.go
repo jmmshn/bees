@@ -56,9 +56,9 @@ func (a Adapter) Prepare(st harness.Start) (harness.Launch, error) {
 	return l, nil
 }
 
-// Ring rings the live session called t.Name: the newest in Claude's registry.
+// Ring rings session t at the pid the core recorded: see AtPID.
 func (Adapter) Ring(t harness.Target, text string, p harness.Priority) error {
-	s, err := Find(t.Name)
+	s, err := AtPID(t.PID, t.Name)
 	if err != nil {
 		return err
 	}

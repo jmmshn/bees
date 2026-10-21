@@ -37,8 +37,9 @@ var minVersion = map[string]string{
 // doctor prints one line per check: ok, warn (bs works, with a caveat) or FAIL (a bs
 // command would refuse or misbehave).
 type doctor struct {
-	w      io.Writer
-	failed bool
+	w           io.Writer
+	failed      bool
+	flagProject string // --project, "" if unset
 }
 
 func (d *doctor) line(level, check, detail string) {
@@ -62,7 +63,7 @@ func cmdDoctor(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 		fmt.Fprintln(stderr, "usage: bs doctor [--project p]")
 		return errUsage
 	}
-	d := &doctor{w: stdout}
+	d := &doctor{w: stdout, flagProject: *proj}
 	name, projErr := project.Name(*proj)
 	if projErr != nil && !errors.Is(projErr, project.ErrNoProject) {
 		d.line("FAIL", "project", projErr.Error())
@@ -298,7 +299,7 @@ func (d *doctor) project(ctx context.Context, p project.Project, err error, cfg 
 		d.line("FAIL", "repo", `workspace.kind = "none" shares paths.repo, which is unset: make the directory and set paths.repo in the project file`)
 	case p.Repo == "":
 		why := "none found: run in the project's repo, or set paths.repo in its project file"
-		if h := paneHint(ctx, p); h != "" {
+		if h := repoHint(ctx, p, d.flagProject); h != "" {
 			why = "none found for project " + p.Name + "; " + h
 		}
 		d.line("FAIL", "repo", why)

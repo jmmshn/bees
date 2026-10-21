@@ -407,3 +407,25 @@ func TestAPaneInAnotherProjectsRepoSaysWhichProject(t *testing.T) {
 		t.Fatalf("spawn: exit %d, %q; want the pane named and --project otherproj suggested", code, stderr)
 	}
 }
+
+// bees-12.45: outside a recorded pane, an inherited BS_PROJECT that names a project whose
+// repo isn't here is named in the missing-repo refusal, with the fix (motif 14).
+func TestAStrayBSProjectIsNamed(t *testing.T) {
+	useTempLogbook(t) // BS_PROJECT=test, outside any pane
+	t.Setenv("BS_REPOS", "")
+	other := filepath.Join(t.TempDir(), "otherproj")
+	if out, err := exec.Command("git", "init", "-q", other).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	t.Chdir(other)
+	want := "BS_PROJECT=test picked project test, though you are in project otherproj's repo: unset BS_PROJECT, or pass --project otherproj"
+	if out, _, _ := bs(t, "doctor"); !strings.Contains(out, want) {
+		t.Errorf("doctor = %q, want %q", out, want)
+	}
+	if _, stderr, code := bs(t, "spawn", "--as", "queen-test", "--label", "probe", "test-1.3"); code == 0 || !strings.Contains(stderr, want) {
+		t.Errorf("spawn: exit %d, %q; want %q", code, stderr, want)
+	}
+	if _, stderr, _ := bs(t, "spawn", "--project", "test", "--as", "queen-test", "--label", "probe", "test-1.3"); strings.Contains(stderr, "BS_PROJECT=") {
+		t.Errorf("with --project test, stderr blames BS_PROJECT: %q", stderr)
+	}
+}

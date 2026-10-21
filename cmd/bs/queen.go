@@ -47,7 +47,7 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	}
 	p, cfg, err := resolve(ctx, "queen", *proj, "", stderr)
 	if err == nil {
-		err = needRepo(ctx, p)
+		err = needRepo(ctx, p, *proj)
 	}
 	if err != nil {
 		return err

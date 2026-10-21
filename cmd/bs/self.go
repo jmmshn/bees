@@ -139,24 +139,28 @@ func (c caller) setLogbook(p *project.Project, stderr io.Writer) {
 	p.Logbook = lb
 }
 
-// paneHint says why a command in a recorded pane acts on the pane's project while the
-// working directory is another project's repo (bees-12.43): the pane decides, so "run bs
-// inside the repo" can't help. "" when that isn't the case.
-func paneHint(ctx context.Context, p project.Project) string {
-	c, err := whoCalls(ctx, nil)
-	if err != nil || !c.inPane || c.Project != p.Name {
+// repoHint says what picked project p while the working directory is another project's
+// repo, so "run bs inside the repo" can't help: the recorded herdr pane (bees-12.43), or
+// an inherited BS_PROJECT (bees-12.45, motif 14). flag is the command's --project. ""
+// when the cwd's repo isn't another project's.
+func repoHint(ctx context.Context, p project.Project, flag string) string {
+	git := project.InGit()
+	if git == "" || git == p.Name {
 		return ""
 	}
-	if git := project.InGit(); git != "" && git != p.Name {
+	if c, err := whoCalls(ctx, nil); err == nil && c.inPane && c.Project == p.Name {
 		return fmt.Sprintf("this herdr pane is %s's, in project %s, though you are in project %s's repo: pass --project %s to act there", c.Name, p.Name, git, git)
+	}
+	if env := os.Getenv("BS_PROJECT"); flag == "" && env != "" && project.Normalise(env) == p.Name {
+		return fmt.Sprintf("BS_PROJECT=%s picked project %s, though you are in project %s's repo: unset BS_PROJECT, or pass --project %s", env, p.Name, git, git)
 	}
 	return ""
 }
 
-// needRepo is p.NeedRepo, saying when the pane's project isn't the repo's bs runs in.
-func needRepo(ctx context.Context, p project.Project) error {
+// needRepo is p.NeedRepo, saying what picked p when bs runs in another project's repo.
+func needRepo(ctx context.Context, p project.Project, flag string) error {
 	err := p.NeedRepo()
-	if h := paneHint(ctx, p); err != nil && h != "" {
+	if h := repoHint(ctx, p, flag); err != nil && h != "" {
 		return fmt.Errorf("%w; %s", err, h)
 	}
 	return err

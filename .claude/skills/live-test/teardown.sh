@@ -42,15 +42,23 @@ endall() {
 # 1. Workers, 2. the queen's workspace, 3. workers again: the queen may have spawned one
 # between 1 and 2, and the logbook recording it is deleted below.
 endall
+# toys lists the open workspaces that are the toy's: a pane in the run dir, or the toy id in
+# the label (setup's "<toy> · queen", bs's "<toy> · <label>"), so a queen relaunched in
+# another dir still counts (bees-12.30). Reads $panes and $wss.
+toys() {
+	jq -r --arg d "$run/" --arg t "$toy" --argjson w "$wss" '
+		[.result.panes[] | select((.cwd // "") + "/" | startswith($d)) | .workspace_id]
+		+ [$w.result.workspaces[] | select(.label | contains($t)) | .workspace_id] | unique[]' <<<"$panes"
+}
 if [ -n "$queen_ws" ]; then
-	panes=$(herdr pane list) || fail "herdr is unreachable, so the queen's workspace $queen_ws may still be open"
-	if jq -e --arg ws "$queen_ws" 'any(.result.panes[]; .workspace_id == $ws)' <<<"$panes" >/dev/null; then
-		# Only while a pane in it sits in the run dir: herdr can hand the id to a later workspace.
-		if jq -e --arg ws "$queen_ws" --arg d "$run/" 'any(.result.panes[]; .workspace_id == $ws and ((.cwd // "") + "/" | startswith($d)))' <<<"$panes" >/dev/null; then
+	panes=$(herdr pane list) && wss=$(herdr workspace list) || fail "herdr is unreachable, so the queen's workspace $queen_ws may still be open"
+	if jq -e --arg ws "$queen_ws" 'any(.result.workspaces[]; .workspace_id == $ws)' <<<"$wss" >/dev/null; then
+		# Only while it is still the toy's: herdr can hand the id to a later workspace.
+		if toys | grep -qxF -- "$queen_ws"; then
 			herdr workspace close "$queen_ws" >/dev/null || fail "herdr workspace close $queen_ws failed"
 			echo "closed the queen's workspace $queen_ws"
 		else
-			echo "workspace $queen_ws has no pane in $run: herdr reused the id; left open"
+			echo "workspace $queen_ws is no longer the toy's (no pane in $run, no $toy in its label): herdr reused the id; left open"
 		fi
 	fi
 fi
@@ -81,7 +89,14 @@ del() {
 	done
 	rm -rf -- "$@"
 }
-del "$repo" "$repo-WT" "$run/xdg" || fail "couldn't remove $repo"
+# Everything in the run dir but keeper/ and live.json: the repo, its worktrees, the config
+# home, and any dir a session made by hand (bees-12.30).
+made=()
+for e in "$run"/* "$run"/.[!.]*; do
+	[ -e "$e" ] || [ -L "$e" ] || continue
+	case ${e##*/} in keeper | live.json) ;; *) made+=("$e") ;; esac
+done
+[ ${#made[@]} = 0 ] || del "${made[@]}" || fail "couldn't remove ${made[*]}"
 # Claude's transcripts of the toy's sessions: kept as the run's record, moved out of ~/.claude.
 for t in "$projects/$enc"-*; do
 	[ -d "$t" ] || continue
@@ -95,12 +110,16 @@ echo "removed the toy repo, its worktrees, logbook and cache files; kept $run/ke
 # 6. Leaks: what the toy owns and teardown should have removed. Exit 2.
 leaks=0
 leak() { echo "LEAK: $*" >&2; leaks=1; }
-if ! panes=$(herdr pane list); then
-	leak "herdr is unreachable, so a pane may still be open in $run"
-elif jq -e --arg d "$run/" 'any(.result.panes[]; (.cwd // "") + "/" | startswith($d))' <<<"$panes" >/dev/null; then
-	leak "a herdr pane is still open in $run"
+if ! { panes=$(herdr pane list) && wss=$(herdr workspace list); }; then
+	leak "herdr is unreachable, so a workspace of the toy's may still be open"
+elif open=$(toys | tr '\n' ' ') && [ -n "$open" ]; then
+	leak "herdr workspaces still open with a pane in $run or $toy in the label: $open"
 fi
-left=$(ls -d "$store/$toy".db* "$cache/$toy"-* "$repo" "$run/xdg" "$projects/$enc"-* 2>/dev/null | tr '\n' ' ')
+left=$(ls -d "$store/$toy".db* "$cache/$toy"-* "$projects/$enc"-* 2>/dev/null | tr '\n' ' ')
+for e in "$run"/* "$run"/.[!.]*; do
+	[ -e "$e" ] || [ -L "$e" ] || continue
+	case ${e##*/} in keeper | live.json) ;; *) left+="$e " ;; esac
+done
 [ -z "$left" ] || leak "files left: $left"
 
 # 7. Leftovers outside the toy: noted, never an exit code, and left for a later cleanup.

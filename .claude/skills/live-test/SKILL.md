@@ -13,8 +13,10 @@ The toy's id (`lt<16 digits>`) names everything it owns: its project, beads (`<t
 
 ```sh
 go build -o bin/bs ./cmd/bs                    # the build under test, in this checkout
-.claude/skills/live-test/setup.sh [--config <file>] [<bin dir>]  # prints live.json: toy, run, repo, pane, workspace, builds
+.claude/skills/live-test/setup.sh [--no-git] [--config <file>] [<bin dir>]  # prints live.json: toy, run, repo, pane, workspace, builds
 ```
+
+**A non-git toy.** `--no-git` makes the toy repo a plain dir, sets `paths.repo` to it and `workspace.kind = "none"` in the toy's project file, and starts the queen with `--project <toy>` and `BEADS_ACTOR=<toy>` (no git `user.name` to mark her beads). Workers' beads from a non-git toy carry the real `$USER` as `created_by`, so teardown's notes can't find one filed outside the toy.
 
 **A toy config.** The toy gets a config home of its own, `<run>/xdg` (`xdg` in live.json): the real one's entries linked in, so gh and git keep their config, plus the real global `config.toml`, and a project file `bees/projects/<toy>.toml` with `worker.path = ["<bin>"]`. Setup starts the queen with `XDG_CONFIG_HOME` there. A `[delivery]`, `[guards]` or other project setting under test goes in a file of yours (your scratch dir) passed as `--config <file>`, appended to that project file before the queen starts; write worker settings as `[worker.claude_code]`, since setup sets `worker.path`. Prefix your own `bs` calls with `XDG_CONFIG_HOME=<xdg>` to see the same config. Workers start from herdr's environment and read the real config. Teardown removes `<run>/xdg`; never write the toy's file under `~/.config` yourself.
 
@@ -59,10 +61,10 @@ A PR body gets a before/after transcript (AGENTS.md): the same steps run with th
 In order, stopping at the first failure (exit 1; fix the cause and run it again, it is idempotent):
 
 1. `bs end --all --project <toy> --force --forget --yes`: every worker the toy's logbook records as live, nothing else. `--forget` records the end of a worker whose workspace id herdr has reused, leaving that workspace open. It runs the shared bs, or your build when the shared one predates `--forget`, from `/` so no checkout's project or staleness hint gets in.
-2. Closes the queen's workspace, the id setup recorded, only while a pane in it is in the run dir; then runs step 1 again, for a worker the queen spawned meanwhile.
+2. Closes the queen's workspace, the id setup recorded, only while it is still the toy's (a pane in the run dir, or the toy id in its label, so a queen relaunched elsewhere counts); then runs step 1 again, for a worker the queen spawned meanwhile.
 3. Deletes every `<toy>-*` bead. It stops instead if one is linked to a bead outside the toy, since `bd delete` would rewrite that bead's references to `[deleted:ID]`.
-4. Removes the toy repo and its worktrees, moves the toy's Claude transcripts from `~/.claude/projects` into `<run>/keeper/transcripts/`, then removes its logbook and cache files. `<run>/keeper/` is kept for your records; delete it when you're done. Claude's folder-trust entry for the toy stays in `~/.claude.json`, which live sessions rewrite.
-5. Checks for leaks (exit 2): panes in the run dir (or herdr unreachable, so it can't tell) and toy files.
+4. Removes everything in the run dir but `keeper/` and `live.json` (the toy repo, its worktrees, `xdg/`, and any dir a session made by hand), moves the toy's Claude transcripts from `~/.claude/projects` into `<run>/keeper/transcripts/`, then removes its logbook and cache files. `<run>/keeper/` is kept for your records; delete it when you're done. Claude's folder-trust entry for the toy stays in `~/.claude.json`, which live sessions rewrite.
+5. Checks for leaks (exit 2): herdr workspaces with a pane in the run dir or the toy id in their label (or herdr unreachable, so it can't tell), anything in the run dir but `keeper/` and `live.json`, and toy files.
 6. Prints a `note:` line, never an exit code, for each leftover outside the toy: beads with `created_by` the toy id outside `<toy>-*`, and rows the toy's sessions (`queen-<toy>`, `<toy>-N`) wrote into other logbooks (read through `logbook.py`). Teardown leaves these alone.
 
 ## 6. Report

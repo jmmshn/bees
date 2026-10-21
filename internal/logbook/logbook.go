@@ -11,12 +11,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	mrand "math/rand/v2"
 	"net/url"
 	"os"
 	"path/filepath"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 
 	"github.com/jmmshn/bees/internal/harness"
 )
@@ -70,7 +72,7 @@ func Open(ctx context.Context, path string) (*Logbook, error) {
 		return nil, err
 	}
 	q := url.Values{}
-	q.Add("_pragma", "busy_timeout(5000)") // first, so the WAL switch below waits instead of failing
+	q.Add("_pragma", "busy_timeout(5000)") // writes wait; a new file's WAL switch can still fail: see below
 	q.Add("_pragma", "journal_mode(WAL)")
 	q.Add("_pragma", "foreign_keys(1)")
 	q.Set("_txlock", "immediate")
@@ -79,11 +81,33 @@ func Open(ctx context.Context, path string) (*Logbook, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := migrate(ctx, db, abs); err != nil {
+	// Two first opens of a new file race on the WAL switch, which SQLite can refuse with
+	// SQLITE_BUSY without waiting on busy_timeout (bees-12.23): retry, for a bounded time.
+	deadline := time.Now().Add(openWait)
+	for err = migrate(ctx, db, abs); busy(err) && time.Now().Before(deadline); err = migrate(ctx, db, abs) {
+		select {
+		case <-ctx.Done():
+			err = errors.Join(err, ctx.Err())
+		case <-time.After(time.Duration(10+mrand.IntN(40)) * time.Millisecond): // jitter: contenders don't retry in step
+			continue
+		}
+		break
+	}
+	if err != nil {
 		db.Close()
 		return nil, fmt.Errorf("open logbook %s: %w", path, err)
 	}
 	return &Logbook{db: db}, nil
+}
+
+// openWait bounds when Open starts a retry on SQLITE_BUSY; one attempt may also wait out
+// busy_timeout, so Open gives up within about openWait plus 5 s.
+const openWait = 5 * time.Second
+
+// busy reports whether err is SQLite's SQLITE_BUSY, extended codes included.
+func busy(err error) bool {
+	var se *sqlite.Error
+	return errors.As(err, &se) && se.Code()&0xff == sqlite3.SQLITE_BUSY
 }
 
 // migrate brings the schema to version. A new file gets the table as it is now. A

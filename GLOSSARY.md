@@ -1,6 +1,6 @@
 # bees
 
-bees coordinates several coding-agent sessions (Claude Code today) working on one codebase: a queen hands out work to workers and they report back, all through a shared logbook.
+bees coordinates several harness sessions (Claude Code today) working on one codebase: a queen hands out work to workers and they report back, all through a shared logbook.
 
 ## Work
 
@@ -9,7 +9,7 @@ The codebase a queen and its workers work on, named in one word (`pymatgen-analy
 _Avoid_: repo, rig, workspace
 
 **Workspace**:
-The directory a worker works in and the herdr workspace opened on it, picked by `[workspace] kind`: a git worktree by default, or the main checkout (`none`), where the worker makes whatever its prompt asks for, such as a CitC client.
+The directory a worker works in and the herdr workspace opened on it, picked by `[workspace] kind`: a git worktree by default, or under `none` the dir the `init` hook makes (a CitC client), else the main checkout.
 _Avoid_: sandbox, clone. Not the project's own repo (see Project)
 
 **Bead**:
@@ -23,7 +23,7 @@ _Avoid_: milestone, story
 ## People and sessions
 
 **Harness**:
-The coding-agent program a session runs in (Claude Code, omp, agy). One per machine, picked by the global `harness` key; bs reaches it only through its harness adapter; herdr reports whether it runs (ADR-0009).
+The program a session runs in (Claude Code, omp, agy). One per machine, picked by the global `harness` key; bs reaches it only through its harness adapter; herdr reports whether it runs (ADR-0009).
 _Avoid_: agent, model, runtime
 
 **Keeper**:
@@ -84,7 +84,7 @@ _Avoid_: notify, wake, poke
 The author's earlier, private multi-session tool that bees replaces. Docs cite its commits (`crew 4f65cd8`) as the incidents a design or bake-off card came from; the repo isn't public.
 
 **omp**:
-Another coding-agent harness the author uses (oh-my-pi); its bs adapter is bees-12.8.
+Another coding-agent harness the author uses (oh-my-pi); its bs adapter is bees-12.8 (oh_my_pi harness adapter).
 
 **agy**:
-Google Antigravity's CLI, a harness the keeper uses; probed against the harness seams in bees-12.7.
+Google Antigravity's CLI, a harness the keeper uses; probed against the harness seams in bees-12.7 (agy probe); its adapter is bees-12.12 (agy harness adapter).

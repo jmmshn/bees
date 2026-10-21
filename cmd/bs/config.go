@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/jmmshn/bees/internal/config"
 	"github.com/jmmshn/bees/internal/project"
@@ -54,7 +55,27 @@ func cmdConfig(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 		if f.Scope != "both" {
 			limit = "; " + f.Scope + " file only"
 		}
-		fmt.Fprintf(stdout, "%s = %q  # %s%s\n", f.Key, f.Value, l.Sources[f.Key], limit)
+		fmt.Fprintf(stdout, "%s = %s  # %s%s\n", f.Key, tomlString(f.Value), l.Sources[f.Key], limit)
 	}
 	return nil
+}
+
+// tomlString quotes s as a TOML basic string; Go's %q writes escapes TOML lacks (\a, \v).
+// ponytail: invalid UTF-8 prints as U+FFFD, since TOML strings can't hold it.
+func tomlString(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range strings.ToValidUTF8(s, "\uFFFD") {
+		switch {
+		case r == '"' || r == '\\':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		case r < 0x20 || r == 0x7f:
+			fmt.Fprintf(&b, `\u%04X`, r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -84,13 +85,12 @@ func TestPrecedenceDefaultGlobalProjectEnv(t *testing.T) {
 		"worker.claude_code.model": {"sonnet", "project " + proj},
 		"queen.claude_code.model":  {"", "default"},
 	} {
-		got := ""
-		for _, f := range l.Fields() {
-			if f.Key == key {
-				got = f.Value
-			}
+		i := slices.IndexFunc(l.Fields(), func(f Field) bool { return f.Key == key })
+		if i < 0 {
+			t.Errorf("no setting %s", key)
+			continue
 		}
-		if got != want.val || l.Sources[key].String() != want.src {
+		if got := l.Fields()[i].Value; got != want.val || l.Sources[key].String() != want.src {
 			t.Errorf("%s = %q (%s), want %q (%s)", key, got, l.Sources[key], want.val, want.src)
 		}
 	}
@@ -116,7 +116,10 @@ func TestUnknownKeyNamesFileAndKeyPath(t *testing.T) {
 	global := filepath.Join(dir, "config.toml")
 	write(t, global, "[worker.claude_code]\nmdoel = \"opus\"\n[worker.oh_my_pi]\nmodel = \"x\"\n")
 	_, err := Load("bees")
-	wantErr(t, err, global+": unknown key worker.claude_code.mdoel", global+": unknown key worker.oh_my_pi.model")
+	wantErr(t, err, global+": unknown key worker.claude_code.mdoel", global+": unknown key worker.oh_my_pi")
+	if strings.Contains(err.Error(), "oh_my_pi.model") {
+		t.Errorf("error %q names each key of an unknown table, not just the table", err)
+	}
 }
 
 func TestWrongScopeKey(t *testing.T) {
@@ -194,7 +197,7 @@ func TestEverySettingIsTagged(t *testing.T) {
 		default:
 			t.Errorf("%s: scope %q", f.key, f.tag.Get("scope"))
 		}
-		if strings.Contains(f.key, "..") || strings.HasSuffix(f.key, ".") {
+		if strings.Contains(f.key, "..") || strings.HasPrefix(f.key, ".") || strings.HasSuffix(f.key, ".") {
 			t.Errorf("%s: a field has no toml tag", f.key)
 		}
 	}

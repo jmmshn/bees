@@ -69,3 +69,18 @@ func TestConfigErrorFailsAndNamesTheFile(t *testing.T) {
 		t.Errorf("stderr = %q, want %q", stderr.String(), want)
 	}
 }
+
+// A value TOML can't hold verbatim still prints as TOML that decodes back to it.
+func TestConfigQuotesValuesAsTOML(t *testing.T) {
+	configEnv(t)
+	want := "/odd\a\v\"q\\ dir"
+	t.Setenv("BS_REPOS", want)
+	var out, stderr bytes.Buffer
+	if code := run([]string{"config", "--project", "bees"}, strings.NewReader(""), &out, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	var parsed struct{ Paths struct{ Repos string } }
+	if _, err := toml.Decode(out.String(), &parsed); err != nil || parsed.Paths.Repos != want {
+		t.Errorf("paths.repos decodes to %q (%v), want %q:\n%s", parsed.Paths.Repos, err, want, out.String())
+	}
+}

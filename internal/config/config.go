@@ -14,6 +14,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	pr "github.com/jmmshn/bees/internal/project"
 )
 
 // Config is every setting bs reads. Its tables mirror the TOML tables. Each leaf is
@@ -117,7 +119,10 @@ func Load(project string) (*Loaded, error) {
 		return nil, err
 	}
 	l := &Loaded{Sources: map[string]Source{}}
-	return l, load(&l.Config, l.Sources, &l.Files, dir, project)
+	if err := load(&l.Config, l.Sources, &l.Files, dir, project); err != nil {
+		return nil, err
+	}
+	return l, nil
 }
 
 func load(dst any, src map[string]Source, files *[]File, dir, project string) error {
@@ -170,8 +175,13 @@ func decodeFile(root reflect.Value, src map[string]Source, file File) (bool, err
 		return true, fmt.Errorf("%s: %w", file.Path, err)
 	}
 	var errs []error
+	var unknown []string
 	for _, k := range md.Undecoded() {
-		errs = append(errs, fmt.Errorf("%s: unknown key %s", file.Path, k))
+		// An unknown table lists itself and then each key in it: name only the table.
+		if !slices.ContainsFunc(unknown, func(t string) bool { return strings.HasPrefix(k.String(), t+".") }) {
+			unknown = append(unknown, k.String())
+			errs = append(errs, fmt.Errorf("%s: unknown key %s", file.Path, k))
+		}
 	}
 	in, out := leaves(read.Elem(), ""), leaves(root, "")
 	for i, f := range in {
@@ -205,18 +215,12 @@ func misnamed(dir, project string) error {
 	var errs []error
 	for _, e := range entries {
 		stem, ok := strings.CutSuffix(e.Name(), ".toml")
-		if ok && stem != project && normalise(stem) == project {
+		if ok && stem != project && pr.Normalise(stem) == project {
 			errs = append(errs, fmt.Errorf("%s: bs never reads it; rename it to %s",
 				filepath.Join(dir, e.Name()), filepath.Join(dir, project+".toml")))
 		}
 	}
 	return errors.Join(errs...)
-}
-
-// normalise is project.Normalise (R27⁶), repeated because project will read config;
-// TestNormaliseMatchesProject keeps the two the same.
-func normalise(s string) string {
-	return strings.ToLower(strings.NewReplacer("-", "", "_", "").Replace(s))
 }
 
 func checkEnum(f leaf, val string) error {

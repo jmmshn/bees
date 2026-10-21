@@ -29,6 +29,9 @@ var (
 	ErrRunning = errors.New("worker is already running")
 	ErrOrphan  = errors.New("a herdr workspace is open on this worker's worktree but bs has no record of it")
 	ErrWaiting = errors.New("claude is waiting at a prompt") // started, but needs an answer in its pane
+	// ErrPaneBusy: herdr refused the start, typing nothing, because something other than the
+	// shell was in the pane's foreground.
+	ErrPaneBusy = errors.New("the pane isn't at an idle shell prompt")
 	// ErrUnconfirmed: herdr stopped waiting for the harness to be ready. It may be busy with
 	// its first prompt or may have exited: only finding its process in the pane can tell.
 	ErrUnconfirmed = errors.New("herdr could not confirm that the harness started")
@@ -655,7 +658,7 @@ func (f Fleet) launch(ctx context.Context, sp logbook.Spawn, st *Started, args [
 	defer cancel()
 	kick := make(chan struct{})
 	seen := watch(wctx, f.H, f.Procs, sp.Pane, f.Harness.Kind(), confirmWait, kick)
-	err := f.H.StartAgent(ctx, sp.Pane, sp.Name, f.Harness.Kind(), args...)
+	err := f.startAgent(ctx, sp.Pane, sp.Name, args)
 	close(kick) // herdr is done waiting: look now, not a poll later
 	switch {
 	case errors.Is(err, ErrWaiting):
@@ -745,6 +748,28 @@ func (f Fleet) protected(ctx context.Context, sp logbook.Spawn) bool {
 // counted from the launch, herdr's own wait included.
 // Claude's shows within about 3 s of launch (herdr 0.9.3, bees-1.14).
 var confirmWait = 20 * time.Second
+
+// startAgent is StartAgent, tried again while herdr finds the pane busy. A new pane's
+// shell runs its startup and prompt helpers (starship, mise) in the foreground for a
+// moment, and herdr refuses a start then without typing anything (agent_pane_busy, herdr
+// 0.9.5), so trying again can't start a twin (bees-12.33). Bounded by busyWait, well
+// inside confirmWait, which the start's watch is already counting (motif 15).
+func (f Fleet) startAgent(ctx context.Context, pane, name string, args []string) error {
+	deadline := time.Now().Add(busyWait)
+	for {
+		err := f.H.StartAgent(ctx, pane, name, f.Harness.Kind(), args...)
+		if !errors.Is(err, ErrPaneBusy) || time.Now().After(deadline) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(watchEvery):
+		}
+	}
+}
+
+var busyWait = 8 * time.Second
 
 // EndOpts says how far ending a worker may go.
 type EndOpts struct {

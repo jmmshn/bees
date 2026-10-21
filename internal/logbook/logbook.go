@@ -322,6 +322,7 @@ type Spawn struct {
 	// before bees-12.6 reads as harness.Default. Record is that harness's Launch.Record.
 	Harness string            `json:"harness,omitempty"`
 	Record  map[string]string `json:"record,omitempty"`
+	Path    []string          `json:"path,omitempty"` // bs spawn --path; none before bees-8.19
 }
 
 // RecordSpawn records that by spawned s.Name and, in the same transaction, sends it

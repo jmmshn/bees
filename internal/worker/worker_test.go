@@ -1627,7 +1627,8 @@ func pathOf(t *testing.T, start []string) string {
 }
 
 // bees-8.19: --path puts a build first on a worker's PATH, so a live test's workers run
-// the build under test. The spawn records it, and a restart reuses it.
+// the build under test. The spawn records it, and a restart or a respawn after an end
+// reuses it, as it does the label.
 func TestSpawnPathIsRecordedAndKeptOnRestart(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
@@ -1657,19 +1658,55 @@ func TestSpawnPathIsRecordedAndKeptOnRestart(t *testing.T) {
 	if _, err := r.fleet.Spawn(ctx, "bees-8", ""); err != nil {
 		t.Fatal(err)
 	}
-	if got := pathOf(t, r.h.started[2]); got != "" {
-		t.Errorf("a fresh spawn after end kept PATH dirs %q; --path is per spawn", got)
+	if got := pathOf(t, r.h.started[2]); got != bin {
+		t.Errorf("respawn after end: PATH dirs = %q, want the recorded %s", got, bin)
+	}
+	// An explicit --path after an end replaces it.
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	other := t.TempDir()
+	if res := r.fleet.SpawnAll(ctx, []worker.Request{{Bead: "bees-8", Path: []string{other}}}); res[0].Err != nil || pathOf(t, r.h.started[3]) != other {
+		t.Errorf("respawn with --path %s: err = %v", other, res[0].Err)
+	}
+}
+
+// A recorded --path dir that has gone (a live test's build removed) refuses the restart,
+// rather than quietly starting the worker on the shared bs.
+func TestRestartRefusesARecordedPathThatHasGone(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	bin := filepath.Join(t.TempDir(), "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if res := r.fleet.SpawnAll(ctx, []worker.Request{{Bead: "bees-8", Label: "spawn and end", Path: []string{bin}}}); res[0].Err != nil {
+		t.Fatal(res[0].Err)
+	}
+	r.h.exit("bees-8")
+	if err := os.Remove(bin); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.fleet.Spawn(ctx, "bees-8", ""); !errors.Is(err, worker.ErrBadPath) || len(r.h.started) != 1 {
+		t.Fatalf("err = %v, starts = %d; want ErrBadPath and no start", err, len(r.h.started))
 	}
 }
 
 func TestSpawnRefusesABadPathBeforeTouchingAnything(t *testing.T) {
 	ctx := context.Background()
 	file := filepath.Join(t.TempDir(), "bs")
-	odd := filepath.Join(t.TempDir(), "it's")
-	if err := errors.Join(os.WriteFile(file, nil, 0o755), os.Mkdir(odd, 0o755)); err != nil {
+	if err := os.WriteFile(file, nil, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range []string{"bin", filepath.Join(t.TempDir(), "missing"), file, odd, t.TempDir() + "/a:b"} {
+	var dirs []string
+	for _, c := range []string{"it's", "a:b", "$HOME", "a`b", "a\nb", `a"b`, `a\b`} {
+		d := filepath.Join(t.TempDir(), c)
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		dirs = append(dirs, d)
+	}
+	for _, p := range append([]string{"bin", filepath.Join(t.TempDir(), "missing"), file}, dirs...) {
 		r := newRig(t)
 		res := r.fleet.SpawnAll(ctx, []worker.Request{{Bead: "bees-8", Label: "spawn and end", Path: []string{p}}})
 		if !errors.Is(res[0].Err, worker.ErrBadPath) || !worker.Refused(res[0].Err) {

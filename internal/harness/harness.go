@@ -18,6 +18,10 @@ const Default = "claude_code"
 // ErrNotRunning means no live session has the name rung.
 var ErrNotRunning = errors.New("not running")
 
+// ErrBadPath means a Start.Path dir can't be used: the core's check (absolute, a
+// directory) or the adapter's own (a character its rendering can't hold) failed.
+var ErrBadPath = errors.New("not a --path dir")
+
 // Priority is when the receiving session acts on a ring.
 type Priority string
 
@@ -37,7 +41,7 @@ type Start struct {
 	Continue   bool              // resume the last conversation in Dir
 	Env        map[string]string // pinned for every process the session starts; nil for the queen, whose env is bs queen's
 	Guards     guards.Rules      // built by the core; zero for the queen
-	Path       []string          // dirs put first on the PATH of the session's shell commands (bs spawn --path); checked by the core
+	Path       []string          // absolute dirs put first on the PATH of the session's shell commands (bs spawn --path)
 }
 
 // Launch is what Prepare returns. Prepare is pure: the core writes each of Files (0600,

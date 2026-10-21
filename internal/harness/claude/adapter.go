@@ -2,6 +2,7 @@ package claude
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/jmmshn/bees/internal/config"
@@ -92,7 +93,11 @@ func workerSettings(st harness.Start) (string, error) {
 		"permissions": map[string][]string{"deny": deny},
 	}
 	if len(st.Path) > 0 {
-		s["hooks"] = map[string]any{"SessionStart": []any{map[string]any{"hooks": []any{pathHook(st.Path)}}}}
+		h, err := pathHook(st.Path)
+		if err != nil {
+			return "", err
+		}
+		s["hooks"] = map[string]any{"SessionStart": []any{map[string]any{"hooks": []any{h}}}}
 	}
 	b, err := json.Marshal(s)
 	return string(b), err
@@ -102,9 +107,14 @@ func workerSettings(st harness.Start) (string, error) {
 // sets that literally, without expanding $PATH, and bs can't know the pane's PATH. The
 // Bash tool sources CLAUDE_ENV_FILE after the shell profile, so the export builds on the
 // pane's PATH at each call (shape C of bees-8.19's probe, Claude Code 2.1.306). Hooks
-// themselves keep the pane's PATH. The core has checked each dir is absolute and holds no
-// quote, $, backslash, backtick, colon or newline, so it is safe inside both quotings.
-func pathHook(dirs []string) map[string]string {
+// themselves keep the pane's PATH. A dir with a quote, $, backslash, backtick, colon or
+// newline is refused: it would break out of one of the two quotings, or split PATH.
+func pathHook(dirs []string) (map[string]string, error) {
+	for _, d := range dirs {
+		if strings.ContainsAny(d, "'\"$\\`:\n") {
+			return nil, fmt.Errorf("%q: %w: claude_code can't quote a quote, $, backslash, backtick, colon or newline in it", d, harness.ErrBadPath)
+		}
+	}
 	export := `export PATH="` + strings.Join(dirs, ":") + `:$PATH"`
-	return map[string]string{"type": "command", "command": `echo '` + export + `' >> "$CLAUDE_ENV_FILE"`}
+	return map[string]string{"type": "command", "command": `echo '` + export + `' >> "$CLAUDE_ENV_FILE"`}, nil
 }

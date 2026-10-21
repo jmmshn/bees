@@ -2,10 +2,9 @@ package claude_test
 
 import (
 	"encoding/json"
-	"os"
+	"errors"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/jmmshn/bees/internal/config"
@@ -53,8 +52,15 @@ func TestPathGoesFirstOnTheBashToolsPath(t *testing.T) {
 	if want := a + ":" + b + ":/pane/bin:/usr/bin:/bin"; err != nil || string(got) != want {
 		t.Fatalf("PATH after the env file = %q, %v; want %q", got, err, want)
 	}
-	if b, _ := os.ReadFile(envFile); strings.Contains(string(b), "/usr/bin:/bin\"") {
-		t.Errorf("env file %q pins the hook's PATH, not the Bash tool's", b)
+}
+
+// The adapter owns its quoting: a dir its export can't hold is refused, never written.
+func TestPrepareRefusesADirTheExportCantQuote(t *testing.T) {
+	for _, d := range []string{"/a'b", `/a"b`, "/$HOME", "/a`b", `/a\b`, "/a:b", "/a\nb"} {
+		_, err := claude.New(config.ClaudeCode{}).Prepare(harness.Start{Role: prompt.Worker, Name: "bees-8", Path: []string{d}})
+		if !errors.Is(err, harness.ErrBadPath) {
+			t.Errorf("Path %q: err = %v, want ErrBadPath", d, err)
+		}
 	}
 }
 

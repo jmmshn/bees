@@ -37,7 +37,7 @@ var (
 	ErrNoLabel     = errors.New("a first spawn needs a label")
 	ErrBadLabel    = errors.New("not a valid label")
 	ErrLabelChange = errors.New("the worker is recorded with another label")
-	ErrBadPath     = errors.New("not a --path dir")
+	ErrBadPath     = harness.ErrBadPath
 	ErrPathChange  = errors.New("the worker is recorded with another --path")
 	ErrTwice       = errors.New("named twice in one spawn")
 	ErrNotStarted  = errors.New("not started: another worker in this spawn was refused")
@@ -62,11 +62,11 @@ func CheckLabel(label string) error {
 	return nil
 }
 
-// CheckPath refuses a --path dir that isn't an absolute path to a directory, or that holds
-// a character the claude_code adapter's PATH export can't quote: ' " $ \ ` : or a newline.
+// CheckPath refuses a --path dir that isn't an absolute path to an existing directory. The
+// harness refuses, in Prepare, a character it can't render.
 func CheckPath(dir string) error {
-	if !filepath.IsAbs(dir) || strings.ContainsAny(dir, "'\"$\\`:\n") {
-		return fmt.Errorf("%q: %w: want an absolute path with no quote, $, backslash, backtick, colon or newline", dir, ErrBadPath)
+	if !filepath.IsAbs(dir) {
+		return fmt.Errorf("%q: %w: not absolute", dir, ErrBadPath)
 	}
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 		return fmt.Errorf("%q: %w: not a directory", dir, ErrBadPath)
@@ -222,7 +222,8 @@ func (f Fleet) Spawn(ctx context.Context, bead, label string) (Started, error) {
 
 // Request asks SpawnAll for one worker. Path is put first on the PATH of the worker's
 // shell commands (bs spawn --path), so a live test's workers run the build under test
-// (bees-8.19). A restart reuses the recorded Path; a fresh spawn after an end does not.
+// (bees-8.19). Like the label, a nil Path reuses the recorded one, on a restart or after
+// an end; a restart refuses another.
 type Request struct {
 	Bead, Label string
 	Path        []string
@@ -315,9 +316,17 @@ func (f Fleet) check(ctx context.Context, req Request) (plan, error) {
 		return plan{}, err
 	}
 	p := plan{name: name, bead: bead, label: label, path: req.Path}
-	for _, d := range req.Path {
+	sp, ok, err := f.LB.LatestSpawn(ctx, name)
+	if err != nil {
+		return p, err
+	}
+	if p.path == nil && ok {
+		p.path = sp.Path
+	}
+	// The recorded dirs too: a build removed since would quietly start the shared bs.
+	for _, d := range p.path {
 		if err := CheckPath(d); err != nil {
-			return p, err
+			return p, fmt.Errorf("%s: %w", name, err)
 		}
 	}
 	// Check the launch line before anything is made, so a launch too long to type leaves
@@ -331,7 +340,7 @@ func (f Fleet) check(ctx context.Context, req Request) (plan, error) {
 	if _, err := Delivery(f.Delivery, f.Guards); err != nil {
 		return p, fmt.Errorf("%s: %w", name, err)
 	}
-	sp0 := logbook.Spawn{Name: name, Bead: bead, Worktree: f.worktree(name), Branch: name, Repo: f.P.Repo}
+	sp0 := logbook.Spawn{Name: name, Bead: bead, Worktree: f.worktree(name), Branch: name, Repo: f.P.Repo, Path: p.path}
 	protected := len(f.Guards.AllowMergeInto) > 0 && f.protected(ctx, sp0) // only a merge grant needs GitHub's word before anything is made
 	r, err := f.rules(ctx, sp0, protected)
 	if err != nil {
@@ -355,10 +364,6 @@ func (f Fleet) check(ctx context.Context, req Request) (plan, error) {
 		if err := CheckLabel(label); err != nil {
 			return p, err
 		}
-	}
-	sp, ok, err := f.LB.LatestSpawn(ctx, name)
-	if err != nil {
-		return p, err
 	}
 	if ok && !sp.Ended {
 		if label != "" && label != sp.Label {

@@ -14,7 +14,7 @@ func TestEachRoleNamesTheProjectAndItsJob(t *testing.T) {
 	shared := []string{"## Known pitfalls", "auto-mode permission denial", "control characters", "bs bead ls", "bs epic", "bs bead new --parent web2-N"}
 	for role, want := range map[prompt.Role][]string{
 		prompt.Queen:  {"queen-web2", "bs spawn --label", "--repo", "bs status", "bs end", "only after its PR is merged", "capture-pitfall", "never write \"keeper approved\"", "a push to another branch", "never edit, commit", "answer them yourself", "end your turn", "Never sleep-loop", "LABEL column of `bs status`", "never by a workspace id"},
-		prompt.Worker: {"bd show <bead>", "run: bs inbox", "bs send queen-web2", "done: <bead> PR #N", "Leave `bd close` to the queen", "Your branch is yours", "never force-push", "Never install anything onto PATH from your work", "\"this pane\", never a workspace id"},
+		prompt.Worker: {"bd show <bead>", "run: bs inbox", "bs send queen-web2", "bs done --pr <PR url>", "bs done --force", "Leave `bd close` to the queen", "Your branch is yours", "never force-push", "Never install anything onto PATH from your work", "\"this pane\", never a workspace id"},
 	} {
 		got := text(t, role)
 		for _, w := range append(shared, want...) {
@@ -123,16 +123,16 @@ func must(t *testing.T, r prompt.Role, workspace, delivery string) string {
 }
 
 // github_pr's fragment is the PR wording QUEEN.md and WORKER.md held before ADR-0009, word
-// for word, each line still in its own role's prompt only (bees-12.3).
+// for word but for bs done (bees-12.18), each line still in its own role's prompt only (bees-12.3).
 func TestGitHubPRDeliveryHoldsTheOldPRWording(t *testing.T) {
 	for role, lines := range map[prompt.Role][]string{
 		prompt.Worker: {
-			"Done: open a PR from your own branch (follow AGENTS.md's push rules), `bs send queen-web2 \"done: <bead> PR #N\"`, then stop.",
+			"Done: open a PR from your own branch (follow AGENTS.md's push rules), run `bs done --pr <PR url>`, then stop.",
 			"Leave `bd close` to the queen: it closes your bead once the PR is merged.",
 			"Your branch is yours: push to it whenever the work needs it, including new commits to your open PR, with no approval. Never push to main or any other branch, never force-push (merge main in instead), never merge or approve a PR.",
 		},
 		prompt.Queen: {
-			"A worker reports `done: <bead> PR #N`; that means \"ready for review\", and the bead stays open. Merges stay the keeper's. Close it with `bd close <bead>` only after its PR is merged, then `bs end` the worker.",
+			"A worker's `bs done` reaches your inbox as `done: <bead> PR <url>`, and `bs status` shows the PR in its DONE column; that means \"ready for review\", and the bead stays open. Merges stay the keeper's. Close it with `bd close <bead>` only after its PR is merged, then `bs end` the worker.",
 			"Deleting a stacked PR's base branch closes the PR above it → retarget first: `gh pr edit <n> --base main`.",
 		},
 	} {
@@ -172,7 +172,7 @@ func TestManualDeliveryMentionsNoPR(t *testing.T) {
 		if pr.MatchString(got) {
 			t.Errorf("manual %s prompt mentions %q", role, pr.FindString(got))
 		}
-		for _, w := range []string{"## Delivery", "done: <bead>", "`bd close`"} {
+		for _, w := range []string{"## Delivery", "bs done", "`bd close`"} {
 			if !strings.Contains(got, w) {
 				t.Errorf("manual %s prompt lacks %q", role, w)
 			}
@@ -213,7 +213,7 @@ func TestNoneWorkspaceMentionsNoBranchOrWorktree(t *testing.T) {
 	}
 	git := regexp.MustCompile(`your own branch|on this branch|this worktree|branch name|its last commit|bs prune`)
 	for role, want := range map[prompt.Role][]string{
-		prompt.Worker: {"## Workspace\n\nWorkers have no worktree and no branch", "Never switch branches, make a worktree", "lists the files you made or changed", "done: <bead>"},
+		prompt.Worker: {"## Workspace\n\nWorkers have no worktree and no branch", "Never switch branches, make a worktree", "lists the files you made or changed", "bs done --report"},
 		prompt.Queen:  {"workers share it", "touches no file", "leaving its files in the directory"},
 	} {
 		got := must(t, role, "none", manual)

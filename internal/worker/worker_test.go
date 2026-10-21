@@ -2419,9 +2419,10 @@ func TestEndAllGatesEachWorker(t *testing.T) {
 	}
 }
 
-// bees-12.15: a worker resumes and ends on the harness its spawn recorded, whatever the
-// config says now.
-func TestAResumeUsesTheRecordedHarness(t *testing.T) {
+// bees-12.15: a dead worker spawned on another harness than the configured one is not
+// resumed there (two harnesses in one fleet, ADR-0009): the refusal says how to restart it.
+// It still ends through the harness it was spawned on.
+func TestAWorkerOnAnotherHarnessEndsButIsNotResumed(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	r.fleet.Harness, r.fleet.HarnessName = fakeHarness{}, "fake_harness"
@@ -2430,16 +2431,18 @@ func TestAResumeUsesTheRecordedHarness(t *testing.T) {
 	}
 	r.h.exit("bees-8")
 	r.fleet.Harness, r.fleet.HarnessName = claude.New(config.ClaudeCode{}), "claude_code" // the config switched
+	if _, err := r.fleet.Spawn(ctx, "bees-8", ""); !errors.Is(err, worker.ErrHarnessChange) || !strings.Contains(err.Error(), "bs end it and spawn it again") || len(r.h.started) != 1 {
+		t.Fatalf("resume on another harness: %v (%d starts); want ErrHarnessChange and no start", err, len(r.h.started))
+	}
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{}); err == nil || !strings.Contains(err.Error(), "spawned on harness fake_harness") {
+		t.Fatalf("end with no adapter for the recorded harness: %v, want refused naming it", err)
+	}
 	asked := ""
 	r.fleet.HarnessOf = func(name string) (harness.Harness, error) { asked = name; return fakeHarness{}, nil }
-	if st, err := r.fleet.Spawn(ctx, "bees-8", ""); err != nil || !st.Resumed {
-		t.Fatalf("resume = %+v, %v", st, err)
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{}); err != nil || asked != "fake_harness" {
+		t.Fatalf("end = %v, asked %q; want it ended through fake_harness", err, asked)
 	}
-	if asked != "fake_harness" || r.h.kind != "fake" {
-		t.Fatalf("resumed on %q (kind %q), want the recorded fake_harness", asked, r.h.kind)
-	}
-	r.fleet.HarnessOf = nil
-	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{Force: true}); err == nil || !strings.Contains(err.Error(), "spawned on harness fake_harness") {
-		t.Fatalf("end with no adapter for the recorded harness: %v, want refused naming it", err)
+	if st, err := r.fleet.Spawn(ctx, "bees-8", ""); err != nil || st.Resumed {
+		t.Fatalf("spawn after the end = %+v, %v; want a fresh start on claude_code", st, err)
 	}
 }

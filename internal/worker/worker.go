@@ -42,10 +42,13 @@ var (
 	ErrLabelChange = errors.New("the worker is recorded with another label")
 	ErrBadPath     = harness.ErrBadPath
 	ErrPathChange  = errors.New("the worker is recorded with another --path")
-	ErrTwice       = errors.New("named twice in one spawn")
-	ErrNotStarted  = errors.New("not started: another worker in this spawn was refused")
-	ErrDirty       = errors.New("the worktree has modified or untracked files")
-	ErrNotOurs     = errors.New("the recorded workspace is open on another worktree")
+	// ErrHarnessChange: the worker was spawned on another harness than the configured
+	// one; resuming it there would run two harnesses in one fleet (ADR-0009).
+	ErrHarnessChange = errors.New("the worker was spawned on another harness")
+	ErrTwice         = errors.New("named twice in one spawn")
+	ErrNotStarted    = errors.New("not started: another worker in this spawn was refused")
+	ErrDirty         = errors.New("the worktree has modified or untracked files")
+	ErrNotOurs       = errors.New("the recorded workspace is open on another worktree")
 	// ErrHerdrDown: herdr didn't answer, so bs can't tell an open workspace from a gone one.
 	ErrHerdrDown = errors.New("herdr is unreachable")
 )
@@ -141,8 +144,8 @@ type Fleet struct {
 	ForeignRepo bool            // skip the check that the bead belongs to P (--repo)
 	Harness     harness.Harness // every start's, built from the worker role's config
 	HarnessName string          // its config name, recorded in each spawned entry
-	// HarnessOf builds the adapter of a recorded harness name, for a worker recorded under
-	// another harness than the configured one; nil: only the configured one.
+	// HarnessOf builds the adapter of a recorded harness name, to end a worker recorded
+	// under another harness than the configured one; nil: only the configured one.
 	HarnessOf     func(name string) (harness.Harness, error)
 	Delivery      config.Delivery // how work lands; a zero Kind is github_pr
 	Guards        config.Guards   // [guards]: what every worker is denied or granted
@@ -433,6 +436,9 @@ func (f Fleet) check(ctx context.Context, req Request) (plan, error) {
 		} else if alive {
 			return p, fmt.Errorf("%s: %w", name, ErrRunning)
 		}
+		if was, now := cmp.Or(sp.Harness, harness.Default), cmp.Or(f.HarnessName, harness.Default); was != now {
+			return p, fmt.Errorf("%s was spawned on harness %s, but the config says %s: %w; bs end it and spawn it again to start it afresh on %s, or set harness back to %s", name, was, now, ErrHarnessChange, now, was)
+		}
 		p.sp, p.resume = sp, true
 		return p, nil
 	}
@@ -595,10 +601,6 @@ func Delivery(d config.Delivery, g config.Guards) (string, error) {
 // claude --continue exits when there is no conversation.
 func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Started, error) {
 	st := Started{Name: sp.Name, Label: sp.Label, Workspace: sp.Workspace, Resumed: resume, Continued: resume && sp.Read}
-	f, err := f.on(sp)
-	if err != nil {
-		return st, err
-	}
 	// Read the delivery fragment before anything is made: an unreadable one stops the start.
 	delivery, err := Delivery(f.Delivery, f.Guards)
 	if err != nil {
@@ -641,8 +643,9 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 	return st, err
 }
 
-// on is f with sp's recorded harness: a resume or an end goes through the harness the
-// worker was spawned on, whatever the config says now (ADR-0009, bees-12.15).
+// on is f with sp's recorded harness: an end goes through the harness the worker was
+// spawned on, whatever the config says now (ADR-0009, bees-12.15). A resume on another
+// harness is refused instead (check: ErrHarnessChange).
 func (f Fleet) on(sp logbook.Spawn) (Fleet, error) {
 	name := cmp.Or(sp.Harness, harness.Default)
 	if name == cmp.Or(f.HarnessName, harness.Default) {

@@ -42,7 +42,7 @@ func adapter(cfg *config.Loaded, role config.Role) (harness.Harness, error) {
 
 // adapterFor is the adapter of harness name for role: the role's table when name is the
 // configured harness, else that harness with no settings (a table for an inactive harness
-// is a config error, so a worker recorded under it restarts on its defaults).
+// is a config error). Only ending a worker uses another harness's, for its Kind.
 func adapterFor(cfg *config.Loaded, role config.Role, name string) (harness.Harness, error) {
 	if name == cfg.Harness {
 		return adapter(cfg, role)
@@ -53,21 +53,25 @@ func adapterFor(cfg *config.Loaded, role config.Role, name string) (harness.Harn
 }
 
 // switched lists the live sessions of lb recorded under another harness than want: the
-// queen and every open spawn whose recorded process runs. While one does, a start on want
+// queen (unless queen is "") and every open spawn whose recorded process runs. While one does, a start on want
 // would put two harnesses in one fleet (ADR-0009: one machine runs one), so bs queen and
 // bs spawn refuse (exit 2), naming them.
 func switched(ctx context.Context, lb *logbook.Logbook, queen, want string) ([]string, error) {
 	var out []string
 	ps := newProcs()
-	if q, ok, err := lb.LatestQueen(ctx, queen); err != nil {
-		return nil, err
-	} else if ok && cmp.Or(q.Harness, harness.Default) != want {
-		alive, err := ps.Alive(proc.Process{PID: q.PID, Start: q.Start})
+	if queen != "" {
+		q, ok, err := lb.LatestQueen(ctx, queen)
 		if err != nil {
 			return nil, err
 		}
-		if alive {
-			out = append(out, fmt.Sprintf("%s (%s)", q.Name, cmp.Or(q.Harness, harness.Default)))
+		if ok && cmp.Or(q.Harness, harness.Default) != want {
+			alive, err := ps.Alive(proc.Process{PID: q.PID, Start: q.Start})
+			if err != nil {
+				return nil, err
+			}
+			if alive {
+				out = append(out, fmt.Sprintf("%s (%s)", q.Name, cmp.Or(q.Harness, harness.Default)))
+			}
 		}
 	}
 	live, err := lb.LiveSpawns(ctx)
@@ -98,6 +102,6 @@ func refuseSwitch(ctx context.Context, cmd string, lb *logbook.Logbook, queen, w
 	if len(others) == 0 {
 		return nil
 	}
-	fmt.Fprintf(stderr, "bs %s: the config says harness = %q, but these sessions still run on another: %s; bs end them (or set harness back) first: one fleet runs one harness\n", cmd, want, strings.Join(others, ", "))
+	fmt.Fprintf(stderr, "bs %s: the config says harness = %q, but these sessions still run on another: %s; bs end the workers and exit the queen first, or set harness back: one fleet runs one harness\n", cmd, want, strings.Join(others, ", "))
 	return exitCode(2)
 }

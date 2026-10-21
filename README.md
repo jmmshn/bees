@@ -152,9 +152,10 @@ sequenceDiagram
     participant P as bees-2-1 (idle)
 
     C->>L: bs send bees-2-1 "…"  (INSERT message)
-    C->>R: Find("bees-2-1")
-    R-->>C: pid, procStart, socket, token
-    Note over C,R: kept only if peerProtocol = 1,<br/>/proc/pid exists and its start time = procStart
+    C->>L: bees-2-1's newest started entry: pid, start time
+    C->>R: read <pid>.json only (AtPID)
+    R-->>C: name, procStart, socket, token
+    Note over C,R: rung only if the pid is alive with the recorded start time,<br/>procStart matches, the name is bees-2-1 and peerProtocol = 1
     C->>L: Unread("bees-2-1")
     C->>P: NDJSON: auth line (if token), then user line, then half-close
     Note over P: arrives as a prompt:<br/>[bs] 1 unread (queen-bees) — run: bs inbox
@@ -174,8 +175,8 @@ sequenceDiagram
 flowchart TD
     A["bs send &lt;to&gt; body"] --> B["INSERT message entry<br/>(BEGIN IMMEDIATE)"]
     B --> O["print: sent &lt;id&gt; to &lt;to&gt;"]
-    O --> F{"claude.Find(to)"}
-    F -- "no live session<br/>by that name" --> Q["print: queued; &lt;to&gt; is not running<br/>exit 0"]
+    O --> F{"to's recorded process<br/>(queen or started entry)<br/>alive with its start time?"}
+    F -- "no, or none recorded" --> Q["print: queued; &lt;to&gt; is not running<br/>exit 0"]
     F -- found --> U["Unread(to) → doorbell text"]
     U --> RG{"Ring(priority:<br/>--now ? now : next)"}
     RG -- ok --> D[exit 0]

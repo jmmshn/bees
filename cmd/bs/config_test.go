@@ -40,7 +40,7 @@ func TestConfigPrintsEveryKeyAsTOMLWithSource(t *testing.T) {
 		`paths.logbook_dir = "~/.local/share/bees"  # default`,
 		`paths.repos = ""  # default; global file only`,
 		`# global file: ` + filepath.Join(dir, "config.toml") + ` (missing)`,
-		`run on claude_code`,
+		`harness = "claude_code"  # default; global file only`,
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output lacks %q:\n%s", want, out.String())

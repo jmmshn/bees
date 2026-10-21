@@ -1,5 +1,6 @@
-// Package claude finds running Claude Code sessions in Claude's session registry and
-// rings them over their cross-session messaging socket (SPEC "Claude adapter").
+// Package claude is the claude_code harness (ADR-0009): it builds Claude Code's launch,
+// finds running sessions in Claude's session registry and rings them over their
+// cross-session messaging socket.
 package claude
 
 import (
@@ -7,26 +8,18 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/jmmshn/bees/internal/harness"
 	"github.com/jmmshn/bees/internal/proc"
 )
 
 // ErrNotRunning means no live session has that name.
-var ErrNotRunning = errors.New("not running")
-
-// Priority is when the receiving session acts on a ring.
-type Priority string
-
-const (
-	Now  Priority = "now"  // interrupt the current turn
-	Next Priority = "next" // after the current turn
-)
+var ErrNotRunning = harness.ErrNotRunning
 
 // Session is a live Claude Code session that accepts cross-session messages.
 type Session struct {
@@ -124,7 +117,7 @@ func Trusted(dir string) bool {
 
 // Ring sends text into s as a user prompt: an NDJSON auth line when s has a token, then
 // the user line, then a half-close. Claude sends no reply.
-func Ring(s Session, text string, p Priority) error {
+func Ring(s Session, text string, p harness.Priority) error {
 	c, err := net.DialTimeout("unix", s.Socket, 2*time.Second)
 	if err != nil {
 		return err

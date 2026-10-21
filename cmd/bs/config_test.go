@@ -252,4 +252,13 @@ func TestConfigShowsDeliveryAndTheEffectiveGuards(t *testing.T) {
 	if _, err := toml.Decode(out, &parsed); err != nil {
 		t.Errorf("output is not TOML: %v", err)
 	}
+	// Under github_pr a merge grant holds only where GitHub protects the default branch.
+	useFakeHive(t) // no GitHub
+	if err := os.WriteFile(proj, []byte("[guards]\nallow_merge_into = [\"pilot/*\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, _ = bs(t, "config", "--project", "bees")
+	if want := "# guards: unusable, so bs spawn refuses: guards.allow_merge_into: GitHub doesn't confirm the repo's default branch is protected"; !strings.Contains(out, want) {
+		t.Errorf("output lacks %q:\n%s", want, out)
+	}
 }

@@ -56,11 +56,15 @@ func DefaultBranches(heads ...string) []string {
 // github_pr, no force push, no push to a default branch, no merging or approving a PR;
 // under manual, no push to a default branch. g.AllowMergeInto lifts the default's
 // gh pr merge deny, since a deny glob can't see a PR's base: the classifier is told which
-// bases are allowed, and a glob that matches a default branch is an error. So only the
-// allow prose and branch protection keep a worker's merge off the default branch.
+// bases are allowed, and a glob that matches a default branch is an error. Branch
+// protection is then what keeps a worker's merge off the default branch, so the grant
+// fails closed: an error unless w.Protected (bees-12.13).
 func Build(d config.Delivery, g config.Guards, w Worker) (Rules, error) {
 	if len(g.AllowMergeInto) > 0 && d.Kind == "manual" {
 		return Rules{}, fmt.Errorf("guards.allow_merge_into: delivery.kind manual has no pull requests to merge")
+	}
+	if len(g.AllowMergeInto) > 0 && !w.Protected {
+		return Rules{}, fmt.Errorf("guards.allow_merge_into: GitHub doesn't confirm the repo's default branch is protected, and with gh pr merge allowed only that protection blocks a worker's merge into it; protect it (Settings → Branches), or drop allow_merge_into")
 	}
 	for _, glob := range g.Deny {
 		if glob == "" || strings.ContainsFunc(glob, unicode.IsControl) {

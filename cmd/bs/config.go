@@ -129,7 +129,11 @@ func printGuards(ctx context.Context, stdout io.Writer, p project.Project, l *co
 		fmt.Fprintln(stdout, "# guards: unknown until bs finds the repo, whose default branch they guard")
 		return
 	}
-	r, err := worker.Rules(ctx, p.Repo, l.Delivery, l.Guards, guards.Worker{Branch: "<worker>", Worktree: filepath.Join(p.Worktrees, "<worker>")})
+	w := guards.Worker{Branch: "<worker>", Worktree: filepath.Join(p.Worktrees, "<worker>"), Repo: p.Repo}
+	if len(l.Guards.AllowMergeInto) > 0 && l.Delivery.Kind != "manual" {
+		w.Protected = protected(ctx, p.Repo) // a merge grant holds only on a protected default branch
+	}
+	r, err := worker.Rules(ctx, p.Repo, l.Delivery, l.Guards, w)
 	if err != nil {
 		fmt.Fprintf(stdout, "# guards: unusable, so bs spawn refuses: %v\n", err)
 		return
@@ -162,4 +166,15 @@ func tomlString(s string) string {
 	}
 	b.WriteByte('"')
 	return b.String()
+}
+
+// protected reports GitHub's word that repo's default branch is protected; no GitHub, or
+// a gh failure, is no.
+func protected(ctx context.Context, repo string) bool {
+	g := newFleet(worker.Fleet{}).G
+	if g == nil {
+		return false
+	}
+	ok, err := g.Protected(ctx, repo)
+	return err == nil && ok
 }

@@ -108,9 +108,17 @@ func TestConfiguredDenyReplacesTheDefault(t *testing.T) {
 }
 
 // allow_merge_into lifts the merge deny for those bases and says so in prose, but never for
-// the default branch (bees-12.13).
+// the default branch, and only where GitHub protects it (bees-12.13).
 func TestAllowMergeIntoGrantsScopedMergesOnly(t *testing.T) {
-	r := build(t, "github_pr", config.Guards{AllowMergeInto: []string{"pilot/*"}})
+	if _, err := guards.Build(config.Delivery{Kind: "github_pr"}, config.Guards{AllowMergeInto: []string{"pilot/*"}}, w); err == nil || !strings.Contains(err.Error(), "protected") {
+		t.Errorf("a merge grant on an unprotected default branch: %v, want refused", err)
+	}
+	w := w
+	w.Protected = true
+	r, err := guards.Build(config.Delivery{Kind: "github_pr"}, config.Guards{AllowMergeInto: []string{"pilot/*"}}, w)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if denied(r, "gh pr merge 41") {
 		t.Error("allow_merge_into left gh pr merge denied")
 	}

@@ -1485,8 +1485,17 @@ func TestManualDeliveryNeverAsksGitHub(t *testing.T) {
 // refuses the spawn before a worktree or record is made.
 func TestBadDeliveryOrGuardsRefuseTheSpawnBeforeAnythingIsMade(t *testing.T) {
 	for name, set := range map[string]func(*worker.Fleet){
-		"missing fragment":       func(f *worker.Fleet) { f.Delivery.Fragment = "/nonexistent/cl.md" },
-		"merge into the default": func(f *worker.Fleet) { f.Guards.AllowMergeInto = []string{"ma*"} },
+		"missing fragment": func(f *worker.Fleet) { f.Delivery.Fragment = "/nonexistent/cl.md" },
+		"merge into the default": func(f *worker.Fleet) {
+			f.Guards.AllowMergeInto, f.G = []string{"ma*"}, fakeGitHub{protected: true}
+		},
+		// A merge grant fails closed: only branch protection keeps the merge off main.
+		"merge grant, main unprotected": func(f *worker.Fleet) {
+			f.Guards.AllowMergeInto, f.G = []string{"pilot/*"}, fakeGitHub{protected: false}
+		},
+		"merge grant, GitHub unreachable": func(f *worker.Fleet) {
+			f.Guards.AllowMergeInto, f.G = []string{"pilot/*"}, fakeGitHub{protected: true, err: errors.New("offline")}
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newRig(t)
@@ -1511,6 +1520,7 @@ func TestFragmentAndMergeGrantReachTheWorker(t *testing.T) {
 	}
 	r.fleet.Delivery.Fragment = frag
 	r.fleet.Guards.AllowMergeInto = []string{"pilot/*"}
+	r.fleet.G = fakeGitHub{protected: true}
 	deny, allow, text := spawnSettings(t, r)
 	if !strings.Contains(text, "## Delivery\n\nMail a CL.\n") || !strings.Contains(text, "`pilot/*`") || strings.Contains(text, "PR #N") {
 		t.Errorf("worker prompt:\n%s", text)

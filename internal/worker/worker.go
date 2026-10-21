@@ -305,7 +305,8 @@ func (f Fleet) check(ctx context.Context, bead, label string) (plan, error) {
 		return p, fmt.Errorf("%s: %w", name, err)
 	}
 	sp0 := logbook.Spawn{Name: name, Bead: bead, Worktree: f.worktree(name), Branch: name, Repo: f.P.Repo}
-	r, err := f.rules(ctx, sp0, false)
+	protected := len(f.Guards.AllowMergeInto) > 0 && f.protected(ctx, sp0) // only a merge grant needs GitHub's word before anything is made
+	r, err := f.rules(ctx, sp0, protected)
 	if err != nil {
 		return p, fmt.Errorf("%s: %w", name, err)
 	}

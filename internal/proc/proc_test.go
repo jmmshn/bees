@@ -86,3 +86,15 @@ func TestDescendantsFindsAGrandchild(t *testing.T) {
 		t.Fatalf("Descendants(sleep) = %v, %v; want none", ds, err)
 	}
 }
+
+// Age of a process just started is small, and of this test about its run time.
+func TestAgeOfAFreshProcess(t *testing.T) {
+	c := exec.Command("sleep", "5")
+	if err := c.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Process.Kill(); _ = c.Wait() })
+	if a, err := proc.Age(c.Process.Pid); err != nil || a < -time.Second || a > 3*time.Second {
+		t.Fatalf("Age(fresh) = %s, %v", a, err)
+	}
+}

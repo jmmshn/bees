@@ -63,14 +63,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if cmd, ok := commands[args[0]]; ok {
 		warnIfStale(context.Background(), stderr)
 		var code exitCode
-		switch err := cmd(context.Background(), args[1:], stdin, stdout, stderr); {
+		switch err := cmd(withMemo(context.Background()), args[1:], stdin, stdout, stderr); {
 		case errors.As(err, &code): // the command already said why
 			return int(code)
 		case errors.Is(err, errHelp):
 			return 0
 		case errors.Is(err, errUsage):
 			return 2
-		case errors.Is(err, project.ErrNoSession), errors.Is(err, project.ErrNoProject), errors.Is(err, project.ErrWrongProject), errors.Is(err, errNoLogbook):
+		case errors.Is(err, project.ErrNoSession), errors.Is(err, project.ErrNoProject), errors.Is(err, errNoLogbook):
 			fmt.Fprintf(stderr, "bs %s: %v\n", args[0], err)
 			return 2
 		case err != nil:

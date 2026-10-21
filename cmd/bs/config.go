@@ -38,7 +38,7 @@ func cmdConfig(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 	case !errors.Is(err, project.ErrNoProject):
 		return err
 	}
-	l, err := settings("config", name)
+	l, err := config.Load(name)
 	if err != nil {
 		return err
 	}
@@ -55,7 +55,7 @@ func cmdConfig(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 		fmt.Fprintf(stdout, "# %s file: %s%s\n", f.Scope, f.Path, missing)
 	}
 	if os.Getenv("BS_LOGBOOK_DIR") != "" {
-		fmt.Fprintf(stdout, "# BS_LOGBOOK_DIR is set, so %s and %s skip both files\n", strings.Join(skipsFiles[:len(skipsFiles)-1], ", "), skipsFiles[len(skipsFiles)-1])
+		fmt.Fprintln(stdout, "# BS_LOGBOOK_DIR is set: it beats paths.logbook_dir in this shell, never in a herdr pane bs recorded, and bs queen and bs spawn refuse a logbook outside the global paths.logbook_dir")
 	}
 	if name != "" {
 		p, err := locate(name, l, "")

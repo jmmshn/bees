@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"os"
@@ -16,12 +17,12 @@ import (
 func started(t *testing.T, name string, running bool) {
 	t.Helper()
 	ctx := context.Background()
-	lb, err := logbook.Open(ctx, os.Getenv("BS_LOGBOOK"))
+	lb, err := logbook.Open(ctx, cmp.Or(os.Getenv("BS_LOGBOOK"), fleetLogbook(t)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer lb.Close()
-	id, err := lb.RecordSpawn(ctx, "queen", logbook.Spawn{Name: name, Bead: name}, "")
+	id, err := lb.RecordSpawn(ctx, "queen", logbook.Spawn{Name: name, Bead: name, Pane: "w-" + name + ":p1"}, "")
 	if err != nil {
 		t.Fatal(err)
 	}

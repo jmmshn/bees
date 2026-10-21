@@ -58,7 +58,8 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return err
 	}
 	// A guard every spawn would refuse stops the queen too, not her first spawn (bees-12.20).
-	// Only configured guards can fail; the defaults always build.
+	// Only configured guards can fail, and the check reads the repo's git: the defaults
+	// always build, so they skip it.
 	if len(cfg.Guards.Deny) > 0 || len(cfg.Guards.AllowMergeInto) > 0 {
 		if _, err := workerGuards(ctx, p, cfg); err != nil {
 			return fmt.Errorf("%w; bs spawn would refuse every worker", err)

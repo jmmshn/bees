@@ -138,7 +138,7 @@ type Fleet struct {
 	Delivery      config.Delivery // how work lands; a zero Kind is github_pr
 	Guards        config.Guards   // [guards]: what every worker is denied or granted
 	WorkspaceKind string          // the workspace kind of a first spawn: GitWorktree ("" too) or NoWorkspace
-	Path          []string        // worker.path: a new worker's Path when its Request has none
+	DefaultPath   []string        // worker.path: a new or ended worker's Path when its Request has none
 }
 
 // kind is f's delivery kind; a Fleet built without config is github_pr, the default.
@@ -245,7 +245,8 @@ func (f Fleet) Spawn(ctx context.Context, bead, label string) (Started, error) {
 // Request asks SpawnAll for one worker. Path is put first on the PATH of the worker's
 // shell commands (bs spawn --path), so a live test's workers run the build under test
 // (bees-8.19). Like the label, a nil Path reuses the recorded one, on a restart or after
-// an end, else takes Fleet.Path; a restart refuses another.
+// an end; a new worker, or an ended one recorded without one, takes Fleet.DefaultPath. A
+// restart refuses another.
 type Request struct {
 	Bead, Label string
 	Path        []string
@@ -346,7 +347,7 @@ func (f Fleet) check(ctx context.Context, req Request) (plan, error) {
 		p.path = sp.Path
 	}
 	if p.path == nil && (!ok || sp.Ended) { // a live worker keeps what it was recorded with
-		p.path = f.Path
+		p.path = f.DefaultPath
 	}
 	// The recorded dirs too: a build removed since would quietly start the shared bs.
 	for _, d := range p.path {

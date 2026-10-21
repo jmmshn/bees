@@ -1738,11 +1738,11 @@ func TestConfiguredPathIsTheDefaultForNewWorkers(t *testing.T) {
 		t.Fatal(res[0].Err)
 	}
 	r.h.exit("bees-8")
-	r.fleet.Path = []string{t.TempDir()}
+	r.fleet.DefaultPath = []string{t.TempDir()}
 	if res := r.fleet.SpawnAll(ctx, []worker.Request{{Bead: "bees-8"}}); res[0].Err != nil || pathOf(t, r.h.started[1]) != "" {
 		t.Fatalf("restart of a worker recorded without a path: err = %v, started = %q", res[0].Err, r.h.started[1])
 	}
-	bin := r.fleet.Path[0]
+	bin := r.fleet.DefaultPath[0]
 	if res := r.fleet.SpawnAll(ctx, []worker.Request{{Bead: "bees-9", Label: "new one"}}); res[0].Err != nil {
 		t.Fatal(res[0].Err)
 	}

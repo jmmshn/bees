@@ -139,6 +139,29 @@ func (c caller) setLogbook(p *project.Project, stderr io.Writer) {
 	p.Logbook = lb
 }
 
+// paneHint says why a command in a recorded pane acts on the pane's project while the
+// working directory is another project's repo (bees-12.43): the pane decides, so "run bs
+// inside the repo" can't help. "" when that isn't the case.
+func paneHint(ctx context.Context, p project.Project) string {
+	c, err := whoCalls(ctx, nil)
+	if err != nil || !c.inPane || c.Project != p.Name {
+		return ""
+	}
+	if git := project.InGit(); git != "" && git != p.Name {
+		return fmt.Sprintf("this herdr pane is %s's, in project %s, though you are in project %s's repo: pass --project %s to act there", c.Name, p.Name, git, git)
+	}
+	return ""
+}
+
+// needRepo is p.NeedRepo, saying when the pane's project isn't the repo's bs runs in.
+func needRepo(ctx context.Context, p project.Project) error {
+	err := p.NeedRepo()
+	if h := paneHint(ctx, p); err != nil && h != "" {
+		return fmt.Errorf("%w; %s", err, h)
+	}
+	return err
+}
+
 // me is the session running bs, and the caller it found. Inside a recorded pane it is the
 // pane's, and an --as naming anyone else is refused (the sender's identity, bees-7.4); an
 // inherited BS_SESSION that disagrees is ignored, with a warning. Outside one, project.Me

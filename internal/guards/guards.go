@@ -64,6 +64,9 @@ func match(glob, s string) bool {
 // branch (bees-1.51).
 type Worker struct {
 	Branch, Worktree, Repo string
+	// Dir is the directory of a worker with no worktree or branch (workspace kind none),
+	// opened on the repo; "" for a worktree.
+	Dir string
 	// Protected is GitHub's word that the default branch is protected. Only then does the
 	// environment say the keeper merges by hand: unchecked, that claim would relax a
 	// classifier on pushes (bees-7.4).
@@ -113,6 +116,19 @@ func Build(d config.Delivery, g config.Guards, w Worker) (Rules, error) {
 				return Rules{}, fmt.Errorf("guards.allow_merge_into %q matches the default branch %s, which a worker may never merge into", glob, b)
 			}
 		}
+	}
+	if w.Dir != "" { // kind none: no worktree or branch to describe or grant, only the denies
+		if len(g.AllowMergeInto) > 0 {
+			return Rules{}, fmt.Errorf("guards.allow_merge_into: workspace.kind none gives a worker no branch, so no pull request of its own to merge")
+		}
+		r := Rules{Deny: slices.Clone(g.Deny), Environment: []string{fmt.Sprintf("Host containment: a bees worker, working in the directory %s for the repository %s.", w.Dir, w.Repo)}, Allow: []string{
+			fmt.Sprintf("Running this repository's own build, lint and test commands inside the directory %s.", w.Dir),
+			"Running bs and bd, the bees tools, to read and send its project's messages and to read and update its own beads.",
+		}}
+		if len(r.Deny) == 0 {
+			r.Deny = pushes(w.DefaultBranches, d.Kind != "manual")
+		}
+		return r, nil
 	}
 	env := fmt.Sprintf("Host containment: a bees worker, working in its own git worktree %s on its own branch %s of the repository %s.", w.Worktree, w.Branch, w.Repo)
 	if w.Protected && d.Kind != "manual" {

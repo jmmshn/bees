@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 )
 
 // Process is a process as bs records it: a pid is only that process while its start time
@@ -24,14 +25,23 @@ type Background struct {
 	Ports   []int  `json:"ports,omitempty"` // TCP ports it listens on
 }
 
-// String is the process as bs lists it: pid, command and any listening port.
+// String is the process as bs lists it on one line: pid, command and any listening port.
+// The command is cut to commandWidth: a harness's shell wrapper runs to many lines
+// (Claude's sources a snapshot before the tool call's own command).
 func (b Background) String() string {
-	s := fmt.Sprintf("pid %-6d %s", b.PID, b.Command)
+	c := []rune(strings.Join(strings.Fields(b.Command), " "))
+	if len(c) > commandWidth {
+		c = append(c[:commandWidth-1], '…')
+	}
+	s := fmt.Sprintf("pid %-6d %s", b.PID, string(c))
 	for _, p := range b.Ports {
 		s += fmt.Sprintf("   listening :%d", p)
 	}
 	return s
 }
+
+// commandWidth bounds the command Background.String shows.
+const commandWidth = 100
 
 // descendants returns the processes below root in a table of every process and its parent,
 // level by level: children, then grandchildren.

@@ -138,3 +138,13 @@ func TestAgeOfAFreshProcess(t *testing.T) {
 		t.Fatalf("Age(fresh) = %s, %v", a, err)
 	}
 }
+
+// A background process lists on one line, its command cut: Claude's shell wrapper runs to
+// several lines and hundreds of characters (live test, bees-12.18).
+func TestBackgroundListsOnOneLine(t *testing.T) {
+	b := proc.Background{Process: proc.Process{PID: 42}, Command: "/usr/bin/zsh -c source snap.sh\n: && " + strings.Repeat("x", 200), Ports: []int{8000}}
+	got := b.String()
+	if strings.Contains(got, "\n") || !strings.HasPrefix(got, "pid 42     /usr/bin/zsh -c source snap.sh : && x") || !strings.HasSuffix(got, "x…   listening :8000") {
+		t.Fatalf("String = %q", got)
+	}
+}

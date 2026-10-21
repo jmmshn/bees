@@ -104,7 +104,7 @@ What `claude_code` does, and the code that moves behind it (bees-12.6):
 | Method | claude_code | Today in |
 |---|---|---|
 | `Kind` | `claude` | `HerdrCLI.StartClaude` |
-| `Prepare` | `--settings` file (crossSessionInbound, env, autoMode, permissions.deny), `--name`, `--append-system-prompt-file`, `--model=`, `--continue` | `worker.workerSettings`, `Fleet.launch`, `cmd/bs/queen.go` |
+| `Prepare` | `--settings` file (crossSessionInbound, autoMode, permissions.deny), `--name`, `--append-system-prompt-file`, `--model=`, `--continue` | `worker.workerSettings`, `Fleet.launch`, `cmd/bs/queen.go` |
 | `Ring` | `~/.claude/sessions/<pid>.json` → socket and `.key` token, then NDJSON | `claude.Ring`, `claude.Find`, `bs send` |
 | (cleanup, core) | `<name>-*` in the cache dir | `bs end`, `Fleet.start` |
 | (to the core: herdr) | liveness and identity | `claude.List`, `ClaudeSessions`, `bs status`, `project.registered` |
@@ -130,7 +130,7 @@ What `claude_code` does, and the code that moves behind it (bees-12.6):
 - `harness` is a top-level key, global file only, enum of the built-in adapters, default `claude_code`. It names the harness new sessions start on, and one machine runs one (keeper, 2026-10-21).
 - Only the active harness's tables are valid. `[worker.oh_my_pi]` with `harness = "claude_code"` is an error naming the file, the table and the `harness` key.
 - Each `spawned` and `queen` entry records the harness. Ringing and teardown use the recorded harness, whatever the config says now (motif 12), and the skip-list commands (ADR-0008) know it without reading the files.
-- `bs queen` and `bs spawn` refuse (exit 2) when the project has a live session recorded under another harness, naming the sessions to `bs end`. `bs end`, `send`, `inbox` and `status` never refuse on a switch. Each project checks on its own next start; bs scans no other project's logbook.
+- `bs queen` and `bs spawn` refuse (exit 2) when the project has a live session recorded under another harness, naming the sessions to `bs end`. `bs end`, `send`, `inbox` and `status` never refuse on a switch. Each project checks on its own next start; this check reads no other project's logbook.
 
 ## Workspace and delivery are config, not ports
 
@@ -157,30 +157,35 @@ The name is still one forward function of the bead (`bees-12.3` → `bees-12-3`)
 
 Keeper decisions, 2026-10-21 (bees-12.16), after the stage beads were filed. They change the text above in place; this section holds the detail.
 
-**1. Identity comes from the pane; bs pins no env.** A session's identity is `HERDR_PANE_ID` (herdr sets it in every pane) → the open `spawned` or `queen` entry that recorded that pane → its project and name. The logbook directory is the global file's `paths.logbook_dir`, so every process reads the same one.
+**1. Identity comes from the pane; bs pins no env.** A session's identity is `HERDR_PANE_ID` (herdr sets it in every pane) → the entry that recorded that pane → its project and name. The logbook directory is the global file's `paths.logbook_dir`, so every process reads the same one.
 
 ```text
-pane = $HERDR_PANE_ID                              # unset: not a session bs started
-dir  = global config paths.logbook_dir             # never the project file, never env
-for db in dir/*.db (read only, no create, no migrate):
-    open spawned/queen entries whose data.pane = pane
-one match → its project and name, then the liveness check (worker: herdr name; queen: pid + start)
-none      → not a recorded pane: --project, BS_PROJECT, git, paths.repo as before
-two+      → keep those that pass the liveness check; still two+ → error naming both (motif 4)
+pane = $HERDR_PANE_ID                    # unset: not a session bs started
+dir  = global config paths.logbook_dir   # never the project file, never env
+for db in dir/*.db, opened read only (no DDL, no WAL switch, no migration):
+    candidates: open spawned entries with data.pane = pane,
+                and the newest queen entry if its pane = pane
+    any db that can't be opened or read → error naming the file (fail closed, SEC-2)
+keep the candidates whose session is the pane's agent now:
+    worker: herdr names it, or (not yet renamed) the pane's agent is Kind() and this is the newest open spawn
+    queen:  her recorded pid is alive with its recorded start time
+one  → its project and name
+none → not a recorded pane: --project, BS_PROJECT, git, paths.repo, and --as, BS_SESSION, as before
+two+ → error naming both (motif 4)
 ```
 
-- **The scan, not an index.** A machine holds tens of logbooks, each opened read only in about a millisecond. An index would be a second truth (motif 1); if the scan ever gets slow, one can be added as a rebuildable projection, as ADR-0002 allows for unread.
+- **The scan, not an index.** A machine holds tens of logbooks, each opened read only in about a millisecond. An index would be a second truth (motif 1); if the scan ever gets slow, one can be added as a rebuildable projection, as ADR-0002 allows for unread. The migration's copy aside is named `<project>.db.pre-<version>`, so the scan never reads it.
 - **`paths.logbook_dir` becomes global only** (amends ADR-0008): a project file's value would put that project's logbook where no pane scan looks.
-- **Inside a recorded pane the pane decides.** An inherited `BS_LOGBOOK`, `BS_LOGBOOK_DIR` or `BS_PROJECT` (herdr's server env, a keeper's shell) is ignored with a warning when it disagrees, which is what the pins used to guard. `send`, `inbox` and `done` refuse a `--project` naming another project, as they refuse `--as`; read-only commands (`bead ls`, `status`) may read another one.
-- **`BS_LOGBOOK`, `BS_LOGBOOK_DIR` and `BS_PROJECT` stay for processes the keeper starts by hand** outside a recorded pane: tests, scripts, a one-off `bs send`, a copied logbook. `bs queen` and `bs spawn` refuse (exit 2) when the logbook they resolve is not `<global logbook_dir>/<project>.db`, since the fleet's panes could never find it.
-- **The skip list** (ADR-0008: `send`, `inbox`, `status`, `bead`, `epic`, `version`) is keyed on `BS_LOGBOOK_DIR`, which sessions no longer carry. Inside a herdr pane those commands read only the global file's `paths.logbook_dir`: an error in that key or a TOML syntax error fails them, an error anywhere else doesn't.
-- **When herdr is down,** the recorded pane alone names the session, with a warning: the scan needs only the env var and the logbooks.
+- **Inside a recorded pane the pane decides.** An inherited `BS_LOGBOOK`, `BS_LOGBOOK_DIR`, `BS_PROJECT` or `BS_SESSION` (herdr's server env, a keeper's shell) is ignored, with a warning when it disagrees: that is what the pins used to guard. `send`, `inbox` and `done` refuse a `--project` naming another project, as they refuse `--as`, since the pane names no one there; read-only commands (`bead ls`, `status`) may read another one.
+- **Those variables stay for processes the keeper starts by hand** outside a recorded pane: tests, scripts, a one-off `bs send`, a copied logbook. `bs queen` and `bs spawn` refuse (exit 2) when the logbook they resolve is not `<global logbook_dir>/<project>.db`, since the fleet's panes would never find it. `bs queen` keeps dropping inherited `BS_*` from the env it execs with.
+- **The skip list** (ADR-0008: `send`, `inbox`, `status`, `bead`, `epic`, `version`, now also `done`) was keyed on `BS_LOGBOOK_DIR`, which sessions no longer carry. With `HERDR_PANE_ID` set, those commands read only the global file's `paths.logbook_dir`, and skip the project file once the pane is found. A global file they can't read falls back, with a warning, to the default `~/.local/share/bees`: a pane found there is right, and a pane found nowhere is an error, never a new logbook. A pane not recorded anywhere reads the files as any command does.
+- **When herdr is down,** a worker counts if its newest `started` entry's pid is alive with its recorded start time (no herdr needed), the queen as above; a warning says so. A pane with no live recorded process names no one, so a pane id reused after a herdr restart names no one (T4).
 
 What bees-11.3 shipped that goes: the `env` block in a worker's `--settings` (`BS_PROJECT`, `BS_LOGBOOK_DIR`, `BS_LOGBOOK=""`, in `worker.workerSettings`), `Project.LogbookDir` and its spawn refusal for a `BS_LOGBOOK` not named `<project>.db` (replaced by the refusal above), and the skip list's `BS_LOGBOOK_DIR` trigger (replaced above). `bs config`'s note when `BS_LOGBOOK_DIR` is set stays. R46's `BS_PROJECT` pin goes too: a `--repo` worker's project is the one whose logbook recorded its pane. Never built, now dropped: `Start.Env`, the `BS_SESSION` and `BS_HARNESS` pins (bees-12.10), the `git worktree add` plus `workspace create --env` path for a harness with no native pin (bees-12.5), and omp's and agy's env file (bees-12.8, 12.12). Every `git_worktree` worker opens with `herdr worktree create` and nests; `none` opens with `workspace create --cwd` and no `--env`.
 
-**2. `bs done` is a logbook entry.** `bs done --pr <url>` or `bs done --report <text>` (one is required; the delivery fragment says which) writes a `done` entry: actor the worker, subject its queen, ref its open `spawned` entry, data `{bead, pr}` or `{bead, report}`. It replaces the free-text `done: <bead> PR #N` message. Unread widens from messages to messages and `done` entries addressed to me with no receipt from me (amends ADR-0002), so the queen's `bs inbox` shows it and `bs done` rings her like a send. `bs status` shows the newest `done` since the open spawn. A second `bs done` (an amended PR) is a new entry, and the newest wins. `bs done` refuses outside a recorded pane and while the gate below finds background work. Closing the bead stays with the queen or keeper (motif 5).
+**2. `bs done` is a logbook entry.** `bs done --pr <url>` or `bs done --report <text>` (one is required; the delivery fragment says which) writes a `done` entry: actor the worker, subject its queen, ref its open `spawned` entry, data `{bead, pr}` or `{bead, report}`. It replaces the free-text `done: <bead> PR #N` message, and rings the queen as a send does. Unread widens from messages to messages and `done` entries addressed to me with no receipt from me (amends ADR-0002); a `done` stays unread after its worker has ended, unlike a message to a worker. `bs status` shows the newest `done` since the open spawn. A second `bs done` (an amended PR) is a new entry, and the newest wins. `bs done` refuses outside a recorded pane and while the gate below refuses. Closing the bead stays with the queen or keeper (motif 5).
 
-**3. The background-work gate, for every harness.** Once a start is confirmed Live, bs records a `started` entry (ref the `spawned` entry): the agent's pid and start time, from `herdr pane process-info --pane <recorded pane>` (the foreground process whose name is `Kind()`; herdr 0.9.5 also gives `shell_pid` and `foreground_process_group_id`), and the baseline: every descendant of that pid as (pid, start time). At `bs done` and `bs end`, a live descendant that isn't in the newest `started` baseline, and isn't the calling `bs` or one of its ancestors, is background work. Both refuse, listing each one's pid, command and any TCP port it listens on:
+**3. The background-work gate, for every harness.** At the first moment herdr reports the pane's agent as `Kind()` (before the start is confirmed, so the doorbell's first tool calls are not yet running), bs records a `started` entry (ref the `spawned` entry): the agent's pid and start time, from `herdr pane process-info --pane <pane>` (the foreground process named `Kind()`; herdr 0.9.5 also gives `shell_pid` and `foreground_process_group_id`), and the baseline, every descendant of that pid as (pid, start time). Each start writes its own; the gate reads the newest since the open spawn. At `bs done` and `bs end`, a descendant of the recorded pid (alive with its recorded start time; no herdr call, so a moved pane still works) that isn't in the baseline, isn't the calling `bs` or one of its ancestors, and is still alive in a second read 1 s later (a hook or statusline command is gone by then) is background work. Both refuse (exit 5), listing each one's pid, command and any TCP port it listens on:
 
 ```text
 bs end: bees-12-3 still runs background work; bs end --force ends it anyway
@@ -188,17 +193,17 @@ bs end: bees-12-3 still runs background work; bs end --force ends it anyway
   pid 41910  go test ./...
 ```
 
-- Descendants are found by parent pid, not by the pane's tty: Claude runs each Bash call in a new session with no controlling tty (probed, Claude Code 2.1.306). Linux reads `/proc/*/stat`; macOS uses `/bin/ps` (R47). Ports come from `/proc/<pid>/fd` socket inodes matched to LISTEN rows in `/proc/net/tcp{,6}`, else `lsof` by absolute path (from bees-6.10's plan).
-- A process that detaches (`setsid` plus a double fork, `nohup … &` from a shell that exits) is reparented away and escapes the walk. The gate catches the common cases, a backgrounded tool call or a server the agent started; it is a speed bump, like the guards.
-- A helper the harness starts after Live (a lazily started MCP server) shows as new; the stage bead probes each harness for these before shipping.
-- Bounded (motif 15): the herdr call and the walk share one deadline (5 s). Any error, a missing `started` entry included, fails closed (motif 7) with its own exit code and message, "bs can't check for background work: …", never the refusal above and never "none".
-- `bs end --force` overrides both refusals; the queen asks the keeper first (`QUEEN.md`). `bs done` has no `--force`: the worker stops its background work, or reports a check error to the queen, who can end it.
+- Descendants are found by parent pid, not by the pane's tty: Claude runs each Bash call in a new session with no controlling tty (probed, Claude Code 2.1.306). Linux reads `/proc/*/stat`; macOS uses `/bin/ps` (R47). Ports come from `/proc/<pid>/fd` socket inodes matched to LISTEN rows in `/proc/net/tcp{,6}`, else `lsof` by absolute path (bees-6.10's plan).
+- **Misses.** A process that detaches (`setsid` plus a double fork, `nohup … &` from a shell that exits) is reparented away and escapes the walk, and work started before the baseline read is in the baseline. The gate catches the common cases, a backgrounded tool call or a server the agent started; it is a speed bump, like the guards.
+- **False alarms.** A helper the harness starts after the baseline (a lazily started MCP server) or a sibling tool call still running shows as new. The gate's stage bead probes each harness for helpers before shipping; the listing names them, so the queen can judge.
+- **Bounded and fail closed.** The walk and the port read share one 5 s deadline (motif 15). Any error, including no `started` entry or a recorded pid that is gone, refuses with its own exit code (6) and message, "bs can't check for background work: …", never the refusal above and never "none" (motif 7).
+- **Overrides.** `bs end --force` overrides both refusals; the queen asks the keeper first (`QUEEN.md`). `bs done --force` writes the entry anyway with the pids it found in its data, so a false alarm never blocks a report (motif 5) and the queen sees what was running. `bs end --all` gates each worker on its own: it ends those that pass and lists the rest, as it does for a dirty worktree. The gate covers workers; the queen has none of their descendants.
 
 This supersedes bees-6.10's port-only check.
 
-**4. No `init` or `finalize` hooks.** `none` opens on `paths.repo`, a directory the keeper made (a CitC client). Hooks come later, if ever.
+**4. No `init` or `finalize` hooks.** `none` opens on `paths.repo`, a directory the keeper made (a CitC client). Hooks come later, if ever; bees-12.5 builds `none` without them.
 
-**5. Delivery fragments shape only the wording:** PR or CL, `bs done --pr` or `--report`. The rest of delivery is bees-12.3's.
+**5. Delivery fragments shape only the wording:** PR or CL, `bs done --pr` or `--report`. The kinds, guards and prune proofs stay as above (bees-12.3).
 
 ## Security acceptance criteria (bees-12.2)
 
@@ -220,6 +225,8 @@ Test plan, run by the bead that builds each adapter:
 | T5 | herdr down fails closed | herdr socket unreachable: spawn refuses, `bs status` errors, `bs send` stores the message and says it couldn't ring |
 | T7 | a repo config can't loosen the guards | toy repo whose project config allows `git push origin main`: the push is still denied |
 | T8 | no secret reaches bees | after a live run, grep the logbook, config, cache dir, per-start files and `/proc/<pid>/environ` of the pane shell for the key's prefix: none |
+| T9 | a pane names one session or none | logbooks in a temp dir: a stale open entry whose pane runs something else, the same pane in two logbooks, an unreadable `.db` (error), a `.db.pre-1` copy (ignored), herdr down with the recorded pid dead |
+| T10 | the background-work gate | a fake process tree: a new child refuses with exit 5 and its port; a baseline child, the caller's chain and a 0.5 s child pass; no `started` entry or a walk error exits 6; `--force` passes |
 
 T6 (a repo hook rewriting a worker's command) went with SEC-3.
 
@@ -229,7 +236,7 @@ T6 (a repo hook rewriting a worker's command) went with SEC-3.
 - **A bs-owned registry, written by omp's extension or an agy SessionStart hook running `bs hello`, bound to the spawn entry.** Round 2's pick. Rejected once herdr proved to report each harness's agent in its recorded pane: a second truth to keep fresh (motif 1), with stale entries, a binding rule and a hook that loads only in a trusted folder.
 - **A `bs hello` the model runs because its prompt says so.** Rejected: a prompt step is not a process fact (motif 9).
 - **Claude's registry for Claude, herdr for the rest.** Rejected by the keeper: two liveness and identity paths.
-- **Workspace and Delivery ports** (`Create/Remove/Dirty/List/Release` with a `command` kind running user scripts; `Landed/Guards/Prompt` with a `command` kind answering "landed?"). Rounds 1 and 2. Cut in round 3: judging a CL landed is prompt text for a capable worker, and what bs proves stays git-only (`git_worktree`, prune). Making and removing a workspace came back as two formal `init` and `finalize` hooks, then went in amendment 1: under `none` the keeper makes the directory, and hooks come later, if ever.
+- **Workspace and Delivery ports** (`Create/Remove/Dirty/List/Release` with a `command` kind running user scripts; `Landed/Guards/Prompt` with a `command` kind answering "landed?"). Rounds 1 and 2. Cut in round 3: judging a CL landed is prompt text for a capable worker, and what bs proves stays git-only (`git_worktree`, prune). Making and removing a workspace came back as two formal `init` and `finalize` hooks, then went in amendment 1.
 - **`Preflight` refusing a launch without a trust step (SEC-3).** Cut in round 3 with SEC-3.
 - **Moving every `git_worktree` worker to `git worktree add` plus `workspace create --env`,** for one env path. Rejected: it changes the default path and drops herdr's `checkout_path`. Amendment 1 drops the env path for every harness instead.
 - **Pinning `BS_PROJECT`, `BS_LOGBOOK_DIR`, `BS_SESSION` and `BS_HARNESS` in each session's env** (the original `Start.Env`). Rejected in amendment 1: a harness with no native pin then needs `workspace create --env`, which doesn't nest, or a bs-written env file its extension or hook loads; the pane already names the session.
@@ -240,7 +247,7 @@ T6 (a repo hook rewriting a worker's command) went with SEC-3.
 - `internal/harness/claude` becomes the `claude_code` adapter behind `Harness`; the core packages stop importing it (bees-12.6). Existing tests pass unchanged.
 - Liveness and identity move from Claude's registry to the recorded herdr pane for every harness, Claude included: a behaviour change, so it lands as its own stage after the extraction (bees-12.10), with `bs status`, the twin check, start confirmation, `project.Me` and the `--as` guard re-live-tested. It amends ADR-0004 (liveness from herdr) and ADR-0007 (herdr's report on the recorded pane confirms a start; herdr's `timeout` stays unconfirmed). `bs queen` needs a herdr pane.
 - The `spawned` entry's data gains `harness` (the config name, `claude_code`; herdr's kind is derived from it, one forward mapping, motif 3) and the harness's `Record`. Old entries read as `claude_code` and `git_worktree`.
-- New entry kinds `queen` (harness, pane, pid, start time; never closed: the newest one is the queen), `started` and `done` (amendment 1) need a logbook migration, one rebuild for all three. The `kind` CHECK constraint can't be altered in SQLite, so the table is rebuilt once inside `BEGIN IMMEDIATE` (the write lock every writer already takes), guarded by `PRAGMA user_version`, after copying the file aside (motif 14). An older shared `bs` keeps working on the rebuilt table: its reads filter by kind and skip `queen` rows, and its writes satisfy the wider CHECK. It ships as its own PR.
+- New entry kinds `queen` (harness, pane, pid, start time; never closed: the newest one is the queen), `started` and `done` (amendment 1) need a logbook migration, one rebuild for all three. The `kind` CHECK constraint can't be altered in SQLite, so the table is rebuilt once inside `BEGIN IMMEDIATE` (the write lock every writer already takes), guarded by `PRAGMA user_version`, after copying the file aside (motif 14). An older shared `bs` keeps working on the rebuilt table: its reads select by kind, so they skip `queen`, `started` and `done` rows, and the new rows' actors are sessions it already lists, and its writes satisfy the wider CHECK. It ships as its own PR.
 - `project.Me` needs the logbook, so `send` and `inbox` resolve identity after opening it; the launch-checkout check that read Claude's registry goes, since a session bs started finds its project from its pane.
 - `QUEEN.md` and `WORKER.md` lose their PR wording to `internal/prompt/delivery/<kind>.md`; the bake-off arms are unchanged for `github_pr` (bees-12.3).
 - `bs config`'s fixed header line about the only harness goes; the `harness` key now says it.

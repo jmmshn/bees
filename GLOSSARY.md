@@ -61,11 +61,11 @@ An entry recording that a session has been shown a message.
 _Avoid_: ack, read marker, cursor
 
 **Unread**:
-The messages addressed to a session that have no receipt from it.
+The messages and `done` entries addressed to a session that have no receipt from it (ADR-0009 amendment 1).
 _Avoid_: pending, backlog, queue
 
 **Inbox**:
-A session's unread messages as shown by `bs inbox`.
+A session's unread entries as shown by `bs inbox`.
 _Avoid_: mailbox, queue
 
 ## Waking sessions

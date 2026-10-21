@@ -1,7 +1,6 @@
 package project_test
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -151,23 +150,6 @@ func TestNamedProjectUsesItsOwnGitRepo(t *testing.T) {
 	p, err := resolve("")
 	if err != nil || p.Repo != repo {
 		t.Fatalf("got %+v, %v; want repo %s with no BS_REPOS", p, err, repo)
-	}
-}
-
-// register makes the test binary's parent a Claude session called name, launched in cwd.
-func register(t *testing.T, name, cwd string) {
-	t.Helper()
-	reg := filepath.Join(os.Getenv("HOME"), ".claude", "sessions")
-	if err := os.MkdirAll(reg, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	start, err := proc.Start(os.Getppid())
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, _ := json.Marshal(map[string]any{"name": name, "pid": os.Getppid(), "procStart": start, "cwd": cwd})
-	if err := os.WriteFile(filepath.Join(reg, fmt.Sprintf("%d.json", os.Getppid())), b, 0o644); err != nil {
-		t.Fatal(err)
 	}
 }
 

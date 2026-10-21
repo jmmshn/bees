@@ -6,6 +6,7 @@ package prompt
 
 import (
 	_ "embed"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,11 +49,19 @@ func File(r Role, project string) (string, error) {
 	return Cache(project+"-"+string(r)+".md", Text(r, project))
 }
 
-// Dir is <user cache dir>/bees, where bs keeps the files it launches Claude with.
+// Dir is <cache dir>/bees, where bs keeps the files it launches Claude with. The cache
+// dir is XDG_CACHE_HOME on every OS (os.UserCacheDir ignores it on macOS), else
+// os.UserCacheDir(); a relative XDG_CACHE_HOME is an error (ADR-0008).
 func Dir() (string, error) {
-	cache, err := os.UserCacheDir()
-	if err != nil {
-		return "", err
+	cache := os.Getenv("XDG_CACHE_HOME")
+	if cache != "" && !filepath.IsAbs(cache) {
+		return "", fmt.Errorf("XDG_CACHE_HOME=%s is not an absolute path", cache)
+	}
+	if cache == "" {
+		var err error
+		if cache, err = os.UserCacheDir(); err != nil {
+			return "", err
+		}
 	}
 	dir := filepath.Join(cache, "bees")
 	return dir, os.MkdirAll(dir, 0o700) // private, like the logbook

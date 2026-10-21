@@ -87,3 +87,18 @@ func TestPromptsHoldNoBeesRepoSpecifics(t *testing.T) {
 		}
 	}
 }
+
+// The cache dir follows XDG_CACHE_HOME on every OS, macOS too (Go ignores it there), and a
+// relative one is an error (ADR-0008).
+func TestDirFollowsXDGCacheHome(t *testing.T) {
+	xdg := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", xdg)
+	t.Setenv("HOME", t.TempDir())
+	if d, err := prompt.Dir(); err != nil || d != filepath.Join(xdg, "bees") {
+		t.Errorf("Dir() = %q, %v; want %s", d, err, filepath.Join(xdg, "bees"))
+	}
+	t.Setenv("XDG_CACHE_HOME", "rel")
+	if _, err := prompt.Dir(); err == nil {
+		t.Error("a relative XDG_CACHE_HOME was used")
+	}
+}

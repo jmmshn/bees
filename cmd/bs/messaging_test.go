@@ -24,7 +24,8 @@ func bsIn(t *testing.T, stdin string, args ...string) (string, string, int) {
 
 func useTempLogbook(t *testing.T) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir()) // no real Claude registry: the session walk finds nothing
+	t.Setenv("HOME", t.TempDir())   // no real Claude registry: the session walk finds nothing
+	t.Setenv("XDG_CONFIG_HOME", "") // config from the temp HOME, never the keeper's
 	t.Setenv("BS_LOGBOOK", filepath.Join(t.TempDir(), "logbook.db"))
 	t.Setenv("BS_SESSION", "")
 	t.Setenv("BS_PROJECT", "test")

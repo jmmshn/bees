@@ -1244,3 +1244,28 @@ func gitRun(t *testing.T, dir string, args ...string) {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 }
+
+// bees-11.4: [worker.claude_code] model reaches every start, a resume included; empty
+// leaves Claude's own default.
+func TestWorkersStartWithTheConfiguredModel(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	r.fleet.Model = "claude-sonnet-5-5"
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	r.h.exit("bees-8")
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	if len(r.h.started) != 2 {
+		t.Fatalf("started = %q, want a start and a restart", r.h.started)
+	}
+	for _, start := range r.h.started {
+		if i := slices.Index(start, "--model"); i < 0 || start[i+1] != "claude-sonnet-5-5" {
+			t.Errorf("start = %q, want --model claude-sonnet-5-5", start)
+		}
+	}
+
+	r = newRig(t)
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	if slices.Contains(r.h.started[0], "--model") {
+		t.Errorf("start = %q, want no --model when none is configured", r.h.started[0])
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -21,7 +22,8 @@ type fakeHive struct {
 	next   int
 	labels map[string]string // workspace label → worker
 	live   map[string]bool
-	down   bool // herdr doesn't answer
+	args   map[string][]string // worker → its last launch line
+	down   bool                // herdr doesn't answer
 }
 
 func (h *fakeHive) CreateWorktree(ctx context.Context, repo, branch, path, label string) (worker.Workspace, error) {
@@ -36,6 +38,7 @@ func (h *fakeHive) StartClaude(ctx context.Context, pane, name string, args ...s
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.live[name] = true
+	h.args[name] = args
 	return worker.CheckAgentArgs(args)
 }
 
@@ -63,7 +66,7 @@ func (h *fakeHive) Alive(ctx context.Context, name string, wait time.Duration) (
 
 func useFakeHive(t *testing.T) *fakeHive {
 	t.Helper()
-	h := &fakeHive{labels: map[string]string{}, live: map[string]bool{}}
+	h := &fakeHive{labels: map[string]string{}, live: map[string]bool{}, args: map[string][]string{}}
 	saved := newFleet
 	t.Cleanup(func() { newFleet = saved })
 	newFleet = func(f worker.Fleet) worker.Fleet {
@@ -90,6 +93,28 @@ func TestSpawnManyBeadsEachWithItsLabel(t *testing.T) {
 	}
 	if !strings.HasSuffix(lines[0], "s)") {
 		t.Fatalf("out = %q, want the time each spawn took", out)
+	}
+}
+
+// bees-11.4: the project file's [worker.claude_code] model reaches the worker's launch.
+func TestSpawnStartsWorkersOnTheConfiguredModel(t *testing.T) {
+	useTempLogbook(t)
+	h := useFakeHive(t)
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	cfg := filepath.Join(xdg, "bees", "projects", "test.toml")
+	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg, []byte("[queen.claude_code]\nmodel = \"claude-opus-5-5\"\n[worker.claude_code]\nmodel = \"claude-haiku-5-5\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, stderr, code := bs(t, "spawn", "--project", "test", "--as", "queen-test", "--label", "sort fruits", "test-1.1"); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	args := h.args["test-1-1"]
+	if i := slices.Index(args, "--model"); i < 0 || args[i+1] != "claude-haiku-5-5" {
+		t.Fatalf("launch = %q, want --model claude-haiku-5-5 (the workers', not the queen's)", args)
 	}
 }
 

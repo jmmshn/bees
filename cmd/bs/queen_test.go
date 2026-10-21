@@ -12,6 +12,7 @@ import (
 
 func TestQueenStartsClaudeNamedForTheProject(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("BS_PROJECT", "bees")
 	t.Setenv("BS_LOGBOOK", "")
 	t.Setenv("BS_REPOS", "/src")
@@ -64,5 +65,40 @@ func TestQueenOutsideItsRepoWantsBSRepos(t *testing.T) {
 
 	if _, stderr, code := bs(t, "queen"); code != 1 || !strings.Contains(stderr, "set BS_REPOS") {
 		t.Fatalf("queen: exit %d, stderr %q; want exit 1 telling the keeper to set BS_REPOS", code, stderr)
+	}
+}
+
+// bees-11.4: [queen.claude_code] model is passed as --model; empty passes none.
+func TestQueenStartsOnTheConfiguredModel(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	t.Setenv("BS_PROJECT", "bees")
+	t.Setenv("BS_LOGBOOK", "")
+	t.Setenv("BS_LOGBOOK_DIR", "")
+	t.Setenv("BS_REPOS", "/src")
+	t.Chdir(t.TempDir())
+	var gotArgs []string
+	execClaude = func(_ string, _ []string, args ...string) error { gotArgs = args; return nil }
+	t.Cleanup(func() { execClaude = execClaudeProcess })
+
+	if _, stderr, code := bs(t, "queen"); code != 0 {
+		t.Fatalf("queen: exit %d: %s", code, stderr)
+	}
+	if slices.Contains(gotArgs, "--model") {
+		t.Errorf("args = %q, want no --model when none is configured", gotArgs)
+	}
+	cfg := filepath.Join(xdg, "bees", "projects", "bees.toml")
+	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg, []byte("[queen.claude_code]\nmodel = \"claude-opus-5-5\"\n[worker.claude_code]\nmodel = \"claude-haiku-5-5\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, stderr, code := bs(t, "queen"); code != 0 {
+		t.Fatalf("queen: exit %d: %s", code, stderr)
+	}
+	if i := slices.Index(gotArgs, "--model"); i < 0 || gotArgs[i+1] != "claude-opus-5-5" {
+		t.Errorf("args = %q, want --model claude-opus-5-5 (the queen's, not the workers')", gotArgs)
 	}
 }

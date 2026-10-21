@@ -189,7 +189,7 @@ func cmdEnd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 	as := fs.String("as", "", "session doing the ending (default: this Claude session)")
 	var o worker.EndOpts
 	fs.BoolVar(&o.Force, "force", false, "end it even while it runs background work, or with uncommitted or untracked files (discarding them)")
-	fs.BoolVar(&o.Forget, "forget", false, "record the end of a worker whose workspace herdr has handed to another worktree, leaving that workspace open")
+	fs.BoolVar(&o.Forget, "forget", false, "record the end and leave the workspace open: one herdr handed to another worktree, or one that holds another session's pane (only the worker's own pane is closed)")
 	all := fs.Bool("all", false, "end every worker the project's logbook records as spawned and not yet ended")
 	yes := fs.Bool("yes", false, "with --all: end them even while the project's queen is running, or from the queen itself")
 	pos, err := parseFlags(fs, args)

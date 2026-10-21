@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -205,5 +206,22 @@ func TestHerdrKeepsLabelsVerbatim(t *testing.T) {
 		if got.Result.Workspace.Label != label {
 			t.Errorf("herdr stored label %q as %q", label, got.Result.Workspace.Label)
 		}
+	}
+}
+
+// The real herdr's pane list, read the way bs reads it, holds this test's own pane; a
+// workspace that is gone has none (motif 13).
+func TestPanesMatchesRealHerdr(t *testing.T) {
+	pane := os.Getenv("HERDR_PANE_ID")
+	if pane == "" {
+		t.Skip("not in a herdr pane")
+	}
+	ws, _, _ := strings.Cut(pane, ":")
+	panes, err := (worker.HerdrCLI{}).Panes(context.Background(), ws)
+	if err != nil || !slices.Contains(panes, pane) {
+		t.Fatalf("Panes(%s) = %v, %v; want %s among them", ws, panes, err, pane)
+	}
+	if panes, err := (worker.HerdrCLI{}).Panes(context.Background(), "w-no-such"); err != nil || len(panes) != 0 {
+		t.Fatalf("Panes of a gone workspace = %v, %v; want none", panes, err)
 	}
 }

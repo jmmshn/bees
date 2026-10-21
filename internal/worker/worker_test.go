@@ -33,33 +33,35 @@ import (
 // It is also the process table (worker.Procs): a start that comes up runs a process named
 // for its kind under the pane's shell, as Claude does, and exit ends it.
 type fakeHerdr struct {
-	mu         sync.Mutex // SpawnAll starts workers concurrently
-	together   int        // >0: StartAgent waits until this many starts are in flight, else fails
-	kind       string     // the last start's herdr kind
-	inFlight   int
-	next       int
-	workspaces []worker.Workspace
-	agents     map[string]string // live Claude sessions: name → pane
-	started    [][]string        // pane, name, args...
-	cuts       [][2]string       // the repo and base ref each worktree was cut from
-	removed    []string
-	closed     []string
-	closeErr   error           // herdr can't close a workspace
-	tagged     []string        // the path each plain workspace was tagged with
-	tagErr     error           // herdr can't tag a workspace
-	dirty      map[string]bool // worktree paths with modified or untracked files
-	failStart  error
-	busyStarts int   // the next starts herdr refuses as agent_pane_busy, typing nothing
-	liveAnyway bool  // with failStart: Claude came up all the same, as after herdr's timeout
-	aliveErr   error // the process table can't be read
-	walkErr    error // the descendants can't be read
-	portsErr   error // the listening ports can't be read
-	listErr    error // herdr can't be reached
-	procs      map[int]*fakeProc
-	pids       map[string]int // agent name → its process
-	nextPID    int
-	renamed    []string // pane=name, one per RenameAgent
-	helpers    []string // processes each harness starts with, so its baseline holds them
+	mu          sync.Mutex // SpawnAll starts workers concurrently
+	together    int        // >0: StartAgent waits until this many starts are in flight, else fails
+	kind        string     // the last start's herdr kind
+	inFlight    int
+	next        int
+	workspaces  []worker.Workspace
+	agents      map[string]string // live Claude sessions: name → pane
+	started     [][]string        // pane, name, args...
+	cuts        [][2]string       // the repo and base ref each worktree was cut from
+	removed     []string
+	closed      []string
+	closeErr    error           // herdr can't close a workspace
+	tagged      []string        // the path each plain workspace was tagged with
+	tagErr      error           // herdr can't tag a workspace
+	dirty       map[string]bool // worktree paths with modified or untracked files
+	failStart   error
+	busyStarts  int   // the next starts herdr refuses as agent_pane_busy, typing nothing
+	liveAnyway  bool  // with failStart: Claude came up all the same, as after herdr's timeout
+	aliveErr    error // the process table can't be read
+	walkErr     error // the descendants can't be read
+	portsErr    error // the listening ports can't be read
+	listErr     error // herdr can't be reached
+	procs       map[int]*fakeProc
+	pids        map[string]int // agent name → its process
+	nextPID     int
+	renamed     []string       // pane=name, one per RenameAgent
+	helpers     []string       // processes each harness starts with, so its baseline holds them
+	moved       map[string]int // a moved pane's id → the shell it kept
+	closedPanes []string
 }
 
 // fakeProc is a process: a pid with a start time, a name and a parent, alive until it exits.
@@ -78,6 +80,14 @@ func (h *fakeHerdr) spawnProc(name string, parent int) int {
 	h.nextPID++
 	h.procs[h.nextPID] = &fakeProc{name: name, start: fmt.Sprintf("t%d", h.nextPID), parent: parent, alive: true}
 	return h.nextPID
+}
+
+// shellOf is pane's shell: the one it kept if it was moved, else shell(pane). Callers hold mu.
+func (h *fakeHerdr) shellOf(pane string) int {
+	if s, ok := h.moved[pane]; ok {
+		return s
+	}
+	return shell(pane)
 }
 
 // shell is pane's shell pid: one per pane, fixed by its name.
@@ -143,16 +153,34 @@ func (h *fakeHerdr) ProcessInfo(ctx context.Context, pane string) (worker.PanePr
 	if h.listErr != nil {
 		return worker.PaneProcesses{}, h.listErr
 	}
-	if !slices.ContainsFunc(h.workspaces, func(w worker.Workspace) bool { return w.Pane == pane }) {
+	ws, _, _ := strings.Cut(pane, ":")
+	_, moved := h.moved[pane]
+	if !slices.ContainsFunc(h.workspaces, func(w worker.Workspace) bool { return w.ID == ws && (w.Pane == pane || moved) }) {
 		return worker.PaneProcesses{}, fmt.Errorf("herdr pane: pane not found: %w", worker.ErrPaneGone)
 	}
-	pi := worker.PaneProcesses{Shell: shell(pane)}
+	pi := worker.PaneProcesses{Shell: h.shellOf(pane)}
 	for name, p := range h.agents {
 		if pr := h.procs[h.pids[name]]; p == pane && pr != nil && pr.alive {
 			pi.Foreground = append(pi.Foreground, worker.PaneProcess{PID: h.pids[name], Name: pr.name})
 		}
 	}
 	return pi, nil
+}
+
+// ClosePane ends the agent in pane, as closing a herdr pane does.
+func (h *fakeHerdr) ClosePane(ctx context.Context, pane string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.closedPanes = append(h.closedPanes, pane)
+	for name, p := range h.agents {
+		if p == pane {
+			if pr := h.procs[h.pids[name]]; pr != nil {
+				pr.alive = false
+			}
+			delete(h.agents, name)
+		}
+	}
+	return nil
 }
 
 func (h *fakeHerdr) RenameAgent(ctx context.Context, pane, name string) error {
@@ -247,12 +275,43 @@ func (h *fakeHerdr) Listening(ctx context.Context, pids []int) (map[int][]int, e
 // movePane moves worker name's pane into another workspace, as herdr pane move does: the
 // pane gets a new id, the emptied workspace closes, and the process runs on.
 func (h *fakeHerdr) movePane(name string) {
+	h.next++
+	h.movePaneInto(name, fmt.Sprintf("w%d", h.next))
+}
+
+// movePaneInto is movePane into workspace ws.
+func (h *fakeHerdr) movePaneInto(name, ws string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	old := h.agents[name]
-	h.next++
-	h.agents[name] = fmt.Sprintf("w%d:p2", h.next)
+	h.next++ // herdr never reuses a pane id
+	pane := fmt.Sprintf("%s:p%d", ws, h.next)
+	h.agents[name] = pane
+	if h.moved == nil {
+		h.moved = map[string]int{}
+	}
+	h.moved[pane] = h.shellOf(old) // the pane keeps its shell, under its new id
 	h.workspaces = slices.DeleteFunc(h.workspaces, func(w worker.Workspace) bool { return w.Pane == old })
+}
+
+// Panes lists ws's root pane and any agent's pane moved into it.
+func (h *fakeHerdr) Panes(ctx context.Context, ws string) ([]string, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.listErr != nil {
+		return nil, h.listErr
+	}
+	i := slices.IndexFunc(h.workspaces, func(w worker.Workspace) bool { return w.ID == ws })
+	if i < 0 {
+		return nil, nil
+	}
+	panes := []string{h.workspaces[i].Pane}
+	for _, p := range h.agents {
+		if strings.HasPrefix(p, ws+":") && !slices.Contains(panes, p) {
+			panes = append(panes, p)
+		}
+	}
+	return panes, nil
 }
 
 // waitTogether holds a start until h.together starts are in flight: a serial spawn
@@ -2147,6 +2206,93 @@ func TestALateHarnessBelowTheShellIsConfirmed(t *testing.T) {
 	sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8")
 	if st, ok, _ := r.lb.LatestStart(ctx, sp.ID); !ok || st.PID != r.h.pids["bees-8"] {
 		t.Fatalf("start = %+v, %v; want the late grandchild", st, ok)
+	}
+}
+
+// bees-12.36: a worker's pane moved into another worker's workspace dies when that
+// workspace closes, so bs end of the workspace's owner refuses while it holds the guest,
+// and --forget records the end and leaves the workspace open (motif 12).
+func TestEndKeepsAWorkspaceThatHoldsAnotherWorkersPane(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	_, _ = r.fleet.Spawn(ctx, "bees-9", "second worker")
+	r.h.movePaneInto("bees-9", "w1") // bees-9 now runs in bees-8's workspace
+	err := r.fleet.End(ctx, "bees-8", worker.EndOpts{Force: true})
+	if !errors.Is(err, worker.ErrGuest) || strings.Count(err.Error(), "bees-9 (pid") != 1 {
+		t.Fatalf("err = %v, want ErrGuest naming bees-9", err)
+	}
+	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); sp.Ended || len(r.h.removed) != 0 {
+		t.Fatalf("ended = %v, removed = %v; want nothing touched", sp.Ended, r.h.removed)
+	}
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{Forget: true}); err != nil {
+		t.Fatal(err)
+	}
+	sp8, _, _ := r.lb.LatestSpawn(ctx, "bees-8")
+	sp9, _, _ := r.lb.LatestSpawn(ctx, "bees-9")
+	if alive, _, _, err := worker.SpawnAlive(ctx, r.lb, r.h, sp9); err != nil || !alive || len(r.h.removed) != 0 {
+		t.Fatalf("bees-9 alive = %v (%v), removed = %v; want it running in the open workspace", alive, err, r.h.removed)
+	}
+	if alive, _, _, _ := worker.SpawnAlive(ctx, r.lb, r.h, sp8); alive || !slices.Equal(r.h.closedPanes, []string{sp8.Pane}) {
+		t.Fatalf("bees-8 alive = %v, closed panes = %v; want only its own pane closed", alive, r.h.closedPanes)
+	}
+	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); !sp.Ended {
+		t.Fatal("--forget didn't record the end")
+	}
+}
+
+// bees-12.36: when herdr can't list the workspace's panes, bs end closes nothing.
+func TestEndClosesNothingWhenItCantListThePanes(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	_, _ = r.fleet.Spawn(ctx, "bees-9", "second worker")
+	h := panesDown{r.h}
+	r.fleet.H = h
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{}); !errors.Is(err, worker.ErrHerdrDown) || len(r.h.removed) != 0 {
+		t.Fatalf("err = %v, removed = %v; want ErrHerdrDown and nothing closed", err, r.h.removed)
+	}
+}
+
+// panesDown is fakeHerdr whose pane list fails.
+type panesDown struct{ *fakeHerdr }
+
+func (panesDown) Panes(context.Context, string) ([]string, error) {
+	return nil, fmt.Errorf("%w: herdr pane list: no server", worker.ErrHerdrDown)
+}
+
+// bees-12.36: an unrecorded harness (another project's session, a keeper's Claude) moved
+// into the workspace is a guest too; and ending every worker at once with --force, in any
+// order, kills none whose pane was moved: --force overrides a dirty worktree, not a guest.
+func TestEndAllForceKillsNoGuest(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	_, _ = r.fleet.Spawn(ctx, "bees-9", "second worker")
+	r.h.movePaneInto("bees-8", "w2") // bees-8 now runs in bees-9's workspace; its own closed
+	r.h.mu.Lock()
+	stranger := r.h.spawnProc("claude", 0)
+	r.h.agents["stranger"], r.h.pids["stranger"] = "w2:p77", stranger
+	r.h.moved["w2:p77"] = 0
+	r.h.mu.Unlock()
+	es, err := r.fleet.EndAll(ctx, worker.EndOpts{Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kept []string
+	for _, e := range es {
+		if e.Err != nil {
+			kept = append(kept, e.Name+": "+e.Err.Error())
+		}
+	}
+	if len(kept) != 1 || !strings.Contains(kept[0], "bees-9") || !strings.Contains(kept[0], "a claude process (pid") || len(r.h.removed) != 0 {
+		t.Fatalf("kept = %q, removed = %v; want bees-9 kept for its guests", kept, r.h.removed)
+	}
+	r.h.mu.Lock()
+	alive := r.h.procs[stranger].alive && r.h.procs[r.h.pids["bees-8"]].alive
+	r.h.mu.Unlock()
+	if !alive {
+		t.Fatal("a guest was killed")
 	}
 }
 

@@ -55,7 +55,7 @@ type Start struct {
 
 // Launch is what Prepare returns. Prepare is pure: the core writes Files (0600, under the
 // cache dir, each named <name>-<key>-*), so the launch-length check runs before anything is
-// made, and cleanup is the forward glob <name>-[a-z]* (motif 3). bs queen execs the binary
+// made, and cleanup is the forward glob <name>-[a-z]*-* (motif 3). bs queen execs the binary
 // named Kind(): it is the same word for claude, omp and agy.
 type Launch struct {
 	Args   []string          // after `herdr agent start … --`; file paths as {{key}}, filled by the core
@@ -81,7 +81,7 @@ type Harness interface {
 }
 ```
 
-Cleanup is not a method: the core removes `<name>-[a-z]*` from the cache dir on `bs end` and before each start. A `Files` key is lowercase and starts with a letter (`settings.json` is written as `<name>-settings-*.json`), so the glob never takes the files of a worker whose name extends this one: `bees-12-*` would take `bees-12-3`'s (bees-12.6). `Start.Env` reaches a worker through the harness's own pin and herdr's `--env`; for the queen, `bs queen` puts it in the env it execs with, `BS_PROJECT` included, so project resolution never needs a harness registry.
+Cleanup is not a method: the core removes `<name>-[a-z]*-*` from the cache dir on `bs end` and before each start. A `Files` key is lowercase and starts with a letter (`settings.json` is written as `<name>-settings-*.json`), so the glob never takes the files of a worker whose name extends this one, nor a prompt file (`<project>-worker.md`): `bees-12-*` would take `bees-12-3`'s (bees-12.6). `Start.Env` reaches a worker through the harness's own pin and herdr's `--env`; for the queen, `bs queen` puts it in the env it execs with, `BS_PROJECT` included, so project resolution never needs a harness registry.
 
 **Liveness and identity come from herdr, for every harness** (keeper, after the probe below). Every session bs starts runs in a herdr pane it records: a worker's in its `spawned` entry, the queen's in a new `queen` entry that `bs queen` writes from `HERDR_PANE_ID` (herdr sets it in every pane) before it execs the harness. `bs queen` outside a herdr pane refuses with exit 2 (a queen bs can't see is a queen no worker can ring), and so does a second `bs queen` while the newest `queen` entry's pid is alive.
 
@@ -110,7 +110,7 @@ What `claude_code` does, and the code that moves behind it (bees-12.6):
 | `Kind` | `claude` | `HerdrCLI.StartClaude` (now `StartAgent(kind)`) |
 | `Prepare` | `--settings` file (crossSessionInbound, env, autoMode, permissions.deny), `--name`, `--append-system-prompt-file`, `--model=`, `--continue` | `worker.workerSettings`, `Fleet.launch`, `cmd/bs/queen.go` |
 | `Ring` | `~/.claude/sessions/<pid>.json` → socket and `.key` token, then NDJSON | `claude.Ring`, `claude.Find`, `bs send` |
-| (cleanup, core) | `<name>-[a-z]*` in the cache dir | `bs end`, `Fleet.start` |
+| (cleanup, core) | `<name>-[a-z]*-*` in the cache dir | `bs end`, `Fleet.start` |
 | (to the core: herdr) | liveness and identity | `claude.List`, `ClaudeSessions`, `bs status`, `project.registered` |
 | (dropped) | the untrusted-repo warning: a trust prompt now shows as Blocked | `claude.Trusted`, `bs spawn` |
 

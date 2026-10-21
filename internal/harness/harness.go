@@ -41,7 +41,7 @@ type Start struct {
 
 // Launch is what Prepare returns. Prepare is pure: the core writes each of Files (0600,
 // in the cache dir, named <name>-<stem>-*<ext> from its key), fills the {{key}} it stands
-// for in Args with that file's path, and removes <name>-[a-z]* on bs end and before each
+// for in Args with that file's path, and removes <name>-[a-z]*-* on bs end and before each
 // start. A key is lowercase and starts with a letter, so a worker's files never match a
 // glob of another worker whose name it extends (bees-12 and bees-12-3).
 type Launch struct {

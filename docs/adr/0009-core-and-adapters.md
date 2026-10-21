@@ -162,7 +162,7 @@ Keeper decisions, 2026-10-21 (bees-12.16), after the stage beads were filed. The
 | question | answered by | used by |
 |---|---|---|
 | alive? | the recorded pid alive with its recorded start time | `bs status`, the twin check, ringing, `bs end` |
-| who is this? | `HERDR_PANE_ID` → the entry that recorded the pane, accepted only while its process is alive and an ancestor of the calling `bs` | `project.Me`, `send`, `inbox`, `done`, the `--as` guard |
+| who is this? | `HERDR_PANE_ID` → the entry that recorded the pane, accepted only while its process is alive and an ancestor of the calling `bs` | `project.Me`, `send` (any project's logbook; the sender stays the pane's), `inbox`, `done`, the `--as` guard |
 | still working? | the process's descendants not in the baseline taken at start | `bs done`, `bs end` |
 | started? | herdr's `process-info` shows the harness process in the pane within the 20 s wait | `bs spawn` (ADR-0007) |
 
@@ -186,7 +186,7 @@ two+ → error naming both (motif 4)
 
 - **The scan, not an index.** A machine holds tens of logbooks, each opened read only in about a millisecond. An index would be a second truth (motif 1); if the scan ever gets slow, one can be added as a rebuildable projection, as ADR-0002 allows for unread. The migration's copy aside is named `<project>.db.pre-<version>`, so the scan never reads it.
 - **`paths.logbook_dir` becomes global only** (amends ADR-0008): a project file's value would put that project's logbook where no pane scan looks.
-- **Inside a recorded pane the pane decides.** An inherited `BS_LOGBOOK`, `BS_LOGBOOK_DIR`, `BS_PROJECT` or `BS_SESSION` (herdr's server env, a keeper's shell) is ignored, with a warning when it disagrees: that is what the pins used to guard. `send`, `inbox` and `done` refuse a `--project` naming another project, as they refuse `--as`, since the pane names no one there; read-only commands (`bead ls`, `status`) may read another one.
+- **Inside a recorded pane the pane decides.** An inherited `BS_LOGBOOK`, `BS_LOGBOOK_DIR`, `BS_PROJECT` or `BS_SESSION` (herdr's server env, a keeper's shell) is ignored, with a warning when it disagrees: that is what the pins used to guard. The sender is always the pane's session, in the pane's project. `bs send --project dotfiles queen-dotfiles` from queen-bees' pane still works, as cross-project mail does today: `--project` picks only the recipient's logbook, the message's actor is the pane's name (an `--as` naming anyone else is refused), and its data records `from_project` (here `bees`), so `bs inbox` shows where to reply (`bs send --project bees queen-bees`) without reading the project back out of a name (motif 3). `inbox` and `done` act only in the pane's own project and refuse a `--project` naming another. Read-only commands (`bead ls`, `status`) may read another project.
 - **Those variables stay for processes the keeper starts by hand** outside a recorded pane: tests, scripts, a one-off `bs send`, a copied logbook. `bs queen` and `bs spawn` refuse (exit 2) when the logbook they resolve is not `<global logbook_dir>/<project>.db`, since the fleet's panes would never find it. `bs queen` keeps dropping inherited `BS_*` from the env it execs with.
 - **The skip list** (ADR-0008: `send`, `inbox`, `status`, `bead`, `epic`, `version`, now also `done`) was keyed on `BS_LOGBOOK_DIR`, which sessions no longer carry. With `HERDR_PANE_ID` set, those commands read only the global file's `paths.logbook_dir`, and skip the project file once the pane is found. A global file they can't read falls back, with a warning, to the default `~/.local/share/bees`: a pane found there is right, and a pane found nowhere is an error, never a new logbook. A pane not recorded anywhere reads the files as any command does.
 - **No herdr call.** The scan needs only the env var, the logbooks and the process table, so it works while herdr is down. A pane with no live recorded process names no one, so a pane id reused after a herdr restart names no one (T4).
@@ -239,6 +239,7 @@ Test plan, run by the bead that builds each adapter:
 | T8 | no secret reaches bees | after a live run, grep the logbook, config, cache dir, per-start files and `/proc/<pid>/environ` of the pane shell for the key's prefix: none |
 | T9 | a pane names one session or none | logbooks in a temp dir: a stale open entry whose pane runs something else, the same pane in two logbooks, an unreadable `.db` (error), a `.db.pre-1` copy (ignored), herdr down with the recorded pid dead |
 | T10 | the background-work gate | a fake process tree: a new child refuses with exit 5 and its port; a baseline child, the caller's chain and a 0.5 s child pass; no `started` entry or a walk error exits 6; `--force` passes |
+| T11 | cross-project send keeps its sender | from a recorded queen-bees pane, `bs send --project dotfiles queen-dotfiles` writes to `dotfiles.db` with actor `queen-bees` and `from_project: bees`; queen-dotfiles' `bs inbox` shows the reply command; `--as` someone else is refused; `bs inbox --project dotfiles` and `bs done --project dotfiles` from that pane are refused |
 
 T6 (a repo hook rewriting a worker's command) went with SEC-3.
 

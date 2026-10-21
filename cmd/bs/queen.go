@@ -118,6 +118,10 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		}
 		return up, nil
 	}
+	// A queen still running is a twin, which RecordQueen refuses: count only her workers.
+	if err := refuseSwitch(ctx, "queen", lb, "", cfg.Harness, stderr); err != nil {
+		return err
+	}
 	switch q, ok, err := lb.RecordQueen(ctx, logbook.Queen{Name: p.Queen(), Harness: cfg.Harness, Pane: pane, PID: os.Getpid(), Start: start}, alive); {
 	case err != nil:
 		return err

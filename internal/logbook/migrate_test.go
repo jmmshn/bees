@@ -175,11 +175,6 @@ func gone(logbook.Queen) (bool, error) { return false, nil }
 func TestOneOfConcurrentQueensIsRecorded(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "bees.db")
-	first, err := logbook.Open(ctx, path) // concurrent first opens of a new file can be BUSY: bees-12.23
-	if err != nil {
-		t.Fatal(err)
-	}
-	first.Close()
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	recorded := 0
@@ -221,5 +216,25 @@ func TestAQueenWhoseLivenessCantBeToldIsNotRecorded(t *testing.T) {
 	}
 	if q, _, _ := lb.LatestQueen(ctx, "queen-bees"); q.PID != 1 {
 		t.Fatalf("newest queen = %+v, want pid 1", q)
+	}
+}
+
+// bees-12.23: concurrent first opens of a new logbook all succeed; SQLite can refuse the
+// WAL switch with SQLITE_BUSY without waiting, so Open retries for a bounded time.
+func TestConcurrentFirstOpensOfANewLogbookAllSucceed(t *testing.T) {
+	for range 30 {
+		path := filepath.Join(t.TempDir(), "bees.db")
+		var wg sync.WaitGroup
+		for range 8 {
+			wg.Go(func() {
+				lb, err := logbook.Open(context.Background(), path)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				lb.Close()
+			})
+		}
+		wg.Wait()
 	}
 }

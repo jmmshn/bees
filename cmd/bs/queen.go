@@ -11,7 +11,6 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/jmmshn/bees/internal/project"
 	"github.com/jmmshn/bees/internal/prompt"
 )
 
@@ -41,7 +40,7 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		fmt.Fprintln(stderr, "usage: bs queen [--project <name>]")
 		return errUsage
 	}
-	p, err := project.Resolve(*proj)
+	p, _, err := resolve("queen", *proj)
 	if err == nil {
 		err = p.NeedRepo()
 	}
@@ -49,7 +48,7 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return err
 	}
 	// The queen starts the project, so her bs commands find a logbook.
-	_, lb, err := scope(ctx, *proj, stderr)
+	_, lb, err := scope(ctx, "queen", *proj, stderr)
 	if err != nil {
 		return err
 	}

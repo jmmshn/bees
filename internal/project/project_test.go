@@ -36,6 +36,16 @@ func git(t *testing.T, dir string, args ...string) {
 	}
 }
 
+// resolve is Name then Locate, with the logbook under /lb and repos from BS_REPOS: what bs
+// does with no config file.
+func resolve(flag string) (project.Project, error) {
+	name, err := project.Name(flag)
+	if err != nil {
+		return project.Project{}, err
+	}
+	return project.Locate(name, project.Paths{LogbookDir: "/lb", Repos: os.Getenv("BS_REPOS")})
+}
+
 func clearEnv(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	for _, k := range []string{"BS_PROJECT", "BS_SESSION", "BS_LOGBOOK", "BS_REPOS"} {
@@ -47,15 +57,12 @@ func TestProjectComesFromGitRepo(t *testing.T) {
 	clearEnv(t)
 	repo := gitRepo(t, "bees")
 	t.Chdir(repo)
-	p, err := project.Resolve("")
+	p, err := resolve("")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if p.Name != "bees" || p.Repo != repo {
 		t.Fatalf("got %+v, want name bees, repo %s", p, repo)
-	}
-	if want := filepath.Join(os.Getenv("HOME"), ".local/share/bees/bees.db"); p.Logbook != want {
-		t.Fatalf("logbook = %s, want %s", p.Logbook, want)
 	}
 	if p.Queen() != "queen-bees" {
 		t.Fatalf("queen = %s", p.Queen())
@@ -68,7 +75,7 @@ func TestLinkedWorktreeResolvesToMainRepo(t *testing.T) {
 	wt := filepath.Join(filepath.Dir(repo), "bees-WT", "beads-995-8")
 	git(t, repo, "worktree", "add", "-q", "-b", "beads-995-8", wt)
 	t.Chdir(wt)
-	p, err := project.Resolve("")
+	p, err := resolve("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,14 +90,14 @@ func TestEnvBeatsGitAndFlagBeatsEnv(t *testing.T) {
 	t.Setenv("BS_REPOS", repos)
 	t.Chdir(gitRepo(t, "bees"))
 	t.Setenv("BS_PROJECT", "dotfiles")
-	p, err := project.Resolve("")
+	p, err := resolve("")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if p.Name != "dotfiles" || p.Repo != filepath.Join(repos, "dotfiles") {
 		t.Fatalf("env: got %+v", p)
 	}
-	if p, _ = project.Resolve("crew"); p.Name != "crew" {
+	if p, _ = resolve("crew"); p.Name != "crew" {
 		t.Fatalf("flag: got %+v", p)
 	}
 }
@@ -99,19 +106,33 @@ func TestLogbookOverride(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("BS_REPOS", t.TempDir())
 	t.Setenv("BS_LOGBOOK", "/tmp/x.db")
-	p, err := project.Resolve("bees")
+	p, err := resolve("bees")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if p.Logbook != "/tmp/x.db" {
 		t.Fatalf("logbook = %s", p.Logbook)
 	}
+	t.Setenv("BS_LOGBOOK", "")
+	if p, _ = resolve("bees"); p.Logbook != "/lb/bees.db" {
+		t.Fatalf("logbook = %s, want it under paths.logbook_dir", p.Logbook)
+	}
+}
+
+// A worker is handed BS_LOGBOOK_DIR, so only a logbook named <project>.db can be its.
+func TestLogbookDirNeedsTheProjectsFileName(t *testing.T) {
+	if d, err := (project.Project{Name: "bees", Logbook: "/x/bees.db"}).LogbookDir(); err != nil || d != "/x" {
+		t.Errorf("LogbookDir = %q, %v; want /x", d, err)
+	}
+	if _, err := (project.Project{Name: "bees", Logbook: "/x/other.db"}).LogbookDir(); err == nil || !strings.Contains(err.Error(), "not named bees.db") {
+		t.Errorf("err = %v, want the file name refused", err)
+	}
 }
 
 func TestNoProjectOutsideGit(t *testing.T) {
 	clearEnv(t)
 	t.Chdir(t.TempDir())
-	if _, err := project.Resolve(""); !errors.Is(err, project.ErrNoProject) {
+	if _, err := resolve(""); !errors.Is(err, project.ErrNoProject) {
 		t.Fatalf("err = %v, want ErrNoProject", err)
 	}
 }
@@ -119,7 +140,7 @@ func TestNoProjectOutsideGit(t *testing.T) {
 func TestNamedProjectNeedsReposOutsideItsGitRepo(t *testing.T) {
 	clearEnv(t)
 	t.Chdir(t.TempDir())
-	p, err := project.Resolve("bees")
+	p, err := resolve("bees")
 	if err != nil || p.Repo != "" {
 		t.Fatalf("outside git: got %+v, %v; want no repo and no error (messages need only the logbook)", p, err)
 	}
@@ -127,7 +148,7 @@ func TestNamedProjectNeedsReposOutsideItsGitRepo(t *testing.T) {
 		t.Fatalf("outside git: NeedRepo = %v, want ErrNoRepos", err)
 	}
 	t.Chdir(gitRepo(t, "dotfiles"))
-	if p, _ := project.Resolve("bees"); !errors.Is(p.NeedRepo(), project.ErrNoRepos) {
+	if p, _ := resolve("bees"); !errors.Is(p.NeedRepo(), project.ErrNoRepos) {
 		t.Fatalf("in another project's repo: got %+v, want ErrNoRepos", p)
 	}
 }
@@ -137,7 +158,7 @@ func TestNamedProjectUsesItsOwnGitRepo(t *testing.T) {
 	repo := gitRepo(t, "jobflow-ray")
 	t.Chdir(repo)
 	t.Setenv("BS_PROJECT", "jobflowray") // as in every worker's settings
-	p, err := project.Resolve("")
+	p, err := resolve("")
 	if err != nil || p.Repo != repo {
 		t.Fatalf("got %+v, %v; want repo %s with no BS_REPOS", p, err, repo)
 	}
@@ -169,17 +190,17 @@ func TestInheritedProjectYieldsToAnotherRepo(t *testing.T) {
 	register(t, "bees-8-1", own)
 	t.Setenv("BS_PROJECT", "bees")
 	t.Chdir(own)
-	if p, err := project.Resolve(""); err != nil || p.Name != "bees" {
+	if p, err := resolve(""); err != nil || p.Name != "bees" {
 		t.Fatalf("own worktree: %+v, %v; want bees", p, err)
 	}
 	t.Chdir(gitRepo(t, "bsdemo"))
-	if p, err := project.Resolve(""); !errors.Is(err, project.ErrWrongProject) || !strings.Contains(err.Error(), "--project bsdemo") {
+	if p, err := resolve(""); !errors.Is(err, project.ErrWrongProject) || !strings.Contains(err.Error(), "--project bsdemo") {
 		t.Fatalf("another repo: %+v, %v; want ErrWrongProject naming --project bsdemo", p, err)
 	}
-	if p, err := project.Resolve("bsdemo"); err != nil || p.Name != "bsdemo" {
+	if p, err := resolve("bsdemo"); err != nil || p.Name != "bsdemo" {
 		t.Fatalf("--project bsdemo: %+v, %v", p, err)
 	}
-	if p, err := project.Resolve("bees"); err != nil || p.Name != "bees" {
+	if p, err := resolve("bees"); err != nil || p.Name != "bees" {
 		t.Fatalf("--project bees: %+v, %v", p, err)
 	}
 	// A submodule inside the session's own checkout is still the session's work: its git
@@ -187,22 +208,22 @@ func TestInheritedProjectYieldsToAnotherRepo(t *testing.T) {
 	sub := gitRepo(t, "vendored")
 	git(t, own, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub, "lib/vendored")
 	t.Chdir(filepath.Join(own, "lib", "vendored"))
-	if p, err := project.Resolve(""); err != nil || p.Name != "bees" {
+	if p, err := resolve(""); err != nil || p.Name != "bees" {
 		t.Fatalf("submodule of the own checkout: %+v, %v; want bees", p, err)
 	}
 	// Suggestions are only names that would pass: a repo called 2fa-app isn't one.
 	t.Chdir(gitRepo(t, "2fa-app"))
-	if _, err := project.Resolve(""); !errors.Is(err, project.ErrWrongProject) || strings.Contains(err.Error(), "2faapp") || !strings.Contains(err.Error(), "--project bees") {
+	if _, err := resolve(""); !errors.Is(err, project.ErrWrongProject) || strings.Contains(err.Error(), "2faapp") || !strings.Contains(err.Error(), "--project bees") {
 		t.Fatalf("invalid repo name: %v; want ErrWrongProject suggesting only --project bees", err)
 	}
 	register(t, "bees-8-1", "") // fail closed: no launch directory means no repo is the session's own
 	t.Chdir(own)
-	if _, err := project.Resolve(""); !errors.Is(err, project.ErrWrongProject) {
+	if _, err := resolve(""); !errors.Is(err, project.ErrWrongProject) {
 		t.Fatalf("empty registry cwd: %v; want ErrWrongProject", err)
 	}
 	clearEnv(t) // outside Claude, a BS_PROJECT the keeper set still wins
 	t.Setenv("BS_PROJECT", "bees")
-	if p, err := project.Resolve(""); err != nil || p.Name != "bees" {
+	if p, err := resolve(""); err != nil || p.Name != "bees" {
 		t.Fatalf("outside Claude: %+v, %v; want bees", p, err)
 	}
 }
@@ -282,13 +303,13 @@ func TestProjectNamesAreNormalisedAndValidated(t *testing.T) {
 		"bees": "bees", "pymatgen-analysis-defects": "pymatgenanalysisdefects",
 		"web-2": "web2", "Jobflow-Ray": "jobflowray", "obsidian_vault": "obsidianvault",
 	} {
-		p, err := project.Resolve(raw)
+		p, err := resolve(raw)
 		if err != nil || p.Name != want {
 			t.Errorf("Resolve(%q) = %q, %v; want %q", raw, p.Name, err, want)
 		}
 	}
 	for _, bad := range []string{"2fa-app", "my.repo", "has space", "a-very-long-project-name-that-overflows"} {
-		if _, err := project.Resolve(bad); !errors.Is(err, project.ErrBadProject) {
+		if _, err := resolve(bad); !errors.Is(err, project.ErrBadProject) {
 			t.Errorf("Resolve(%q): err = %v, want ErrBadProject", bad, err)
 		}
 	}
@@ -298,7 +319,7 @@ func TestGitDirNameIsNormalisedButRepoPathIsNot(t *testing.T) {
 	clearEnv(t)
 	repo := gitRepo(t, "jobflow-ray")
 	t.Chdir(repo)
-	p, err := project.Resolve("")
+	p, err := resolve("")
 	if err != nil || p.Name != "jobflowray" || p.Repo != repo {
 		t.Fatalf("got %+v, %v", p, err)
 	}
@@ -313,7 +334,7 @@ func TestRepoPathFromNameFindsTheDirWhoseNormalisedNameMatches(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"pymatgen-analysis-defects", "pymatgenanalysisdefects", "Pymatgen_Analysis_Defects"} {
-		if p, err := project.Resolve(name); err != nil || p.Repo != want {
+		if p, err := resolve(name); err != nil || p.Repo != want {
 			t.Errorf("Resolve(%q) = %+v, %v; want Repo %s", name, p, err, want)
 		}
 	}

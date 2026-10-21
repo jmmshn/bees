@@ -8,9 +8,12 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/jmmshn/bees/internal/config"
 	"github.com/jmmshn/bees/internal/harness/claude"
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/project"
@@ -23,16 +26,57 @@ var errUsage = errors.New("usage")
 // errNoLogbook means the project's logbook is missing and the command may not start one.
 var errNoLogbook = errors.New("no logbook")
 
-// scope resolves the project and opens its logbook. Callers close the logbook.
-// Only a command that starts a project (init, queen, spawn) passes starts, where a new
-// logbook is announced; with nil a missing logbook is refused, since opening one creates
-// it and a deleted logbook would silently come back empty (bees-8.12, motif 14).
-func scope(ctx context.Context, flagProject string, starts io.Writer) (project.Project, *logbook.Logbook, error) {
-	p, err := project.Resolve(flagProject)
+// skipsFiles lists the commands that read only the environment, never the config files,
+// while BS_LOGBOOK_DIR is set: a keeper editing config.toml mid-run can't silence a fleet
+// whose workers carry the store in their env (ADR-0008). Every other command reads them.
+var skipsFiles = []string{"send", "inbox", "status", "bead", "epic", "version"}
+
+// settings loads the config for project name (none: "") as command cmd reads it.
+func settings(cmd, name string) (*config.Loaded, error) {
+	if slices.Contains(skipsFiles, cmd) && os.Getenv("BS_LOGBOOK_DIR") != "" {
+		return config.Env()
+	}
+	return config.Load(name)
+}
+
+// resolve resolves the project, then loads its config as command cmd reads it and
+// locates the project's files from that.
+func resolve(cmd, flagProject string) (project.Project, *config.Loaded, error) {
+	name, err := project.Name(flagProject)
+	if err != nil {
+		return project.Project{}, nil, err
+	}
+	cfg, err := settings(cmd, name)
+	if err != nil {
+		return project.Project{Name: name}, nil, err
+	}
+	p, err := locate(name, cfg)
+	return p, cfg, err
+}
+
+// locate finds project name's files from its loaded config.
+func locate(name string, cfg *config.Loaded) (project.Project, error) {
+	return project.Locate(name, project.Paths{
+		LogbookDir: config.Expand(cfg.Paths.LogbookDir),
+		Repos:      config.Expand(cfg.Paths.Repos),
+	})
+}
+
+// scope resolves the project as command cmd does and opens its logbook. Callers close
+// the logbook. Only a command that starts a project (init, queen, spawn) passes starts,
+// where a new logbook is announced; with nil a missing logbook is refused, since opening
+// one creates it and a deleted logbook would silently come back empty (bees-8.12, motif
+// 14). A missing logbook is refused either way when paths.logbook_dir moved away from one
+// that exists: starting afresh would split the store.
+func scope(ctx context.Context, cmd, flagProject string, starts io.Writer) (project.Project, *logbook.Logbook, error) {
+	p, cfg, err := resolve(cmd, flagProject)
 	if err != nil {
 		return p, nil, err
 	}
 	if _, err := os.Stat(p.Logbook); errors.Is(err, fs.ErrNotExist) {
+		if err := moved(p, cfg); err != nil {
+			return p, nil, err
+		}
 		if starts == nil {
 			return p, nil, fmt.Errorf("%w for project %s at %s: start the project with bs queen; "+
 				"if it already had a queen or workers, the logbook was deleted, so restore the file "+
@@ -44,6 +88,22 @@ func scope(ctx context.Context, flagProject string, starts io.Writer) (project.P
 	}
 	lb, err := logbook.Open(ctx, p.Logbook)
 	return p, lb, err
+}
+
+// moved refuses a missing logbook when a value paths.logbook_dir overrides (the default,
+// or a file's) holds the project's logbook. BS_LOGBOOK names the file outright: no move.
+func moved(p project.Project, cfg *config.Loaded) error {
+	if os.Getenv("BS_LOGBOOK") != "" {
+		return nil
+	}
+	for _, dir := range cfg.Shadowed["paths.logbook_dir"] {
+		old := filepath.Join(config.Expand(dir), p.Name+".db")
+		if _, err := os.Stat(old); err == nil && old != p.Logbook {
+			return fmt.Errorf("%w for project %s at %s, but paths.logbook_dir moved there (%s) from %s, which has one: "+
+				"move %s into %s, or set paths.logbook_dir back", errNoLogbook, p.Name, p.Logbook, cfg.Sources["paths.logbook_dir"], dir, old, filepath.Dir(p.Logbook))
+		}
+	}
+	return nil
 }
 
 // parseFlags parses fs's flags wherever they appear among the arguments and returns
@@ -87,7 +147,7 @@ func cmdInit(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		fmt.Fprintln(stderr, "usage: bs init [--project <name>]")
 		return errUsage
 	}
-	_, lb, err := scope(ctx, *proj, stderr)
+	_, lb, err := scope(ctx, "init", *proj, stderr)
 	if err != nil {
 		return err
 	}
@@ -120,7 +180,7 @@ func cmdSend(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		}
 		body = strings.TrimRight(string(b), "\n")
 	}
-	p, lb, err := scope(ctx, *proj, nil)
+	p, lb, err := scope(ctx, "send", *proj, nil)
 	if err != nil {
 		return err
 	}
@@ -222,7 +282,7 @@ func cmdInbox(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if err != nil {
 		return err
 	}
-	_, lb, err := scope(ctx, *proj, nil)
+	_, lb, err := scope(ctx, "inbox", *proj, nil)
 	if err != nil {
 		return err
 	}

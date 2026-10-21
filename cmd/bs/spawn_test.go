@@ -140,7 +140,7 @@ func TestSpawnBeadsAfterDoubleDash(t *testing.T) {
 // them on a re-run once herdr answers (bees-8.10).
 func TestEndAllSaysWhatItKeptAndHealsOnRerun(t *testing.T) {
 	useTempLogbook(t)
-	t.Setenv("BS_LOGBOOK", filepath.Join(t.TempDir(), "test.db")) // the project's own logbook
+	t.Setenv("BS_LOGBOOK", filepath.Join(t.TempDir(), "test.db")) // a fresh one: none yet
 	h := useFakeHive(t)
 	if _, _, code := bs(t, "end", "--as", "queen-test", "--all"); code != 2 {
 		t.Fatalf("--all without --project: exit %d, want 2", code)
@@ -184,7 +184,9 @@ func TestEndAllRefusesTheWrongFleet(t *testing.T) {
 			t.Errorf("%v: exit %d, %q; want refused with %q", args, code, stderr, why)
 		}
 	}
-	refused("is not project test's logbook", "--as", "keeper") // BS_LOGBOOK is logbook.db
+	t.Setenv("BS_LOGBOOK", filepath.Join(t.TempDir(), "logbook.db"))
+	bs(t, "init")
+	refused("is not project test's logbook", "--as", "keeper")
 	t.Setenv("BS_LOGBOOK", filepath.Join(t.TempDir(), "test.db"))
 	bs(t, "init")
 	refused("a worker never ends its whole project", "--as", "test-1-1", "--yes")

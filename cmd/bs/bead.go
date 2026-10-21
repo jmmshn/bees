@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/jmmshn/bees/internal/project"
 	"github.com/jmmshn/bees/internal/worker"
 )
 
@@ -42,7 +41,7 @@ func beadLs(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	if err != nil {
 		return err
 	}
-	p, err := project.Resolve(*proj)
+	p, _, err := resolve("bead", *proj)
 	if err != nil {
 		return err
 	}
@@ -76,7 +75,7 @@ func beadNew(ctx context.Context, args []string, stdout, stderr io.Writer) error
 		fmt.Fprintln(stderr, beadUsage)
 		return errUsage
 	}
-	p, err := project.Resolve(*proj)
+	p, _, err := resolve("bead", *proj)
 	if err != nil {
 		return err
 	}

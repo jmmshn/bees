@@ -71,11 +71,11 @@ func cmdStatus(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 		}
 		r := sessionStatus{Session: name, Label: sp.Label, Running: running, Unread: counts[name]}
 		if spawned && !sp.Ended {
-			d, ok, derr := lb.LatestDone(ctx, sp.ID)
-			if derr != nil {
-				return derr
-			}
-			if ok {
+			switch d, ok, derr := lb.LatestDone(ctx, sp.ID); {
+			case derr != nil:
+				fmt.Fprintf(stderr, "bs status: %s: can't read its done: %v\n", name, derr)
+				r.Done, unknown = "unknown", true
+			case ok:
 				r.Done = cmp.Or(d.PR, "report")
 			}
 		}

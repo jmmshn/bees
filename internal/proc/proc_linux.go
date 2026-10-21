@@ -116,7 +116,7 @@ func Listening(ctx context.Context, pids []int) (map[int][]int, error) {
 	port := map[string]int{} // socket inode → port
 	for _, f := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
 		b, err := os.ReadFile(f)
-		if os.IsNotExist(err) { // no IPv6
+		if os.IsNotExist(err) && f == "/proc/net/tcp6" { // no IPv6
 			continue
 		} else if err != nil {
 			return nil, err

@@ -225,7 +225,7 @@ func cmdEnd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 	}
 	fmt.Fprintf(stdout, "ended %s\n", name)
 	if e.Exited {
-		fmt.Fprintf(stdout, "no harness process ran for %s, so there was no background work to check\n", name)
+		fmt.Fprintf(stdout, noHarness+"\n", name)
 	}
 	if sp, _, err := f.LB.LatestSpawn(ctx, name); err == nil && sp.Branch != "" {
 		fmt.Fprintf(stdout, "branch %s kept; bs prune deletes it once merged\n", sp.Branch)
@@ -297,7 +297,7 @@ func endAll(ctx context.Context, f worker.Fleet, o worker.EndOpts, stdout, stder
 			fmt.Fprintf(stdout, "ended %s: removed workspace %s\n", e.Name, e.Workspace)
 		}
 		if e.Err == nil && e.Exited {
-			fmt.Fprintf(stdout, "  no harness process ran for %s, so there was no background work to check\n", e.Name)
+			fmt.Fprintf(stdout, "  "+noHarness+"\n", e.Name)
 		}
 		if e.Err == nil && e.Warn != nil {
 			fmt.Fprintf(stderr, "bs end: %s ended, but its settings files may be left: %v\n", e.Name, e.Warn)
@@ -312,6 +312,9 @@ func endAll(ctx context.Context, f worker.Fleet, o worker.EndOpts, stdout, stder
 	}
 	return nil
 }
+
+// noHarness is bs end's note on a worker the gate had nothing to walk for.
+const noHarness = "no harness process ran for %s, so there was no background work to check"
 
 // gateCode is bs's exit code for a refusal by the background-work gate, else 0.
 func gateCode(err error) int {

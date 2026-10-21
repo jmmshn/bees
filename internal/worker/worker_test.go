@@ -2254,3 +2254,21 @@ func TestEndOfAnUnrecordedHarnessFailsClosed(t *testing.T) {
 		t.Fatalf("err = %v, want ErrCantCheck: no start, and the pane runs claude", err)
 	}
 }
+
+// T10: bs end --all gates each worker on its own: it ends those that pass and keeps the
+// one running background work, live in the logbook.
+func TestEndAllGatesEachWorker(t *testing.T) {
+	defer worker.FastGate(time.Millisecond)()
+	ctx := context.Background()
+	r := newRig(t)
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	_, _ = r.fleet.Spawn(ctx, "bees-9", "second worker")
+	r.h.child("bees-9", "go test ./...")
+	ended, err := r.fleet.EndAll(ctx, worker.EndOpts{})
+	if err != nil || len(ended) != 2 || ended[0].Err != nil || !errors.Is(ended[1].Err, worker.ErrBackground) {
+		t.Fatalf("ended = %+v, %v; want bees-8 ended, bees-9 kept for background work", ended, err)
+	}
+	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-9"); sp.Ended {
+		t.Fatal("bees-9 recorded ended")
+	}
+}

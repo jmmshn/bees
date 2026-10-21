@@ -700,7 +700,8 @@ WHERE q.kind = 'queen' AND json_extract(q.data, '$.pane') = ?1
 
 // Done is a done entry: worker Name reporting its bead finished to its queen (bs done,
 // ADR-0009 amendment 1), with a PR or a report. A second bs done is a new entry, and the
-// newest wins. Background holds what bs done --force found running.
+// newest wins. Background holds what bs done --force found running, and Unchecked why it
+// couldn't look.
 type Done struct {
 	ID         ID                `json:"-"`
 	Spawn      ID                `json:"-"`
@@ -711,6 +712,7 @@ type Done struct {
 	PR         string            `json:"pr,omitempty"`
 	Report     string            `json:"report,omitempty"`
 	Background []proc.Background `json:"background,omitempty"`
+	Unchecked  string            `json:"unchecked,omitempty"`
 }
 
 // Text is d as its queen's inbox shows it.
@@ -728,6 +730,9 @@ func (d Done) Text() string {
 			s += "\n  " + b.String()
 		}
 		s += ")"
+	}
+	if d.Unchecked != "" {
+		s += "\n(reported with bs done --force; " + d.Unchecked + ")"
 	}
 	return s
 }

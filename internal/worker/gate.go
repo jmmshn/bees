@@ -29,13 +29,10 @@ var (
 	ErrNoStart = errors.New("no start recorded for this spawn (unconfirmed, or started by a bs from before it recorded starts)")
 )
 
-// Background is a process the gate found running below a worker's harness.
-type Background = proc.Background
-
 // BackgroundError is ErrBackground with what was found.
 type BackgroundError struct {
 	Name  string
-	Procs []Background
+	Procs []proc.Background
 }
 
 func (e *BackgroundError) Error() string {
@@ -58,10 +55,30 @@ var (
 // CheckBackground returns the background work of open spawn sp: each live descendant of
 // its newest start's process that the start's baseline doesn't hold, that isn't this bs
 // or one of its ancestors, and that is still there secondLook later. Any failure to look
-// is ErrCantCheck; a recorded process that has exited is ErrHarnessGone too.
-func CheckBackground(ctx context.Context, lb *logbook.Logbook, ps Procs, sp logbook.Spawn) ([]Background, error) {
+// is ErrCantCheck; a recorded process that has exited is ErrHarnessGone too. The whole
+// check shares one gateDeadline (motif 15): past it, a lookup still running is left to
+// its own bound and the check fails closed.
+func CheckBackground(ctx context.Context, lb *logbook.Logbook, ps Procs, sp logbook.Spawn) ([]proc.Background, error) {
 	ctx, cancel := context.WithTimeout(ctx, gateDeadline)
 	defer cancel()
+	type result struct {
+		bg  []proc.Background
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		bg, err := checkBackground(ctx, lb, ps, sp)
+		done <- result{bg, err}
+	}()
+	select {
+	case r := <-done:
+		return r.bg, r.err
+	case <-ctx.Done():
+		return nil, fmt.Errorf("%w: %s: %w", ErrCantCheck, sp.Name, ctx.Err())
+	}
+}
+
+func checkBackground(ctx context.Context, lb *logbook.Logbook, ps Procs, sp logbook.Spawn) ([]proc.Background, error) {
 	bad := func(format string, a ...any) error {
 		return fmt.Errorf("%w: %s: %w", ErrCantCheck, sp.Name, fmt.Errorf(format, a...))
 	}
@@ -76,7 +93,7 @@ func CheckBackground(ctx context.Context, lb *logbook.Logbook, ps Procs, sp logb
 	case st.BaselineErr != "":
 		return nil, bad("its start couldn't read the processes it began with: %s", st.BaselineErr)
 	}
-	skip, err := Ancestors(ps)
+	skip, err := ancestors(ps)
 	if err != nil {
 		return nil, bad("%w", err)
 	}
@@ -105,7 +122,7 @@ func CheckBackground(ctx context.Context, lb *logbook.Logbook, ps Procs, sp logb
 	if err != nil {
 		return nil, bad("%w", err)
 	}
-	var out []Background
+	var out []proc.Background
 	var pids []int
 	for _, p := range first {
 		if !slices.Contains(second, p) {
@@ -117,7 +134,7 @@ func CheckBackground(ctx context.Context, lb *logbook.Logbook, ps Procs, sp logb
 		} else if err != nil {
 			return nil, bad("%w", err)
 		}
-		out = append(out, Background{Process: p, Command: c})
+		out = append(out, proc.Background{Process: p, Command: c})
 		pids = append(pids, p.PID)
 	}
 	if len(out) == 0 {
@@ -133,8 +150,8 @@ func CheckBackground(ctx context.Context, lb *logbook.Logbook, ps Procs, sp logb
 	return out, nil
 }
 
-// Ancestors is this bs and every process above it.
-func Ancestors(ps Procs) ([]int, error) {
+// ancestors is this bs and every process above it.
+func ancestors(ps Procs) ([]int, error) {
 	out := []int{os.Getpid()}
 	for pid := os.Getpid(); pid > 1; {
 		pp, err := ps.Parent(pid)

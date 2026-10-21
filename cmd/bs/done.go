@@ -23,7 +23,8 @@ const (
 var errNotInPane = errors.New("bs done runs only inside a worker's session, in the herdr pane bs spawn recorded for it")
 
 // cmdDone reports the caller's bead done to its queen: a done entry, rung like a send. It
-// refuses while the worker runs background work, unless --force, which records what ran.
+// refuses while the worker runs background work or bs can't check, unless --force, which
+// records what ran or why bs couldn't look.
 func cmdDone(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("done", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -49,13 +50,14 @@ func cmdDone(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 			return errUsage
 		}
 	}
-	name, c, err := me(ctx, "", stderr)
+	c, err := whoCalls(ctx, stderr) // the pane names the worker: no --as, no BS_SESSION
 	if err != nil {
 		return err
 	}
 	if !c.inPane || c.Queen {
 		return errNotInPane
 	}
+	name := c.Name
 	p, lb, err := scope(ctx, "done", *proj, "", nil, stderr)
 	if err != nil {
 		return err
@@ -71,9 +73,11 @@ func cmdDone(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	d := logbook.Done{Spawn: sp.ID, Name: name, Queen: p.Queen(), Bead: sp.Bead, PR: *pr, Report: *report}
 	bg, err := worker.CheckBackground(ctx, lb, newProcs(), sp)
 	switch {
-	case err != nil:
-		fmt.Fprintf(stderr, "bs done: %v\n", err)
+	case err != nil && !*force:
+		fmt.Fprintf(stderr, "bs done: %v\nbs done --force reports anyway, telling %s that bs couldn't check\n", err, d.Queen)
 		return exitCode(exitCantCheck)
+	case err != nil: // a report never dead-ends (motif 5); the queen reads that it went unchecked
+		d.Unchecked = err.Error()
 	case len(bg) > 0 && !*force:
 		fmt.Fprintf(stderr, "bs done: %v\nstop it and run bs done again; or bs done --force reports anyway, listing it for %s\n", &worker.BackgroundError{Name: name, Procs: bg}, d.Queen)
 		return exitCode(exitBackground)

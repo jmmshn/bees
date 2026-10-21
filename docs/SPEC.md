@@ -252,7 +252,7 @@ bs bead new --parent <project>-N [--description D] [--type T] [--priority P] <ti
                               bd create --force under that parent; prints the new id
 bs send <to> [--now] <body|-> store a message, then ring <to>   (flags may follow <to>)
 bs inbox [--peek]             print unread messages and done entries; without --peek, record receipts in one commit
-bs done (--pr U | --report T|-) [--force]  a worker, in its recorded pane, reports its bead done to its queen: a done entry, rung like a send; exit 5 while it runs background work (--force records it in the entry), 6 if bs can't check
+bs done (--pr U | --report T|-) [--force]  a worker, in its recorded pane, reports its bead done to its queen: a done entry, rung like a send; exit 5 while it runs background work, 6 if bs can't check (--force reports anyway, recording what ran or why bs couldn't look)
 bs status [--json]            each known session: running or not, unread count, a live worker's newest done
 bs config [--project p]       every setting from $XDG_CONFIG_HOME/bees as key = "value"  # source (ADR-0008); exit 1 on a config error
 bs version                    the commit bs was built from

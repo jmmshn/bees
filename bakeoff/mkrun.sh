@@ -20,7 +20,16 @@ case $arm in
 	a) cmd="claude --name lead-$id --append-system-prompt-file $here/arms/A-subagents.md" ;;
 	b) cmd="claude --name lead-$id --append-system-prompt-file $here/arms/B-peers.md" ;;
 	c) cmd="bs queen" # BAKEOFF_BS=<path to a bs build> plays a branch build without installing it
-		[ -n "${BAKEOFF_BS:-}" ] && cmd="PATH=$(cd "$(dirname "$BAKEOFF_BS")" && pwd):\$PATH bs queen" ;;
+		if [ -n "${BAKEOFF_BS:-}" ]; then
+			# The queen runs it from PATH; her workers through worker.path, set in a config home of the
+			# run's own (the real one's entries linked in), as live-test's setup.sh does (bees-12.18).
+			bin=$(cd "$(dirname "$BAKEOFF_BS")" && pwd) real=${XDG_CONFIG_HOME:-$HOME/.config} xdg=$dir/xdg
+			mkdir -p "$xdg/bees/projects"
+			for e in "$real"/*; do [ -e "$e" ] && [ "$(basename "$e")" != bees ] && ln -s "$e" "$xdg/"; done
+			[ ! -e "$real/bees/config.toml" ] || ln -s "$real/bees/config.toml" "$xdg/bees/config.toml"
+			printf 'worker.path = ["%s"]\n' "$bin" >"$xdg/bees/projects/$id.toml"
+			cmd="XDG_CONFIG_HOME=$(printf %q "$xdg") PATH=$(printf %q "$bin"):\$PATH bs queen"
+		fi ;;
 esac
 name=$([ "$arm" = c ] && echo "queen-$id" || echo "lead-$id")
 ws=$(herdr workspace create --cwd "$repo" --label "$id · $([ "$arm" = c ] && echo queen || echo lead)" --no-focus) # <project> · <label>, as bs labels (bees-12.14)

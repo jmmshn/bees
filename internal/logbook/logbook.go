@@ -40,8 +40,8 @@ type Message struct {
 type Logbook struct{ db *sql.DB }
 
 // table is the DDL of the entries table of schema version 1, named name (ADR-0009):
-// version 0 lacked the queen, started and done kinds. started and done have no writers
-// yet (bees-12.10's next stage, bees-12.18): one rebuild widens the CHECK for all three.
+// version 0 lacked the queen, started and done kinds; one rebuild widened the CHECK for
+// all three.
 func table(name string) string {
 	return `CREATE TABLE IF NOT EXISTS ` + name + ` (
   id      TEXT PRIMARY KEY,
@@ -253,15 +253,16 @@ func (l *Logbook) SendFrom(ctx context.Context, from, fromProject, to, body stri
 	return id, tx.Commit()
 }
 
-// Unread returns the messages addressed to session that have no receipt from it, in the
-// order they were stored, leaving out the briefs of ended spawns.
+// Unread returns the messages and done entries addressed to session that have no receipt
+// from it, in the order they were stored, leaving out the briefs of ended spawns. A done
+// stays unread after its worker has ended (ADR-0009 amendment 1); its Body is Done.Text.
 func (l *Logbook) Unread(ctx context.Context, session string) ([]Message, error) {
 	rows, err := l.db.QueryContext(ctx, `
-SELECT m.id, m.ts, m.actor, m.subject, coalesce(json_extract(m.data, '$.from_project'), ''), json_extract(m.data, '$.body') FROM entries m
-WHERE m.kind = 'message' AND m.subject = ?1
+SELECT m.id, m.ts, m.actor, m.subject, coalesce(json_extract(m.data, '$.from_project'), ''), m.kind, m.data FROM entries m
+WHERE m.kind IN ('message', 'done') AND m.subject = ?1
   AND NOT EXISTS (SELECT 1 FROM entries r
                   WHERE r.kind = 'received' AND r.ref = m.id AND r.actor = ?1)
-  AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = m.ref)
+  AND (m.kind = 'done' OR NOT EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = m.ref))
 ORDER BY m.rowid`, session)
 	if err != nil {
 		return nil, err
@@ -270,8 +271,11 @@ ORDER BY m.rowid`, session)
 	var out []Message
 	for rows.Next() {
 		var m Message
-		var ts string
-		if err := rows.Scan(&m.ID, &ts, &m.From, &m.To, &m.FromProject, &m.Body); err != nil {
+		var ts, kind, data string
+		if err := rows.Scan(&m.ID, &ts, &m.From, &m.To, &m.FromProject, &kind, &data); err != nil {
+			return nil, err
+		}
+		if err := m.decode(kind, data); err != nil {
 			return nil, err
 		}
 		if m.TS, err = time.Parse(tsLayout, ts); err != nil {
@@ -280,6 +284,24 @@ ORDER BY m.rowid`, session)
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// decode fills m's Body from a message or done entry's data.
+func (m *Message) decode(kind, data string) error {
+	if kind == "done" {
+		var d Done
+		if err := json.Unmarshal([]byte(data), &d); err != nil {
+			return fmt.Errorf("done entry %s: %w", m.ID, err)
+		}
+		m.Body = d.Text()
+		return nil
+	}
+	var d struct{ Body string }
+	if err := json.Unmarshal([]byte(data), &d); err != nil {
+		return fmt.Errorf("message %s: %w", m.ID, err)
+	}
+	m.Body = d.Body
+	return nil
 }
 
 // UnreadCounts returns every session the logbook names (a writer, recipient or worker) with its
@@ -291,8 +313,8 @@ SELECT name, SUM(unread) FROM (
   UNION ALL SELECT subject, 0 FROM entries WHERE kind = 'spawned'
   UNION ALL SELECT m.subject, NOT EXISTS (SELECT 1 FROM entries r
                                          WHERE r.kind = 'received' AND r.ref = m.id AND r.actor = m.subject)
-            FROM entries m WHERE m.kind = 'message'
-              AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = m.ref)
+            FROM entries m WHERE m.kind IN ('message', 'done')
+              AND (m.kind = 'done' OR NOT EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = m.ref))
 ) GROUP BY name`)
 	if err != nil {
 		return nil, err
@@ -674,4 +696,77 @@ WHERE q.kind = 'queen' AND json_extract(q.data, '$.pane') = ?1
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// Done is a done entry: worker Name reporting its bead finished to its queen (bs done,
+// ADR-0009 amendment 1), with a PR or a report. A second bs done is a new entry, and the
+// newest wins. Background holds what bs done --force found running, and Unchecked why it
+// couldn't look.
+type Done struct {
+	ID         ID                `json:"-"`
+	Spawn      ID                `json:"-"`
+	Name       string            `json:"-"`
+	Queen      string            `json:"-"`
+	TS         time.Time         `json:"-"`
+	Bead       string            `json:"bead"`
+	PR         string            `json:"pr,omitempty"`
+	Report     string            `json:"report,omitempty"`
+	Background []proc.Background `json:"background,omitempty"`
+	Unchecked  string            `json:"unchecked,omitempty"`
+}
+
+// Text is d as its queen's inbox shows it.
+func (d Done) Text() string {
+	s := "done: " + d.Bead
+	if d.PR != "" {
+		s += " PR " + d.PR
+	}
+	if d.Report != "" {
+		s += "\n" + d.Report
+	}
+	if len(d.Background) > 0 {
+		s += "\n(reported with bs done --force while it still ran background work:"
+		for _, b := range d.Background {
+			s += "\n  " + b.String()
+		}
+		s += ")"
+	}
+	if d.Unchecked != "" {
+		s += "\n(reported with bs done --force; " + d.Unchecked + ")"
+	}
+	return s
+}
+
+// RecordDone records done d of the worker whose open spawned entry is d.Spawn, addressed
+// to d.Queen.
+func (l *Logbook) RecordDone(ctx context.Context, d Done) (ID, error) {
+	now := time.Now().UTC()
+	id := newID(now)
+	data, err := json.Marshal(d)
+	if err != nil {
+		return "", err
+	}
+	_, err = l.db.ExecContext(ctx, `INSERT INTO entries (id, ts, kind, actor, subject, ref, data) VALUES (?, ?, 'done', ?, ?, ?, ?)`,
+		string(id), now.Format(tsLayout), d.Name, d.Queen, string(d.Spawn), string(data))
+	return id, err
+}
+
+// LatestDone returns the newest done recorded for spawn; ok is false when there is none.
+func (l *Logbook) LatestDone(ctx context.Context, spawn ID) (d Done, ok bool, err error) {
+	var data, ts string
+	err = l.db.QueryRowContext(ctx, `SELECT id, ts, actor, subject, data FROM entries WHERE kind = 'done' AND ref = ? ORDER BY rowid DESC LIMIT 1`, string(spawn)).Scan(&d.ID, &ts, &d.Name, &d.Queen, &data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Done{}, false, nil
+	}
+	if err != nil {
+		return Done{}, false, err
+	}
+	d.Spawn = spawn
+	if d.TS, err = time.Parse(tsLayout, ts); err != nil {
+		return Done{}, false, err
+	}
+	if err := json.Unmarshal([]byte(data), &d); err != nil {
+		return Done{}, false, fmt.Errorf("done entry %s: %w", d.ID, err)
+	}
+	return d, true, nil
 }

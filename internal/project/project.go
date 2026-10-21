@@ -72,6 +72,7 @@ type Paths struct {
 	Repo       string // paths.repo, the project file's checkout; "" if unset
 	Repos      string // paths.repos, the directory holding the user's repos; "" if unset
 	Worktrees  string // paths.worktrees; {repo} stands for the main checkout
+	AnyVCS     bool   // workspace kind none: Repo may be any directory, a jj or hg checkout too
 }
 
 // Name finds the project from flag, then BS_PROJECT, then the git repo containing the
@@ -120,6 +121,9 @@ func Locate(name string, c Paths) (Project, error) {
 		p.Repo, p.RepoFrom = git, "git"
 	case c.Repo != "":
 		p.Repo, p.Base, p.repoErr = checkout("paths.repo", c.Repo)
+		if c.AnyVCS && p.repoErr != nil {
+			p.Repo, p.Base, p.repoErr = plainDir("paths.repo", c.Repo)
+		}
 		p.RepoFrom = "paths.repo"
 	case c.Repos != "":
 		p.Repo, p.RepoFrom = repoDir(c.Repos, name), "paths.repos"
@@ -153,6 +157,19 @@ func checkout(what, dir string) (main, base string, err error) {
 		base = top
 	}
 	return main, base, nil
+}
+
+// plainDir returns dir, made absolute, if it is a directory: a repo no worktree is cut
+// from needs no git.
+func plainDir(what, dir string) (string, string, error) {
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", "", err
+	}
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		return "", "", fmt.Errorf("%s %s is not a directory", what, dir)
+	}
+	return dir, "", nil
 }
 
 // LogbookDir is the directory to hand a worker as BS_LOGBOOK_DIR, so its bs opens p's

@@ -74,8 +74,13 @@ func CheckPath(dir string) error {
 	return nil
 }
 
-// Workspace is a herdr workspace opened on a git worktree.
-type Workspace struct{ ID, Label, Pane, Path string }
+// Workspace is a herdr workspace: on a git worktree, or a plain one bs tagged with its
+// worker and path (kind none).
+type Workspace struct {
+	ID, Label, Pane string
+	Path            string // the worktree's checkout; "" for a plain workspace
+	Worker          string // the worker token of a plain workspace bs opened; "" untagged
+}
 
 // Bead is the part of a bead bs reads.
 type Bead struct{ ID, Title, Description string }
@@ -94,6 +99,15 @@ type Herdr interface {
 	// when herdr itself didn't answer.
 	RemoveWorktree(ctx context.Context, workspace string, force bool) error
 	Workspaces(ctx context.Context) ([]Workspace, error)
+	// CreateWorkspace opens a plain workspace on dir. herdr 0.9.5 opens $HOME, exiting 0,
+	// for a dir that doesn't exist: check it first.
+	CreateWorkspace(ctx context.Context, dir, label string) (Workspace, error)
+	// TagWorkspace tags workspace with its worker and path, since herdr lists no directory
+	// for a plain workspace.
+	TagWorkspace(ctx context.Context, workspace, worker, path string) error
+	// CloseWorkspace closes a plain workspace, leaving its directory; already gone → nil.
+	// ErrHerdrDown when herdr didn't answer.
+	CloseWorkspace(ctx context.Context, workspace string) error
 }
 
 // Sessions tells whether a Claude session is running, from Claude's own registry
@@ -111,19 +125,20 @@ type Beads interface {
 
 // Fleet spawns and ends the workers of one project.
 type Fleet struct {
-	P           project.Project
-	LB          *logbook.Logbook
-	H           Herdr
-	S           Sessions
-	B           Beads
-	G           GitHub          // nil: End proves a merge from git alone
-	Me          string          // the queen doing the spawning
-	ForeignRepo bool            // skip the check that the bead belongs to P (--repo)
-	Harness     harness.Harness // every start's, built from the worker role's config
-	HarnessName string          // its config name, recorded in each spawned entry
-	Delivery    config.Delivery // how work lands; a zero Kind is github_pr
-	Guards      config.Guards   // [guards]: what every worker is denied or granted
-	Path        []string        // worker.path: a new worker's Path when its Request has none
+	P             project.Project
+	LB            *logbook.Logbook
+	H             Herdr
+	S             Sessions
+	B             Beads
+	G             GitHub          // nil: End proves a merge from git alone
+	Me            string          // the queen doing the spawning
+	ForeignRepo   bool            // skip the check that the bead belongs to P (--repo)
+	Harness       harness.Harness // every start's, built from the worker role's config
+	HarnessName   string          // its config name, recorded in each spawned entry
+	Delivery      config.Delivery // how work lands; a zero Kind is github_pr
+	Guards        config.Guards   // [guards]: what every worker is denied or granted
+	WorkspaceKind string          // the workspace kind of a first spawn: GitWorktree ("" too) or NoWorkspace
+	Path          []string        // worker.path: a new worker's Path when its Request has none
 }
 
 // kind is f's delivery kind; a Fleet built without config is github_pr, the default.
@@ -136,6 +151,12 @@ func (f Fleet) gh() GitHub {
 	}
 	return f.G
 }
+
+// Workspace kinds (ADR-0009). A spawn recorded with no kind is a git worktree.
+const (
+	GitWorktree = "git_worktree"
+	NoWorkspace = "none"
+)
 
 var herdrName = project.SessionName
 
@@ -345,6 +366,12 @@ func (f Fleet) check(ctx context.Context, req Request) (plan, error) {
 		return p, fmt.Errorf("%s: %w", name, err)
 	}
 	sp0 := logbook.Spawn{Name: name, Bead: bead, Worktree: f.worktree(name), Branch: name, Repo: f.P.Repo, Path: p.path}
+	if f.WorkspaceKind == NoWorkspace {
+		sp0 = logbook.Spawn{Name: name, Bead: bead, Kind: NoWorkspace, Dir: f.P.Repo, Repo: f.P.Repo, Path: p.path}
+		if fi, err := os.Stat(f.P.Repo); err != nil || !fi.IsDir() { // herdr would open $HOME without a word
+			return p, fmt.Errorf("%s: workspace directory %s is not a directory", name, f.P.Repo)
+		}
+	}
 	protected := len(f.Guards.AllowMergeInto) > 0 && f.protected(ctx, sp0) // only a merge grant needs GitHub's word before anything is made
 	r, err := f.rules(ctx, sp0, protected)
 	if err != nil {
@@ -407,6 +434,15 @@ func (f Fleet) check(ctx context.Context, req Request) (plan, error) {
 	if err != nil {
 		return p, err
 	}
+	if f.WorkspaceKind == NoWorkspace {
+		// Workers may share paths.repo, so find an orphan by the worker token bs tags a
+		// plain workspace with.
+		if i := slices.IndexFunc(wss, func(w Workspace) bool { return w.Worker == name }); i >= 0 {
+			return p, fmt.Errorf("%s: %w; check it, then close it with: herdr workspace close %s", name, ErrOrphan, wss[i].ID)
+		}
+		_, err = f.P.LogbookDir()
+		return p, err
+	}
 	// Find an orphan by its worktree, never its label: the path is built forward from
 	// the name, while a label is free text. The latest spawn's recorded worktree counts
 	// too, since paths.worktrees may have moved since it ended.
@@ -424,10 +460,13 @@ func (f Fleet) check(ctx context.Context, req Request) (plan, error) {
 // worktree is where worker name's worktree goes: <paths.worktrees>/<name>.
 func (f Fleet) worktree(name string) string { return filepath.Join(f.P.Worktrees, name) }
 
-// open opens a first spawn's worktree and records the spawn; a resume has both already.
+// open opens a first spawn's workspace and records the spawn; a resume has both already.
 func (f Fleet) open(ctx context.Context, p plan) (logbook.Spawn, error) {
 	if p.resume {
 		return p.sp, nil
+	}
+	if f.WorkspaceKind == NoWorkspace {
+		return f.openPlain(ctx, p)
 	}
 	base := ""
 	if f.P.Base != "" { // a linked worktree: herdr cuts from its HEAD, run from the main checkout
@@ -437,7 +476,7 @@ func (f Fleet) open(ctx context.Context, p plan) (logbook.Spawn, error) {
 		}
 		base = strings.TrimSpace(out)
 	}
-	ws, err := f.H.CreateWorktree(ctx, f.P.Repo, base, p.name, f.worktree(p.name), p.label)
+	ws, err := f.H.CreateWorktree(ctx, f.P.Repo, base, p.name, f.worktree(p.name), f.herdrLabel(p.label))
 	if err != nil {
 		return logbook.Spawn{}, err
 	}
@@ -447,9 +486,40 @@ func (f Fleet) open(ctx context.Context, p plan) (logbook.Spawn, error) {
 	return sp, err
 }
 
+// openPlain opens a plain herdr workspace (kind none) on paths.repo, tags it with its
+// worker, and records the spawn. A failure before the record closes the workspace, so
+// spawning again starts clean (motif 8).
+func (f Fleet) openPlain(ctx context.Context, p plan) (logbook.Spawn, error) {
+	dir := f.P.Repo // check found it a directory
+	ws, err := f.H.CreateWorkspace(ctx, dir, f.herdrLabel(p.label))
+	if err != nil {
+		return logbook.Spawn{}, err
+	}
+	sp := logbook.Spawn{Name: p.name, Bead: p.bead, Label: p.label, Workspace: ws.ID, Pane: ws.Pane, Kind: NoWorkspace, Dir: dir, Repo: f.P.Repo, Base: f.P.BaseRepo(), Harness: cmp.Or(f.HarnessName, harness.Default), Record: p.record, Path: p.path}
+	if err = f.H.TagWorkspace(ctx, ws.ID, p.name, dir); err == nil {
+		sp.ID, err = f.LB.RecordSpawn(ctx, f.Me, sp, brief(p.b))
+	}
+	if err != nil {
+		if cerr := f.H.CloseWorkspace(ctx, ws.ID); cerr != nil {
+			err = errors.Join(err, fmt.Errorf("closing workspace %s again: %w", ws.ID, cerr))
+		}
+		return logbook.Spawn{}, err
+	}
+	return sp, nil
+}
+
+// herdrLabel is the workspace label herdr shows for a worker labelled label: the project,
+// then the queen's words. herdr's sidebar shows a plain workspace with no repo above it,
+// so every kind carries the project (ADR-0009, bees-12.14). One forward mapping: bs never
+// parses a herdr label back (motif 3), and the logbook records only the words.
+func (f Fleet) herdrLabel(label string) string { return f.P.Name + " · " + label }
+
 // rules builds sp's guards; protected is GitHub's word on the default branch (f.protected).
 func (f Fleet) rules(ctx context.Context, sp logbook.Spawn, protected bool) (guards.Rules, error) {
 	repo := cmp.Or(sp.Repo, f.P.Repo)
+	if sp.Kind == NoWorkspace {
+		return Rules(ctx, repo, config.Delivery{Kind: f.kind()}, f.Guards, guards.Worker{Repo: sp.Repo, Dir: sp.Dir, Protected: protected})
+	}
 	return Rules(ctx, repo, config.Delivery{Kind: f.kind()}, f.Guards, guards.Worker{Branch: cmp.Or(sp.Branch, sp.Name), Worktree: sp.Worktree, Repo: sp.Repo, Protected: protected})
 }
 
@@ -458,6 +528,18 @@ func (f Fleet) rules(ctx context.Context, sp logbook.Spawn, protected bool) (gua
 // main checkout, has checked out, since origin/HEAD is unset in a repo that was never cloned.
 func Rules(ctx context.Context, repo string, d config.Delivery, g config.Guards, w guards.Worker) (guards.Rules, error) {
 	var heads []string
+	if w.Dir != "" {
+		// Kind none on a jj or hg checkout: no git default branch to read, so the guards
+		// cover main and master. Any other git failure refuses (motif 7).
+		err := gitRun(ctx, repo, "rev-parse", "--git-dir")
+		if err != nil && !strings.Contains(err.Error(), "not a git repository") {
+			return guards.Rules{}, fmt.Errorf("finding the default branch to guard: %w", err)
+		}
+		if err != nil {
+			w.DefaultBranches = guards.DefaultBranches()
+			return guards.Build(d, g, w)
+		}
+	}
 	for _, ref := range []string{"refs/remotes/origin/HEAD", "HEAD"} {
 		h, err := symRef(ctx, repo, ref)
 		if err != nil {
@@ -554,7 +636,7 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 // reads its unread messages without needing a ring.
 func (f Fleet) startOf(sp logbook.Spawn, promptFile string, cont bool, env map[string]string, r guards.Rules) harness.Start {
 	return harness.Start{
-		Role: prompt.Worker, Name: sp.Name, Dir: sp.Worktree, PromptFile: promptFile, Continue: cont, Env: env, Path: sp.Path,
+		Role: prompt.Worker, Name: sp.Name, Dir: cmp.Or(sp.Worktree, sp.Dir), PromptFile: promptFile, Continue: cont, Env: env, Path: sp.Path,
 		Doorbell: fmt.Sprintf("[bs] you are %s, working on %s — run: bs inbox   (reply with: bs send %s \"...\")", sp.Name, sp.Bead, f.Me),
 		Guards:   r,
 	}
@@ -623,9 +705,11 @@ type EndOpts struct {
 }
 
 // End removes the worker's recorded workspace and records the end. It never asks herdr
-// which workspace to remove, and removes the recorded one only while it is still open on
-// the recorded worktree, so a reused workspace id can't take another worktree with it
-// (bees-7.4). A worktree with uncommitted or untracked files is kept unless o.Force: ErrDirty.
+// which workspace to remove, and removes the recorded one only while it is still the
+// worker's (open on the recorded worktree, or for kind none tagged with the worker), so a
+// reused workspace id can't take another worktree with it (bees-7.4). A worktree with
+// uncommitted or untracked files is kept unless o.Force: ErrDirty. Under kind none, End
+// only closes the workspace: the directory is the keeper's.
 // Ending an ended worker is a no-op. The worker's branch is always kept, with its
 // committed work: Prune deletes it once merged.
 func (f Fleet) End(ctx context.Context, name string, o EndOpts) error {
@@ -646,10 +730,11 @@ func (f Fleet) End(ctx context.Context, name string, o EndOpts) error {
 // Ending is what EndAll did with one worker.
 type Ending struct {
 	Name, Workspace string
-	Gone            bool  // herdr no longer had the workspace, so only the end was recorded
-	Forgot          bool  // the workspace is open on another worktree: the end was recorded, the workspace left open
-	Err             error // the worker was kept: still live in the logbook
-	Warn            error // the worker was ended, but removing its per-start files failed
+	Branch          string // the worker's branch, kept; "" under kind none
+	Gone            bool   // herdr no longer had the workspace, so only the end was recorded
+	Forgot          bool   // the workspace is no longer the worker's: the end was recorded, the workspace left open
+	Err             error  // the worker was kept: still live in the logbook
+	Warn            error  // the worker was ended, but removing its per-start files failed
 }
 
 // EndAll ends every worker the logbook records as spawned and not yet ended, and nothing
@@ -671,7 +756,7 @@ func (f Fleet) EndAll(ctx context.Context, o EndOpts) ([]Ending, error) {
 
 // end removes live spawn sp's workspace and records the end.
 func (f Fleet) end(ctx context.Context, sp logbook.Spawn, o EndOpts) Ending {
-	e := Ending{Name: sp.Name, Workspace: sp.Workspace}
+	e := Ending{Name: sp.Name, Workspace: sp.Workspace, Branch: sp.Branch}
 	wss, err := f.H.Workspaces(ctx)
 	if err != nil {
 		e.Err = fmt.Errorf("%s: can't tell whether workspace %s is open; nothing removed: %w", sp.Name, sp.Workspace, err)
@@ -679,8 +764,20 @@ func (f Fleet) end(ctx context.Context, sp logbook.Spawn, o EndOpts) Ending {
 	}
 	i := slices.IndexFunc(wss, func(w Workspace) bool { return w.ID == sp.Workspace })
 	e.Gone = i < 0
+	plain := sp.Kind == NoWorkspace
 	switch {
 	case e.Gone:
+	case plain && wss[i].Worker != sp.Name:
+		if !o.Forget {
+			e.Err = fmt.Errorf("%s: workspace %s is tagged %q, not as this worker's: %w; nothing closed (--forget records the end and leaves it open)", sp.Name, sp.Workspace, wss[i].Worker, ErrNotOurs)
+			return e
+		}
+		e.Forgot = true
+	case plain:
+		if err := f.H.CloseWorkspace(ctx, sp.Workspace); err != nil {
+			e.Err = fmt.Errorf("%s: %w", sp.Name, err)
+			return e
+		}
 	case sp.Worktree == "" || filepath.Clean(wss[i].Path) != filepath.Clean(sp.Worktree):
 		if !o.Forget {
 			e.Err = fmt.Errorf("%s: workspace %s is open on %q, not its recorded worktree %q: %w; nothing removed (--forget records the end and leaves it open)", sp.Name, sp.Workspace, wss[i].Path, sp.Worktree, ErrNotOurs)
@@ -727,7 +824,7 @@ func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error) {
 	var out []Pruned
 	for _, sp := range ended {
 		repo := cmp.Or(sp.Repo, f.P.Repo)
-		if gitRun(ctx, repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+sp.Branch) != nil {
+		if sp.Branch == "" || gitRun(ctx, repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+sp.Branch) != nil { // kind none has no branch
 			continue
 		}
 		p := Pruned{Branch: sp.Branch, Repo: repo}

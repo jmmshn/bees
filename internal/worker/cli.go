@@ -72,6 +72,48 @@ func (HerdrCLI) CreateWorktree(ctx context.Context, repo, base, branch, path, la
 	return Workspace{ID: r.Result.Workspace.ID, Label: label, Pane: r.Result.RootPane.ID, Path: r.Result.Worktree.Path}, nil
 }
 
+func (HerdrCLI) CreateWorkspace(ctx context.Context, dir, label string) (Workspace, error) {
+	var r struct {
+		Result struct {
+			Workspace struct {
+				ID string `json:"workspace_id"`
+			} `json:"workspace"`
+			RootPane struct {
+				ID string `json:"pane_id"`
+			} `json:"root_pane"`
+		} `json:"result"`
+	}
+	if _, err := herdr(ctx, &r, "workspace", "create", "--cwd", dir, "--label", label, "--no-focus"); err != nil {
+		return Workspace{}, err
+	}
+	if r.Result.Workspace.ID == "" || r.Result.RootPane.ID == "" {
+		return Workspace{}, fmt.Errorf("herdr workspace create: no workspace or pane id in its output")
+	}
+	return Workspace{ID: r.Result.Workspace.ID, Label: label, Pane: r.Result.RootPane.ID, Path: dir}, nil
+}
+
+// TagWorkspace reports worker and path as workspace's metadata tokens. herdr 0.9.5
+// refuses --source before --token, and cuts each token's value to 80 characters without
+// a word, so a long path reads back cut: bs matches a workspace by its worker token.
+func (HerdrCLI) TagWorkspace(ctx context.Context, workspace, worker, path string) error {
+	_, err := herdr(ctx, nil, "workspace", "report-metadata", workspace, "--token", tokenWorker+"="+worker, "--token", tokenPath+"="+path, "--source", "bs")
+	return err
+}
+
+// Metadata tokens bs tags a plain workspace with.
+const (
+	tokenWorker = "worker"
+	tokenPath   = "path"
+)
+
+func (HerdrCLI) CloseWorkspace(ctx context.Context, workspace string) error {
+	code, err := herdr(ctx, nil, "workspace", "close", workspace)
+	if code == "workspace_not_found" {
+		return nil
+	}
+	return down(ctx, code, err)
+}
+
 // ErrUnsafeArg is an agent argument herdr refuses to pass to the agent's shell.
 var ErrUnsafeArg = errors.New("herdr can't pass an agent argument containing a control character")
 
@@ -164,6 +206,7 @@ func (HerdrCLI) Workspaces(ctx context.Context) ([]Workspace, error) {
 				Worktree *struct {
 					Path string `json:"checkout_path"`
 				} `json:"worktree"`
+				Tokens map[string]string `json:"tokens"`
 			} `json:"workspaces"`
 		} `json:"result"`
 	}
@@ -172,7 +215,7 @@ func (HerdrCLI) Workspaces(ctx context.Context) ([]Workspace, error) {
 	}
 	var out []Workspace
 	for _, w := range r.Result.Workspaces {
-		ws := Workspace{ID: w.ID, Label: w.Label}
+		ws := Workspace{ID: w.ID, Label: w.Label, Worker: w.Tokens[tokenWorker]} // the path token may be cut: never a Path
 		if w.Worktree != nil {
 			ws.Path = w.Worktree.Path
 		}

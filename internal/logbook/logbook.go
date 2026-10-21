@@ -338,8 +338,10 @@ type Spawn struct {
 	Pane      string `json:"pane"`
 	Worktree  string `json:"worktree"`
 	Branch    string `json:"branch"`
-	Repo      string `json:"repo"`           // where the branch lives, for bs end
-	Base      string `json:"base,omitempty"` // the checkout the branch was cut from (Repo, or a linked worktree); empty before bees-11.3
+	Repo      string `json:"repo"`                     // where the branch lives, for bs end
+	Base      string `json:"base,omitempty"`           // the checkout the branch was cut from (Repo, or a linked worktree); empty before bees-11.3
+	Kind      string `json:"workspace_kind,omitempty"` // "none", or "" for git_worktree (ADR-0009)
+	Dir       string `json:"dir,omitempty"`            // kind none: the directory the workspace was opened on
 	Ended     bool   `json:"-"`
 	Read      bool   `json:"-"` // the worker has read a message since this spawn, so it has a conversation
 	// Harness is the config name of the harness the worker started on; an entry from

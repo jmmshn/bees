@@ -151,6 +151,28 @@ func TestAllowMergeIntoGrantsScopedMergesOnly(t *testing.T) {
 	}
 }
 
+func TestAWorkerWithNoWorktreeIsToldItsDirectoryAndNoBranch(t *testing.T) {
+	w := guards.Worker{Repo: "/src/toy", Dir: "/src/toy", DefaultBranches: guards.DefaultBranches()}
+	r, err := guards.Build(config.Delivery{Kind: "github_pr"}, config.Guards{}, w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.Join(append(r.Environment, r.Allow...), "\n")
+	if !strings.Contains(text, "working in the directory /src/toy") || strings.Contains(text, "branch") || strings.Contains(text, "worktree") {
+		t.Fatalf("prose = %s; want the directory, and no branch or worktree", text)
+	}
+	if !slices.ContainsFunc(r.Deny, func(g string) bool { return matches(g, "git push origin main") }) {
+		t.Fatalf("deny = %q; want pushes to main still denied", r.Deny)
+	}
+}
+
+func TestAMergeGrantNeedsABranch(t *testing.T) {
+	w := guards.Worker{Repo: "/src/toy", Dir: "/src/toy", Protected: true, DefaultBranches: guards.DefaultBranches()}
+	if _, err := guards.Build(config.Delivery{Kind: "github_pr"}, config.Guards{AllowMergeInto: []string{"pilot/*"}}, w); err == nil || !strings.Contains(err.Error(), "workspace.kind none") {
+		t.Fatalf("err = %v, want allow_merge_into refused under kind none", err)
+	}
+}
+
 // Denies matches the way the test's own regexp does, so every harness rendering the same
 // globs denies the same commands.
 func TestDeniesAgreesWithTheGlobOracle(t *testing.T) {

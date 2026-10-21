@@ -115,6 +115,10 @@ func printRepo(stdout io.Writer, p project.Project, l *config.Loaded) {
 	if p.Base != "" {
 		fmt.Fprintf(stdout, "# base: %s (a linked worktree: workers branch from its HEAD)\n", p.Base)
 	}
+	if l.Workspace.Kind == worker.NoWorkspace {
+		fmt.Fprintf(stdout, "# workers: each in a herdr workspace on the repo, no worktree (workspace.kind = none)\n")
+		return
+	}
 	fmt.Fprintf(stdout, "# worker worktrees: %s/<worker>\n", p.Worktrees)
 }
 
@@ -148,6 +152,9 @@ func printGuards(ctx context.Context, stdout io.Writer, p project.Project, l *co
 // same check bs spawn makes, so bs config shows and bs queen refuses what every spawn would.
 func workerGuards(ctx context.Context, p project.Project, l *config.Loaded) (guards.Rules, error) {
 	w := guards.Worker{Branch: "<worker>", Worktree: filepath.Join(p.Worktrees, "<worker>"), Repo: p.Repo}
+	if l.Workspace.Kind == worker.NoWorkspace {
+		w = guards.Worker{Repo: p.Repo, Dir: p.Repo}
+	}
 	if len(l.Guards.AllowMergeInto) > 0 && l.Delivery.Kind != "manual" {
 		w.Protected = protected(ctx, p.Repo) // a merge grant holds only on a protected default branch
 	}

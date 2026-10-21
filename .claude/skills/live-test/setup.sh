@@ -53,8 +53,9 @@ pane=$(jq -r .result.root_pane.pane_id <<<"$ws")
 record pane "$pane"
 # The pane's shell starts from herdr's environment, not this one, so unset BS_LOGBOOK and
 # BS_PROJECT there too: the queen finds the toy from the cwd. The PATH reaches the queen's own
-# bs calls only: workers start from herdr's environment and run the shared bs. So does the
-# toy's XDG_CONFIG_HOME: the queen and her spawns read the toy's config, workers the real one.
+# bs calls only: workers start from herdr's environment and run the shared bs, unless the
+# queen spawns them with --path "$bin". The toy's XDG_CONFIG_HOME reaches the queen only:
+# she and her spawns read the toy's config, workers the real one.
 herdr pane run "$pane" "env -u BS_LOGBOOK -u BS_PROJECT ${xdg:+XDG_CONFIG_HOME=$(printf %q "$xdg") }PATH=$(printf %q "$bin"):\$PATH bs queen" >/dev/null
 cat "$run/live.json"
 # Trust the new folder once, as a human would; Claude keys trust by repo root, so workers'

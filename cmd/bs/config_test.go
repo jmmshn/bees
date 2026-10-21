@@ -195,6 +195,7 @@ func TestConfigShowsTheRepoAndWorktrees(t *testing.T) {
 	for _, want := range []string{
 		"# repo: " + filepath.Join(repos, "bees") + " (paths.repos, env BS_REPOS)\n",
 		"# worker worktrees: /trees/<worker>\n",
+		"# cache (launch prompts, worker settings): ",
 	} {
 		if code != 0 || !strings.Contains(out, want) {
 			t.Errorf("exit %d (%s), output lacks %q:\n%s", code, stderr, want, out)

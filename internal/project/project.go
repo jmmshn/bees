@@ -34,11 +34,16 @@ var validName = regexp.MustCompile(`^[a-z][a-z0-9]{0,24}$`)
 type Project struct {
 	Name      string // e.g. "bees"
 	Repo      string // main checkout of the project's git repo; empty if unknown
-	RepoFrom  string // the link of the repo chain that gave Repo, for bs config
+	RepoFrom  string // the link of the repo chain that gave Repo: --repo, git, paths.repo or paths.repos
 	Base      string // the linked worktree workers branch from; empty: Repo
 	Worktrees string // the parent dir of worker worktrees; empty if Repo is
 	Logbook   string // path to this project's logbook file
+	repoErr   error  // why the chain's repo is unusable; NeedRepo returns it
 }
+
+// RepoPlaceholder, in paths.worktrees, stands for the main checkout of the repo a
+// worker's worktree is cut from (ADR-0008).
+const RepoPlaceholder = "{repo}"
 
 // BaseRepo is the checkout workers branch from: Base, else Repo.
 func (p Project) BaseRepo() string { return cmp.Or(p.Base, p.Repo) }
@@ -47,8 +52,12 @@ func (p Project) BaseRepo() string { return cmp.Or(p.Base, p.Repo) }
 // herdr's session names are machine-wide.
 func (p Project) Queen() string { return "queen-" + p.Name }
 
-// NeedRepo fails with ErrNoRepos when the project's repo is unknown.
+// NeedRepo fails when the project's repo is unusable (a --repo or paths.repo that is no
+// git checkout), or with ErrNoRepos when it is unknown.
 func (p Project) NeedRepo() error {
+	if p.repoErr != nil {
+		return p.repoErr
+	}
 	if p.Repo == "" {
 		return fmt.Errorf("project %s: %w", p.Name, ErrNoRepos)
 	}
@@ -98,36 +107,37 @@ func Name(flag string) (string, error) {
 // git repo containing the working directory when it is the project's, c.Repo, then the
 // project's directory under c.Repos, else empty: messages need only the logbook, and
 // NeedRepo stops what would run in no repo. A flag or c.Repo naming a linked worktree
-// makes it the Base workers branch from, while Repo and Worktrees stay the main checkout's.
+// makes it the Base workers branch from, while Repo and Worktrees stay the main checkout's;
+// one that is no git checkout fails only NeedRepo, so messages still flow.
 func Locate(name string, c Paths) (Project, error) {
 	p := Project{Name: name}
 	git := mainRepo("")
-	var err error
 	switch {
 	case c.RepoFlag != "":
-		p.Repo, p.Base, err = checkout("--repo", c.RepoFlag)
+		p.Repo, p.Base, p.repoErr = checkout("--repo", c.RepoFlag)
 		p.RepoFrom = "--repo"
 	case git != "" && Normalise(filepath.Base(git)) == name:
-		p.Repo, p.RepoFrom = git, "the git repo you are in"
+		p.Repo, p.RepoFrom = git, "git"
 	case c.Repo != "":
-		p.Repo, p.Base, err = checkout("paths.repo", c.Repo)
+		p.Repo, p.Base, p.repoErr = checkout("paths.repo", c.Repo)
 		p.RepoFrom = "paths.repo"
 	case c.Repos != "":
 		p.Repo, p.RepoFrom = repoDir(c.Repos, name), "paths.repos"
 	}
-	if err != nil {
-		return p, err
-	}
 	if p.Repo != "" {
-		p.Worktrees = strings.Replace(c.Worktrees, "{repo}", p.Repo, 1)
+		p.Worktrees = strings.Replace(c.Worktrees, RepoPlaceholder, p.Repo, 1)
 	}
 	p.Logbook = os.Getenv("BS_LOGBOOK")
 	if p.Logbook == "" {
 		p.Logbook = filepath.Join(c.LogbookDir, name+".db")
 	}
+	var err error
 	p.Logbook, err = filepath.Abs(p.Logbook)
 	return p, err
 }
+
+// RepoErr is why the repo chain's repo is unusable, nil if it is fine or unknown.
+func (p Project) RepoErr() error { return p.repoErr }
 
 // checkout returns the main checkout of the git repo at dir, named by what (for errors),
 // and dir's own checkout when that is a linked worktree of it.

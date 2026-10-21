@@ -11,6 +11,7 @@ import (
 
 	"github.com/jmmshn/bees/internal/config"
 	"github.com/jmmshn/bees/internal/project"
+	"github.com/jmmshn/bees/internal/prompt"
 )
 
 // cmdConfig prints every setting as valid TOML, key = "value", with its source and any
@@ -66,6 +67,11 @@ func cmdConfig(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 		fmt.Fprintf(stdout, "# logbook: %s (%s)\n", p.Logbook, from)
 		printRepo(stdout, p, l)
 	}
+	if dir, err := prompt.Dir(); err == nil {
+		fmt.Fprintf(stdout, "# cache (launch prompts, worker settings): %s\n", dir)
+	} else {
+		fmt.Fprintf(stdout, "# cache: unusable: %v\n", err)
+	}
 	for _, f := range l.Fields() {
 		limit := ""
 		if f.Scope != "both" {
@@ -79,12 +85,19 @@ func cmdConfig(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 // printRepo says which repo the repo chain found for p, from which link, and where
 // workers' worktrees go.
 func printRepo(stdout io.Writer, p project.Project, l *config.Loaded) {
+	if err := p.RepoErr(); err != nil {
+		fmt.Fprintf(stdout, "# repo: unusable (%s): %v\n", p.RepoFrom, err)
+		return
+	}
 	if p.Repo == "" {
 		fmt.Fprintf(stdout, "# repo: none: bs queen and bs spawn need one; set paths.repo in %s, or paths.repos\n", l.Files[len(l.Files)-1].Path)
 		return
 	}
 	from := p.RepoFrom
-	if strings.HasPrefix(from, "paths.") {
+	switch from {
+	case "git":
+		from = "the git repo you are in"
+	case "paths.repo", "paths.repos":
 		from += ", " + l.Sources[from].String()
 	}
 	fmt.Fprintf(stdout, "# repo: %s (%s)\n", p.Repo, from)

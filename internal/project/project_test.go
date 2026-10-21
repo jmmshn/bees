@@ -361,7 +361,7 @@ func TestRepoChain(t *testing.T) {
 		repo, from string
 	}{
 		{project.Paths{RepoFlag: other, Repo: configured, Repos: repos}, other, "--repo"},
-		{project.Paths{Repo: configured, Repos: repos}, own, "the git repo you are in"},
+		{project.Paths{Repo: configured, Repos: repos}, own, "git"},
 	} {
 		if p := locate(c.paths); p.Repo != c.repo || p.RepoFrom != c.from || p.Worktrees != c.repo+"-WT" {
 			t.Errorf("%+v: got %+v, want repo %s from %s", c.paths, p, c.repo, c.from)
@@ -377,10 +377,12 @@ func TestRepoChain(t *testing.T) {
 	if p := locate(project.Paths{}); p.Repo != "" || p.RepoFrom != "" || p.Worktrees != "" {
 		t.Errorf("nothing: got %+v, want no repo", p)
 	}
+	// A non-repo fails only what needs a repo: messages need only the logbook.
 	for _, c := range []project.Paths{{RepoFlag: repos}, {Repo: repos}} {
 		c.LogbookDir = "/lb"
-		if _, err := project.Locate("bees", c); err == nil || !strings.Contains(err.Error(), "not a git checkout") {
-			t.Errorf("%+v: err = %v, want a non-repo refused", c, err)
+		p, err := project.Locate("bees", c)
+		if err != nil || p.NeedRepo() == nil || !strings.Contains(p.NeedRepo().Error(), "not a git checkout") {
+			t.Errorf("%+v: Locate err = %v, NeedRepo = %v; want only NeedRepo to refuse a non-repo", c, err, p.NeedRepo())
 		}
 	}
 }

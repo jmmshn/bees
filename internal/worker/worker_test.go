@@ -1420,7 +1420,7 @@ func TestABadHarnessFileKeyIsRefusedBeforeTouchingAnything(t *testing.T) {
 }
 
 // bees-12.6: ending bees-8 removes its files and leaves those of bees-8-1, whose name
-// extends it.
+// extends it, and the project's prompt file.
 func TestEndingAWorkerLeavesTheFilesOfAWorkerWhoseNameExtendsIt(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
@@ -1435,5 +1435,8 @@ func TestEndingAWorkerLeavesTheFilesOfAWorkerWhoseNameExtendsIt(t *testing.T) {
 	}
 	if _, err := os.Stat(child); err != nil {
 		t.Fatalf("bees-8-1's settings %s after ending bees-8: %v", child, err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(child), "bees-worker.md")); err != nil {
+		t.Fatalf("the project's prompt file after ending bees-8: %v", err)
 	}
 }

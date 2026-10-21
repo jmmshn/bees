@@ -461,10 +461,13 @@ func filePattern(name, key string) string {
 	return name + "-" + stem + "-*" + ext
 }
 
-// removeFiles removes every per-start file of worker name. A file key starts with a
-// letter, so this never takes the files of a worker whose name extends name (bees-12 and
-// bees-12-3); it also takes the fixed name of 8.3's first cut, <name>-settings.json.
-func removeFiles(name string) error { return prompt.Remove(name + "-[a-z]*") }
+// removeFiles removes every per-start file of worker name: <name>-<stem>-*, where a stem
+// starts with a letter, so this never takes the files of a worker whose name extends name
+// (bees-12 and bees-12-3), nor a prompt file (<project>-worker.md). It also takes the
+// fixed name of 8.3's first cut, <name>-settings.json.
+func removeFiles(name string) error {
+	return errors.Join(prompt.Remove(name+"-[a-z]*-*"), prompt.Remove(name+"-settings.json"))
+}
 
 // fill returns l.Args with each {{key}} of l.Files replaced by path(key). It refuses a
 // key that breaks harness.FileKey, so removeFiles stays a forward glob.

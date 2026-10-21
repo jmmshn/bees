@@ -175,13 +175,17 @@ func load(dst any, src map[string]Source, shadowed map[string][]string, files *[
 		f.v.SetString(val)
 		src[f.key] = Source{Kind: "env", Where: env}
 	}
-	return errors.Join(append(errs, inactive(root, src)...)...)
+	// A harness off its enum already has its error; every table would be inactive under it.
+	sf, _ := root.Type().FieldByName("Harness")
+	if h := root.FieldByName("Harness").String(); check(leaf{key: "harness", tag: sf.Tag}, h) == nil {
+		errs = append(errs, inactive(root, src, h)...)
+	}
+	return errors.Join(errs...)
 }
 
 // inactive refuses a value set in a role's table for a harness other than the active one:
 // bs would never read it. A role's tables are named by harness config names.
-func inactive(root reflect.Value, src map[string]Source) []error {
-	harness := root.FieldByName("Harness").String()
+func inactive(root reflect.Value, src map[string]Source, harness string) []error {
 	var errs []error
 	seen := map[string]bool{}
 	for _, f := range leaves(root, "") {

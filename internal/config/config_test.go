@@ -293,10 +293,13 @@ func TestHarnessIsAGlobalEnum(t *testing.T) {
 	if l, err := Load("bees"); err != nil || l.Harness != "claude_code" {
 		t.Fatalf("default harness = %v, %v; want claude_code", l, err)
 	}
-	write(t, global, "harness = \"agy\"\n")
+	write(t, global, "harness = \"agy\"\n[worker.claude_code]\nmodel = \"m\"\n")
 	write(t, proj, "harness = \"claude_code\"\n")
 	_, err := Load("bees")
 	wantErr(t, err, global+`: harness = "agy": must be one of claude_code`, proj+": harness belongs in the global file, not the project one")
+	if strings.Contains(err.Error(), "is for harness") {
+		t.Errorf("error %q also calls every table inactive under a harness that isn't one", err)
+	}
 }
 
 // bees-12.6: a table for a harness other than the active one is an error naming the file,
@@ -309,8 +312,7 @@ func TestAnInactiveHarnessTableIsAnError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	l.Harness = "oh_my_pi"
-	errs := inactive(reflect.ValueOf(&l.Config).Elem(), l.Sources)
+	errs := inactive(reflect.ValueOf(&l.Config).Elem(), l.Sources, "oh_my_pi")
 	if len(errs) != 2 {
 		t.Fatalf("errs = %v, want one per table", errs)
 	}

@@ -388,7 +388,7 @@ func (f Fleet) check(ctx context.Context, req Request) (plan, error) {
 	if err != nil {
 		return p, fmt.Errorf("%s: %w", name, err)
 	}
-	st := f.startOf(sp0, filepath.Join(dir, f.P.Name+"-worker.md"), true, nil, r)
+	st := f.startOf(sp0, filepath.Join(dir, f.P.Name+"-worker.md"), true, r)
 	l, err := f.Harness.Prepare(st)
 	if errors.Is(err, harness.ErrNoResume) { // no resume ever starts, so a fresh start's line is the longest
 		st.Continue = false
@@ -426,8 +426,7 @@ func (f Fleet) check(ctx context.Context, req Request) (plan, error) {
 			return p, fmt.Errorf("%s: %w", name, ErrRunning)
 		}
 		p.sp, p.resume = sp, true
-		_, err := f.P.LogbookDir() // start needs it; refuse before anything is touched
-		return p, err
+		return p, nil
 	}
 	if label == "" && ok {
 		p.label = sp.Label // an ended worker comes back under its recorded label
@@ -451,8 +450,7 @@ func (f Fleet) check(ctx context.Context, req Request) (plan, error) {
 		if i := slices.IndexFunc(wss, func(w Workspace) bool { return w.Worker == name }); i >= 0 {
 			return p, fmt.Errorf("%s: %w; check it, then close it with: herdr workspace close %s", name, ErrOrphan, wss[i].ID)
 		}
-		_, err = f.P.LogbookDir()
-		return p, err
+		return p, nil
 	}
 	// Find an orphan by its worktree, never its label: the path is built forward from
 	// the name, while a label is free text. The latest spawn's recorded worktree counts
@@ -464,8 +462,7 @@ func (f Fleet) check(ctx context.Context, req Request) (plan, error) {
 	if i := slices.IndexFunc(wss, func(w Workspace) bool { return w.Path != "" && slices.Contains(wts, filepath.Clean(w.Path)) }); i >= 0 {
 		return p, fmt.Errorf("%s: %w; check it, then remove it with: herdr worktree remove --workspace %s --force", name, ErrOrphan, wss[i].ID)
 	}
-	_, err = f.P.LogbookDir()
-	return p, err
+	return p, nil
 }
 
 // worktree is where worker name's worktree goes: <paths.worktrees>/<name>.
@@ -590,10 +587,6 @@ func Delivery(d config.Delivery, g config.Guards) (string, error) {
 // claude --continue exits when there is no conversation.
 func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Started, error) {
 	st := Started{Name: sp.Name, Label: sp.Label, Workspace: sp.Workspace, Resumed: resume, Continued: resume && sp.Read}
-	lbDir, err := f.P.LogbookDir()
-	if err != nil {
-		return st, err
-	}
 	// Read the delivery fragment before anything is made: an unreadable one stops the start.
 	delivery, err := Delivery(f.Delivery, f.Guards)
 	if err != nil {
@@ -607,11 +600,9 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 	if err != nil {
 		return st, err
 	}
-	// The worker's logbook is BS_LOGBOOK_DIR, the spawner's, with any BS_LOGBOOK the pane
-	// inherits from herdr blanked: else a queen and her workers could split the store
-	// (bees-11.3).
-	env := map[string]string{"BS_PROJECT": f.P.Name, "BS_LOGBOOK_DIR": lbDir, "BS_LOGBOOK": ""}
-	l, err := f.Harness.Prepare(f.startOf(sp, file, st.Continued, env, r))
+	// No env is pinned: the worker's bs finds its project, name and logbook from its herdr
+	// pane, recorded in the spawned entry (ADR-0009 amendment 1).
+	l, err := f.Harness.Prepare(f.startOf(sp, file, st.Continued, r))
 	if err != nil {
 		return st, err
 	}
@@ -686,9 +677,9 @@ func (f Fleet) launch(ctx context.Context, sp logbook.Spawn, st *Started, args [
 
 // startOf is the harness.Start of worker sp, with a doorbell as its first prompt so it
 // reads its unread messages without needing a ring.
-func (f Fleet) startOf(sp logbook.Spawn, promptFile string, cont bool, env map[string]string, r guards.Rules) harness.Start {
+func (f Fleet) startOf(sp logbook.Spawn, promptFile string, cont bool, r guards.Rules) harness.Start {
 	return harness.Start{
-		Role: prompt.Worker, Name: sp.Name, Dir: cmp.Or(sp.Worktree, sp.Dir), PromptFile: promptFile, Continue: cont, Env: env, Path: sp.Path,
+		Role: prompt.Worker, Name: sp.Name, Dir: cmp.Or(sp.Worktree, sp.Dir), PromptFile: promptFile, Continue: cont, Path: sp.Path,
 		Doorbell: fmt.Sprintf("[bs] you are %s, working on %s — run: bs inbox   (reply with: bs send %s \"...\")", sp.Name, sp.Bead, f.Me),
 		Guards:   r,
 	}

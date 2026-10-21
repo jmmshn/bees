@@ -482,9 +482,6 @@ func TestSpawnStartsAWorkerInItsOwnWorkspace(t *testing.T) {
 			t.Errorf("autoMode.%s = %q, want $defaults and the worker's branch", k, l)
 		}
 	}
-	if p := bsProject(t, start); p != "bees" {
-		t.Errorf("env.BS_PROJECT = %q, want bees: the worker's bs must read the spawner's logbook", p)
-	}
 	if !strings.Contains(strings.Join(settings.AutoMode["environment"], " "), wt) {
 		t.Errorf("autoMode.environment = %q, want the worktree %s", settings.AutoMode["environment"], wt)
 	}
@@ -746,17 +743,17 @@ func TestAWorkerInAnotherProjectsRepoStaysInTheSpawnersProject(t *testing.T) {
 	r.fleet.ForeignRepo, r.fleet.P.Repo = true, filepath.Join(t.TempDir(), "dotfiles") // as --repo does
 	gitInit(t, r.fleet.P.Repo)
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
-	projects := []string{bsProject(t, r.h.started[0])} // read now: a restart removes spent settings files
 	r.h.exit("bees-8")
 	_, _ = own.Spawn(ctx, "bees-8", "spawn and end") // a resume doesn't repeat --repo
 	if len(r.h.started) != 2 {
 		t.Fatalf("started = %q, want a start and a restart", r.h.started)
 	}
-	projects = append(projects, bsProject(t, r.h.started[1]))
-	for i, start := range r.h.started {
-		if projects[i] != "bees" {
-			t.Errorf("start = %q, want env.BS_PROJECT bees in --settings", start)
-		}
+	// Its bs finds the spawner's project from its pane, which the spawner's logbook
+	// records (ADR-0009 amendment 1); no BS_PROJECT is pinned.
+	if sp, ok, _ := r.lb.LatestSpawn(ctx, "bees-8"); !ok || sp.Pane != r.h.started[1][0] {
+		t.Errorf("spawn in the spawner's logbook = %+v, %v; want its pane %s", sp, ok, r.h.started[1][0])
+	}
+	for _, start := range r.h.started {
 		i := slices.Index(start, "--append-system-prompt-file")
 		if i < 0 {
 			t.Fatalf("start = %q, want the bees worker prompt", start)
@@ -780,16 +777,6 @@ func settingsFile(t *testing.T, start []string) []byte {
 		t.Fatalf("--settings %q: %v", start[i+1], err)
 	}
 	return b
-}
-
-// bsProject returns env.BS_PROJECT from a start's --settings.
-func bsProject(t *testing.T, start []string) string {
-	t.Helper()
-	var settings struct{ Env map[string]string }
-	if err := json.Unmarshal(settingsFile(t, start), &settings); err != nil {
-		t.Fatalf("--settings: %v", err)
-	}
-	return settings.Env["BS_PROJECT"]
 }
 
 func TestWorkerWaitingAtAPromptCountsAsStarted(t *testing.T) {
@@ -1533,32 +1520,20 @@ func gitRun(t *testing.T, dir string, args ...string) {
 	}
 }
 
-// Every spawn pins BS_LOGBOOK_DIR (and blanks any BS_LOGBOOK herdr passes on), so the
-// worker's bs writes the store its spawner resolved; a logbook it can't be pointed at
-// refuses the spawn before anything is made (bees-11.3).
-func TestSpawnPinsTheLogbookDir(t *testing.T) {
+// bees-12.10: a spawn pins no env (ADR-0009 amendment 1): the worker's bs finds its
+// project, name and logbook from its herdr pane, so --settings carries no env block.
+func TestSpawnPinsNoEnv(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil {
 		t.Fatal(err)
 	}
-	var settings struct{ Env map[string]*string }
+	var settings map[string]any
 	if err := json.Unmarshal(settingsFile(t, r.h.started[0]), &settings); err != nil {
 		t.Fatal(err)
 	}
-	if d := settings.Env["BS_LOGBOOK_DIR"]; d == nil || *d != filepath.Dir(r.fleet.P.Logbook) {
-		t.Errorf("env.BS_LOGBOOK_DIR = %v, want %s", d, filepath.Dir(r.fleet.P.Logbook))
-	}
-	if lb := settings.Env["BS_LOGBOOK"]; lb == nil || *lb != "" {
-		t.Errorf("env.BS_LOGBOOK = %v, want it blanked", lb)
-	}
-
-	r.fleet.P.Logbook = filepath.Join(t.TempDir(), "other.db")
-	if _, err := r.fleet.Spawn(ctx, "bees-9", "second worker"); err == nil || !strings.Contains(err.Error(), "not named bees.db") {
-		t.Fatalf("err = %v, want the logbook refused", err)
-	}
-	if _, ok, _ := r.lb.LatestSpawn(ctx, "bees-9"); ok || len(r.h.started) != 1 {
-		t.Errorf("a refused spawn was recorded or started (%d starts)", len(r.h.started))
+	if env, ok := settings["env"]; ok {
+		t.Errorf("--settings env = %v, want none", env)
 	}
 }
 

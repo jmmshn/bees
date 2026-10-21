@@ -45,7 +45,7 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		fmt.Fprintln(stderr, "usage: bs queen [--project <name>]")
 		return errUsage
 	}
-	p, cfg, err := resolve("queen", *proj, "")
+	p, cfg, err := resolve(ctx, "queen", *proj, "", stderr)
 	if err == nil {
 		err = p.NeedRepo()
 	}
@@ -75,21 +75,21 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		fmt.Fprintln(stderr, "bs queen: not in a herdr pane (HERDR_PANE_ID is unset): start the queen in a herdr pane, so her workers can find and ring her")
 		return exitCode(2)
 	}
+	if err := atFleetLogbook("queen", p, stderr); err != nil {
+		return err
+	}
 	// The queen starts the project, so her bs commands find a logbook.
-	_, lb, err := scope(ctx, "queen", *proj, "", stderr)
+	_, lb, err := scope(ctx, "queen", *proj, "", stderr, stderr)
 	if err != nil {
 		return err
 	}
 	defer lb.Close()
-	// No BS_SESSION or BS_PROJECT: the queen's bs finds its name from --name and its project
-	// from the repo (R25). Drop inherited ones so they can't override either. A BS_LOGBOOK
-	// passes on absolute: relative, it would name another file in her repo.
+	// No inherited identity or logbook variable: the queen's bs finds her name, project and
+	// logbook from her herdr pane, which her queen entry records (ADR-0009 amendment 1).
 	env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
-		return strings.HasPrefix(kv, "BS_SESSION=") || strings.HasPrefix(kv, "BS_PROJECT=") || strings.HasPrefix(kv, "BS_LOGBOOK=")
+		k, _, _ := strings.Cut(kv, "=")
+		return slices.Contains([]string{"BS_SESSION", "BS_PROJECT", "BS_LOGBOOK", "BS_LOGBOOK_DIR"}, k)
 	})
-	if os.Getenv("BS_LOGBOOK") != "" {
-		env = append(env, "BS_LOGBOOK="+p.Logbook)
-	}
 	file, err := prompt.File(prompt.Queen, p.Name, cfg.Workspace.Kind, delivery)
 	if err != nil {
 		return err

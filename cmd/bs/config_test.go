@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"github.com/jmmshn/bees/internal/config"
+	"github.com/jmmshn/bees/internal/logbook"
 )
 
 func configEnv(t *testing.T) string {
@@ -111,35 +113,44 @@ func TestConfigQuotesValuesAsTOML(t *testing.T) {
 	}
 }
 
-// While BS_LOGBOOK_DIR is set, the fixed list of commands skips the config files, so a
-// broken file can't silence a fleet; every other command still fails on it (ADR-0008).
-func TestSkipListIgnoresTheFilesWhileLogbookDirIsSet(t *testing.T) {
+// bees-12.10: in a recorded herdr pane, the fixed list of commands skips the project file
+// and falls back to the defaults when the global file is broken, so a broken file can't
+// silence a fleet; every other command, and every command outside the pane, fails on it
+// (ADR-0008, ADR-0009 amendment 1).
+func TestSkipListIgnoresTheFilesInARecordedPane(t *testing.T) {
 	useTempLogbook(t)
 	t.Setenv("BS_LOGBOOK", "")
-	t.Setenv("BS_LOGBOOK_DIR", t.TempDir())
-	if _, stderr, code := bs(t, "init"); code != 0 {
-		t.Fatalf("init: exit %d: %s", code, stderr)
-	}
-	global := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "bees", "config.toml")
-	if err := os.MkdirAll(filepath.Dir(global), 0o755); err != nil {
+	started(t, "test-1-1", true) // this test process is the pane's recorded worker
+	lb, err := logbook.Open(context.Background(), fleetLogbook(t))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(global, []byte("[paths]\nrepoz = \"/x\"\n"), 0o644); err != nil {
-		t.Fatal(err)
+	sp, _, _ := lb.LatestSpawn(context.Background(), "test-1-1")
+	lb.Close()
+	t.Setenv("HERDR_PANE_ID", sp.Pane)
+	cfg := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "bees")
+	global, proj := filepath.Join(cfg, "config.toml"), filepath.Join(cfg, "projects", "test.toml")
+	for _, f := range []string{global, proj} {
+		if err := os.MkdirAll(filepath.Dir(f), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(f, []byte("[paths]\nrepoz = \"/x\"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	for _, args := range [][]string{{"send", "--as", "queen-test", "test-1-1", "hi"}, {"inbox", "--as", "test-1-1"}, {"status"}, {"version"}} {
+	for _, args := range [][]string{{"send", "queen-test", "hi"}, {"inbox"}, {"status"}, {"version"}} {
 		if _, stderr, code := bs(t, args...); code != 0 {
 			t.Errorf("%v: exit %d: %s; want the files skipped", args, code, stderr)
 		}
 	}
-	for _, args := range [][]string{{"init"}, {"config"}, {"spawn", "--as", "queen-test", "--label", "x", "test-1.1"}, {"prune"}} {
-		if _, stderr, code := bs(t, args...); code == 0 || !strings.Contains(stderr, global+": unknown key paths.repoz") {
+	for _, args := range [][]string{{"init"}, {"config"}, {"spawn", "--label", "x", "test-1.2"}, {"prune"}} {
+		if _, stderr, code := bs(t, args...); code == 0 || !strings.Contains(stderr, ": unknown key paths.repoz") {
 			t.Errorf("%v: exit %d: %s; want the file's error", args, code, stderr)
 		}
 	}
-	t.Setenv("BS_LOGBOOK_DIR", "")
+	t.Setenv("HERDR_PANE_ID", "")
 	if _, stderr, code := bs(t, "status"); code == 0 || !strings.Contains(stderr, "unknown key paths.repoz") {
-		t.Errorf("status without BS_LOGBOOK_DIR: exit %d: %s; want the file's error", code, stderr)
+		t.Errorf("status outside the pane: exit %d: %s; want the file's error", code, stderr)
 	}
 }
 
@@ -194,7 +205,7 @@ func TestConfigShowsTheLogbookAndTheSkipList(t *testing.T) {
 	t.Setenv("BS_LOGBOOK_DIR", "/e")
 	t.Setenv("BS_LOGBOOK", "/x/bees.db")
 	out, _, _ = bs(t, "config", "--project", "bees")
-	for _, want := range []string{"# logbook: /x/bees.db (env BS_LOGBOOK)\n", "# BS_LOGBOOK_DIR is set, so send, inbox, status, bead, epic and version skip both files\n"} {
+	for _, want := range []string{"# logbook: /x/bees.db (env BS_LOGBOOK)\n", "# BS_LOGBOOK_DIR is set: it beats paths.logbook_dir in this shell, never in a herdr pane bs recorded"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}

@@ -1671,6 +1671,32 @@ func TestSpawnPathIsRecordedAndKeptOnRestart(t *testing.T) {
 	}
 }
 
+// bees-12.24: worker.path is the --path of a spawn that passes none, so a live test's toy
+// queen spawns the build under test without naming it. A recorded worker keeps its own.
+func TestConfiguredPathIsTheDefaultForNewWorkers(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	if res := r.fleet.SpawnAll(ctx, []worker.Request{{Bead: "bees-8", Label: "spawn and end"}}); res[0].Err != nil {
+		t.Fatal(res[0].Err)
+	}
+	r.h.exit("bees-8")
+	r.fleet.Path = []string{t.TempDir()}
+	if res := r.fleet.SpawnAll(ctx, []worker.Request{{Bead: "bees-8"}}); res[0].Err != nil || pathOf(t, r.h.started[1]) != "" {
+		t.Fatalf("restart of a worker recorded without a path: err = %v, started = %q", res[0].Err, r.h.started[1])
+	}
+	bin := r.fleet.Path[0]
+	if res := r.fleet.SpawnAll(ctx, []worker.Request{{Bead: "bees-9", Label: "new one"}}); res[0].Err != nil {
+		t.Fatal(res[0].Err)
+	}
+	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-9"); !slices.Equal(sp.Path, []string{bin}) || pathOf(t, r.h.started[2]) != bin {
+		t.Errorf("new worker: recorded %q, started on %q; want worker.path %s", sp.Path, pathOf(t, r.h.started[2]), bin)
+	}
+	other := t.TempDir()
+	if res := r.fleet.SpawnAll(ctx, []worker.Request{{Bead: "bees-10", Label: "flag wins", Path: []string{other}}}); res[0].Err != nil || pathOf(t, r.h.started[3]) != other {
+		t.Errorf("--path %s over worker.path: err = %v", other, res[0].Err)
+	}
+}
+
 // A recorded --path dir that has gone (a live test's build removed) refuses the restart,
 // rather than quietly starting the worker on the shared bs.
 func TestRestartRefusesARecordedPathThatHasGone(t *testing.T) {

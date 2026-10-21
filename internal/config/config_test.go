@@ -285,3 +285,40 @@ func TestEnvSkipsTheFiles(t *testing.T) {
 		t.Fatalf("Env() = %+v, %v", l, err)
 	}
 }
+
+// [delivery] and [guards] (ADR-0009): kind is an enum defaulting to github_pr, fragment an
+// absolute path, and the guards lists come from either file, each item checked.
+func TestDeliveryAndGuards(t *testing.T) {
+	dir := setup(t)
+	global, proj := filepath.Join(dir, "config.toml"), filepath.Join(dir, "projects", "bees.toml")
+	l, err := Load("bees")
+	if err != nil || l.Delivery.Kind != "github_pr" || l.Delivery.Fragment != "" || l.Guards.Deny != nil {
+		t.Fatalf("defaults = %+v, %v", l.Config, err)
+	}
+	write(t, global, "[guards]\ndeny = [\"g4 submit*\"]\n")
+	write(t, proj, "[delivery]\nkind = \"manual\"\nfragment = \"~/cl.md\"\n[guards]\nallow_merge_into = [\"pilot/*\", \"rel/*\"]\n")
+	if l, err = Load("bees"); err != nil {
+		t.Fatal(err)
+	}
+	if l.Delivery.Kind != "manual" || !strings.HasSuffix(l.Delivery.Fragment, "~/cl.md") ||
+		!slices.Equal(l.Guards.Deny, []string{"g4 submit*"}) || !slices.Equal(l.Guards.AllowMergeInto, []string{"pilot/*", "rel/*"}) {
+		t.Errorf("loaded %+v", l.Config)
+	}
+	if s := l.Sources["guards.deny"].String(); s != "global "+global {
+		t.Errorf("guards.deny from %s", s)
+	}
+	i := slices.IndexFunc(l.Fields(), func(f Field) bool { return f.Key == "guards.allow_merge_into" })
+	if f := l.Fields()[i]; !f.List || !slices.Equal(f.Items, []string{"pilot/*", "rel/*"}) {
+		t.Errorf("field = %+v", f)
+	}
+	for body, why := range map[string]string{
+		"[delivery]\nkind = \"email\"\n":     `delivery.kind = "email": must be one of github_pr, manual`,
+		"[delivery]\nfragment = \"cl.md\"\n": `delivery.fragment = "cl.md": not an absolute path`,
+		"[guards]\ndeny = \"git push*\"\n":   "deny",
+		"[guards]\nallow_merge_into = [1]\n": "allow_merge_into",
+	} {
+		write(t, proj, body)
+		_, err := Load("bees")
+		wantErr(t, err, proj, why)
+	}
+}

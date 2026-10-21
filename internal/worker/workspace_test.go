@@ -170,3 +170,15 @@ func TestNoneSpawnThatCantTagClosesItsWorkspace(t *testing.T) {
 		t.Fatalf("workspaces = %v, closed = %v; want the workspace taken back", r.h.workspaces, r.h.closed)
 	}
 }
+
+func TestNoneRecordsTheWorkersPath(t *testing.T) {
+	ctx := context.Background()
+	r := newPlainRig(t)
+	bin := t.TempDir()
+	if res := r.fleet.SpawnAll(ctx, []worker.Request{{Bead: "bees-8", Label: "hg client", Path: []string{bin}}}); res[0].Err != nil {
+		t.Fatal(res[0].Err)
+	}
+	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); !slices.Equal(sp.Path, []string{bin}) {
+		t.Fatalf("spawn record path = %q, want %q", sp.Path, bin)
+	}
+}

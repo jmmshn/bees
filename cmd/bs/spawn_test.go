@@ -221,3 +221,30 @@ func TestEndAllRefusesTheWrongFleet(t *testing.T) {
 		t.Fatalf("--yes: exit %d, %q %q", code, out, stderr)
 	}
 }
+
+// bees-8.19: --path, before the first bead, goes first on every worker's PATH in the call.
+func TestSpawnPathReachesEveryWorkerInTheCall(t *testing.T) {
+	useTempLogbook(t)
+	h := useFakeHive(t)
+	bin := t.TempDir()
+	if _, stderr, code := bs(t, "spawn", "--project", "test", "--as", "queen-test", "--path", bin,
+		"--label", "sort fruits", "test-1.1", "--label", "dedupe todo", "test-1.2"); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	for _, w := range []string{"test-1-1", "test-1-2"} {
+		args := h.args[w]
+		b, err := os.ReadFile(args[slices.Index(args, "--settings")+1])
+		if err != nil || !strings.Contains(string(b), `PATH=\"`+bin+`:$PATH\"`) {
+			t.Errorf("%s settings = %s, %v; want %s first on its PATH", w, b, err, bin)
+		}
+	}
+	for _, args := range [][]string{
+		{"--path", "bin", "--label", "a b", "test-1.3"},                             // relative
+		{"--label", "a b", "test-1.3", "--path", bin, "--label", "c d", "test-1.4"}, // after a bead
+	} {
+		_, stderr, code := bs(t, append([]string{"spawn", "--project", "test", "--as", "queen-test"}, args...)...)
+		if code != 2 || len(h.labels) != 2 {
+			t.Errorf("spawn %q: exit %d, stderr %q, spawned %v; want usage and nothing spawned", args, code, stderr, h.labels)
+		}
+	}
+}

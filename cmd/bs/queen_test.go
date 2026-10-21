@@ -1,19 +1,24 @@
 package main
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
-
-	"github.com/jmmshn/bees/internal/prompt"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/jmmshn/bees/internal/logbook"
+	"github.com/jmmshn/bees/internal/proc"
+	"github.com/jmmshn/bees/internal/prompt"
 )
 
 func TestQueenStartsClaudeNamedForTheProject(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("BS_PROJECT", "bees")
+	t.Setenv("HERDR_PANE_ID", "w1:p1")
 	t.Setenv("BS_LOGBOOK", "")
 	t.Setenv("BS_LOGBOOK_DIR", "")
 	t.Setenv("BS_REPOS", "/src")
@@ -60,6 +65,7 @@ func TestQueenOutsideItsRepoWantsBSRepos(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("BS_PROJECT", "bees")
+	t.Setenv("HERDR_PANE_ID", "w1:p1")
 	t.Setenv("BS_REPOS", "")
 	t.Chdir(t.TempDir())
 	execAgent = func(string, []string, string, ...string) error { t.Fatal("started Claude in no repo"); return nil }
@@ -75,6 +81,7 @@ func TestQueenOutsideItsRepoWantsBSRepos(t *testing.T) {
 func TestQueenGetsAnAbsoluteLogbook(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("BS_PROJECT", "bees")
+	t.Setenv("HERDR_PANE_ID", "w1:p1")
 	t.Setenv("BS_REPOS", "/src")
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -97,6 +104,7 @@ func TestQueenStartsOnTheConfiguredModel(t *testing.T) {
 	xdg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 	t.Setenv("BS_PROJECT", "bees")
+	t.Setenv("HERDR_PANE_ID", "w1:p1")
 	t.Setenv("BS_LOGBOOK", "")
 	t.Setenv("BS_LOGBOOK_DIR", "")
 	t.Setenv("BS_REPOS", "/src")
@@ -112,6 +120,7 @@ func TestQueenStartsOnTheConfiguredModel(t *testing.T) {
 		t.Errorf("args = %q, want no --model when none is configured", gotArgs)
 	}
 	writeModels(t, xdg, "bees")
+	t.Setenv("HOME", t.TempDir()) // a new logbook: the stubbed exec left the first queen "running"
 	if _, stderr, code := bs(t, "queen"); code != 0 {
 		t.Fatalf("queen: exit %d: %s", code, stderr)
 	}
@@ -130,6 +139,84 @@ func writeModels(t *testing.T, xdg, project string) {
 	}
 	if err := os.WriteFile(cfg, []byte("[queen.claude_code]\nmodel = \"claude-opus-5-5\"\n[worker.claude_code]\nmodel = \"claude-haiku-5-5\"\n"), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// bees-12.10: bs queen records her pane and process before it execs, so her workers can
+// find her; exec keeps the pid and start time.
+func TestQueenRecordsHerPaneAndProcess(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("BS_PROJECT", "bees")
+	t.Setenv("BS_LOGBOOK", "")
+	t.Setenv("BS_LOGBOOK_DIR", "")
+	t.Setenv("BS_REPOS", "/src")
+	t.Setenv("HERDR_PANE_ID", "w7:p2")
+	t.Chdir(t.TempDir())
+	execAgent = func(string, []string, string, ...string) error { return nil }
+	t.Cleanup(func() { execAgent = execAgentProcess })
+	if _, stderr, code := bs(t, "queen"); code != 0 {
+		t.Fatalf("queen: exit %d: %s", code, stderr)
+	}
+	lb, err := logbook.Open(context.Background(), filepath.Join(os.Getenv("HOME"), ".local/share/bees/bees.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lb.Close()
+	q, ok, err := lb.LatestQueen(context.Background(), "queen-bees")
+	start, _ := proc.Start(os.Getpid())
+	if err != nil || !ok || q.Pane != "w7:p2" || q.PID != os.Getpid() || q.Start != start || q.Harness != "claude_code" {
+		t.Fatalf("queen entry = %+v, %v, %v; want pane w7:p2, this pid and start, claude_code", q, ok, err)
+	}
+	// This process is still alive with that start time: a second queen is refused.
+	execAgent = func(string, []string, string, ...string) error { t.Fatal("started a twin queen"); return nil }
+	if _, stderr, code := bs(t, "queen"); code != 2 || !strings.Contains(stderr, "already running") {
+		t.Fatalf("twin queen: exit %d, stderr %q; want exit 2", code, stderr)
+	}
+}
+
+// bees-12.10: a queen whose recorded process is gone doesn't block the next one.
+func TestQueenStartsOverADeadQueen(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("BS_PROJECT", "bees")
+	t.Setenv("BS_LOGBOOK", "")
+	t.Setenv("BS_LOGBOOK_DIR", "")
+	t.Setenv("BS_REPOS", "/src")
+	t.Setenv("HERDR_PANE_ID", "w1:p1")
+	t.Chdir(t.TempDir())
+	lb, err := logbook.Open(context.Background(), filepath.Join(os.Getenv("HOME"), ".local/share/bees/bees.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, _ := proc.Start(os.Getpid())
+	if _, _, err := lb.RecordQueen(context.Background(), logbook.Queen{Name: "queen-bees", Harness: "claude_code", Pane: "w1:p1", PID: os.Getpid(), Start: start + "0"}, func(logbook.Queen) (bool, error) { return false, nil }); err != nil {
+		t.Fatal(err)
+	}
+	lb.Close()
+	started := false
+	execAgent = func(string, []string, string, ...string) error { started = true; return nil }
+	t.Cleanup(func() { execAgent = execAgentProcess })
+	if _, stderr, code := bs(t, "queen"); code != 0 || !started {
+		t.Fatalf("queen over a dead one (reused pid): exit %d, started %v: %s", code, started, stderr)
+	}
+}
+
+// bees-12.10: outside a herdr pane bs queen refuses with exit 2 and records nothing.
+func TestQueenRefusesOutsideHerdr(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("BS_PROJECT", "bees")
+	t.Setenv("BS_REPOS", "/src")
+	t.Setenv("HERDR_PANE_ID", "")
+	t.Chdir(t.TempDir())
+	execAgent = func(string, []string, string, ...string) error { t.Fatal("started a queen outside herdr"); return nil }
+	t.Cleanup(func() { execAgent = execAgentProcess })
+	if _, stderr, code := bs(t, "queen"); code != 2 || !strings.Contains(stderr, "not in a herdr pane") {
+		t.Fatalf("exit %d, stderr %q; want exit 2", code, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".local/share/bees/bees.db")); !os.IsNotExist(err) {
+		t.Fatalf("logbook made outside herdr: %v", err)
 	}
 }
 
@@ -167,6 +254,42 @@ func TestQueenRefusesAnUnreadableFragment(t *testing.T) {
 	t.Cleanup(func() { execAgent = execAgentProcess })
 	if _, stderr, code := bs(t, "queen"); code != 1 || !strings.Contains(stderr, "delivery.fragment") {
 		t.Fatalf("queen: exit %d, stderr %q; want exit 1 naming delivery.fragment", code, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".local/share/bees/bees.db")); err == nil {
+		t.Error("a refused queen started a logbook")
+	}
+}
+
+// A merge grant every spawn would refuse stops bs queen before Claude starts, rather than
+// at the queen's first spawn, after its bead is made (bees-12.20).
+func TestQueenRefusesGuardsEverySpawnWouldRefuse(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	t.Setenv("BS_PROJECT", "bees")
+	t.Setenv("BS_LOGBOOK", "")
+	t.Setenv("BS_LOGBOOK_DIR", "")
+	repos := t.TempDir()
+	t.Setenv("BS_REPOS", repos)
+	if out, err := exec.Command("git", "init", "-q", filepath.Join(repos, "bees")).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	t.Chdir(t.TempDir())
+	useFakeHive(t) // no GitHub, so nothing confirms the default branch is protected
+	cfg := filepath.Join(xdg, "bees", "projects", "bees.toml")
+	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg, []byte("[guards]\nallow_merge_into = [\"pilot/*\"]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	execAgent = func(string, []string, string, ...string) error {
+		t.Fatal("started Claude with guards every spawn refuses")
+		return nil
+	}
+	t.Cleanup(func() { execAgent = execAgentProcess })
+	if _, stderr, code := bs(t, "queen"); code != 1 || !strings.Contains(stderr, "guards.allow_merge_into") || !strings.Contains(stderr, "bs spawn would refuse every worker") {
+		t.Fatalf("queen: exit %d, stderr %q; want exit 1 naming guards.allow_merge_into", code, stderr)
 	}
 	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".local/share/bees/bees.db")); err == nil {
 		t.Error("a refused queen started a logbook")

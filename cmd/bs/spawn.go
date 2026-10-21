@@ -41,12 +41,12 @@ func fleet(ctx context.Context, cmd, flagProject, flagAs, flagRepo string, start
 		lb.Close()
 		return worker.Fleet{}, err
 	}
-	h, err := adapter(cfg, cfg.Worker)
+	h, err := adapter(cfg, cfg.Worker.Role())
 	if err != nil {
 		lb.Close()
 		return worker.Fleet{}, err
 	}
-	return newFleet(worker.Fleet{P: p, LB: lb, Me: me, Harness: h, HarnessName: cfg.Harness, Delivery: cfg.Delivery, Guards: cfg.Guards, WorkspaceKind: cfg.Workspace.Kind, ForeignRepo: flagRepo != ""}), nil
+	return newFleet(worker.Fleet{P: p, LB: lb, Me: me, Harness: h, HarnessName: cfg.Harness, Delivery: cfg.Delivery, Guards: cfg.Guards, WorkspaceKind: cfg.Workspace.Kind, Path: expandAll(cfg.Worker.Path), ForeignRepo: flagRepo != ""}), nil
 }
 
 func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -63,6 +63,14 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		repo = s
 		return nil
 	})
+	var path []string
+	fs.Func("path", "put this dir first on the PATH of every worker's shell commands, e.g. a live test's build (repeatable; absolute); before the first bead", func(s string) error {
+		if len(reqs) > 0 {
+			return errors.New("--path goes before the first bead: it applies to every worker of the call")
+		}
+		path = append(path, s)
+		return nil
+	})
 	label, labelled := "", false // the --label waiting for its bead
 	fs.Func("label", "the herdr workspace label of the bead after it: 1-4 lowercase words naming the work (required on a first spawn)", func(s string) error {
 		if labelled {
@@ -75,7 +83,7 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		if err != nil {
 			fmt.Fprintf(stderr, "bs spawn: %v\n", err)
 		}
-		fmt.Fprintf(stderr, "usage: bs spawn --label \"<words>\" <bead> [--label \"<words>\" <bead> ...] [--repo <path>]\n%s\n", worker.LabelRules)
+		fmt.Fprintf(stderr, "usage: bs spawn --label \"<words>\" <bead> [--label \"<words>\" <bead> ...] [--repo <path>] [--path <dir> ...]\n%s\n", worker.LabelRules)
 		return errUsage
 	}
 	// Like parseFlags, but each --label goes with the bead after it.
@@ -84,7 +92,7 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		args, tail = args[:i], args[i+1:]
 	}
 	addBead := func(b string) {
-		reqs = append(reqs, worker.Request{Bead: b, Label: label})
+		reqs = append(reqs, worker.Request{Bead: b, Label: label, Path: path})
 		label, labelled = "", false
 	}
 	for {
@@ -347,4 +355,13 @@ func cmdPrune(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return exitCode(code)
 	}
 	return nil
+}
+
+// expandAll is config.Expand of each of paths; nil stays nil, so no default is no --path.
+func expandAll(paths []string) []string {
+	var out []string
+	for _, p := range paths {
+		out = append(out, config.Expand(p))
+	}
+	return out
 }

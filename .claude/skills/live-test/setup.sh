@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
-# setup.sh [--config <file>] [<dir holding a bs build>]: a throwaway project for a live test
-# of bs, with its queen running that build in its own herdr workspace. Prints the run's
-# live.json. --config is the toy's project config, in place before the queen starts; setup
-# adds worker.path, so the toy's workers run that build too (bees-12.24).
+# setup.sh [--no-git] [--config <file>] [<dir holding a bs build>]: a throwaway project for
+# a live test of bs, with its queen running that build in its own herdr workspace. Prints
+# the run's live.json. --config is the toy's project config, in place before the queen
+# starts; setup adds worker.path, so the toy's workers run that build too (bees-12.24).
+# --no-git makes the toy a plain dir, under workspace.kind none (bees-12.30).
 set -euo pipefail
 unset BS_LOGBOOK BS_PROJECT # the toy's sessions find their logbook and project from its name
 here=$(cd "$(dirname "$0")" && pwd)
-cfg=
+cfg= nogit=
+if [ "${1:-}" = --no-git ]; then nogit=1 && shift; fi
 if [ "${1:-}" = --config ]; then
 	cfg=$(realpath -e "${2:?--config needs a file}") && [ -f "$cfg" ] || { echo "--config $2: no such file" >&2; exit 1; }
 	shift 2
-	# worker.path goes in as a dotted key on top, which a [worker] table would redefine.
+	# Setup's keys go in as dotted keys on top, which a [worker], [paths] or [workspace]
+	# table would redefine.
 	# ponytail: a line grep, blind to an inline worker = {…}; a TOML parse would see it.
-	! grep -Eq '^[[:space:]]*\[worker\]|^[[:space:]]*worker\.path' "$cfg" || { echo "--config $cfg: setup sets worker.path; write worker settings as [worker.claude_code], without worker.path" >&2; exit 1; }
+	! grep -Eq '^[[:space:]]*\[(worker|paths|workspace)\]|^[[:space:]]*(worker\.path|paths\.repo|workspace\.kind)' "$cfg" || { echo "--config $cfg: setup sets worker.path (and paths.repo, workspace.kind under --no-git); write other settings in those tables as dotted keys (paths.worktrees = …) or subtables ([worker.claude_code])" >&2; exit 1; }
 fi
 bin=$(cd "${1:-$here/../../../bin}" 2>/dev/null && pwd) || bin=
 [ -n "$bin" ] && [ -x "$bin/bs" ] || { echo "no bs build in ${1:-bin/}: run go build -o bin/bs ./cmd/bs in the checkout under test" >&2; exit 1; }
@@ -40,25 +43,36 @@ for e in "$real"/* "$real"/.[!.]*; do
 	[ -e "$e" ] && [ "$(basename "$e")" != bees ] && ln -s "$e" "$xdg/"
 done
 [ ! -e "$real/bees/config.toml" ] || ln -s "$real/bees/config.toml" "$xdg/bees/config.toml"
-{ printf 'worker.path = ["%s"]\n' "$bin"; [ -z "$cfg" ] || cat "$cfg"; } >"$xdg/bees/projects/$toy.toml"
+{
+	printf 'worker.path = ["%s"]\n' "$bin"
+	# No git repo to find the toy from: name its dir, and have no worktrees made.
+	[ -z "$nogit" ] || printf 'paths.repo = "%s"\nworkspace.kind = "none"\n' "$repo"
+	[ -z "$cfg" ] || cat "$cfg"
+} >"$xdg/bees/projects/$toy.toml"
 record xdg "$xdg"
-git init -q -b main "$repo"
-git -C "$repo" config commit.gpgsign false # the signing key and identity live under ~/repos only
-# bd records git user.name as a bead's created_by: the toy id marks every bead the toy's
-# sessions file, wherever they file it, so teardown.sh can find and delete it.
-git -C "$repo" config user.name "$toy" && git -C "$repo" config user.email live-test@example.invalid
+mkdir "$repo"
 printf '# %s\n\nA throwaway project for a live test of bs.\n' "$toy" >"$repo/README.md"
-git -C "$repo" add -A && git -C "$repo" commit -qm "toy"
+if [ -z "$nogit" ]; then
+	git init -q -b main "$repo"
+	git -C "$repo" config commit.gpgsign false # the signing key and identity live under ~/repos only
+	# bd records git user.name as a bead's created_by: the toy id marks every bead the toy's
+	# sessions file, wherever they file it, so teardown.sh can find and delete it.
+	git -C "$repo" config user.name "$toy" && git -C "$repo" config user.email live-test@example.invalid
+	git -C "$repo" add -A && git -C "$repo" commit -qm "toy"
+fi
 ws=$(herdr workspace create --cwd "$repo" --label "$toy · queen" --no-focus)
 record workspace "$(jq -r .result.workspace.workspace_id <<<"$ws")"
 pane=$(jq -r .result.root_pane.pane_id <<<"$ws")
 record pane "$pane"
 # The pane's shell starts from herdr's environment, not this one, so unset BS_LOGBOOK and
-# BS_PROJECT there too: the queen finds the toy from the cwd. The PATH reaches the queen's own
+# BS_PROJECT there too: the queen finds the toy from the cwd, or with no git from --project
+# (and bd's created_by from BEADS_ACTOR, for her own beads). The PATH reaches the queen's own
 # bs calls only: workers start from herdr's environment, and run the build because the toy's
 # worker.path is the default --path of her spawns. The toy's XDG_CONFIG_HOME reaches the
 # queen only: she and her spawns read the toy's config, workers the real one.
-herdr pane run "$pane" "env -u BS_LOGBOOK -u BS_PROJECT XDG_CONFIG_HOME=$(printf %q "$xdg") PATH=$(printf %q "$bin"):\$PATH bs queen" >/dev/null
+queen="bs queen" actor=
+[ -z "$nogit" ] || queen="bs queen --project $toy" actor="BEADS_ACTOR=$toy "
+herdr pane run "$pane" "env -u BS_LOGBOOK -u BS_PROJECT $actor""XDG_CONFIG_HOME=$(printf %q "$xdg") PATH=$(printf %q "$bin"):\$PATH $queen" >/dev/null
 cat "$run/live.json"
 # Trust the new folder once, as a human would; Claude keys trust by repo root, so workers'
 # worktrees inherit it. The prompt can draw before Claude reads keys (bees-8.1): send them

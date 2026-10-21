@@ -9,3 +9,11 @@ func Fast(wait time.Duration) func() {
 	confirmWait, watchEvery, busyWait = wait, time.Millisecond, wait
 	return func() { confirmWait, watchEvery, busyWait = cw, we, bw }
 }
+
+// FastGate shortens the gate's second look to look, for tests; it returns a func that
+// undoes it.
+func FastGate(look time.Duration) func() {
+	sl := secondLook
+	secondLook = look
+	return func() { secondLook = sl }
+}

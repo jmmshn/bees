@@ -41,7 +41,12 @@ func fleet(ctx context.Context, cmd, flagProject, flagAs, flagRepo string, start
 		lb.Close()
 		return worker.Fleet{}, err
 	}
-	return newFleet(worker.Fleet{P: p, LB: lb, Me: me, Model: cfg.Worker.ClaudeCode.Model, Delivery: cfg.Delivery, Guards: cfg.Guards, ForeignRepo: flagRepo != ""}), nil
+	h, err := adapter(cfg, cfg.Worker)
+	if err != nil {
+		lb.Close()
+		return worker.Fleet{}, err
+	}
+	return newFleet(worker.Fleet{P: p, LB: lb, Me: me, Harness: h, HarnessName: cfg.Harness, Delivery: cfg.Delivery, Guards: cfg.Guards, ForeignRepo: flagRepo != ""}), nil
 }
 
 func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {

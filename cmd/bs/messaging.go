@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/jmmshn/bees/internal/config"
-	"github.com/jmmshn/bees/internal/harness/claude"
+	"github.com/jmmshn/bees/internal/harness"
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/project"
 	"github.com/jmmshn/bees/internal/worker"
@@ -224,7 +224,7 @@ func warnStranger(ctx context.Context, lb *logbook.Logbook, p project.Project, t
 func ring(ctx context.Context, lb *logbook.Logbook, from, to string, now bool, stdout, stderr io.Writer) error {
 	err := ringOnce(ctx, lb, from, to, now)
 	switch {
-	case errors.Is(err, claude.ErrNotRunning):
+	case errors.Is(err, harness.ErrNotRunning):
 		fmt.Fprintf(stdout, "queued; %s is not running\n", to)
 	case err != nil:
 		fmt.Fprintf(stderr, "bs send: couldn't ring %s (the message is stored): %v\n", to, err)
@@ -232,8 +232,16 @@ func ring(ctx context.Context, lb *logbook.Logbook, from, to string, now bool, s
 	return nil
 }
 
+// ringOnce rings to through the harness its spawn recorded; the queen, who has no record
+// yet, through harness.Default.
 func ringOnce(ctx context.Context, lb *logbook.Logbook, from, to string, now bool) error {
-	s, err := claude.Find(to)
+	name := harness.Default
+	if sp, ok, err := lb.LatestSpawn(ctx, to); err != nil {
+		return err
+	} else if ok {
+		name = sp.Harness
+	}
+	h, err := harnessFor(name)
 	if err != nil {
 		return err
 	}
@@ -241,11 +249,11 @@ func ringOnce(ctx context.Context, lb *logbook.Logbook, from, to string, now boo
 	if err != nil {
 		return err
 	}
-	priority := claude.Next
+	priority := harness.Next
 	if now {
-		priority = claude.Now
+		priority = harness.Now
 	}
-	return claude.Ring(s, doorbell(unread, from), priority)
+	return h.Ring(harness.Target{Name: to}, doorbell(unread, from), priority)
 }
 
 // doorbell names who the unread messages are from, never what they say:

@@ -15,19 +15,25 @@ import (
 	"github.com/jmmshn/bees/internal/config"
 )
 
-// Rules are one worker's guards.
+// Rules are one launch's guards.
 type Rules struct {
 	// Deny holds shell globs over a whole command line, where * matches any text, spaces
 	// and slashes too, and nothing else is special.
 	Deny []string
-	// Allow holds intents in prose, naming the worker's branch and worktree, for a
-	// harness that judges commands by intent.
-	Allow []string
+	// Environment and Allow are prose for a harness that judges commands by intent: where
+	// the session runs and what it owns, and what it may do there.
+	Environment, Allow []string
 }
 
-// Worker names what one worker's rules are about.
+// Worker names what one worker's rules are about: its own git worktree on its own branch
+// of Repo. A worker owns its worktree and branch, so it may build, test and push its own
+// branch (bees-1.51).
 type Worker struct {
-	Branch, Worktree string
+	Branch, Worktree, Repo string
+	// Protected is GitHub's word that the default branch is protected. Only then does the
+	// environment say the keeper merges by hand: unchecked, that claim would relax a
+	// classifier on pushes (bees-7.4).
+	Protected bool
 	// DefaultBranches are the names a repo's default branch may have: main and master, plus
 	// what the repo says. Every one is denied, so a repo whose default is develop guards
 	// develop (bees-11.7).
@@ -70,7 +76,11 @@ func Build(d config.Delivery, g config.Guards, w Worker) (Rules, error) {
 			}
 		}
 	}
-	r := Rules{Deny: slices.Clone(g.Deny), Allow: []string{
+	env := fmt.Sprintf("Host containment: a bees worker, working in its own git worktree %s on its own branch %s of the repository %s.", w.Worktree, w.Branch, w.Repo)
+	if w.Protected && d.Kind != "manual" {
+		env += " GitHub protects the repository's default branch, so the worker's work reaches it only through a pull request the keeper merges."
+	}
+	r := Rules{Deny: slices.Clone(g.Deny), Environment: []string{env}, Allow: []string{
 		fmt.Sprintf("Running this repository's own build, lint and test commands (such as go vet, go test, go build -o into the worktree, pre-commit) inside the worktree %s.", w.Worktree),
 	}}
 	switch d.Kind {

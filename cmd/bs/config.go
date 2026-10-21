@@ -57,7 +57,6 @@ func cmdConfig(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 	if os.Getenv("BS_LOGBOOK_DIR") != "" {
 		fmt.Fprintf(stdout, "# BS_LOGBOOK_DIR is set, so %s and %s skip both files\n", strings.Join(skipsFiles[:len(skipsFiles)-1], ", "), skipsFiles[len(skipsFiles)-1])
 	}
-	fmt.Fprintln(stdout, "# the queen and every worker run on claude_code: bs's only harness, so no key selects one yet")
 	if name != "" {
 		p, err := locate(name, l, "")
 		if err != nil {

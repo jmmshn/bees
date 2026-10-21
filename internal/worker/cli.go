@@ -104,11 +104,11 @@ func CheckAgentArgs(args []string) error {
 	return nil
 }
 
-func (HerdrCLI) StartClaude(ctx context.Context, pane, name string, args ...string) error {
+func (HerdrCLI) StartAgent(ctx context.Context, pane, name, kind string, args ...string) error {
 	if err := CheckAgentArgs(args); err != nil {
 		return err
 	}
-	code, err := herdr(ctx, nil, append([]string{"agent", "start", name, "--kind", "claude", "--pane", pane, "--timeout", strconv.FormatInt(herdrStartTimeout.Milliseconds(), 10), "--"}, args...)...)
+	code, err := herdr(ctx, nil, append([]string{"agent", "start", name, "--kind", kind, "--pane", pane, "--timeout", strconv.FormatInt(herdrStartTimeout.Milliseconds(), 10), "--"}, args...)...)
 	// Codes seen with herdr 0.9.3 (bees-1.14). agent_not_ready: blocked during startup,
 	// e.g. at Claude's folder-trust prompt, reported about 3 s in. timeout: Claude never
 	// sat idle at its prompt in time, either busy with its first prompt or exited (as

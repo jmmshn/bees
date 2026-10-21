@@ -371,3 +371,23 @@ func writeForever(path string) {
 		fmt.Println(id)
 	}
 }
+
+// bees-12.6: an entry from before spawns recorded a harness reads as claude_code, in both
+// LatestSpawn and LiveSpawns; a recorded one reads back as recorded.
+func TestASpawnWithoutAHarnessReadsAsClaudeCode(t *testing.T) {
+	ctx := context.Background()
+	lb := open(t)
+	if _, err := lb.RecordSpawn(ctx, "queen-bees", logbook.Spawn{Name: "bees-1", Bead: "bees-1"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lb.RecordSpawn(ctx, "queen-bees", logbook.Spawn{Name: "bees-2", Bead: "bees-2", Harness: "oh_my_pi", Record: map[string]string{"profile": "p"}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, err := lb.LatestSpawn(ctx, "bees-1"); err != nil || got.Harness != "claude_code" {
+		t.Fatalf("LatestSpawn = %+v, %v; want harness claude_code", got, err)
+	}
+	live, err := lb.LiveSpawns(ctx)
+	if err != nil || len(live) != 2 || live[0].Harness != "claude_code" || live[1].Harness != "oh_my_pi" || live[1].Record["profile"] != "p" {
+		t.Fatalf("LiveSpawns = %+v, %v", live, err)
+	}
+}

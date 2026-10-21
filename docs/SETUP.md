@@ -2,13 +2,15 @@
 
 Linux or macOS. Needs Go, [Claude Code](https://code.claude.com) with cross-session messaging (2.1.296 or later), [herdr](https://herdr.dev) for spawning workers, and `bd` 1.1.0 or later for beads, with one local store shared by every repo (`BEADS_DIR`; the skill below sets it up).
 
-For a guided setup, run the [`setup-bees`](../.claude/skills/setup-bees/SKILL.md) skill in Claude Code from this repo (`/setup-bees`): it checks and installs each piece, then runs a queen → worker round trip.
+For a guided setup, have a coding agent follow [`SETUP-AGENT.md`](SETUP-AGENT.md) (in Claude Code from this repo, `/setup-bees`): it checks and installs each piece, writes the config with `bs config init`, checks it with `bs doctor`, then runs a queen → worker round trip.
 
 ## Install
 
 ```sh
 go install ./cmd/bs     # from this repo
 bs init                 # creates ~/.local/share/bees/<project>.db (bs queen and bs spawn do too)
+bs config init          # a commented config.toml with every key and its default (--project p: a project's file)
+bs doctor               # one line per check: herdr, the harness, bd, the logbook dir, the project's repo and guards
 ```
 
 ## Names

@@ -262,7 +262,7 @@ func Me(flag string) (string, error) {
 
 // registered returns the name and launch directory of the nearest ancestor process that
 // is a registered, named, live Claude Code session: its registry entry's procStart must match the pid's
-// start time, as in claude.List, so a stale entry on a reused pid names no one. A failed
+// start time, so a stale entry on a reused pid names no one. A failed
 // process lookup is an error, never "not in Claude": that would let --as name anyone.
 func registered() (name, cwd string, ok bool, err error) {
 	home, err := os.UserHomeDir()

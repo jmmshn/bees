@@ -655,6 +655,8 @@ func (f Fleet) launch(ctx context.Context, sp logbook.Spawn, st *Started, args [
 	case errors.Is(err, ErrWaiting):
 		st.Waiting = true
 	case err != nil && !errors.Is(err, ErrUnconfirmed):
+		cancel()
+		<-seen // the watch is done before launch returns: no goroutine outlives the start
 		return err
 	}
 	got := <-seen

@@ -47,7 +47,7 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	}
 	p, cfg, err := resolve(ctx, "queen", *proj, "", stderr)
 	if err == nil {
-		err = p.NeedRepo()
+		err = needRepo(ctx, p)
 	}
 	if err != nil {
 		return err
@@ -84,6 +84,11 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		return err
 	}
 	defer lb.Close()
+	// Before the harness is built, so a switch reads as one, whatever the new harness says.
+	// A queen still running is a twin, which RecordQueen refuses: count only her workers.
+	if err := refuseSwitch(ctx, "queen", lb, "", cfg.Harness, stderr); err != nil {
+		return err
+	}
 	// No inherited identity or logbook variable: the queen's bs finds her name, project and
 	// logbook from her herdr pane, which her queen entry records (ADR-0009 amendment 1).
 	env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
@@ -117,10 +122,6 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 			return false, fmt.Errorf("can't tell whether %s is still running (pid %d): %w", q.Name, q.PID, err)
 		}
 		return up, nil
-	}
-	// A queen still running is a twin, which RecordQueen refuses: count only her workers.
-	if err := refuseSwitch(ctx, "queen", lb, "", cfg.Harness, stderr); err != nil {
-		return err
 	}
 	switch q, ok, err := lb.RecordQueen(ctx, logbook.Queen{Name: p.Queen(), Harness: cfg.Harness, Pane: pane, PID: os.Getpid(), Start: start}, alive); {
 	case err != nil:

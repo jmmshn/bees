@@ -294,7 +294,11 @@ func (d *doctor) project(ctx context.Context, p project.Project, err error, cfg 
 	case none && !p.RepoNamed():
 		d.line("FAIL", "repo", `workspace.kind = "none" shares paths.repo, which is unset: make the directory and set paths.repo in the project file`)
 	case p.Repo == "":
-		d.line("FAIL", "repo", "none found: run in the project's repo, or set paths.repo in its project file")
+		why := "none found: run in the project's repo, or set paths.repo in its project file"
+		if h := paneHint(ctx, p); h != "" {
+			why = "none found for project " + p.Name + "; " + h
+		}
+		d.line("FAIL", "repo", why)
 	default:
 		if _, err := os.Stat(p.Repo); err != nil {
 			d.line("FAIL", "repo", err.Error())
@@ -346,7 +350,11 @@ func (d *doctor) harnessSwitch(ctx context.Context, p project.Project, want stri
 	case err != nil:
 		d.line("FAIL", "harness switch", err.Error())
 	case len(others) > 0:
-		d.line("FAIL", "harness switch", strings.Join(others, ", ")+" still runs, so bs queen and bs spawn refuse to start "+want+"; bs end it first")
+		verb, them := "still runs", "it"
+		if len(others) > 1 {
+			verb, them = "still run", "them"
+		}
+		d.line("FAIL", "harness switch", strings.Join(others, ", ")+" "+verb+", so bs queen and bs spawn refuse to start "+want+"; bs end "+them+" (exit a queen) first")
 	}
 }
 

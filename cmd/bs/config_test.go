@@ -311,3 +311,91 @@ func TestConfigShowsDeliveryAndTheEffectiveGuards(t *testing.T) {
 		t.Errorf("output lacks %q:\n%s", want, out)
 	}
 }
+
+// bees-12.9: bs config init writes a commented global file that loads clean, shows every
+// key with its default, and sets only what its flags name.
+func TestConfigInitWritesCommentedGlobalFile(t *testing.T) {
+	dir := configEnv(t)
+	var out, stderr bytes.Buffer
+	if code := run([]string{"config", "init", "--workspace", "none", "--delivery", "manual"}, strings.NewReader(""), &out, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	path := filepath.Join(dir, "config.toml")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(b)
+	for _, want := range []string{
+		"# harness = \"claude_code\"\n",
+		"[workspace]\n",
+		"kind = \"none\"\n",
+		"[delivery]\n",
+		"kind = \"manual\"\n",
+		"# logbook_dir = \"~/.local/share/bees\"\n",
+		"# deny = []\n",
+		"[worker.claude_code]\n",
+		"# model = \"\"\n",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("config.toml lacks %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "repo = ") {
+		t.Errorf("the global file shows paths.repo, a project-only key:\n%s", text)
+	}
+	l, err := config.Load("")
+	if err != nil {
+		t.Fatalf("written file doesn't load: %v", err)
+	}
+	if l.Workspace.Kind != "none" || l.Delivery.Kind != "manual" || l.Harness != "claude_code" {
+		t.Errorf("loaded %+v %+v %q", l.Workspace, l.Delivery, l.Harness)
+	}
+	if !strings.Contains(out.String(), path) {
+		t.Errorf("stdout doesn't name the file: %q", out.String())
+	}
+	// A second init never overwrites the keeper's file.
+	stderr.Reset()
+	if code := run([]string{"config", "init"}, strings.NewReader(""), &out, &stderr); code != 1 || !strings.Contains(stderr.String(), "already exists") {
+		t.Errorf("second init: exit %d, %q", code, stderr.String())
+	}
+}
+
+// A project file holds only project-scope keys, takes --repo, and refuses --harness.
+func TestConfigInitProjectFile(t *testing.T) {
+	dir := configEnv(t)
+	repo := t.TempDir()
+	var out, stderr bytes.Buffer
+	args := []string{"config", "init", "--project", "toy", "--workspace", "none", "--delivery", "manual", "--repo", repo}
+	if code := run(args, strings.NewReader(""), &out, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "projects", "toy.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "repo = "+config.Quote(repo)+"\n") || strings.Contains(string(b), "harness = ") || strings.Contains(string(b), "logbook_dir = ") {
+		t.Errorf("project file:\n%s", b)
+	}
+	l, err := config.Load("toy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.Paths.Repo != repo || l.Workspace.Kind != "none" {
+		t.Errorf("loaded %+v %+v", l.Paths, l.Workspace)
+	}
+	for _, bad := range [][]string{
+		{"config", "init", "--project", "other", "--harness", "claude_code"},
+		{"config", "init", "--repo", repo},
+		{"config", "init", "--workspace", "citc"},
+		{"config", "init", "--project", "other", "--repo", "relative/dir"},
+	} {
+		stderr.Reset()
+		if code := run(bad, strings.NewReader(""), &out, &stderr); code != 2 {
+			t.Errorf("%v: exit %d, want 2: %s", bad, code, stderr.String())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "config.toml")); err == nil {
+		t.Error("a refused init wrote the global file")
+	}
+}

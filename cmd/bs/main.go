@@ -25,7 +25,8 @@ commands:
   inbox     print your unread messages and record receipts
   done      report your bead done to your queen (--pr <url> | --report <text>)
   status    list running sessions and unread counts (--json for scripts)
-  config    print every setting, its value and where it came from
+  config    print every setting, its value and where it came from (init: write a commented config file)
+  doctor    check what bs needs here, one line per check
   guard     agy's tool-call hook: deny a command line matching one of its globs
   version   print the commit bs was built from
 `
@@ -44,6 +45,7 @@ var commands = map[string]func(ctx context.Context, args []string, stdin io.Read
 	"bead":    cmdBead,
 	"status":  cmdStatus,
 	"config":  cmdConfig,
+	"doctor":  cmdDoctor,
 	"guard":   cmdGuard,
 	"version": cmdVersion,
 }

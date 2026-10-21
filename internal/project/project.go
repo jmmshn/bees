@@ -72,7 +72,7 @@ type Paths struct {
 	Repo       string // paths.repo, the project file's checkout; "" if unset
 	Repos      string // paths.repos, the directory holding the user's repos; "" if unset
 	Worktrees  string // paths.worktrees; {repo} stands for the main checkout
-	AnyVCS     bool   // workspace kind none: Repo may be any directory, a jj or hg checkout too
+	AnyVCS     bool   // workspace kind none: Repo is where workers open, any directory, and beats git
 }
 
 // Name finds the project from flag, then BS_PROJECT, then the git repo containing the
@@ -109,7 +109,8 @@ func Name(flag string) (string, error) {
 // project's directory under c.Repos, else empty: messages need only the logbook, and
 // NeedRepo stops what would run in no repo. A flag or c.Repo naming a linked worktree
 // makes it the Base workers branch from, while Repo and Worktrees stay the main checkout's;
-// one that is no git checkout fails only NeedRepo, so messages still flow.
+// one that is no git checkout fails only NeedRepo, so messages still flow. Under c.AnyVCS
+// (workspace kind none) c.Repo comes before git and is taken as given, any directory.
 func Locate(name string, c Paths) (Project, error) {
 	p := Project{Name: name}
 	git := mainRepo("")
@@ -117,13 +118,13 @@ func Locate(name string, c Paths) (Project, error) {
 	case c.RepoFlag != "":
 		p.Repo, p.Base, p.repoErr = checkout("--repo", c.RepoFlag)
 		p.RepoFrom = "--repo"
+	case c.Repo != "" && c.AnyVCS: // the directory workers open on, wherever bs runs (ADR-0009)
+		p.Repo, p.Base, p.repoErr = plainDir("paths.repo", c.Repo)
+		p.RepoFrom = "paths.repo"
 	case git != "" && Normalise(filepath.Base(git)) == name:
 		p.Repo, p.RepoFrom = git, "git"
 	case c.Repo != "":
 		p.Repo, p.Base, p.repoErr = checkout("paths.repo", c.Repo)
-		if c.AnyVCS && p.repoErr != nil {
-			p.Repo, p.Base, p.repoErr = plainDir("paths.repo", c.Repo)
-		}
 		p.RepoFrom = "paths.repo"
 	case c.Repos != "":
 		p.Repo, p.RepoFrom = repoDir(c.Repos, name), "paths.repos"

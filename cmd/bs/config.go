@@ -116,7 +116,11 @@ func printRepo(stdout io.Writer, p project.Project, l *config.Loaded) {
 		fmt.Fprintf(stdout, "# base: %s (a linked worktree: workers branch from its HEAD)\n", p.Base)
 	}
 	if l.Workspace.Kind == worker.NoWorkspace {
-		fmt.Fprintf(stdout, "# workers: each in a herdr workspace on the repo, no worktree (workspace.kind = none)\n")
+		if p.RepoFrom != "paths.repo" && p.RepoFrom != "--repo" {
+			fmt.Fprintf(stdout, "# workers: none start: workspace.kind = none opens them on paths.repo, which is unset (bs spawn refuses rather than share %s)\n", p.Repo)
+			return
+		}
+		fmt.Fprintf(stdout, "# workers: share %s, each in its own herdr workspace, no worktree or branch (workspace.kind = none)\n", p.Repo)
 		return
 	}
 	fmt.Fprintf(stdout, "# worker worktrees: %s/<worker>\n", p.Worktrees)

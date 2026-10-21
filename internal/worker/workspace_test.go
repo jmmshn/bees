@@ -21,7 +21,7 @@ func newPlainRig(t *testing.T) rig {
 	if err := os.MkdirAll(filepath.Join(r.repo, ".hg"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	r.fleet.P.Repo = r.repo
+	r.fleet.P.Repo, r.fleet.P.RepoFrom = r.repo, "paths.repo"
 	r.fleet.WorkspaceKind = worker.NoWorkspace
 	return r
 }
@@ -47,6 +47,22 @@ func TestNoneOpensATaggedPlainWorkspaceOnTheRepo(t *testing.T) {
 	settings, err := os.ReadFile(start[slices.Index(start, "--settings")+1])
 	if err != nil || !strings.Contains(string(settings), "working in the directory "+r.repo) || strings.Contains(string(settings), "branch") {
 		t.Fatalf("settings = %s, %v; want the directory and no branch", settings, err)
+	}
+}
+
+// Kind none opens on paths.repo: a repo found any other way is the checkout bs runs in
+// (the queen's), and workers sharing it would move it (bees-12.28).
+func TestNoneRefusesARepoNotNamedByPathsRepo(t *testing.T) {
+	ctx := context.Background()
+	for _, from := range []string{"git", "paths.repos"} {
+		r := newPlainRig(t)
+		r.fleet.P.RepoFrom = from
+		if _, err := r.fleet.Spawn(ctx, "bees-8", "hg client"); err == nil || !strings.Contains(err.Error(), "paths.repo") {
+			t.Fatalf("%s: err = %v, want a refusal naming paths.repo", from, err)
+		}
+		if _, ok, _ := r.lb.LatestSpawn(ctx, "bees-8"); ok || len(r.h.workspaces) != 0 {
+			t.Fatalf("%s: something was opened or recorded", from)
+		}
 	}
 }
 

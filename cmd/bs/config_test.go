@@ -227,6 +227,19 @@ func TestConfigShowsTheRepoAndWorktrees(t *testing.T) {
 			t.Errorf("exit %d (%s), output lacks %q:\n%s", code, stderr, want, out)
 		}
 	}
+	// Kind none: bs config says where workers open, or that none start (bees-12.28).
+	client := t.TempDir()
+	for body, want := range map[string]string{
+		"[workspace]\nkind = \"none\"\n":                                     "# workers: none start: workspace.kind = none opens them on paths.repo, which is unset",
+		"[workspace]\nkind = \"none\"\n[paths]\nrepo = \"" + client + "\"\n": "# workers: share " + client + ", each in its own herdr workspace, no worktree or branch",
+	} {
+		if err := os.WriteFile(proj, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if out, stderr, code := bs(t, "config", "--project", "bees"); code != 0 || !strings.Contains(out, want) {
+			t.Errorf("%s: exit %d (%s), output lacks %q:\n%s", body, code, stderr, want, out)
+		}
+	}
 }
 
 // bs config shows the delivery kind and the guards every worker gets: the kind's default

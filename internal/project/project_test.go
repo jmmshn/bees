@@ -362,6 +362,8 @@ func TestRepoChain(t *testing.T) {
 	}{
 		{project.Paths{RepoFlag: other, Repo: configured, Repos: repos}, other, "--repo"},
 		{project.Paths{Repo: configured, Repos: repos}, own, "git"},
+		// Kind none opens workers on paths.repo, so it beats the checkout bs runs in.
+		{project.Paths{Repo: configured, Repos: repos, AnyVCS: true}, configured, "paths.repo"},
 	} {
 		if p := locate(c.paths); p.Repo != c.repo || p.RepoFrom != c.from || p.Worktrees != c.repo+"-WT" {
 			t.Errorf("%+v: got %+v, want repo %s from %s", c.paths, p, c.repo, c.from)

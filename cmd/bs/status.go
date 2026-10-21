@@ -35,7 +35,7 @@ func cmdStatus(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 		fmt.Fprintln(stderr, "usage: bs status [--json]")
 		return errUsage
 	}
-	_, lb, err := scope(ctx, *proj, nil)
+	_, lb, err := scope(ctx, "status", *proj, nil)
 	if err != nil {
 		return err
 	}

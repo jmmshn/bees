@@ -6,9 +6,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
-	"github.com/jmmshn/bees/internal/config"
 	"github.com/jmmshn/bees/internal/project"
 )
 
@@ -27,13 +27,13 @@ func cmdConfig(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 		return errUsage
 	}
 	name := ""
-	switch p, err := project.Resolve(*proj); {
+	switch n, err := project.Name(*proj); {
 	case err == nil:
-		name = p.Name
+		name = n
 	case !errors.Is(err, project.ErrNoProject):
 		return err
 	}
-	l, err := config.Load(name)
+	l, err := settings("config", name)
 	if err != nil {
 		return err
 	}
@@ -49,7 +49,21 @@ func cmdConfig(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 		}
 		fmt.Fprintf(stdout, "# %s file: %s%s\n", f.Scope, f.Path, missing)
 	}
+	if os.Getenv("BS_LOGBOOK_DIR") != "" {
+		fmt.Fprintf(stdout, "# BS_LOGBOOK_DIR is set, so %s and %s skip both files\n", strings.Join(skipsFiles[:len(skipsFiles)-1], ", "), skipsFiles[len(skipsFiles)-1])
+	}
 	fmt.Fprintln(stdout, "# the queen and every worker run on claude_code: bs's only harness, so no key selects one yet")
+	if name != "" {
+		p, err := locate(name, l)
+		if err != nil {
+			return err
+		}
+		from := "paths.logbook_dir, " + l.Sources["paths.logbook_dir"].String()
+		if os.Getenv("BS_LOGBOOK") != "" {
+			from = "env BS_LOGBOOK"
+		}
+		fmt.Fprintf(stdout, "# logbook: %s (%s)\n", p.Logbook, from)
+	}
 	for _, f := range l.Fields() {
 		limit := ""
 		if f.Scope != "both" {

@@ -7,7 +7,6 @@ import (
 	"io"
 	"strings"
 
-	"github.com/jmmshn/bees/internal/project"
 	"github.com/jmmshn/bees/internal/worker"
 )
 
@@ -23,7 +22,7 @@ func cmdEpic(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 		fmt.Fprintln(stderr, "usage: bs epic <title>")
 		return errUsage
 	}
-	p, err := project.Resolve(*proj)
+	p, _, err := resolve("epic", *proj)
 	if err != nil {
 		return err
 	}

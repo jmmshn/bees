@@ -1259,6 +1259,35 @@ func gitRun(t *testing.T, dir string, args ...string) {
 	}
 }
 
+// Every spawn pins BS_LOGBOOK_DIR (and blanks any BS_LOGBOOK herdr passes on), so the
+// worker's bs writes the store its spawner resolved; a logbook it can't be pointed at
+// refuses the spawn before anything is made (bees-11.3).
+func TestSpawnPinsTheLogbookDir(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil {
+		t.Fatal(err)
+	}
+	var settings struct{ Env map[string]*string }
+	if err := json.Unmarshal(settingsFile(t, r.h.started[0]), &settings); err != nil {
+		t.Fatal(err)
+	}
+	if d := settings.Env["BS_LOGBOOK_DIR"]; d == nil || *d != filepath.Dir(r.fleet.P.Logbook) {
+		t.Errorf("env.BS_LOGBOOK_DIR = %v, want %s", d, filepath.Dir(r.fleet.P.Logbook))
+	}
+	if lb := settings.Env["BS_LOGBOOK"]; lb == nil || *lb != "" {
+		t.Errorf("env.BS_LOGBOOK = %v, want it blanked", lb)
+	}
+
+	r.fleet.P.Logbook = filepath.Join(t.TempDir(), "other.db")
+	if _, err := r.fleet.Spawn(ctx, "bees-9", "second worker"); err == nil || !strings.Contains(err.Error(), "not named bees.db") {
+		t.Fatalf("err = %v, want the logbook refused", err)
+	}
+	if _, ok, _ := r.lb.LatestSpawn(ctx, "bees-9"); ok || len(r.h.started) != 1 {
+		t.Errorf("a refused spawn was recorded or started (%d starts)", len(r.h.started))
+	}
+}
+
 // bees-11.4: [worker.claude_code] model reaches every start, a resume included; empty
 // leaves Claude's own default.
 func TestWorkersStartWithTheConfiguredModel(t *testing.T) {

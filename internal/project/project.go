@@ -19,7 +19,7 @@ import (
 var (
 	ErrNoProject    = errors.New("can't tell which project; run inside its git repo, set BS_PROJECT or pass --project")
 	ErrBadProject   = errors.New("project names must be a letter then up to 24 letters or digits (after dropping - and _); set BS_PROJECT")
-	ErrNoRepos      = errors.New("can't find the project's repo; run bs inside it, or set BS_REPOS to the directory that holds your repos")
+	ErrNoRepos      = errors.New("can't find the project's repo; run bs inside it, or set BS_REPOS (or paths.repos in bs's config.toml) to the directory that holds your repos")
 	ErrNoSession    = errors.New("can't tell which session you are; run bs from inside a named Claude session, or pass --as")
 	ErrBadSession   = errors.New("not a session name: a lowercase letter, then up to 31 of a-z, 0-9, - and _")
 	ErrNotYou       = errors.New("this Claude session is registered as")
@@ -49,48 +49,67 @@ func (p Project) NeedRepo() error {
 	return nil
 }
 
-// Resolve finds the project from flag, then BS_PROJECT, then the git repo containing
-// the working directory. A linked worktree resolves to its main repo. Inside a Claude
-// session, an inherited BS_PROJECT holds only within the checkout the session was
-// launched in (a submodule in it too): a worker that runs bs in another project's repo
-// must pick with --project (bees-8.7). The repo is the
-// git repo when it is the project's, else the project's directory under BS_REPOS, else
-// empty: messages need only the logbook, and NeedRepo stops what would run in no repo.
-func Resolve(flag string) (Project, error) {
+// Paths is what bs's config says about where a project's files live (ADR-0008), with ~
+// already expanded.
+type Paths struct {
+	LogbookDir string // the directory holding <project>.db
+	Repos      string // the directory holding the user's repos; "" if unset
+}
+
+// Name finds the project from flag, then BS_PROJECT, then the git repo containing the
+// working directory; a linked worktree names its main repo. Inside a Claude session, an
+// inherited BS_PROJECT holds only within the checkout the session was launched in (a
+// submodule in it too): a worker that runs bs in another project's repo must pick with
+// --project (bees-8.7). The name comes before any config, so no file can change it.
+func Name(flag string) (string, error) {
 	name, git := flag, mainRepo("")
 	if name == "" {
 		name = os.Getenv("BS_PROJECT")
 		if name != "" && git != "" && Normalise(filepath.Base(git)) != Normalise(name) {
 			if err := inLaunchCheckout(name, git); err != nil {
-				return Project{}, err
+				return "", err
 			}
 		}
 	}
 	if name == "" {
 		if git == "" {
-			return Project{}, ErrNoProject
+			return "", ErrNoProject
 		}
 		name = filepath.Base(git)
 	}
 	name = Normalise(name)
 	if !validName.MatchString(name) {
-		return Project{}, fmt.Errorf("%q: %w", name, ErrBadProject)
+		return "", fmt.Errorf("%q: %w", name, ErrBadProject)
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return Project{}, err
-	}
+	return name, nil
+}
+
+// Locate finds project name's logbook and repo. The logbook is BS_LOGBOOK, else
+// <c.LogbookDir>/<name>.db. The repo is the git repo containing the working directory
+// when it is the project's, else the project's directory under c.Repos, else empty:
+// messages need only the logbook, and NeedRepo stops what would run in no repo.
+func Locate(name string, c Paths) (Project, error) {
 	repo := ""
-	if git != "" && Normalise(filepath.Base(git)) == name {
+	if git := mainRepo(""); git != "" && Normalise(filepath.Base(git)) == name {
 		repo = git
-	} else if repos := os.Getenv("BS_REPOS"); repos != "" {
-		repo = repoDir(repos, name)
+	} else if c.Repos != "" {
+		repo = repoDir(c.Repos, name)
 	}
 	lb := os.Getenv("BS_LOGBOOK")
 	if lb == "" {
-		lb = filepath.Join(home, ".local", "share", "bees", name+".db")
+		lb = filepath.Join(c.LogbookDir, name+".db")
 	}
-	return Project{Name: name, Repo: repo, Logbook: lb}, nil
+	lb, err := filepath.Abs(lb)
+	return Project{Name: name, Repo: repo, Logbook: lb}, err
+}
+
+// LogbookDir is the directory to hand a worker as BS_LOGBOOK_DIR, so its bs opens p's
+// logbook. A logbook not named <project>.db (a BS_LOGBOOK of another name) has none.
+func (p Project) LogbookDir() (string, error) {
+	if filepath.Base(p.Logbook) != p.Name+".db" {
+		return "", fmt.Errorf("BS_LOGBOOK=%s is not named %s.db, so a worker can't be pointed at it with BS_LOGBOOK_DIR; rename the file, or unset BS_LOGBOOK", p.Logbook, p.Name)
+	}
+	return filepath.Dir(p.Logbook), nil
 }
 
 // Normalise lowercases a project or directory name and drops - and _ (R27⁶).

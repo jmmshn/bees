@@ -302,7 +302,8 @@ func (f Fleet) check(ctx context.Context, bead, label string) (plan, error) {
 			return p, fmt.Errorf("%s: %w", name, ErrRunning)
 		}
 		p.sp, p.resume = sp, true
-		return p, nil
+		_, err := f.P.LogbookDir() // start needs it; refuse before anything is touched
+		return p, err
 	}
 	if label == "" && ok {
 		p.label = sp.Label // an ended worker comes back under its recorded label
@@ -326,7 +327,8 @@ func (f Fleet) check(ctx context.Context, bead, label string) (plan, error) {
 	if i := slices.IndexFunc(wss, func(w Workspace) bool { return w.Path != "" && filepath.Clean(w.Path) == wt }); i >= 0 {
 		return p, fmt.Errorf("%s: %w; check it, then remove it with: herdr worktree remove --workspace %s --force", name, ErrOrphan, wss[i].ID)
 	}
-	return p, nil
+	_, err = f.P.LogbookDir()
+	return p, err
 }
 
 func (f Fleet) worktree(name string) string { return filepath.Join(f.P.Repo+"-WT", name) }
@@ -355,6 +357,8 @@ func (f Fleet) open(ctx context.Context, p plan) (logbook.Spawn, error) {
 // worker's bs finds its name from its Claude process and its project from env.BS_PROJECT,
 // the spawner's project: never from the worktree's git dir, which names another project in
 // a --repo worktree and would send its messages and receipts to that logbook (bees-1.54).
+// Its logbook is env.BS_LOGBOOK_DIR, the spawner's, with any BS_LOGBOOK the pane inherits
+// from herdr blanked: else a queen and her workers could split the store (bees-11.3).
 //
 // A worker owns its worktree and branch, so the classifier may let it build, test and push
 // its own branch (bees-1.51). The environment says the keeper merges by hand only when
@@ -368,7 +372,7 @@ func (f Fleet) open(ctx context.Context, p plan) (logbook.Spawn, error) {
 // the guard: a shell finds other spellings, and branch protection on main is the real
 // one (docs/SETUP.md). Not git * push: that would deny a commit whose message says
 // "push … main".
-func workerSettings(project string, sp logbook.Spawn, protected bool) (string, error) {
+func workerSettings(project, logbookDir string, sp logbook.Spawn, protected bool) (string, error) {
 	branch := cmp.Or(sp.Branch, sp.Name)
 	var deny []string
 	for _, git := range []string{"git", "command git", "*/git"} {
@@ -388,7 +392,7 @@ func workerSettings(project string, sp logbook.Spawn, protected bool) (string, e
 	}
 	b, err := json.Marshal(map[string]any{
 		"crossSessionInbound": "accept",
-		"env":                 map[string]string{"BS_PROJECT": project},
+		"env":                 map[string]string{"BS_PROJECT": project, "BS_LOGBOOK_DIR": logbookDir, "BS_LOGBOOK": ""},
 		"autoMode": map[string][]string{
 			"environment": {"$defaults", env},
 			"allow": {"$defaults",
@@ -409,7 +413,11 @@ func workerSettings(project string, sp logbook.Spawn, protected bool) (string, e
 // claude --continue exits when there is no conversation.
 func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Started, error) {
 	st := Started{Name: sp.Name, Label: sp.Label, Workspace: sp.Workspace, Resumed: resume, Continued: resume && sp.Read}
-	settings, err := workerSettings(f.P.Name, sp, f.protected(ctx, sp))
+	lbDir, err := f.P.LogbookDir()
+	if err != nil {
+		return st, err
+	}
+	settings, err := workerSettings(f.P.Name, lbDir, sp, f.protected(ctx, sp))
 	if err != nil {
 		return st, err
 	}

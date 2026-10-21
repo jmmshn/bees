@@ -84,3 +84,93 @@ func TestConfigQuotesValuesAsTOML(t *testing.T) {
 		t.Errorf("paths.repos decodes to %q (%v), want %q:\n%s", parsed.Paths.Repos, err, want, out.String())
 	}
 }
+
+// While BS_LOGBOOK_DIR is set, the fixed list of commands skips the config files, so a
+// broken file can't silence a fleet; every other command still fails on it (ADR-0008).
+func TestSkipListIgnoresTheFilesWhileLogbookDirIsSet(t *testing.T) {
+	useTempLogbook(t)
+	t.Setenv("BS_LOGBOOK", "")
+	t.Setenv("BS_LOGBOOK_DIR", t.TempDir())
+	if _, stderr, code := bs(t, "init"); code != 0 {
+		t.Fatalf("init: exit %d: %s", code, stderr)
+	}
+	global := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "bees", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(global), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(global, []byte("[paths]\nrepoz = \"/x\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"send", "--as", "queen-test", "test-1-1", "hi"}, {"inbox", "--as", "test-1-1"}, {"status"}, {"version"}} {
+		if _, stderr, code := bs(t, args...); code != 0 {
+			t.Errorf("%v: exit %d: %s; want the files skipped", args, code, stderr)
+		}
+	}
+	for _, args := range [][]string{{"init"}, {"config"}, {"spawn", "--as", "queen-test", "--label", "x", "test-1.1"}, {"prune"}} {
+		if _, stderr, code := bs(t, args...); code == 0 || !strings.Contains(stderr, global+": unknown key paths.repoz") {
+			t.Errorf("%v: exit %d: %s; want the file's error", args, code, stderr)
+		}
+	}
+	t.Setenv("BS_LOGBOOK_DIR", "")
+	if _, stderr, code := bs(t, "status"); code == 0 || !strings.Contains(stderr, "unknown key paths.repoz") {
+		t.Errorf("status without BS_LOGBOOK_DIR: exit %d: %s; want the file's error", code, stderr)
+	}
+}
+
+// Moving paths.logbook_dir away from a logbook that exists is refused, by the commands
+// that would start a new one too: that would split the store.
+func TestMovedLogbookDirIsRefused(t *testing.T) {
+	useTempLogbook(t)
+	t.Setenv("BS_LOGBOOK", "")
+	if _, stderr, code := bs(t, "init"); code != 0 {
+		t.Fatalf("init: exit %d: %s", code, stderr)
+	}
+	old := filepath.Join(os.Getenv("HOME"), ".local/share/bees/test.db")
+	if _, err := os.Stat(old); err != nil {
+		t.Fatalf("init made no logbook at the default dir: %v", err)
+	}
+	newDir := t.TempDir()
+	global := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "bees", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(global), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(global, []byte("[paths]\nlogbook_dir = \""+newDir+"\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"init"}, {"send", "--as", "queen-test", "test-1-1", "hi"}} {
+		if _, stderr, code := bs(t, args...); code != 2 || !strings.Contains(stderr, "paths.logbook_dir moved there (global "+global+") from ~/.local/share/bees") {
+			t.Errorf("%v: exit %d: %s; want the move refused", args, code, stderr)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(newDir, "test.db")); err == nil {
+		t.Fatal("a refused command started a logbook at the new dir")
+	}
+	if err := os.Rename(old, filepath.Join(newDir, "test.db")); err != nil {
+		t.Fatal(err)
+	}
+	if _, stderr, code := bs(t, "send", "--as", "queen-test", "test-1-1", "hi"); code != 0 {
+		t.Errorf("send after the move: exit %d: %s", code, stderr)
+	}
+}
+
+// bs config shows the logbook file every command will open and why, and says when the
+// skip list is in force.
+func TestConfigShowsTheLogbookAndTheSkipList(t *testing.T) {
+	configEnv(t)
+	t.Setenv("BS_LOGBOOK", "")
+	out, stderr, code := bs(t, "config", "--project", "bees")
+	if want := "# logbook: " + filepath.Join(os.Getenv("HOME"), ".local/share/bees/bees.db") + " (paths.logbook_dir, default)\n"; code != 0 || !strings.Contains(out, want) {
+		t.Errorf("exit %d (%s), output lacks %q:\n%s", code, stderr, want, out)
+	}
+	if strings.Contains(out, "skip") {
+		t.Errorf("output mentions the skip list without BS_LOGBOOK_DIR:\n%s", out)
+	}
+	t.Setenv("BS_LOGBOOK_DIR", "/e")
+	t.Setenv("BS_LOGBOOK", "/x/bees.db")
+	out, _, _ = bs(t, "config", "--project", "bees")
+	for _, want := range []string{"# logbook: /x/bees.db (env BS_LOGBOOK)\n", "# BS_LOGBOOK_DIR is set, so send, inbox, status, bead, epic and version skip both files\n"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+}

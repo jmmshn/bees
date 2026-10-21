@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 )
@@ -37,4 +38,17 @@ func TestUnknownCommandFails(t *testing.T) {
 	if !strings.Contains(stderr.String(), `unknown command "frobnicate"`) {
 		t.Errorf("stderr = %q", stderr.String())
 	}
+}
+
+// TestMain keeps every test off the real config files and store dir.
+func TestMain(m *testing.M) {
+	xdg, err := os.MkdirTemp("", "bs-config-")
+	if err != nil {
+		panic(err)
+	}
+	os.Setenv("XDG_CONFIG_HOME", xdg)
+	os.Unsetenv("BS_LOGBOOK_DIR")
+	code := m.Run()
+	os.RemoveAll(xdg)
+	os.Exit(code)
 }

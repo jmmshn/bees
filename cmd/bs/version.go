@@ -95,9 +95,10 @@ func warnIfStale(ctx context.Context, stderr io.Writer) {
 // staleFix says who rebuilds the shared bs: a worker asks its queen; the queen or the
 // keeper installs it from main.
 func staleFix() string {
-	if p, err := project.Resolve(""); err == nil {
-		if me, err := project.Me(""); err == nil && me != p.Queen() {
-			return fmt.Sprintf("don't install it yourself; tell the queen: bs send %s \"bs is stale\"", p.Queen())
+	if name, err := project.Name(""); err == nil {
+		queen := project.Project{Name: name}.Queen()
+		if me, err := project.Me(""); err == nil && me != queen {
+			return fmt.Sprintf("don't install it yourself; tell the queen: bs send %s \"bs is stale\"", queen)
 		}
 	}
 	return "rebuild it from main: go install ./cmd/bs"

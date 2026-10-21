@@ -11,8 +11,6 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/jmmshn/bees/internal/config"
-	"github.com/jmmshn/bees/internal/project"
 	"github.com/jmmshn/bees/internal/prompt"
 )
 
@@ -42,28 +40,28 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		fmt.Fprintln(stderr, "usage: bs queen [--project <name>]")
 		return errUsage
 	}
-	p, err := project.Resolve(*proj)
+	p, cfg, err := resolve("queen", *proj)
 	if err == nil {
 		err = p.NeedRepo()
 	}
 	if err != nil {
 		return err
 	}
-	cfg, err := config.Load(p.Name)
-	if err != nil {
-		return err
-	}
 	// The queen starts the project, so her bs commands find a logbook.
-	_, lb, err := scope(ctx, *proj, stderr)
+	_, lb, err := scope(ctx, "queen", *proj, stderr)
 	if err != nil {
 		return err
 	}
 	lb.Close()
-	// No BS_* variables: the queen's bs finds its name from --name and its project from
-	// the repo (R25). Drop inherited ones so they can't override either.
+	// No BS_SESSION or BS_PROJECT: the queen's bs finds its name from --name and its project
+	// from the repo (R25). Drop inherited ones so they can't override either. A BS_LOGBOOK
+	// passes on absolute: relative, it would name another file in her repo.
 	env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
-		return strings.HasPrefix(kv, "BS_SESSION=") || strings.HasPrefix(kv, "BS_PROJECT=")
+		return strings.HasPrefix(kv, "BS_SESSION=") || strings.HasPrefix(kv, "BS_PROJECT=") || strings.HasPrefix(kv, "BS_LOGBOOK=")
 	})
+	if os.Getenv("BS_LOGBOOK") != "" {
+		env = append(env, "BS_LOGBOOK="+p.Logbook)
+	}
 	file, err := prompt.File(prompt.Queen, p.Name)
 	if err != nil {
 		return err

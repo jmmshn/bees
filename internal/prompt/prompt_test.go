@@ -38,12 +38,9 @@ func TestNoPromptSaysBdCloseIsFineForEveryone(t *testing.T) {
 }
 
 func TestFileHoldsTheRolePromptInBsCache(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	t.Setenv("HOME", t.TempDir()) // macOS ignores XDG_CACHE_HOME for ~/Library/Caches
-	cache, err := os.UserCacheDir()
-	if err != nil {
-		t.Fatal(err)
-	}
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache) // on every OS, macOS too (TestDirFollowsXDGCacheHome)
+	t.Setenv("HOME", t.TempDir())
 	for _, role := range []prompt.Role{prompt.Queen, prompt.Worker} {
 		for range 2 { // rewritten, not appended, at every launch
 			path, err := prompt.File(role, "web2")
@@ -85,5 +82,20 @@ func TestPromptsHoldNoBeesRepoSpecifics(t *testing.T) {
 		if strings.Contains(got, "internal/prompt") {
 			t.Errorf("%s prompt names the bees repo's internal/prompt", role)
 		}
+	}
+}
+
+// The cache dir follows XDG_CACHE_HOME on every OS, macOS too (Go ignores it there), and a
+// relative one is an error (ADR-0008).
+func TestDirFollowsXDGCacheHome(t *testing.T) {
+	xdg := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", xdg)
+	t.Setenv("HOME", t.TempDir())
+	if d, err := prompt.Dir(); err != nil || d != filepath.Join(xdg, "bees") {
+		t.Errorf("Dir() = %q, %v; want %s", d, err, filepath.Join(xdg, "bees"))
+	}
+	t.Setenv("XDG_CACHE_HOME", "rel")
+	if _, err := prompt.Dir(); err == nil {
+		t.Error("a relative XDG_CACHE_HOME was used")
 	}
 }

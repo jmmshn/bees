@@ -9,19 +9,21 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
-	"github.com/jmmshn/bees/internal/harness/claude/claudetest"
+	"github.com/jmmshn/bees/internal/logbook"
+	"github.com/jmmshn/bees/internal/proc"
 	"github.com/jmmshn/bees/internal/worker"
 )
 
-// fakeHive is herdr, Claude's registry and bd for cmd tests: every bead exists, and
-// every start comes up.
+// fakeHive is herdr, the process table and bd for cmd tests: every bead exists, and
+// every start comes up as a process named for its kind, pid 1000+n for the nth start.
 type fakeHive struct {
 	mu     sync.Mutex
 	next   int
 	labels map[string]string // workspace label → worker
 	live   map[string]bool
+	pids   map[string]int      // worker → its process
+	panes  map[string]string   // pane → the worker started in it
 	args   map[string][]string // worker → its last launch line
 	down   bool                // herdr doesn't answer
 }
@@ -39,6 +41,10 @@ func (h *fakeHive) StartAgent(ctx context.Context, pane, name, kind string, args
 	defer h.mu.Unlock()
 	h.live[name] = true
 	h.args[name] = args
+	if h.pids == nil {
+		h.pids, h.panes = map[string]int{}, map[string]string{}
+	}
+	h.pids[name], h.panes[pane] = 1000+len(h.pids), name
 	return worker.CheckAgentArgs(args)
 }
 
@@ -63,11 +69,54 @@ func (h *fakeHive) Show(ctx context.Context, id string) (worker.Bead, error) {
 	return worker.Bead{ID: id, Title: "t"}, nil
 }
 
-func (h *fakeHive) Alive(ctx context.Context, name string, wait time.Duration) (bool, error) {
+func (h *fakeHive) ProcessInfo(ctx context.Context, pane string) (worker.PaneProcesses, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.live[name], nil
+	if h.down {
+		return worker.PaneProcesses{}, fmt.Errorf("%w: herdr pane: no herdr server is running", worker.ErrHerdrDown)
+	}
+	if name, ok := h.panes[pane]; ok && h.live[name] {
+		return worker.PaneProcesses{Shell: 1, Foreground: []worker.PaneProcess{{PID: h.pids[name], Name: "claude"}}}, nil
+	}
+	return worker.PaneProcesses{Shell: 1}, nil
 }
+
+func (h *fakeHive) RenameAgent(ctx context.Context, pane, name string) error { return nil }
+
+// name is the worker whose process pid is.
+func (h *fakeHive) name(pid int) string {
+	for n, p := range h.pids {
+		if p == pid {
+			return n
+		}
+	}
+	return ""
+}
+
+// Alive: the fake lists no workspace, and herdr ends the processes of a workspace it
+// closed, so a worker's process counts as gone once its start is confirmed. Any other pid
+// is the real process table's (a queen the test records with its own pid).
+func (h *fakeHive) Alive(p proc.Process) (bool, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.name(p.PID) != "" {
+		return false, nil
+	}
+	return proc.Alive(p.PID, p.Start)
+}
+
+func (h *fakeHive) Start(pid int) (string, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.live[h.name(pid)] {
+		return "t", nil
+	}
+	return "", proc.ErrGone
+}
+
+func (h *fakeHive) Name(pid int) (string, error)                { return "claude", nil }
+func (h *fakeHive) Exe(pid int) (string, error)                 { return "/fake/claude", nil }
+func (h *fakeHive) Descendants(pid int) ([]proc.Process, error) { return nil, nil }
 
 func useFakeHive(t *testing.T) *fakeHive {
 	t.Helper()
@@ -75,7 +124,7 @@ func useFakeHive(t *testing.T) *fakeHive {
 	saved := newFleet
 	t.Cleanup(func() { newFleet = saved })
 	newFleet = func(f worker.Fleet) worker.Fleet {
-		f.H, f.S, f.B = h, h, h
+		f.H, f.Procs, f.B = h, h, h
 		return f
 	}
 	return h
@@ -172,7 +221,7 @@ func TestEndAllSaysWhatItKeptAndHealsOnRerun(t *testing.T) {
 	if _, _, code := bs(t, "end", "--project", "test", "--as", "queen-test", "--all", "test-1-1"); code != 2 {
 		t.Fatalf("--all with a worker: exit %d, want 2", code)
 	}
-	end := []string{"end", "--project", "test", "--as", "keeper", "--all"}
+	end := []string{"end", "--project", "test", "--as", "keeper", "--all", "--yes"} // no queen recorded: bs can't tell she isn't running
 	if _, stderr, code := bs(t, end...); code != 2 || !strings.Contains(stderr, "no logbook for project test") {
 		t.Fatalf("no logbook: exit %d, %q", code, stderr)
 	}
@@ -215,7 +264,17 @@ func TestEndAllRefusesTheWrongFleet(t *testing.T) {
 	bs(t, "init")
 	refused("a worker never ends its whole project", "--as", "test-1-1", "--yes")
 	refused("pass --yes", "--as", "queen-test")
-	claudetest.FakeRegistry(t).Add(t, "queen-test", "")
+	refused("the logbook records no queen", "--as", "keeper") // fail closed: she may predate queen entries
+	lb, err := logbook.Open(context.Background(), os.Getenv("BS_LOGBOOK"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, _ := proc.Start(os.Getpid()) // this test's own process: running
+	_, _, err = lb.RecordQueen(context.Background(), logbook.Queen{Name: "queen-test", PID: os.Getpid(), Start: start}, func(logbook.Queen) (bool, error) { return false, nil })
+	lb.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
 	refused("queen-test is running", "--as", "keeper")
 	if out, stderr, code := bs(t, "end", "--project", "test", "--all", "--as", "keeper", "--yes"); code != 0 {
 		t.Fatalf("--yes: exit %d, %q %q", code, out, stderr)

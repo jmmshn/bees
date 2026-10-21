@@ -18,9 +18,12 @@ import (
 	"github.com/jmmshn/bees/internal/worker"
 )
 
+// newProcs is the process table bs status reads. Tests swap in fakes.
+var newProcs = func() worker.Procs { return worker.SystemProcs{} }
+
 // newFleet builds the Fleet for a command. Tests swap in fakes.
 var newFleet = func(f worker.Fleet) worker.Fleet {
-	f.H, f.S, f.B, f.G = worker.HerdrCLI{}, worker.ClaudeSessions{}, worker.BeadsCLI{}, worker.GitHubCLI{}
+	f.H, f.Procs, f.B, f.G = worker.HerdrCLI{}, worker.SystemProcs{}, worker.BeadsCLI{}, worker.GitHubCLI{}
 	return f
 }
 
@@ -157,6 +160,9 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		case !trusted && !st.Continued: // a fresh restart may meet the prompt its first start did
 			untrusted = append(untrusted, st.Name)
 		}
+		if st.Warn != nil {
+			fmt.Fprintf(stderr, "bs spawn: warning: %s started, but herdr didn't take its name (the sidebar shows another): %v\n", st.Name, st.Warn)
+		}
 	}
 	if len(untrusted) > 0 {
 		fmt.Fprintf(stderr, "bs spawn: Claude hasn't trusted %s yet; if %s asks, answer the trust prompt in its pane\n", f.P.Repo, strings.Join(untrusted, " or "))
@@ -194,7 +200,7 @@ func cmdEnd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 	}
 	defer f.LB.Close()
 	if *all {
-		if err := mayEndAll(f, *yes); err != nil {
+		if err := mayEndAll(ctx, f, *yes); err != nil {
 			return err
 		}
 		return endAll(ctx, f, o, stdout, stderr)
@@ -216,7 +222,7 @@ func cmdEnd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 // mayEndAll refuses an --all that would end the wrong fleet: one read from a BS_LOGBOOK that
 // is not the project's, one run by a worker of the project (it would end itself and its
 // peers), or, without yes, one run by the project's queen or while it is running.
-func mayEndAll(f worker.Fleet, yes bool) error {
+func mayEndAll(ctx context.Context, f worker.Fleet, yes bool) error {
 	if lb := os.Getenv("BS_LOGBOOK"); lb != "" && filepath.Base(lb) != f.P.Name+".db" {
 		return fmt.Errorf("BS_LOGBOOK=%s is not project %s's logbook; unset it, or pass the project it belongs to", lb, f.P.Name)
 	}
@@ -229,11 +235,13 @@ func mayEndAll(f worker.Fleet, yes bool) error {
 	if f.Me == f.P.Queen() {
 		return fmt.Errorf("this ends every worker of your own project %s; pass --yes if you mean it", f.P.Name)
 	}
-	switch _, err := claude.Find(f.P.Queen()); {
-	case err == nil:
-		return fmt.Errorf("%s is running and may spawn again; stop it first, or pass --yes", f.P.Queen())
-	case !errors.Is(err, claude.ErrNotRunning):
+	switch alive, known, err := worker.QueenAlive(ctx, f.LB, f.Procs, f.P.Queen()); {
+	case err != nil:
 		return fmt.Errorf("can't tell whether %s is running (pass --yes to end its workers anyway): %w", f.P.Queen(), err)
+	case !known: // fail closed: a queen started before bs recorded queens may be running (motif 7)
+		return fmt.Errorf("can't tell whether %s is running: the logbook records no queen; pass --yes to end its workers anyway", f.P.Queen())
+	case alive:
+		return fmt.Errorf("%s is running and may spawn again; stop it first, or pass --yes", f.P.Queen())
 	}
 	return nil
 }

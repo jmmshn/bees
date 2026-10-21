@@ -1,6 +1,7 @@
 package proc
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -42,4 +43,50 @@ func stat(pid int) ([]string, error) {
 		return nil, fmt.Errorf("pid %d: short /proc stat", pid)
 	}
 	return f, nil
+}
+
+// Name is pid's command name (/proc/<pid>/comm).
+func Name(pid int) (string, error) {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
+	if os.IsNotExist(err) {
+		return "", fmt.Errorf("pid %d: %w", pid, ErrGone)
+	}
+	return strings.TrimSpace(string(b)), err
+}
+
+// Exe is the path of pid's executable.
+func Exe(pid int) (string, error) { return os.Readlink(fmt.Sprintf("/proc/%d/exe", pid)) }
+
+// Descendants returns every live process below pid, with its start time, nearest first.
+// A process that exits during the walk is left out; any other read error fails it.
+func Descendants(pid int) ([]Process, error) {
+	ents, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil, err
+	}
+	var all []Process
+	parent := map[int]int{}
+	for _, e := range ents {
+		n, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue // not a process
+		}
+		f, err := stat(n)
+		if errors.Is(err, ErrGone) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if f[0] == "Z" {
+			continue
+		}
+		pp, err := strconv.Atoi(f[1])
+		if err != nil {
+			return nil, fmt.Errorf("pid %d: parent %q: %w", n, f[1], err)
+		}
+		parent[n] = pp
+		all = append(all, Process{PID: n, Start: f[19]})
+	}
+	return descendants(pid, all, parent), nil
 }

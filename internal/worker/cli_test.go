@@ -9,9 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/jmmshn/bees/internal/harness/claude/claudetest"
 	"github.com/jmmshn/bees/internal/worker"
 )
 
@@ -75,13 +73,35 @@ func TestHerdrDownOnlyWhenHerdrDidNotAnswer(t *testing.T) {
 	}
 }
 
-func TestClaudeSessionsAliveReadsClaudesRegistry(t *testing.T) {
-	reg := claudetest.FakeRegistry(t)
-	reg.Add(t, "bees-8", "")
-	for name, want := range map[string]bool{"bees-8": true, "bees-9": false} {
-		if got, err := (worker.ClaudeSessions{}).Alive(context.Background(), name, 300*time.Millisecond); err != nil || got != want {
-			t.Errorf("Alive(%s) = %v, %v; want %v", name, got, err, want)
-		}
+func TestProcessInfoOfAClosedPaneIsPaneGone(t *testing.T) {
+	fakeHerdrBinary(t, "pane_not_found")
+	if _, err := (worker.HerdrCLI{}).ProcessInfo(context.Background(), "w1:p1"); !errors.Is(err, worker.ErrPaneGone) {
+		t.Fatalf("err = %v, want ErrPaneGone", err)
+	}
+}
+
+// The real herdr's process-info, read the way bs reads it, finds this test's own pane:
+// its shell, and the process tree this test runs in below it (motif 13).
+func TestProcessInfoMatchesRealHerdr(t *testing.T) {
+	pane := os.Getenv("HERDR_PANE_ID")
+	if pane == "" {
+		t.Skip("not in a herdr pane")
+	}
+	pi, err := (worker.HerdrCLI{}).ProcessInfo(context.Background(), pane)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pi.Shell <= 0 || len(pi.Foreground) == 0 || pi.Foreground[0].PID <= 0 || pi.Foreground[0].Name == "" {
+		t.Fatalf("process-info of %s = %+v, want a shell and a named foreground process", pane, pi)
+	}
+}
+
+// herdr refuses a second agent start with a live agent's name and starts nothing
+// (agent_name_taken, probed for ADR-0009): that is a running worker, a fenced twin.
+func TestHerdrNameTakenMeansRunning(t *testing.T) {
+	fakeHerdrBinary(t, "agent_name_taken")
+	if err := (worker.HerdrCLI{}).StartAgent(context.Background(), "w1:p1", "bees-8", "claude"); !errors.Is(err, worker.ErrRunning) {
+		t.Fatalf("err = %v, want ErrRunning", err)
 	}
 }
 

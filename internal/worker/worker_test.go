@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"github.com/jmmshn/bees/internal/harness"
 	"github.com/jmmshn/bees/internal/harness/claude"
 	"github.com/jmmshn/bees/internal/logbook"
+	"github.com/jmmshn/bees/internal/proc"
 	"github.com/jmmshn/bees/internal/project"
 	"github.com/jmmshn/bees/internal/prompt"
 	"github.com/jmmshn/bees/internal/worker"
@@ -27,7 +29,8 @@ import (
 // fakeHerdr keeps workspaces and live Claude sessions in memory, and records removals.
 // Like herdr 0.9.3 it keeps any label verbatim, even empty or with newlines
 // (TestHerdrKeepsLabelsVerbatim), so CheckLabel is bs's rule, not herdr's.
-// It is also the fake Claude registry (worker.Sessions), so a start shows up there.
+// It is also the process table (worker.Procs): a start that comes up runs a process named
+// for its kind under the pane's shell, as Claude does, and exit ends it.
 type fakeHerdr struct {
 	mu         sync.Mutex // SpawnAll starts workers concurrently
 	together   int        // >0: StartAgent waits until this many starts are in flight, else fails
@@ -46,11 +49,43 @@ type fakeHerdr struct {
 	dirty      map[string]bool // worktree paths with modified or untracked files
 	failStart  error
 	liveAnyway bool  // with failStart: Claude came up all the same, as after herdr's timeout
-	aliveErr   error // the registry can't be read
+	aliveErr   error // the process table can't be read
 	listErr    error // herdr can't be reached
+	procs      map[int]*fakeProc
+	pids       map[string]int // agent name → its process
+	nextPID    int
+	renamed    []string // pane=name, one per RenameAgent
+}
+
+// fakeProc is a process: a pid with a start time, a name and a parent, alive until it exits.
+type fakeProc struct {
+	name, start string
+	parent      int
+	alive       bool
+}
+
+// spawnProc runs a process named name under parent and returns its pid. Callers hold mu.
+func (h *fakeHerdr) spawnProc(name string, parent int) int {
+	if h.procs == nil {
+		h.procs, h.pids, h.nextPID = map[int]*fakeProc{}, map[string]int{}, 1000
+	}
+	h.nextPID++
+	h.procs[h.nextPID] = &fakeProc{name: name, start: fmt.Sprintf("t%d", h.nextPID), parent: parent, alive: true}
+	return h.nextPID
+}
+
+// shell is pane's shell pid: one per pane, fixed by its name.
+func shell(pane string) int {
+	n := 0
+	for _, c := range pane {
+		n = n*31 + int(c)
+	}
+	return 1 + n%900
 }
 
 func (h *fakeHerdr) CreateWorktree(ctx context.Context, repo, base, branch, path, label string) (worker.Workspace, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	// Like herdr 0.9.5: "New and open worktree actions start from the repo parent workspace".
 	if fi, err := os.Stat(filepath.Join(repo, ".git")); err == nil && !fi.IsDir() {
 		return worker.Workspace{}, fmt.Errorf("herdr worktree: %s is a linked worktree", repo)
@@ -79,7 +114,95 @@ func (h *fakeHerdr) StartAgent(ctx context.Context, pane, name, kind string, arg
 		h.agents[name] = pane
 		h.kind = kind
 	}
+	// The harness process runs whenever the start came up, at a prompt too.
+	if h.failStart == nil || h.liveAnyway || errors.Is(h.failStart, worker.ErrWaiting) {
+		h.pids[name] = h.spawnProc(kind, shell(pane))
+		h.agents[name] = pane
+	}
 	return h.failStart
+}
+
+// ProcessInfo shows the live harness process in pane in the foreground; a pane of no open
+// workspace is pane_not_found.
+func (h *fakeHerdr) ProcessInfo(ctx context.Context, pane string) (worker.PaneProcesses, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.listErr != nil {
+		return worker.PaneProcesses{}, h.listErr
+	}
+	if !slices.ContainsFunc(h.workspaces, func(w worker.Workspace) bool { return w.Pane == pane }) {
+		return worker.PaneProcesses{}, fmt.Errorf("herdr pane: pane not found: %w", worker.ErrPaneGone)
+	}
+	pi := worker.PaneProcesses{Shell: shell(pane)}
+	for name, p := range h.agents {
+		if pr := h.procs[h.pids[name]]; p == pane && pr != nil && pr.alive {
+			pi.Foreground = append(pi.Foreground, worker.PaneProcess{PID: h.pids[name], Name: pr.name})
+		}
+	}
+	return pi, nil
+}
+
+func (h *fakeHerdr) RenameAgent(ctx context.Context, pane, name string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.renamed = append(h.renamed, pane+"="+name)
+	return nil
+}
+
+func (h *fakeHerdr) Alive(p proc.Process) (bool, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	pr := h.procs[p.PID]
+	return pr != nil && pr.alive && pr.start == p.Start, h.aliveErr
+}
+
+func (h *fakeHerdr) Start(pid int) (string, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if pr := h.procs[pid]; pr != nil && pr.alive {
+		return pr.start, nil
+	}
+	return "", proc.ErrGone
+}
+
+func (h *fakeHerdr) Name(pid int) (string, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if pr := h.procs[pid]; pr != nil && pr.alive {
+		return pr.name, nil
+	}
+	return "", proc.ErrGone
+}
+
+func (h *fakeHerdr) Exe(pid int) (string, error) { return "/fake/" + fmt.Sprint(pid), nil }
+
+// Descendants is every live process below pid, level by level, as proc's is.
+func (h *fakeHerdr) Descendants(pid int) ([]proc.Process, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var out []proc.Process
+	for level := []int{pid}; len(level) > 0; {
+		var next []int
+		for _, n := range slices.Sorted(maps.Keys(h.procs)) {
+			if pr := h.procs[n]; pr.alive && slices.Contains(level, pr.parent) {
+				out = append(out, proc.Process{PID: n, Start: pr.start})
+				next = append(next, n)
+			}
+		}
+		level = next
+	}
+	return out, nil
+}
+
+// movePane moves worker name's pane into another workspace, as herdr pane move does: the
+// pane gets a new id, the emptied workspace closes, and the process runs on.
+func (h *fakeHerdr) movePane(name string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	old := h.agents[name]
+	h.next++
+	h.agents[name] = fmt.Sprintf("w%d:p2", h.next)
+	h.workspaces = slices.DeleteFunc(h.workspaces, func(w worker.Workspace) bool { return w.Pane == old })
 }
 
 // waitTogether holds a start until h.together starts are in flight: a serial spawn
@@ -102,27 +225,24 @@ func (h *fakeHerdr) waitTogether() error {
 	return fmt.Errorf("only %d of %d starts in flight together", h.inFlight, h.together)
 }
 
-func (h *fakeHerdr) Alive(ctx context.Context, name string, wait time.Duration) (bool, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	_, ok := h.agents[name]
-	return ok, h.aliveErr
-}
-
 // RemoveWorktree refuses a dirty worktree without force, as herdr 0.9.3 does with
 // dirty_worktree_requires_force (TestHerdrDirtyWorktreeNeedsForce).
 func (h *fakeHerdr) RemoveWorktree(ctx context.Context, workspace string, force bool) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if i := slices.IndexFunc(h.workspaces, func(w worker.Workspace) bool { return w.ID == workspace }); i >= 0 && h.dirty[h.workspaces[i].Path] && !force {
 		return fmt.Errorf("herdr worktree: contains modified or untracked files, use --force: %w", worker.ErrDirty)
 	}
 	h.removed = append(h.removed, workspace)
-	h.workspaces = slices.DeleteFunc(h.workspaces, func(w worker.Workspace) bool { return w.ID == workspace })
+	h.dropWorkspaces(func(w worker.Workspace) bool { return w.ID == workspace })
 	return nil
 }
 
 // CreateWorkspace opens on $HOME for a dir that doesn't exist, as herdr 0.9.5 does
 // (exit 0), and lists no path or worker until the workspace is tagged.
 func (h *fakeHerdr) CreateWorkspace(ctx context.Context, dir, label string) (worker.Workspace, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if _, err := os.Stat(dir); err != nil {
 		dir = os.Getenv("HOME")
 	}
@@ -136,6 +256,8 @@ func (h *fakeHerdr) CreateWorkspace(ctx context.Context, dir, label string) (wor
 // TagWorkspace cuts each value to 80 characters, as herdr 0.9.5 does without a word; the
 // path token reads back as no Path, as HerdrCLI.Workspaces lists it.
 func (h *fakeHerdr) TagWorkspace(ctx context.Context, workspace, name, path string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	i := slices.IndexFunc(h.workspaces, func(w worker.Workspace) bool { return w.ID == workspace })
 	if i < 0 {
 		return fmt.Errorf("herdr workspace report-metadata: workspace %s not found", workspace)
@@ -149,20 +271,57 @@ func (h *fakeHerdr) TagWorkspace(ctx context.Context, workspace, name, path stri
 }
 
 func (h *fakeHerdr) CloseWorkspace(ctx context.Context, workspace string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if h.closeErr != nil {
 		return h.closeErr
 	}
 	h.closed = append(h.closed, workspace)
-	h.workspaces = slices.DeleteFunc(h.workspaces, func(w worker.Workspace) bool { return w.ID == workspace })
+	h.dropWorkspaces(func(w worker.Workspace) bool { return w.ID == workspace })
 	return nil
 }
 
 func (h *fakeHerdr) Workspaces(ctx context.Context) ([]worker.Workspace, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	return h.workspaces, h.listErr
 }
 
 // exit simulates the worker's Claude process ending.
-func (h *fakeHerdr) exit(name string) { delete(h.agents, name) }
+// closeWorkspaces closes the workspaces drop picks, and, as herdr does, ends the
+// processes in their panes.
+func (h *fakeHerdr) closeWorkspaces(drop func(worker.Workspace) bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.dropWorkspaces(drop)
+}
+
+// dropWorkspaces is closeWorkspaces for a caller holding mu.
+func (h *fakeHerdr) dropWorkspaces(drop func(worker.Workspace) bool) {
+	for _, w := range h.workspaces {
+		if !drop(w) {
+			continue
+		}
+		for name, pane := range h.agents {
+			if pane == w.Pane {
+				if pr := h.procs[h.pids[name]]; pr != nil {
+					pr.alive = false
+				}
+				delete(h.agents, name)
+			}
+		}
+	}
+	h.workspaces = slices.DeleteFunc(h.workspaces, drop)
+}
+
+func (h *fakeHerdr) exit(name string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if pr := h.procs[h.pids[name]]; pr != nil {
+		pr.alive = false
+	}
+	delete(h.agents, name)
+}
 
 type fakeBeads map[string]worker.Bead
 
@@ -192,7 +351,7 @@ func newRig(t *testing.T) rig {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { lb.Close() })
-	h := &fakeHerdr{agents: map[string]string{}}
+	h := &fakeHerdr{agents: map[string]string{}, procs: map[int]*fakeProc{}, pids: map[string]int{}, nextPID: 1000}
 	beads := fakeBeads{
 		"bees-8":     {ID: "bees-8", Title: "spawn and end bees", Description: "Build bs spawn."},
 		"bees-8.1":   {ID: "bees-8.1", Title: "child of bees-8"},
@@ -204,7 +363,7 @@ func newRig(t *testing.T) rig {
 	repo := filepath.Join(dir, "bees")
 	gitInit(t, repo) // the guards read its default branch
 	p := project.Project{Name: "bees", Repo: repo, Worktrees: repo + "-WT", Logbook: filepath.Join(dir, "bees.db")}
-	return rig{fleet: worker.Fleet{P: p, LB: lb, H: h, S: h, B: beads, Me: "queen-bees", Harness: claude.New(config.ClaudeCode{})}, h: h, lb: lb, repo: repo}
+	return rig{fleet: worker.Fleet{P: p, LB: lb, H: h, Procs: h, B: beads, Me: "queen-bees", Harness: claude.New(config.ClaudeCode{})}, h: h, lb: lb, repo: repo}
 }
 
 func TestName(t *testing.T) {
@@ -655,10 +814,15 @@ func TestHerdrTimeoutWithClaudeRunningCountsAsStarted(t *testing.T) {
 func TestHerdrTimeoutWithNoClaudeIsAFailure(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
+	defer worker.Fast(50 * time.Millisecond)()
 	r.h.failStart = fmt.Errorf("herdr agent: timed out waiting for agent startup: %w", worker.ErrUnconfirmed)
-	_, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	sp, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end")
 	if !errors.Is(err, worker.ErrUnconfirmed) || !strings.Contains(err.Error(), "herdr pane read w1:p1") {
 		t.Fatalf("err = %v, want ErrUnconfirmed pointing at the pane", err)
+	}
+	rec, _, _ := r.lb.LatestSpawn(ctx, sp.Name)
+	if _, ok, err := r.lb.LatestStart(ctx, rec.ID); ok || err != nil {
+		t.Fatalf("an unconfirmed start recorded a start: %v, %v", ok, err)
 	}
 }
 
@@ -831,7 +995,7 @@ func TestEndOfAVanishedWorkspaceRecordsTheEnd(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
 	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
-	r.h.workspaces = nil
+	r.h.closeWorkspaces(func(worker.Workspace) bool { return true })
 	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{}); err != nil {
 		t.Fatal(err)
 	}
@@ -876,7 +1040,7 @@ func TestEndAllEndsOnlyRecordedLiveWorkersAndHealsOnRerun(t *testing.T) {
 	r.fleet.ForeignRepo = true
 	_, _ = r.fleet.Spawn(ctx, "dotfiles-3", "spawn and end")                                                                // w5: --repo, another project's bead
 	r.h.workspaces = append(r.h.workspaces, worker.Workspace{ID: "w-other", Label: "bees-8", Path: r.h.workspaces[0].Path}) // not recorded
-	r.h.workspaces = slices.DeleteFunc(r.h.workspaces, func(w worker.Workspace) bool { return w.ID == "w4" })               // bees-10's vanished
+	r.h.closeWorkspaces(func(w worker.Workspace) bool { return w.ID == "w4" })                                              // bees-10's vanished
 	r.h.dirty = map[string]bool{filepath.Join(r.repo+"-WT", "bees-9"): true}
 	r.h.removed = nil
 
@@ -1803,5 +1967,134 @@ func TestSpawnRefusesABadPathBeforeTouchingAnything(t *testing.T) {
 		if len(r.h.workspaces) != 0 {
 			t.Errorf("--path %q: a workspace was made", p)
 		}
+	}
+}
+
+// bees-12.10: a confirmed start records the harness process herdr shows in the pane,
+// with its start time and baseline, then names the agent in herdr.
+func TestAConfirmedStartRecordsTheHarnessProcess(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil {
+		t.Fatal(err)
+	}
+	sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8")
+	st, ok, err := r.lb.LatestStart(ctx, sp.ID)
+	pid := r.h.pids["bees-8"]
+	if err != nil || !ok || st.PID != pid || st.Start != r.h.procs[pid].start || st.Harness != "claude_code" || st.Baseline == nil {
+		t.Fatalf("start = %+v, %v, %v; want pid %d and its start time", st, ok, err, pid)
+	}
+	if !slices.Equal(r.h.renamed, []string{sp.Pane + "=bees-8"}) {
+		t.Errorf("renamed = %v, want the pane named bees-8 once", r.h.renamed)
+	}
+}
+
+// bees-12.10 (T4): the recorded pid reused by another process (another start time) is
+// not the worker, so it may be started again; the live one is a twin.
+func TestAReusedPidIsNotTheWorker(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); !errors.Is(err, worker.ErrRunning) {
+		t.Fatalf("respawn of a live worker: err = %v, want ErrRunning", err)
+	}
+	r.h.mu.Lock()
+	*r.h.procs[r.h.pids["bees-8"]] = fakeProc{name: "vim", start: "reused", parent: 1, alive: true} // another program got the pid
+	delete(r.h.agents, "bees-8")
+	r.h.mu.Unlock()
+	if st, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil || !st.Resumed {
+		t.Fatalf("respawn over a reused pid = %+v, %v; want a restart", st, err)
+	}
+}
+
+// bees-12.10: a spawn with no start recorded (from before bs recorded starts) reads as
+// Absent, but its start looks in the pane first: a harness already there refuses it, so an
+// upgrade never starts a twin; herdr down fails closed.
+func TestAStartRefusesAHarnessAlreadyInThePane(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	ws, _ := r.h.CreateWorktree(ctx, r.repo, "", "bees-8", filepath.Join(r.repo+"-WT", "bees-8"), "spawn and end")
+	if _, err := r.lb.RecordSpawn(ctx, "queen-bees", logbook.Spawn{Name: "bees-8", Bead: "bees-8", Label: "spawn and end", Workspace: ws.ID, Pane: ws.Pane, Worktree: ws.Path, Branch: "bees-8", Repo: r.repo}, ""); err != nil {
+		t.Fatal(err)
+	}
+	r.h.mu.Lock()
+	r.h.pids["bees-8"], r.h.agents["bees-8"] = r.h.spawnProc("claude", shell(ws.Pane)), ws.Pane
+	r.h.mu.Unlock()
+	if _, err := r.fleet.Spawn(ctx, "bees-8", ""); !errors.Is(err, worker.ErrRunning) {
+		t.Fatalf("err = %v, want ErrRunning from the pane's claude", err)
+	}
+	r.h.listErr = fmt.Errorf("%w: no server", worker.ErrHerdrDown)
+	if _, err := r.fleet.Spawn(ctx, "bees-8", ""); !errors.Is(err, worker.ErrHerdrDown) {
+		t.Fatalf("herdr down: err = %v, want ErrHerdrDown (fail closed)", err)
+	}
+	r.h.listErr = nil
+	r.h.exit("bees-8")
+	if st, err := r.fleet.Spawn(ctx, "bees-8", ""); err != nil || !st.Resumed {
+		t.Fatalf("after it exited: %+v, %v; want a restart", st, err)
+	}
+}
+
+// bees-12.10: a worker whose workspace is gone while its process still runs was moved
+// (herdr pane move): bs end refuses rather than record ended over it; --force ends it.
+func TestEndRefusesAMovedWorker(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	r.h.movePane("bees-8")
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{}); !errors.Is(err, worker.ErrMoved) || !strings.Contains(err.Error(), fmt.Sprint(r.h.pids["bees-8"])) {
+		t.Fatalf("err = %v, want ErrMoved naming the pid", err)
+	}
+	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); sp.Ended {
+		t.Fatal("recorded ended over a running worker")
+	}
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	if sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8"); !sp.Ended {
+		t.Fatal("--force didn't end it")
+	}
+}
+
+// bees-12.10: a resume whose start was never confirmed leaves the previous start's dead
+// pid newest; the harness it launched may still come up in the pane, and then the next
+// spawn refuses instead of starting a twin beside it (motif 7).
+func TestAnUnconfirmedResumeIsNotTwinned(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	defer worker.Fast(20 * time.Millisecond)()
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	r.h.exit("bees-8")
+	r.h.failStart = fmt.Errorf("herdr agent: timed out: %w", worker.ErrUnconfirmed)
+	if _, err := r.fleet.Spawn(ctx, "bees-8", ""); !errors.Is(err, worker.ErrUnconfirmed) {
+		t.Fatalf("err = %v, want ErrUnconfirmed", err)
+	}
+	r.h.failStart = nil
+	r.h.mu.Lock() // it came up late, after bs stopped looking
+	r.h.pids["bees-8"], r.h.agents["bees-8"] = r.h.spawnProc("claude", shell("w1:p1")), "w1:p1"
+	r.h.mu.Unlock()
+	if _, err := r.fleet.Spawn(ctx, "bees-8", ""); !errors.Is(err, worker.ErrRunning) || !strings.Contains(err.Error(), "no start of") {
+		t.Fatalf("err = %v, want ErrRunning for the unrecorded harness in the pane", err)
+	}
+}
+
+// bees-12.10: a harness that shows below the pane's shell only after herdr gave up (busy
+// with its doorbell) is still found within the wait, as a grandchild too.
+func TestALateHarnessBelowTheShellIsConfirmed(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	r.h.failStart = fmt.Errorf("herdr agent: timed out: %w", worker.ErrUnconfirmed)
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		r.h.mu.Lock()
+		wrapper := r.h.spawnProc("sh", shell("w1:p1")) // e.g. a wrapper script
+		r.h.pids["bees-8"] = r.h.spawnProc("claude", wrapper)
+		r.h.mu.Unlock()
+	}()
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil {
+		t.Fatal(err)
+	}
+	sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8")
+	if st, ok, _ := r.lb.LatestStart(ctx, sp.ID); !ok || st.PID != r.h.pids["bees-8"] {
+		t.Fatalf("start = %+v, %v; want the late grandchild", st, ok)
 	}
 }

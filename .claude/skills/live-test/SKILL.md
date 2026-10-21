@@ -16,6 +16,8 @@ go build -o bin/bs ./cmd/bs                    # the build under test, in this c
 .claude/skills/live-test/setup.sh [<bin dir>]  # prints live.json: toy, run, repo, pane, workspace, builds
 ```
 
+`BEES_LIVE_CONFIG=1` gives the queen's bs a config dir of its own, `<run>/keeper/config/bees` (live.json's `config`), for testing config keys: write `config.toml` or `projects/<toy>.toml` there before the line that needs it. Workers and `teardown.sh` read the real config, so end anything a key changed the teardown of through the queen first.
+
 Setup makes a git repo at `~/.cache/bees-live/<toy>/<toy>` (or under `$BEES_LIVE`, symlinks resolved) (outside every repo, so bees' `CLAUDE.md` stays out of the toy's sessions), sets its git `user.name` to the toy id (bd's `created_by` on every bead the toy's sessions file, so teardown can note one filed elsewhere), opens a herdr workspace on it, starts `bs queen` there with your build first on its PATH and `BS_LOGBOOK`/`BS_PROJECT` unset, answers the folder-trust prompt, and exits 0 only once the queen is up and idle. Keep every file you write under `<run>/keeper/`; other live tests may run beside yours.
 
 **Which build ran what.** The queen's bs calls run your build (`queen_bs` in live.json). Workers start from herdr's environment, so they run the shared `bs` on PATH (`worker_bs`). Say both in your report; to test a worker-side change, the shared bs must be that build, which is the queen's install, never yours (bees-8.19 tracks lifting this).

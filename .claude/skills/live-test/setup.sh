@@ -27,14 +27,21 @@ git -C "$repo" config commit.gpgsign false # the signing key and identity live u
 git -C "$repo" config user.name "$toy" && git -C "$repo" config user.email live-test@example.invalid
 printf '# %s\n\nA throwaway project for a live test of bs.\n' "$toy" >"$repo/README.md"
 git -C "$repo" add -A && git -C "$repo" commit -qm "toy"
-ws=$(herdr workspace create --cwd "$repo" --label "live $toy" --no-focus)
+ws=$(herdr workspace create --cwd "$repo" --label "$toy · queen" --no-focus)
 record workspace "$(jq -r .result.workspace.workspace_id <<<"$ws")"
 pane=$(jq -r .result.root_pane.pane_id <<<"$ws")
 record pane "$pane"
 # The pane's shell starts from herdr's environment, not this one, so unset BS_LOGBOOK and
 # BS_PROJECT there too: the queen finds the toy from the cwd. The PATH reaches the queen's own
 # bs calls only: workers start from herdr's environment and run the shared bs.
-herdr pane run "$pane" "env -u BS_LOGBOOK -u BS_PROJECT PATH=$(printf %q "$bin"):\$PATH bs queen" >/dev/null
+# BEES_LIVE_CONFIG=1 gives the queen's bs its own config dir, <run>/keeper/config/bees, for a
+# test of config keys; workers and teardown.sh still read the real one.
+xdg=
+if [ -n "${BEES_LIVE_CONFIG:-}" ]; then
+	mkdir -p "$run/keeper/config/bees/projects" && record config "$run/keeper/config/bees"
+	xdg="XDG_CONFIG_HOME=$(printf %q "$run/keeper/config") "
+fi
+herdr pane run "$pane" "env -u BS_LOGBOOK -u BS_PROJECT ${xdg}PATH=$(printf %q "$bin"):\$PATH bs queen" >/dev/null
 cat "$run/live.json"
 # Trust the new folder once, as a human would; Claude keys trust by repo root, so workers'
 # worktrees inherit it. The prompt can draw before Claude reads keys (bees-8.1): send them

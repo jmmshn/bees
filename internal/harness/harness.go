@@ -26,6 +26,10 @@ var ErrNoResume = errors.New("its harness can't resume a conversation yet")
 // for the session's next bs inbox.
 var ErrNoRing = errors.New("its harness has no ring yet")
 
+// ErrBadPath means a Start.Path dir can't be used: the core's check (absolute, a
+// directory) or the adapter's own (a character its rendering can't hold) failed.
+var ErrBadPath = errors.New("not a --path dir")
+
 // Priority is when the receiving session acts on a ring.
 type Priority string
 
@@ -45,6 +49,7 @@ type Start struct {
 	Continue   bool              // resume the last conversation in Dir
 	Env        map[string]string // pinned for every process the session starts; nil for the queen, whose env is bs queen's
 	Guards     guards.Rules      // built by the core; zero for the queen
+	Path       []string          // absolute dirs put first on the PATH of the session's shell commands (bs spawn --path)
 }
 
 // Launch is what Prepare returns. Prepare is pure: the core writes each of Files (0600,

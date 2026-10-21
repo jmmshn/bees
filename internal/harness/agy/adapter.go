@@ -57,6 +57,9 @@ func (a Adapter) Prepare(st harness.Start) (harness.Launch, error) {
 	if st.Continue {
 		return l, fmt.Errorf("agy: %w (bees-12.12); bs end the worker and spawn it again to start fresh", harness.ErrNoResume)
 	}
+	if len(st.Path) > 0 {
+		return l, errors.New("agy: bs spawn --path isn't supported yet: agy has no per-session way to put a dir on its commands' PATH that bs has proven (bees-12.12)")
+	}
 	trusted := a.trusted
 	if trusted == nil {
 		trusted = Trusted

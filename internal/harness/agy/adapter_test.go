@@ -100,6 +100,15 @@ func TestPrepareRefusesAResume(t *testing.T) {
 	}
 }
 
+// --path would silently run the shared bs, so it is refused.
+func TestPrepareRefusesPath(t *testing.T) {
+	st := worker
+	st.Path = []string{"/build/bin"}
+	if _, err := (Adapter{trusted: trustAll}).Prepare(st); err == nil || errors.Is(err, ErrNoHome) || !strings.Contains(err.Error(), "--path") {
+		t.Fatalf("err = %v, want a --path refusal", err)
+	}
+}
+
 // An untrusted folder is refused before anything is rendered, naming where to trust.
 func TestPrepareRefusesAnUntrustedFolder(t *testing.T) {
 	untrusted := func(string) (bool, error) { return false, nil }

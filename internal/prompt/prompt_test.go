@@ -38,12 +38,9 @@ func TestNoPromptSaysBdCloseIsFineForEveryone(t *testing.T) {
 }
 
 func TestFileHoldsTheRolePromptInBsCache(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
-	t.Setenv("HOME", t.TempDir()) // macOS ignores XDG_CACHE_HOME for ~/Library/Caches
-	cache, err := os.UserCacheDir()
-	if err != nil {
-		t.Fatal(err)
-	}
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache) // on every OS, macOS too (TestDirFollowsXDGCacheHome)
+	t.Setenv("HOME", t.TempDir())
 	for _, role := range []prompt.Role{prompt.Queen, prompt.Worker} {
 		for range 2 { // rewritten, not appended, at every launch
 			path, err := prompt.File(role, "web2")

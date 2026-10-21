@@ -587,7 +587,7 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 	if err != nil {
 		return st, err
 	}
-	file, err := prompt.File(prompt.Worker, f.P.Name, delivery)
+	file, err := prompt.File(prompt.Worker, f.P.Name, sp.Kind, delivery)
 	if err != nil {
 		return st, err
 	}

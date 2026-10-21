@@ -87,7 +87,7 @@ func cmdQueen(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 	if os.Getenv("BS_LOGBOOK") != "" {
 		env = append(env, "BS_LOGBOOK="+p.Logbook)
 	}
-	file, err := prompt.File(prompt.Queen, p.Name, delivery)
+	file, err := prompt.File(prompt.Queen, p.Name, cfg.Workspace.Kind, delivery)
 	if err != nil {
 		return err
 	}

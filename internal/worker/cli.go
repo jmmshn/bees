@@ -160,6 +160,8 @@ func (HerdrCLI) StartAgent(ctx context.Context, pane, name, kind string, args ..
 		return fmt.Errorf("%w: %w", err, ErrUnconfirmed)
 	case "agent_name_taken": // a live agent has the name: herdr started nothing (probed, ADR-0009)
 		return fmt.Errorf("%w: %w", err, ErrRunning)
+	case "agent_pane_busy": // not at an idle shell, e.g. a new shell's prompt helper (herdr 0.9.5, bees-12.33)
+		return fmt.Errorf("%w: %w", err, ErrPaneBusy)
 	}
 	return err
 }

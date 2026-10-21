@@ -33,7 +33,7 @@ bs spawn --label "ring on send" <project>-2.1   # worker <project>-2-1 in its ow
 bs send <project>-2-1 "…"      # store, then ring it awake; --now interrupts its current turn
 bs inbox                       # your unread messages; --peek leaves them unread
 bs status                      # every session the logbook knows: running or not, unread
-bs end <project>-2-1           # remove its workspace; its branch is kept; refuses uncommitted work without --force
+bs end <project>-2-1           # remove its workspace; a git worktree's branch is kept; refuses uncommitted work without --force
 bs prune                       # delete ended workers' branches once merged; --dry-run reports only
 ```
 

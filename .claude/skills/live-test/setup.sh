@@ -12,10 +12,13 @@ if [ "${1:-}" = --no-git ]; then nogit=1 && shift; fi
 if [ "${1:-}" = --config ]; then
 	cfg=$(realpath -e "${2:?--config needs a file}") && [ -f "$cfg" ] || { echo "--config $2: no such file" >&2; exit 1; }
 	shift 2
-	# Setup's keys go in as dotted keys on top, which a [worker], [paths] or [workspace]
-	# table would redefine.
+	# Setup's keys go in as dotted keys on top, which a table of theirs would redefine: worker
+	# always, paths and workspace under --no-git. A git toy's config may set paths.repo and
+	# workspace.kind itself, for none on a separate dir (bees-12.34).
 	# ponytail: a line grep, blind to an inline worker = {…}; a TOML parse would see it.
-	! grep -Eq '^[[:space:]]*\[(worker|paths|workspace)\]|^[[:space:]]*(worker\.path|paths\.repo|workspace\.kind)' "$cfg" || { echo "--config $cfg: setup sets worker.path (and paths.repo, workspace.kind under --no-git); write other settings in those tables as dotted keys (paths.worktrees = …) or subtables ([worker.claude_code])" >&2; exit 1; }
+	mine='worker' keys='worker\.path'
+	[ -z "$nogit" ] || mine='worker|paths|workspace' keys='worker\.path|paths\.repo|workspace\.kind'
+	! grep -Eq "^[[:space:]]*\[($mine)\]|^[[:space:]]*($keys)" "$cfg" || { echo "--config $cfg: setup sets worker.path${nogit:+, paths.repo and workspace.kind}; write other settings in those tables as dotted keys (paths.worktrees = …) or subtables ([worker.claude_code])" >&2; exit 1; }
 fi
 bin=$(cd "${1:-$here/../../../bin}" 2>/dev/null && pwd) || bin=
 [ -n "$bin" ] && [ -x "$bin/bs" ] || { echo "no bs build in ${1:-bin/}: run go build -o bin/bs ./cmd/bs in the checkout under test" >&2; exit 1; }
@@ -45,8 +48,10 @@ done
 [ ! -e "$real/bees/config.toml" ] || ln -s "$real/bees/config.toml" "$xdg/bees/config.toml"
 {
 	printf 'worker.path = ["%s"]\n' "$bin"
-	# No git repo to find the toy from: name its dir, and have no worktrees made.
+	# No git repo to find the toy from: name its dir, and have no worktrees made. With no
+	# branch to open a PR from, delivery is manual, unless --config says how (bees-12.35).
 	[ -z "$nogit" ] || printf 'paths.repo = "%s"\nworkspace.kind = "none"\n' "$repo"
+	[ -z "$nogit" ] || grep -Eq '^[[:space:]]*(\[delivery\]|delivery\.)' "${cfg:-/dev/null}" || printf 'delivery.kind = "manual"\n'
 	[ -z "$cfg" ] || cat "$cfg"
 } >"$xdg/bees/projects/$toy.toml"
 record xdg "$xdg"
@@ -73,13 +78,14 @@ record pane "$pane"
 queen="bs queen" actor=
 [ -z "$nogit" ] || queen="bs queen --project $toy" actor="BEADS_ACTOR=$toy "
 herdr pane run "$pane" "env -u BS_LOGBOOK -u BS_PROJECT $actor""XDG_CONFIG_HOME=$(printf %q "$xdg") PATH=$(printf %q "$bin"):\$PATH $queen" >/dev/null
-cat "$run/live.json"
+# A bs queen that refused prints its error and leaves no Claude: say so, not "trusting".
+refused() { herdr pane read "$pane" --source recent --lines 40 2>/dev/null | grep -m1 '^bs queen: '; }
 # Trust the new folder once, as a human would; Claude keys trust by repo root, so workers'
 # worktrees inherit it. The prompt can draw before Claude reads keys (bees-8.1): send them
 # once, give Claude 10 s to take them, and only then send again. Sending while the prompt
 # is merely slow to redraw would put an extra enter into the queen's input box.
 trusting() { herdr pane read "$pane" 2>/dev/null | grep -q "Yes, I trust this folder"; }
-for _ in $(seq 30); do trusting && break; sleep 1; done
+for _ in $(seq 30); do trusting && break; refused >/dev/null && break; sleep 1; done
 for _ in 1 2 3; do
 	trusting || break
 	herdr pane send-keys "$pane" down enter >/dev/null
@@ -88,4 +94,11 @@ done
 trusting && { echo "setup: the folder-trust prompt is still up in $pane; answer it there" >&2; exit 1; }
 # Setup succeeds only with the queen's Claude up and idle (motif 11): a bs queen that failed,
 # or a Claude that never drew, leaves no agent to wait for.
-herdr agent wait "$pane" --until idle --timeout 60000 >/dev/null || { echo "setup: no queen came up in $pane; read it with herdr pane read $pane" >&2; exit 1; }
+# live.json is printed only then, so a failed setup never reads as a usable toy (bees-12.35);
+# teardown.sh still undoes it from the file.
+if why=$(refused); then
+	echo "setup: the queen refused to start in $pane: $why; tear down with teardown.sh $run" >&2
+	exit 1
+fi
+herdr agent wait "$pane" --until idle --timeout 60000 >/dev/null || { echo "setup: no queen came up in $pane; read it with herdr pane read $pane, then tear down with teardown.sh $run" >&2; exit 1; }
+cat "$run/live.json"

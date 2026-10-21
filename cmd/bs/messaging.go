@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -16,6 +17,7 @@ import (
 	"github.com/jmmshn/bees/internal/config"
 	"github.com/jmmshn/bees/internal/harness"
 	"github.com/jmmshn/bees/internal/logbook"
+	"github.com/jmmshn/bees/internal/proc"
 	"github.com/jmmshn/bees/internal/project"
 	"github.com/jmmshn/bees/internal/worker"
 )
@@ -266,14 +268,11 @@ func ring(ctx context.Context, lb *logbook.Logbook, from, to string, now bool, s
 	return nil
 }
 
-// ringOnce rings to through the harness its spawn recorded; the queen, who has no record
-// yet, through harness.Default.
+// ringOnce rings to at its recorded process, through the harness its entry recorded.
 func ringOnce(ctx context.Context, lb *logbook.Logbook, from, to string, now bool) error {
-	name := harness.Default
-	if sp, ok, err := lb.LatestSpawn(ctx, to); err != nil {
+	t, name, err := target(ctx, lb, to)
+	if err != nil {
 		return err
-	} else if ok {
-		name = sp.Harness
 	}
 	h, err := harnessFor(name)
 	if err != nil {
@@ -287,7 +286,39 @@ func ringOnce(ctx context.Context, lb *logbook.Logbook, from, to string, now boo
 	if now {
 		priority = harness.Now
 	}
-	return h.Ring(harness.Target{Name: to}, doorbell(unread, from), priority)
+	return h.Ring(t, doorbell(unread, from), priority)
+}
+
+// target is to as its entries recorded it, and the harness it runs: the queen's newest
+// queen entry, else an open spawn's newest start (ADR-0009). A process that is gone, or
+// none recorded (a session a bs from before these entries started), is ErrNotRunning:
+// the message waits for its next bs inbox. bs never looks a session up by name.
+func target(ctx context.Context, lb *logbook.Logbook, to string) (harness.Target, string, error) {
+	t := harness.Target{Name: to}
+	if q, ok, err := lb.LatestQueen(ctx, to); err != nil || ok {
+		if err != nil {
+			return t, "", err
+		}
+		t.Pane, t.PID = q.Pane, q.PID
+		alive, err := newProcs().Alive(proc.Process{PID: q.PID, Start: q.Start})
+		if err == nil && !alive {
+			err = fmt.Errorf("%s: %w", to, harness.ErrNotRunning)
+		}
+		return t, cmp.Or(q.Harness, harness.Default), err
+	}
+	sp, ok, err := lb.LatestSpawn(ctx, to)
+	if err != nil || !ok || sp.Ended {
+		return t, "", cmp.Or(err, fmt.Errorf("%s: %w", to, harness.ErrNotRunning))
+	}
+	alive, known, st, err := worker.SpawnAlive(ctx, lb, newProcs(), sp)
+	switch {
+	case err != nil:
+		return t, "", err
+	case !known || !alive:
+		return t, "", fmt.Errorf("%s: %w", to, harness.ErrNotRunning)
+	}
+	t.Pane, t.PID = sp.Pane, st.PID
+	return t, sp.Harness, nil
 }
 
 // doorbell names who the unread messages are from, never what they say:

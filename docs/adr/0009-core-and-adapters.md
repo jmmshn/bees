@@ -60,10 +60,10 @@ type Launch struct {
 	Record map[string]string // facts known before the start that a later start needs (omp: its profile)
 }
 
-// Target is a Live session as the core found it, from the logbook's record and herdr.
+// Target is a Live session as the core found it, from the logbook's record.
 type Target struct {
 	Name, Pane string
-	PID        int // the agent's pid, from herdr pane process-info
+	PID        int // the harness process its start or queen entry recorded (amendment 1)
 }
 
 // harness.For(name) maps a recorded harness name (claude_code) to its adapter, one forward
@@ -105,7 +105,7 @@ What `claude_code` does, and the code that moves behind it (bees-12.6):
 |---|---|---|
 | `Kind` | `claude` | `HerdrCLI.StartClaude` (now `StartAgent(kind)`) |
 | `Prepare` | `--settings` file (crossSessionInbound, autoMode, permissions.deny), `--name`, `--append-system-prompt-file`, `--model=`, `--continue` | `worker.workerSettings`, `Fleet.launch`, `cmd/bs/queen.go` |
-| `Ring` | `~/.claude/sessions/<pid>.json` → socket and `.key` token, then NDJSON | `claude.Ring`, `claude.Find`, `bs send` |
+| `Ring` | `~/.claude/sessions/<pid>.json` → socket and `.key` token, then NDJSON | `claude.Ring`, `claude.Find` (now `claude.AtPID`), `bs send` |
 | (cleanup, core) | `<name>-[a-z]*-*` in the cache dir | `bs end`, `Fleet.start` |
 | (to the core: the recorded process) | liveness and identity | `claude.List`, `ClaudeSessions`, `bs status`, `project.registered` |
 | (dropped) | the untrusted-repo warning: a worker at its trust prompt is Live, and the keeper answers it in its pane | `claude.Trusted`, `bs spawn` |

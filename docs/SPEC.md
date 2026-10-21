@@ -113,15 +113,15 @@ type Session struct {
 	Token     string // empty when the session has no key file
 }
 
-func List() ([]Session, error)        // every live, compatible session
-func Find(name string) (Session, error) // newest of that name; ErrNotRunning when absent or stale
+func AtPID(pid int, name string) (Session, error) // the recorded pid's entry only; ErrNotRunning when it exited
 func Ring(s Session, text string, p Priority) error
 ```
 
-`List` reads `~/.claude/sessions/<pid>.json` and keeps a session only when all of these hold:
+`AtPID` reads only `~/.claude/sessions/<pid>.json` for the pid an entry recorded, and returns the session only when all of these hold (else an error; `ErrNotRunning` when the process exited):
 
 - `peerProtocol == 1`;
 - `/proc/<pid>` exists and its start time equals `procStart`;
+- its `name` is the session rung;
 - `messagingSocketPath` is set.
 
 The token comes from `<pid>.<sha256(socket path)>.key` (`peerToken`).
@@ -266,11 +266,12 @@ Run inside bs's own source repo, every command warns on stderr when bs was built
 ```go
 id := lb.Send(ctx, me, to, body)
 fmt.Printf("sent %s to %s\n", id, to)
-s, err := claude.Find(to)
-if errors.Is(err, claude.ErrNotRunning) {
+t, err := target(to) // the queen's newest queen entry, else an open spawn's newest start: alive with its start time
+if errors.Is(err, harness.ErrNotRunning) {
 	fmt.Printf("queued; %s is not running\n", to)
 	return nil
 }
+s, err := claude.AtPID(t.PID, to) // only <pid>.json; fails closed (ADR-0009 SEC-2)
 unread := lb.Unread(ctx, to)
 if err := claude.Ring(s, doorbell(unread, me), prio); err != nil {
 	fmt.Fprintf(os.Stderr, "couldn't ring %s (the message is stored): %v\n", to, err) // still exit 0

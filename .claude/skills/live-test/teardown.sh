@@ -52,6 +52,15 @@ toys() {
 		[.result.panes[] | select((.cwd // "") + "/" | startswith($d)) | .workspace_id]
 		+ [$w.result.workspaces[] | select(.label | contains($t)) | .workspace_id] | unique[]' <<<"$panes"
 }
+# A worker workspace no spawn entry owns any more (bs end --forget keeps one open for a
+# guest pane) is the toy's too, and herdr refuses to close the queen's while one is linked
+# under it (workspace_group_close_required): close those first (bees-12.40).
+panes=$(herdr pane list) && wss=$(herdr workspace list) || fail "herdr is unreachable, so the toy's workspaces may still be open"
+for ws in $(toys); do
+	[ "$ws" = "$queen_ws" ] && continue
+	herdr workspace close "$ws" >/dev/null || fail "herdr workspace close $ws failed"
+	echo "closed the toy's workspace $ws, left open after its worker ended"
+done
 if [ -n "$queen_ws" ]; then
 	panes=$(herdr pane list) && wss=$(herdr workspace list) || fail "herdr is unreachable, so the queen's workspace $queen_ws may still be open"
 	if jq -e --arg ws "$queen_ws" 'any(.result.workspaces[]; .workspace_id == $ws)' <<<"$wss" >/dev/null; then

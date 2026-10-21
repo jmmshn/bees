@@ -144,3 +144,26 @@ func TestStatusWorksWithHerdrDown(t *testing.T) {
 		t.Fatalf("exit %d, %q, %q; want worker-a running and a note on worker-b", code, out, stderr)
 	}
 }
+
+// bees-12.37: a worker spawned and not ended whose process is gone shows as not running,
+// unread mail or not: it needs a restart or bs end. An ended one with nothing waiting is
+// history and is left out.
+func TestStatusShowsADeadWorkerThatWasNotEnded(t *testing.T) {
+	useTempLogbook(t)
+	started(t, "worker-a", false) // died without bs end
+	started(t, "worker-b", false)
+	lb, err := logbook.Open(context.Background(), os.Getenv("BS_LOGBOOK"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sp, _, _ := lb.LatestSpawn(context.Background(), "worker-b")
+	err = lb.RecordEnd(context.Background(), "queen", sp.ID)
+	lb.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, stderr, code := bs(t, "status")
+	if code != 0 || !strings.Contains(out, "worker-a  -      not running  0") || strings.Contains(out, "worker-b") {
+		t.Fatalf("exit %d, %q, %q; want worker-a not running and worker-b left out", code, out, stderr)
+	}
+}

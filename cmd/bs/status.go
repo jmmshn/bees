@@ -73,7 +73,10 @@ func cmdStatus(ctx context.Context, args []string, stdin io.Reader, stdout, stde
 			r.Error, unknown = err.Error(), true
 			fmt.Fprintf(stderr, "bs status: %s: can't tell whether it runs: %v\n", name, err)
 		}
-		if running || counts[name] > 0 || r.Error != "" { // a stopped session with nothing waiting is history
+		// History is a session that ended (or was never spawned) with nothing waiting. A worker
+		// spawned and not ended always shows, so one that died without bs end reads as not
+		// running, for the queen to restart or end (bees-12.37).
+		if running || counts[name] > 0 || r.Error != "" || spawned && !sp.Ended {
 			rows = append(rows, r)
 		}
 	}

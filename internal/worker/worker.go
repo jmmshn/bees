@@ -131,16 +131,19 @@ type Beads interface {
 
 // Fleet spawns and ends the workers of one project.
 type Fleet struct {
-	P             project.Project
-	LB            *logbook.Logbook
-	H             Herdr
-	Procs         Procs
-	B             Beads
-	G             GitHub          // nil: End proves a merge from git alone
-	Me            string          // the queen doing the spawning
-	ForeignRepo   bool            // skip the check that the bead belongs to P (--repo)
-	Harness       harness.Harness // every start's, built from the worker role's config
-	HarnessName   string          // its config name, recorded in each spawned entry
+	P           project.Project
+	LB          *logbook.Logbook
+	H           Herdr
+	Procs       Procs
+	B           Beads
+	G           GitHub          // nil: End proves a merge from git alone
+	Me          string          // the queen doing the spawning
+	ForeignRepo bool            // skip the check that the bead belongs to P (--repo)
+	Harness     harness.Harness // every start's, built from the worker role's config
+	HarnessName string          // its config name, recorded in each spawned entry
+	// HarnessOf builds the adapter of a recorded harness name, for a worker recorded under
+	// another harness than the configured one; nil: only the configured one.
+	HarnessOf     func(name string) (harness.Harness, error)
 	Delivery      config.Delivery // how work lands; a zero Kind is github_pr
 	Guards        config.Guards   // [guards]: what every worker is denied or granted
 	WorkspaceKind string          // the workspace kind of a first spawn: GitWorktree ("" too) or NoWorkspace
@@ -592,6 +595,10 @@ func Delivery(d config.Delivery, g config.Guards) (string, error) {
 // claude --continue exits when there is no conversation.
 func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Started, error) {
 	st := Started{Name: sp.Name, Label: sp.Label, Workspace: sp.Workspace, Resumed: resume, Continued: resume && sp.Read}
+	f, err := f.on(sp)
+	if err != nil {
+		return st, err
+	}
 	// Read the delivery fragment before anything is made: an unreadable one stops the start.
 	delivery, err := Delivery(f.Delivery, f.Guards)
 	if err != nil {
@@ -632,6 +639,24 @@ func (f Fleet) start(ctx context.Context, sp logbook.Spawn, resume bool) (Starte
 		}
 	}
 	return st, err
+}
+
+// on is f with sp's recorded harness: a resume or an end goes through the harness the
+// worker was spawned on, whatever the config says now (ADR-0009, bees-12.15).
+func (f Fleet) on(sp logbook.Spawn) (Fleet, error) {
+	name := cmp.Or(sp.Harness, harness.Default)
+	if name == cmp.Or(f.HarnessName, harness.Default) {
+		return f, nil
+	}
+	if f.HarnessOf == nil {
+		return f, fmt.Errorf("%s was spawned on harness %s, and this bs can't build it", sp.Name, name)
+	}
+	h, err := f.HarnessOf(name)
+	if err != nil {
+		return f, fmt.Errorf("%s was spawned on harness %s: %w", sp.Name, name, err)
+	}
+	f.Harness, f.HarnessName = h, name
+	return f, nil
 }
 
 // launch starts the harness in sp's pane and confirms the start: the harness process shows
@@ -839,6 +864,11 @@ func (f Fleet) EndAll(ctx context.Context, o EndOpts) ([]Ending, error) {
 // end removes live spawn sp's workspace and records the end.
 func (f Fleet) end(ctx context.Context, sp logbook.Spawn, o EndOpts) Ending {
 	e := Ending{Name: sp.Name, Workspace: sp.Workspace, Branch: sp.Branch}
+	f, err := f.on(sp)
+	if err != nil {
+		e.Err = err
+		return e
+	}
 	if sp.Kind != "" && sp.Kind != GitWorktree && sp.Kind != NoWorkspace { // a newer bs's: never guess, even to --forget
 		e.Err = fmt.Errorf("%s: recorded with workspace kind %q, which this bs doesn't know; nothing removed: end it with the bs that spawned it", sp.Name, sp.Kind)
 		return e

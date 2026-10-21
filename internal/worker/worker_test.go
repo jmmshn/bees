@@ -2418,3 +2418,28 @@ func TestEndAllGatesEachWorker(t *testing.T) {
 		t.Fatal("bees-9 recorded ended")
 	}
 }
+
+// bees-12.15: a worker resumes and ends on the harness its spawn recorded, whatever the
+// config says now.
+func TestAResumeUsesTheRecordedHarness(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	r.fleet.Harness, r.fleet.HarnessName = fakeHarness{}, "fake_harness"
+	if _, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end"); err != nil {
+		t.Fatal(err)
+	}
+	r.h.exit("bees-8")
+	r.fleet.Harness, r.fleet.HarnessName = claude.New(config.ClaudeCode{}), "claude_code" // the config switched
+	asked := ""
+	r.fleet.HarnessOf = func(name string) (harness.Harness, error) { asked = name; return fakeHarness{}, nil }
+	if st, err := r.fleet.Spawn(ctx, "bees-8", ""); err != nil || !st.Resumed {
+		t.Fatalf("resume = %+v, %v", st, err)
+	}
+	if asked != "fake_harness" || r.h.kind != "fake" {
+		t.Fatalf("resumed on %q (kind %q), want the recorded fake_harness", asked, r.h.kind)
+	}
+	r.fleet.HarnessOf = nil
+	if err := r.fleet.End(ctx, "bees-8", worker.EndOpts{Force: true}); err == nil || !strings.Contains(err.Error(), "spawned on harness fake_harness") {
+		t.Fatalf("end with no adapter for the recorded harness: %v, want refused naming it", err)
+	}
+}

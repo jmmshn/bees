@@ -29,8 +29,8 @@ var worker = harness.Start{
 // the files, but rendered, so the probe that finds one only has to lift the refusal.
 func TestPrepareRendersTheWorkerLaunchAndRefuses(t *testing.T) {
 	l, err := Adapter{cfg: config.Agy{Model: "gemini-3.8-flash-low"}, trusted: trustAll}.Prepare(worker)
-	if !errors.Is(err, ErrNoHome) {
-		t.Fatalf("err = %v, want ErrNoHome", err)
+	if !errors.Is(err, ErrUnguarded) {
+		t.Fatalf("err = %v, want ErrUnguarded", err)
 	}
 	want := []string{"--model=gemini-3.8-flash-low", "--agent", "bs-worker", "-i", worker.Doorbell}
 	if !slices.Equal(l.Args, want) {
@@ -104,7 +104,7 @@ func TestPrepareRefusesAResume(t *testing.T) {
 func TestPrepareRefusesPath(t *testing.T) {
 	st := worker
 	st.Path = []string{"/build/bin"}
-	if _, err := (Adapter{trusted: trustAll}).Prepare(st); err == nil || errors.Is(err, ErrNoHome) || !strings.Contains(err.Error(), "--path") {
+	if _, err := (Adapter{trusted: trustAll}).Prepare(st); err == nil || errors.Is(err, ErrUnguarded) || !strings.Contains(err.Error(), "--path") {
 		t.Fatalf("err = %v, want a --path refusal", err)
 	}
 }
@@ -113,8 +113,8 @@ func TestPrepareRefusesPath(t *testing.T) {
 func TestPrepareRefusesAnUntrustedFolder(t *testing.T) {
 	untrusted := func(string) (bool, error) { return false, nil }
 	l, err := Adapter{trusted: untrusted}.Prepare(worker)
-	if err == nil || errors.Is(err, ErrNoHome) || !strings.Contains(err.Error(), "start agy once in /r-WT,") || l.Args != nil {
-		t.Fatalf("Prepare = %v, %v; want a trust refusal naming /r-WT", l, err)
+	if err == nil || errors.Is(err, ErrUnguarded) || !strings.Contains(err.Error(), "hasn't trusted /r-WT/bees-12-12,") || l.Args != nil {
+		t.Fatalf("Prepare = %v, %v; want a trust refusal naming the worktree", l, err)
 	}
 	broken := errors.New("unreadable")
 	if _, err := (Adapter{trusted: func(string) (bool, error) { return false, broken }}).Prepare(worker); !errors.Is(err, broken) {
@@ -137,8 +137,8 @@ func TestTrustedReadsAgysListReadOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	for dir, want := range map[string]bool{
-		"/r/bees": true, "/r/bees/sub": true, "/r/bees-WT/bees-1-2": true, "/r/bees-WT": true,
-		"/r/beesx": false, "/r": false, "/r/bees/../other": false, "relative/bees": false,
+		"/r/bees": true, "/r/bees/": true, "/r/bees-WT": true,
+		"/r/bees/sub": false, "/r/bees-WT/bees-1-2": false, "/r/beesx": false, "/r": false, "/r/bees/../other": false, "r/bees": false,
 	} {
 		if ok, err := Trusted(dir); ok != want || err != nil {
 			t.Errorf("Trusted(%q) = %v, %v; want %v", dir, ok, err, want)

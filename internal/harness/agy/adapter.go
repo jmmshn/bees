@@ -26,9 +26,9 @@ import (
 // Name is this harness's config name.
 const Name = "agy"
 
-// ErrNoHome is Prepare's refusal while bs has no proven place to load its guard hook and
+// ErrUnguarded is Prepare's refusal while bs has no proven place to load its guard hook and
 // role prompt from.
-var ErrNoHome = errors.New("agy: bs has no proven place yet to load its guard hook and role prompt from, and won't start agy without them (bees-12.12)")
+var ErrUnguarded = errors.New("agy: bs has no proven place yet to load its guard hook and role prompt from, and won't start agy without them (bees-12.12)")
 
 // Adapter is the agy harness, built per role from its config table.
 type Adapter struct {
@@ -69,11 +69,7 @@ func (a Adapter) Prepare(st harness.Start) (harness.Launch, error) {
 		return l, err
 	}
 	if !ok {
-		at := st.Dir
-		if st.Role == prompt.Worker {
-			at = filepath.Dir(st.Dir) // the worktree doesn't exist yet at a first spawn
-		}
-		return l, fmt.Errorf("agy hasn't trusted %s or a folder above it, and it loads bs's guard hook only in a folder trusted at startup: start agy once in %s, answer Yes to its trust prompt, quit it, then try again", st.Dir, at)
+		return l, fmt.Errorf("agy hasn't trusted %s, and it loads bs's guard hook only in a folder trusted at startup, so bs won't start agy there (whether trusting a parent folder covers it is unprobed: bees-12.12)", st.Dir)
 	}
 	agent := "bs-" + string(st.Role)
 	l.Files = map[string]string{"agent.md": agentFile(agent, st.PromptFile)}
@@ -87,7 +83,7 @@ func (a Adapter) Prepare(st harness.Start) (harness.Launch, error) {
 	if st.Doorbell != "" {
 		l.Args = append(l.Args, "-i", st.Doorbell)
 	}
-	return l, ErrNoHome
+	return l, ErrUnguarded
 }
 
 // Ring has no way in yet: agy agentapi send-message needs the session's language-server
@@ -131,8 +127,10 @@ func TrustFile() (string, error) {
 	return filepath.Join(home, ".gemini", "antigravity-cli", "settings.json"), err
 }
 
-// Trusted reports whether agy trusts dir or a folder above it. A missing file trusts
-// nothing; an unreadable one is an error, never "untrusted" passed off as an answer.
+// Trusted reports whether dir is on agy's trusted list. Only an exact entry counts: that
+// agy extends trust to a listed folder's subfolders is unprobed, and assuming it would start
+// a worker whose hooks never load. A missing file trusts nothing; an unreadable one is an
+// error, never "untrusted" passed off as an answer.
 func Trusted(dir string) (bool, error) {
 	path, err := TrustFile()
 	if err != nil {
@@ -150,8 +148,7 @@ func Trusted(dir string) (bool, error) {
 	if err := json.Unmarshal(b, &s); err != nil {
 		return false, fmt.Errorf("reading agy's trusted folders: %s: %w", path, err)
 	}
-	return slices.ContainsFunc(s.TrustedWorkspaces, func(t string) bool {
-		rel, err := filepath.Rel(t, dir)
-		return err == nil && filepath.IsAbs(t) && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	return filepath.IsAbs(dir) && slices.ContainsFunc(s.TrustedWorkspaces, func(t string) bool {
+		return filepath.Clean(t) == filepath.Clean(dir)
 	}), nil
 }

@@ -15,6 +15,7 @@ func TestGuardDeniesAMatchingCommandAndAsksOtherwise(t *testing.T) {
 		{call("gh pr merge 4"), "deny"},
 		{call("git push -u origin bees-12-12"), "ask"},
 		{"not json", "deny"},
+		{`{"toolCall":{"name":"run_command","args":{"Command":"git push origin main"}}}`, "deny"},
 	} {
 		out, stderr, code := bsIn(t, c.stdin, "guard", "git push *main*", "gh pr merge*")
 		var got map[string]string

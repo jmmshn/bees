@@ -24,6 +24,7 @@ commands:
   send      store a message for a session, then ring it
   inbox     print your unread messages and record receipts
   status    list running sessions and unread counts (--json for scripts)
+  config    print every setting, its value and where it came from
   version   print the commit bs was built from
 `
 
@@ -39,6 +40,7 @@ var commands = map[string]func(ctx context.Context, args []string, stdin io.Read
 	"epic":    cmdEpic,
 	"bead":    cmdBead,
 	"status":  cmdStatus,
+	"config":  cmdConfig,
 	"version": cmdVersion,
 }
 

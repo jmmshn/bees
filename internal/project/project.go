@@ -60,7 +60,7 @@ func Resolve(flag string) (Project, error) {
 	name, git := flag, mainRepo("")
 	if name == "" {
 		name = os.Getenv("BS_PROJECT")
-		if name != "" && git != "" && normalise(filepath.Base(git)) != normalise(name) {
+		if name != "" && git != "" && Normalise(filepath.Base(git)) != Normalise(name) {
 			if err := inLaunchCheckout(name, git); err != nil {
 				return Project{}, err
 			}
@@ -72,7 +72,7 @@ func Resolve(flag string) (Project, error) {
 		}
 		name = filepath.Base(git)
 	}
-	name = normalise(name)
+	name = Normalise(name)
 	if !validName.MatchString(name) {
 		return Project{}, fmt.Errorf("%q: %w", name, ErrBadProject)
 	}
@@ -81,7 +81,7 @@ func Resolve(flag string) (Project, error) {
 		return Project{}, err
 	}
 	repo := ""
-	if git != "" && normalise(filepath.Base(git)) == name {
+	if git != "" && Normalise(filepath.Base(git)) == name {
 		repo = git
 	} else if repos := os.Getenv("BS_REPOS"); repos != "" {
 		repo = repoDir(repos, name)
@@ -93,8 +93,8 @@ func Resolve(flag string) (Project, error) {
 	return Project{Name: name, Repo: repo, Logbook: lb}, nil
 }
 
-// normalise lowercases a project or directory name and drops - and _ (R27⁶).
-func normalise(s string) string {
+// Normalise lowercases a project or directory name and drops - and _ (R27⁶).
+func Normalise(s string) string {
 	return strings.ToLower(strings.NewReplacer("-", "", "_", "").Replace(s))
 }
 
@@ -103,7 +103,7 @@ func normalise(s string) string {
 func repoDir(repos, name string) string {
 	entries, _ := os.ReadDir(repos)
 	for _, e := range entries {
-		if e.IsDir() && normalise(e.Name()) == name {
+		if e.IsDir() && Normalise(e.Name()) == name {
 			return filepath.Join(repos, e.Name())
 		}
 	}
@@ -131,7 +131,7 @@ func inLaunchCheckout(name, git string) error {
 		}
 	}
 	var picks []string
-	for _, n := range []string{normalise(filepath.Base(git)), normalise(name)} {
+	for _, n := range []string{Normalise(filepath.Base(git)), Normalise(name)} {
 		if validName.MatchString(n) {
 			picks = append(picks, "--project "+n)
 		}

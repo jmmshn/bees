@@ -2,7 +2,7 @@
 
 `bs` lets coding-agent sessions (Claude Code today; [ADR-0009](adr/0009-core-and-adapters.md)) in herdr panes send each other messages through a shared logbook, and wakes an idle session when it has mail. Vocabulary is in [GLOSSARY.md](../GLOSSARY.md); the reasons behind the shape are in [docs/adr/](adr/); every decision is indexed in [DECISIONS.md](DECISIONS.md).
 
-This spec covers **v0**, the walking skeleton, plus **spawn**, which v0 grows into for dogfooding. [v1](#v1-outline) is outlined at the end and gets its own spec pass.
+This spec covers **v0**, the walking skeleton, plus **spawn**, which v0 grows into for dogfooding. [v1](#v1-outline) is outlined at the end and gets its own spec pass. Since the swap (R53), bs is the rebuilt core of [ADR-0010](adr/0010-core-rebuild.md): where this spec and that ADR differ (goals, `bs done`, `bs end` as the completion gate, the layout below), the ADR holds.
 
 ## Scope
 
@@ -10,7 +10,7 @@ v0 proves the core loop: the queen sends a message, an idle worker wakes, reads 
 
 | In v0 + spawn | Deferred to v1 |
 |---|---|
-| `send`, `inbox`, `status`, `queen`, `spawn`, `end` (`bs init` until the swap, R53) | `bs hook` |
+| `send`, `inbox`, `status`, `queen`, `spawn`, `end` (and `bs init`, gone with the swap, R53) | `bs hook` |
 | `entries` table; writes `message`, `received`, `spawned`, `ended` | `rang` entries |
 | Claude adapter: find, ring; herdr and bd adapters | reconciler |
 | Ring every unread message on every send | `Plan` reconciler, coalescing, re-ring, flag the queen, watchdog |
@@ -69,19 +69,22 @@ Rules:
 - Entries are only inserted, never updated or deleted.
 - Each write is one `BEGIN IMMEDIATE` transaction; concurrent writers wait on the busy timeout instead of failing.
 - A receipt id is deterministic and written with `INSERT OR IGNORE`, so a duplicate is a no-op.
-- `Open` creates the file, table and indexes if missing. Only `bs queen` and `spawn` call it on a missing file (`bs init` too, until the swap), and say so on stderr; every other command refuses one (exit 2), so a deleted logbook is never silently recreated empty (R48).
+- `Open` opens an existing file and refuses a missing one (`ErrNoLogbook`); `Create`, which makes the file, table and indexes, is called only by `bs queen` and `bs spawn`, which say so on stderr. Every other command refuses a missing logbook (exit 2), so a deleted logbook is never silently recreated empty (R48).
 - Unread is always this query, in insertion order (`rowid`). Never use a cursor or a time window.
 
 ```sql
 SELECT m.id, m.actor, m.ts, m.data FROM entries m
-WHERE m.kind = 'message' AND m.subject = ?
+WHERE m.kind IN ('message', 'done') AND m.subject = ?1
   AND NOT EXISTS (SELECT 1 FROM entries r
-                  WHERE r.kind = 'received' AND r.ref = m.id AND r.actor = ?)
-  AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = m.ref)
+                  WHERE r.kind = 'received' AND r.ref = m.id AND r.actor = ?1)
+  AND (NOT EXISTS (SELECT 1 FROM entries x WHERE x.kind = 'spawned' AND x.subject = m.subject)
+       OR EXISTS (SELECT 1 FROM entries s WHERE s.kind = 'spawned' AND s.subject = m.subject AND s.rowid < m.rowid
+                  AND s.rowid = (SELECT MAX(x.rowid) FROM entries x WHERE x.kind = 'spawned' AND x.subject = m.subject)
+                  AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = s.id)))
 ORDER BY m.rowid;
 ```
 
-The last clause retires a brief whose spawn has ended, so a worker spawned again for the bead gets only its own brief (R39).
+The last clause scopes mail to the recipient's open spawn (ADR-0010 Amendment 3): a name ever spawned reads only what was stored after its latest spawn, while that spawn is open, so a worker spawned again gets only its own brief and the mail sent since, never mail meant for an earlier spawn (R39, amended). A name never spawned (a queen) reads all of its own.
 
 ```go
 package logbook
@@ -304,6 +307,8 @@ bs spawn --label "ring on send" bees-2.1   # inside the queen: bees-2-1 in bees-
 Manual worker (no herdr): `claude --name worker-a --settings '{"crossSessionInbound":"accept"}'` in its worktree.
 
 ## Tests
+
+The old bs's tests, kept as the record of what v0 checked; the rebuilt core's are the scenario suite over stateful fakes (`internal/scenario`, ADR-0010 Tests), and its packages' own tests.
 
 | Test | Checks |
 |---|---|

@@ -2,6 +2,7 @@ package logbook_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"slices"
@@ -217,5 +218,34 @@ func TestMailIsScopedToTheOpenSpawn(t *testing.T) {
 	}
 	if ms, _ := lb.Unread(ctx, "queen-toy"); len(ms) != 1 {
 		t.Fatalf("the queen's unread: %+v", ms)
+	}
+}
+
+// Migrated mail is scoped too: a v0 logbook's unread message to an ended worker, and its
+// brief, never reach that worker's next spawn (bees-13.9 review SPEC9).
+func TestMigratedMailIsScopedToTheOpenSpawn(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "bees.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE entries (id TEXT PRIMARY KEY, ts TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('message','received','rang','spawned','ended')),
+  actor TEXT NOT NULL, subject TEXT, ref TEXT REFERENCES entries(id),
+  data TEXT CHECK (data IS NULL OR json_valid(data))) STRICT;
+INSERT INTO entries VALUES ('s1','2026-10-01T00:00:00.000Z','spawned','queen-bees','bees-8',NULL,'{"bead":"bees-8","workspace":"w2","pane":"w2:p1","worktree":"/r/bees-WT/bees-8","branch":"bees-8","repo":"/r/bees"}');
+INSERT INTO entries VALUES ('m1','2026-10-01T00:00:01.000Z','message','queen-bees','bees-8','s1','{"body":"old brief"}');
+INSERT INTO entries VALUES ('e1','2026-10-01T00:00:02.000Z','ended','queen-bees','bees-8','s1',NULL);
+INSERT INTO entries VALUES ('m2','2026-10-01T00:00:03.000Z','message','queen-bees','bees-8',NULL,'{"body":"sent after it ended"}');`)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lb := open(t, path) // migrates
+	spawn(t, lb, "bees-8", "default", "w3:p1", "branch")
+	ms, err := lb.Unread(ctx, "bees-8")
+	if err != nil || len(ms) != 1 || ms[0].Body != "brief for bees-8" {
+		t.Fatalf("the new spawn's unread after migration: %+v, %v", ms, err)
 	}
 }

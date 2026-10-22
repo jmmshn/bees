@@ -363,7 +363,8 @@ func TestCustomGoalsAreFrozenAtSpawn(t *testing.T) {
 // word (R48, bees-8.12, motif 14; bees-13.26).
 func TestOnlyQueenAndSpawnStartALogbook(t *testing.T) {
 	x := newToy(t)
-	for _, args := range [][]string{{"status"}, {"inbox", "--as", "queen-toy"}, {"send", "--as", "queen-toy", "toy-1", "hi"}, {"end", "--as", "queen-toy", "toy-1"}, {"prune", "--as", "queen-toy"}} {
+	for _, args := range [][]string{{"status"}, {"inbox", "--as", "queen-toy"}, {"send", "--as", "queen-toy", "toy-1", "hi"}, {"end", "--as", "queen-toy", "toy-1"}, {"prune", "--as", "queen-toy"},
+		{"done", "--as", "toy-1"}, {"check", "toy-1"}, {"goal", "--as", "queen-toy", "toy-1", "note"}} {
 		must(t, x.keeper(args...), 2, "no logbook for project toy at "+x.logbook, "next: bs queen")
 		if _, err := os.Stat(x.logbook); !os.IsNotExist(err) {
 			t.Fatalf("%v created the logbook: %v", args, err)
@@ -383,6 +384,18 @@ func TestOnlyQueenAndSpawnStartALogbook(t *testing.T) {
 	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 0, "new logbook for project toy at "+x.logbook)
 	if r := x.keeper("status"); r.code != 0 || strings.Contains(r.String(), "new logbook") {
 		t.Fatalf("status once it exists:\n%s", r)
+	}
+}
+
+// bs queen starts a project: on a fresh one it makes the logbook, its entry the first.
+func TestBsQueenMakesALogbook(t *testing.T) {
+	x := newToy(t)
+	if _, err := os.Stat(x.logbook); !os.IsNotExist(err) {
+		t.Fatalf("a fresh toy has a logbook: %v", err)
+	}
+	q := x.startQueen()
+	if q.Name != "queen-toy" {
+		t.Fatalf("queen entry %+v", q)
 	}
 }
 

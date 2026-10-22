@@ -35,8 +35,10 @@ func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch) erro
 	case err != nil:
 		return exit(ExitStart, next, err, "bs spawn %s: can't tell whether pane %s already runs %s", sp.Name, sp.Herdr.Pane, c.Harness.Kind())
 	case ok:
-		_, err := c.recordStart(ctx, sp, p, false)
-		return err
+		if _, _, err := c.recordStart(ctx, sp, p, false); err != nil {
+			return exit(ExitStart, next, err, "bs spawn %s: its start (pid %d) couldn't be recorded", sp.Name, p.PID)
+		}
+		return nil
 	}
 	switch p, ok, err := c.harnessIn(ctx, sp); {
 	case err != nil:
@@ -156,7 +158,7 @@ func (c *Core) own(ctx context.Context, sp logbook.Spawn) (proc.Process, bool, e
 		}
 		start, err := c.Proc.Start(p.PID)
 		if errors.Is(err, proc.ErrGone) {
-			return proc.Process{}, false, nil
+			continue
 		}
 		return proc.Process{PID: p.PID, Start: start}, err == nil, err
 	}
@@ -186,14 +188,13 @@ func named(argv []string, name string) bool {
 }
 
 // recordStart records p as sp's start, reading its baseline now; late marks a heal.
-func (c *Core) recordStart(ctx context.Context, sp logbook.Spawn, p proc.Process, late bool) (logbook.Start, error) {
+func (c *Core) recordStart(ctx context.Context, sp logbook.Spawn, p proc.Process, late bool) (logbook.Start, bool, error) {
 	s := sighting{pid: p.PID, process: p}
 	s.exe, _ = c.Proc.Exe(p.PID)
 	s.baseline, s.walkErr = c.Proc.Descendants(p.PID)
 	st := s.start(sp)
 	st.Late = late
-	got, _, err := c.Logbook.RecordStartOnce(ctx, st)
-	return got, err
+	return c.Logbook.RecordStartOnce(ctx, st)
 }
 
 // StartOf is open spawn sp's newest start. A spawn with none, whose start confirmation
@@ -212,8 +213,9 @@ func (c *Core) StartOf(ctx context.Context, sp logbook.Spawn) (logbook.Start, bo
 	if !found {
 		return st, false, nil
 	}
-	if st, err = c.recordStart(ctx, sp, p, true); err != nil {
-		return st, false, err
+	st, recorded, err := c.recordStart(ctx, sp, p, true)
+	if err != nil || !recorded { // another trigger healed it first: its record stands
+		return st, err == nil, err
 	}
 	c.warn("%s's start was never confirmed; found it running in pane %s (pid %d): recorded late", sp.Name, sp.Herdr.Pane, p.PID)
 	return st, true, nil

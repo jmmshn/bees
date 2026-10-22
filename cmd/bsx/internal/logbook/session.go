@@ -95,14 +95,6 @@ type Start struct {
 	Late        bool      `json:"late,omitempty"`
 }
 
-// RecordStart records start s of the worker whose spawned entry is s.Spawn.
-func (l *Logbook) RecordStart(ctx context.Context, s Start) (ID, error) {
-	if s.Baseline == nil {
-		s.Baseline = []Process{}
-	}
-	return insert(ctx, l.db, entry{kind: "started", actor: s.Name, subject: s.Name, ref: s.Spawn, data: s})
-}
-
 // LatestStart returns the newest start recorded for spawn; ok is false when the spawn has
 // none (never confirmed, or spawned before bs recorded starts).
 func (l *Logbook) LatestStart(ctx context.Context, spawn ID) (s Start, ok bool, err error) {
@@ -129,9 +121,12 @@ func (l *Logbook) RecordStartOnce(ctx context.Context, s Start) (got Start, reco
 			return err
 		}
 		id, err := insert(ctx, tx, entry{kind: "started", actor: s.Name, subject: s.Name, ref: s.Spawn, data: s})
+		if err != nil {
+			return err
+		}
 		got, recorded = s, true
 		got.ID = id
-		return err
+		return nil
 	})
 	got.Harness = cmp.Or(got.Harness, DefaultHarness)
 	return got, recorded, err

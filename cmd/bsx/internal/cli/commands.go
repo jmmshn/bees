@@ -27,15 +27,18 @@ func (r *run) queen(fs *flag.FlagSet, args []string) error {
 	if fs.NArg() != 0 {
 		return fmt.Errorf("%w: bsx queen takes no arguments", errUsage)
 	}
+	if err := r.s.unpinned("queen"); err != nil {
+		return err
+	}
 	if p := r.s.Pane; p != nil {
-		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bsx queen: this pane runs %s already", p.Who.Name)}
+		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bsx queen: this pane runs %s already", p.Who.Name), Next: "start the queen in a pane of her own"}
 	}
 	if r.c.Harness == nil {
-		return &core.Exit{Code: core.ExitRefused, Msg: "bsx queen: no harness adapter for harness = " + r.s.Harness}
+		return &core.Exit{Code: core.ExitRefused, Msg: "bsx queen: no harness adapter for harness = " + r.s.Harness, Next: "bsx config"}
 	}
 	exe, ok := lookPath(core.Getenv(r.env.Vars, "PATH"), r.c.Harness.Kind())
 	if !ok {
-		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bsx queen: %s is not on PATH", r.c.Harness.Kind())}
+		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bsx queen: %s is not on PATH", r.c.Harness.Kind()), Next: "bsx doctor"}
 	}
 	argv, err := r.c.Queen(r.ctx, core.QueenReq{Session: r.s.Session, Pane: core.Getenv(r.env.Vars, "HERDR_PANE_ID"), Self: r.env.Self, Exe: exe})
 	if err != nil {
@@ -62,8 +65,11 @@ func (r *run) spawn(fs *flag.FlagSet, args []string) error {
 	if fs.NArg() != 1 {
 		return fmt.Errorf("%w: bsx spawn --goal <goal> <bead>", errUsage)
 	}
+	if err := r.s.unpinned("spawn"); err != nil {
+		return err
+	}
 	if r.c.Harness == nil {
-		return &core.Exit{Code: core.ExitRefused, Msg: "bsx spawn: no harness adapter for harness = " + r.s.Harness}
+		return &core.Exit{Code: core.ExitRefused, Msg: "bsx spawn: no harness adapter for harness = " + r.s.Harness, Next: "bsx config"}
 	}
 	w, err := r.who(*as)
 	if err != nil {
@@ -193,7 +199,8 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 		// so the reply needs no project read back out of a name (motif 3).
 		path := filepath.Join(filepath.Dir(r.s.Logbook), p+".db")
 		if _, err := os.Stat(path); err != nil {
-			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bsx send --project %s: no logbook at %s; nothing stored", p, path), Err: err}
+			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bsx send --project %s: no logbook at %s; nothing stored", p, path), Err: err,
+				Next: "check the project name: bs bead ls names it, and its queen starts its logbook"}
 		}
 		lb, err := logbook.Open(r.ctx, path)
 		if err != nil {

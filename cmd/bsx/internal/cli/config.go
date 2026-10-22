@@ -35,6 +35,7 @@ type settings struct {
 	Logbook      string     // the logbook file
 	Worktrees    string     // paths.worktrees with {repo} and ~ resolved
 	Pane         *core.Pane // the recorded pane bs runs in; nil outside one
+	PinnedDir    string     // BS_LOGBOOK_DIR, applied outside a recorded pane; "" when unset
 	Warnings     []string
 }
 
@@ -106,6 +107,7 @@ func load(ctx context.Context, env Env, ports Ports) (*settings, error) {
 	} else if err := s.findProject(ctx, env.Dir, run, overrides["BS_PROJECT"]); err != nil {
 		return nil, err
 	}
+	s.PinnedDir = overrides["BS_LOGBOOK_DIR"]
 	l, err := config.Load(config.Input{Dir: dir, Project: s.Project, Home: home, Env: overrides})
 	if err != nil {
 		return nil, err
@@ -270,6 +272,17 @@ func samePath(a, b string) bool {
 // harnessProgram is the program a config harness name starts.
 func harnessProgram(name string) string {
 	return cmp.Or(map[string]string{"claude_code": "claude"}[name], name)
+}
+
+// unpinned refuses a command that records a pane (bs queen, bs spawn) under a
+// BS_LOGBOOK_DIR pin: the entry would land where no pane scan looks, since a recorded
+// pane's bs reads only the config's paths.logbook_dir (motif 14).
+func (s *settings) unpinned(cmd string) error {
+	if s.PinnedDir == "" {
+		return nil
+	}
+	return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bsx %s: BS_LOGBOOK_DIR=%s would record a pane where its own bs calls never look; nothing was recorded", cmd, s.PinnedDir),
+		Next: "env -u BS_LOGBOOK_DIR bsx " + cmd + " ..., or set paths.logbook_dir in the session's config"}
 }
 
 // workerPath is worker.path with ~ expanded.

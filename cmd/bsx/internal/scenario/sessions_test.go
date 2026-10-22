@@ -288,3 +288,12 @@ func TestRound11EndOnAMovedWorker(t *testing.T) {
 		t.Fatal("toy-1 still runs")
 	}
 }
+
+// Motif 14: a BS_LOGBOOK_DIR pin would record a pane where its own bs calls never look,
+// so bs spawn (and bs queen) refuse to record under one.
+func TestRecordingAPaneUnderABSLogbookDirPinIsRefused(t *testing.T) {
+	x := newToy(t)
+	x.bead("toy-1", "work on toy-1")
+	x.env = append(x.env, "BS_LOGBOOK_DIR="+filepath.Dir(x.logbook))
+	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 2, "BS_LOGBOOK_DIR=", "nothing was recorded", "env -u BS_LOGBOOK_DIR")
+}

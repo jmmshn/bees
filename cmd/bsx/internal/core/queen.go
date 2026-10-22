@@ -28,7 +28,10 @@ func (c *Core) Queen(ctx context.Context, req QueenReq) ([]string, error) {
 		return nil, exit(ExitRefused, "", nil, "bs queen: not in a herdr pane (HERDR_PANE_ID is unset): start the queen in a herdr pane, so her workers can find and ring her")
 	}
 	if c.Harness == nil {
-		return nil, exit(ExitRefused, "", nil, "bs queen: no harness adapter for this config")
+		return nil, exit(ExitRefused, "bs config", nil, "bs queen: no harness adapter for this config")
+	}
+	if c.Repo == "" {
+		return nil, exit(ExitRefused, "cd into the project's repo, or set paths.repo", nil, "bs queen: project %s has no repo to start her in", c.Project)
 	}
 	running := func(q logbook.Queen) (bool, error) {
 		up, err := c.Proc.Alive(q.Process)
@@ -37,8 +40,8 @@ func (c *Core) Queen(ctx context.Context, req QueenReq) ([]string, error) {
 		}
 		return up, nil
 	}
-	// Looked at before any file is written, so a refused second queen leaves the first's
-	// files alone; RecordQueen checks again under its lock.
+	// A refused second queen leaves the first's files alone: they are written only once
+	// RecordQueen, which checks again under its lock, has recorded this one.
 	if q, ok, err := c.Logbook.LatestQueen(ctx, name); err != nil {
 		return nil, err
 	} else if ok {
@@ -56,11 +59,6 @@ func (c *Core) Queen(ctx context.Context, req QueenReq) ([]string, error) {
 	if err != nil {
 		return nil, exit(ExitRefused, "", err, "bs queen: its harness refused the launch")
 	}
-	l.Files = withPrompt(l.Files, prompt.Queen, c.Project)
-	args, err := c.writeFiles(name, l)
-	if err != nil {
-		return nil, exit(ExitFail, "", err, "bs queen: couldn't write its start files")
-	}
 	q := logbook.Queen{Name: name, Harness: c.HarnessName, Session: req.Session, Pane: req.Pane,
 		Process: logbook.Process{PID: req.Self, Start: start}, Exe: req.Exe}
 	switch prev, ok, err := c.Logbook.RecordQueen(ctx, q, running); {
@@ -68,6 +66,11 @@ func (c *Core) Queen(ctx context.Context, req QueenReq) ([]string, error) {
 		return nil, err
 	case !ok:
 		return nil, exit(ExitRefused, "", nil, "bs queen: %s already runs (pid %d, pane %s)", name, prev.PID, prev.Pane)
+	}
+	l.Files = withPrompt(l.Files, prompt.Queen, c.Project)
+	args, err := c.writeFiles(name, l)
+	if err != nil {
+		return nil, exit(ExitFail, "bsx queen", err, "bs queen: couldn't write its start files (her entry names this pid, which exits: harmless)")
 	}
 	return append([]string{c.Harness.Kind()}, args...), nil
 }

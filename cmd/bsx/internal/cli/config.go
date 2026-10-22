@@ -281,7 +281,7 @@ func (s *settings) unpinned(cmd string) error {
 	if s.PinnedDir == "" {
 		return nil
 	}
-	return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bsx %s: BS_LOGBOOK_DIR=%s would record a pane where its own bs calls never look; nothing was recorded", cmd, s.PinnedDir),
+	return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("BS_LOGBOOK_DIR=%s would record a pane where its own bs calls never look; nothing was recorded", s.PinnedDir),
 		Next: "env -u BS_LOGBOOK_DIR bsx " + cmd + " ..., or set paths.logbook_dir in the session's config"}
 }
 

@@ -646,12 +646,20 @@ func (c *Core) isWorktree(ctx context.Context, ws logbook.Workspace) (bool, erro
 	return false, nil
 }
 
-// samePath reports whether a and b name the same directory, symlinks resolved (motif 3).
-func samePath(a, b string) bool {
-	ra, errA := filepath.EvalSymlinks(a)
-	rb, errB := filepath.EvalSymlinks(b)
-	if errA != nil || errB != nil {
-		return filepath.Clean(a) == filepath.Clean(b)
+// samePath reports whether a and b name the same directory, symlinks resolved (motif 3),
+// even once it is gone: git lists a removed worktree by its resolved path (/private/var on
+// macOS), the record by the path bs was given.
+func samePath(a, b string) bool { return resolved(a) == resolved(b) }
+
+// resolved is path with symlinks resolved in its longest existing prefix.
+func resolved(path string) string {
+	path = filepath.Clean(path)
+	if r, err := filepath.EvalSymlinks(path); err == nil {
+		return r
 	}
-	return ra == rb
+	dir, base := filepath.Split(path)
+	if dir = filepath.Clean(dir); dir == path {
+		return path
+	}
+	return filepath.Join(resolved(dir), base)
 }

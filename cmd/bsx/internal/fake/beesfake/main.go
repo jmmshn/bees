@@ -69,16 +69,20 @@ func main() {
 		switch os.Args[1] {
 		case "call":
 			os.Exit(call(os.Args[2:]))
-		case "idle":
-			select {}
-		case "listen":
+		case "idle": // a bare select{} is a deadlock to the runtime, which kills it on macOS
+			for {
+				time.Sleep(time.Hour)
+			}
+		case "listen": // idle, listening on a TCP port
 			ln, err := net.Listen("tcp", "127.0.0.1:0")
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
 			defer ln.Close()
-			select {}
+			for {
+				time.Sleep(time.Hour)
+			}
 		case "detach":
 			c := exec.Command(self(), "idle")
 			c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}

@@ -28,23 +28,27 @@ func (r *run) queen(fs *flag.FlagSet, args []string) error {
 	if fs.NArg() != 0 {
 		return fmt.Errorf("%w: bsx queen takes no arguments", errUsage)
 	}
+	pane := core.Getenv(r.env.Vars, "HERDR_PANE_ID")
+	if pane == "" { // before anything else bs queen needs: no pane, no queen
+		return &core.Exit{Code: core.ExitRefused, Msg: "not in a herdr pane (HERDR_PANE_ID is unset): start the queen in a herdr pane, so her workers can find and ring her"}
+	}
 	if err := r.s.unpinned("queen"); err != nil {
 		return err
 	}
 	if p := r.s.Pane; p != nil {
-		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bsx queen: this pane runs %s already", p.Who.Name), Next: "start the queen in a pane of her own"}
+		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("this pane runs %s already", p.Who.Name), Next: "start the queen in a pane of her own"}
 	}
 	if r.c.Harness == nil {
-		return &core.Exit{Code: core.ExitRefused, Msg: "bsx queen: no harness adapter for harness = " + r.s.Harness, Next: "bsx config"}
+		return &core.Exit{Code: core.ExitRefused, Msg: "no harness adapter for harness = " + r.s.Harness, Next: "bsx config"}
 	}
 	exe, ok := lookPath(core.Getenv(r.env.Vars, "PATH"), r.c.Harness.Kind())
 	if !ok {
-		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bsx queen: %s is not on PATH", r.c.Harness.Kind()), Next: "bsx doctor"}
+		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("%s is not on PATH", r.c.Harness.Kind()), Next: "bsx doctor"}
 	}
 	if err := r.c.CheckGuards(r.ctx); err != nil { // bees-12.20: refused now, not at every spawn
 		return err
 	}
-	argv, err := r.c.Queen(r.ctx, core.QueenReq{Session: r.s.Session, Pane: core.Getenv(r.env.Vars, "HERDR_PANE_ID"), Self: r.env.Self, Exe: exe})
+	argv, err := r.c.Queen(r.ctx, core.QueenReq{Session: r.s.Session, Pane: pane, Self: r.env.Self, Exe: exe})
 	if err != nil {
 		return err
 	}
@@ -73,7 +77,7 @@ func (r *run) spawn(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	if r.c.Harness == nil {
-		return &core.Exit{Code: core.ExitRefused, Msg: "bsx spawn: no harness adapter for harness = " + r.s.Harness, Next: "bsx config"}
+		return &core.Exit{Code: core.ExitRefused, Msg: "no harness adapter for harness = " + r.s.Harness, Next: "bsx config"}
 	}
 	w, err := r.who(*as)
 	if err != nil {

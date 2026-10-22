@@ -25,3 +25,20 @@ func TestBusyWithSeesARebaseOrBisect(t *testing.T) {
 		t.Error("busy in an idle worktree")
 	}
 }
+
+// samePath matches a gone directory named through a symlink with git's resolved name
+// (macOS's /var → /private/var), so prune can free a worktree deleted by hand.
+func TestSamePathResolvesAGoneDirsParent(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := filepath.EvalSymlinks(real)
+	if !samePath(filepath.Join(link, "gone", "wt"), filepath.Join(r, "gone", "wt")) {
+		t.Fatal("a gone dir under a symlink doesn't match its resolved path")
+	}
+	if samePath(filepath.Join(link, "a"), filepath.Join(r, "b")) {
+		t.Fatal("different dirs match")
+	}
+}

@@ -280,7 +280,7 @@ INSERT INTO entries VALUES ('s1','2026-10-01T00:00:00.000Z','spawned','queen-toy
 	}
 	// The old bs started it and recorded no start: status and end warn, all else refuses
 	// before the logbook is opened, so nothing is migrated (bees-13.9).
-	must(t, x.keeper("goal", "toy-9", "note"), 2, "has an open spawn the old bs started, which this bs can neither ring nor see run: toy-9", "nothing was read or written", "next: bs end <worker> for each (it names the herdr workspace to close by hand)")
+	must(t, x.keeper("goal", "toy-9", "note"), 2, "has an open spawn the old bs started, which this bs can neither ring nor see run: toy-9", "nothing was recorded or migrated", "next: bs end <worker> for each (it names the herdr workspace to close by hand)")
 	if _, err := os.Stat(x.logbook + ".pre-2"); !os.IsNotExist(err) {
 		t.Fatalf("a refused command migrated the logbook: %v", err)
 	}

@@ -231,7 +231,9 @@ var errFoundRunning = errors.New("found already running, not seen starting: the 
 // spawn with no start is ok false.
 func (c *Core) StartOf(ctx context.Context, sp logbook.Spawn) (logbook.Start, bool, error) {
 	st, ok, err := c.Logbook.LatestStart(ctx, sp.ID)
-	if err != nil || sp.Ended {
+	// A spawn the old bs started is never healed: a harness in its pane is the old bs's
+	// live worker, which this bs must neither adopt nor tear down (bees-13.9 SPEC7).
+	if err != nil || sp.Ended || sp.Legacy() {
 		return st, ok, err
 	}
 	var replaces logbook.ID

@@ -239,7 +239,7 @@ func (r *run) oldSessions() error {
 		fmt.Fprintf(r.err, "%s %s: warning: %s\n  next: %s end <worker> for each\n", bsname.Cmd, r.name, what, bsname.Cmd)
 		return nil
 	}
-	return &core.Exit{Code: core.ExitRefused, Msg: what + "; nothing was read or written",
+	return &core.Exit{Code: core.ExitRefused, Msg: what + "; nothing was recorded or migrated",
 		Next: fmt.Sprintf("%s end <worker> for each (it names the herdr workspace to close by hand), then run this again", bsname.Cmd)}
 }
 

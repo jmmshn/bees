@@ -3,6 +3,7 @@ package scenario_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -601,4 +602,56 @@ type startsRec struct {
 func (h *startsRec) Prepare(st port.Start) (port.Launch, error) {
 	h.starts = append(h.starts, st)
 	return h.Harness.Prepare(st)
+}
+
+// A spawn the old bs started is never healed, even when its recorded pane runs a harness
+// with --name <worker> (the old bs's live worker, at the rollout): it stays refused, and
+// bs end leaves its workspace open (bees-13.9 review SPEC7, motif 12).
+func TestAnOldBsSpawnIsNeverHealed(t *testing.T) {
+	x := newToy(t)
+	ctx := context.Background()
+	out, err := x.herdr.Run(ctx, "", "herdr", "workspace", "create", "--cwd", x.repo, "--label", "old worker", "--no-focus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ws struct {
+		Result struct {
+			Workspace struct {
+				ID string `json:"workspace_id"`
+			} `json:"workspace"`
+			Pane struct {
+				ID string `json:"pane_id"`
+			} `json:"root_pane"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(out, &ws); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := x.herdr.Run(ctx, "", "herdr", "agent", "start", "toy-9", "--kind", "claude", "--pane", ws.Result.Pane.ID,
+		"--timeout", "5000", "--", "--name", "toy-9", "--state", x.harness.Dir("toy-9")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(x.logbook), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", x.logbook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE entries (id TEXT PRIMARY KEY, ts TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('message','received','rang','spawned','ended')),
+  actor TEXT NOT NULL, subject TEXT, ref TEXT REFERENCES entries(id),
+  data TEXT CHECK (data IS NULL OR json_valid(data))) STRICT;
+INSERT INTO entries VALUES ('s1','2026-10-01T00:00:00.000Z','spawned','queen-toy','toy-9',NULL,json_object('bead','toy-9','workspace',?1,'pane',?2,'worktree','/r/toy-WT/toy-9','branch','toy-9','repo','/r/toy'));`,
+		ws.Result.Workspace.ID, ws.Result.Pane.ID)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	must(t, x.keeper("status"), 0, "stuck: toy-9: started by the old bs")
+	must(t, x.queen("inbox"), 2, "has an open spawn the old bs started", "toy-9")
+	must(t, x.queen("end", "toy-9"), 0, "left open", "ended toy-9")
+	if _, ok := x.herdr.Agent(herdr.Default, "toy-9"); !ok {
+		t.Fatal("bs end stopped the old bs's worker")
+	}
 }

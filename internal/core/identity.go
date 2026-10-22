@@ -92,7 +92,7 @@ func ScanPanes(ctx context.Context, in ScanIn) (Pane, bool, error) {
 			// A worker with no start, or whose recorded process died (restarted by hand in
 			// its pane), counts when its harness runs here above in.Self: Identify heals it.
 			if !alive {
-				if r.Queen || in.Program == nil {
+				if r.Queen || in.Program == nil || r.Legacy { // the old bs's worker: never healed (SPEC7)
 					continue
 				}
 				if probe == nil {
@@ -130,10 +130,12 @@ func ScanPanes(ctx context.Context, in ScanIn) (Pane, bool, error) {
 	return Pane{}, false, exit(ExitFail, bsname.Cmd+" status, then "+bsname.Cmd+" end the one that shouldn't be there", nil, "pane %s on herdr session %s is recorded by %d live sessions: %s", in.Pane, in.Session, len(found), strings.Join(names, ", "))
 }
 
-// recorded is a logbook.Recorded with its spawn's workspace repo.
+// recorded is a logbook.Recorded with its spawn's workspace repo, and whether the spawn
+// is the old bs's (legacy), which is never healed.
 type recorded struct {
 	logbook.Recorded
-	Repo string
+	Repo   string
+	Legacy bool
 }
 
 // inPane reads the entries of the logbook at path that recorded pane.
@@ -158,7 +160,7 @@ func inPane(ctx context.Context, path, session, pane string) ([]recorded, error)
 		if err != nil {
 			return nil, err
 		}
-		out[i].Repo = sp.Workspace.Repo
+		out[i].Repo, out[i].Legacy = sp.Workspace.Repo, sp.Legacy()
 	}
 	return out, nil
 }

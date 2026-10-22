@@ -45,9 +45,11 @@ type Herdr struct {
 	// Version is the client's version, ServerVersion the running server's (both 0.9.5
 	// when unset); Socket is the path status names for the server's socket.
 	Version, ServerVersion, Socket string
-	// Incompatible: the server's endpoint and private protocols aren't the client's;
-	// RestartNeeded: status says update.restart_needed: yes.
-	Incompatible, RestartNeeded bool
+	// EndpointIncompatible, ProtocolIncompatible: status says the server's endpoint or
+	// private protocol isn't the client's; RestartNeeded and BinaryStale: it says
+	// update.restart_needed or update.server_binary_stale: yes (0.9.5 says stale with no
+	// restart needed; a server version other than the client's is stale too).
+	EndpointIncompatible, ProtocolIncompatible, RestartNeeded, BinaryStale bool
 	// RefuseNext makes the next call of this command ("workspace report-metadata") fail
 	// with herdr's error envelope, as a server-side failure would.
 	RefuseNext string
@@ -148,12 +150,14 @@ func (h *Herdr) status(session string) []byte {
 	server := "  status: not running\n"
 	if !h.Down {
 		sv := cmp.Or(h.ServerVersion, v)
-		compatible := map[bool]string{true: "no", false: "yes"}[h.Incompatible]
-		server = fmt.Sprintf("  status: running\n  version: %s\n  endpoint_compatible: %s\n  private_protocol: 22\n  private_protocol_compatible: %s\n", sv, compatible, compatible)
+		server = fmt.Sprintf("  status: running\n  version: %s\n  endpoint_compatible: %s\n  private_protocol: 22\n  private_protocol_compatible: %s\n", sv, yes[!h.EndpointIncompatible], yes[!h.ProtocolIncompatible])
 	}
 	return []byte(fmt.Sprintf("client:\n  version: %s\n  channel: stable\n  protocol: 22\n  endpoint_protocol_generation: 1\n\nserver:\n%s  socket: %s\n\nupdate:\n  restart_needed: %s\n  server_binary_stale: %s\n",
-		v, server, h.Socket, map[bool]string{true: "yes", false: "no"}[h.RestartNeeded], map[bool]string{true: "no", false: "yes"}[h.ServerVersion == "" || h.ServerVersion == v]))
+		v, server, h.Socket, yes[h.RestartNeeded], yes[h.BinaryStale || h.ServerVersion != "" && h.ServerVersion != v]))
 }
+
+// yes is a bool as herdr status prints it.
+var yes = map[bool]string{true: "yes", false: "no"}
 
 // flags is a parsed herdr command line: positionals, repeatable --flags, and what
 // follows --.

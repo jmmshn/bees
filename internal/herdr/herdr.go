@@ -66,13 +66,18 @@ var codes = map[string]error{
 // Unwrap lets errors.Is match a code to its error.
 func (e *Error) Unwrap() error { return codes[e.Code] }
 
-// call runs herdr args on c's server and decodes its JSON result into out (if non-nil).
-func (c Client) call(ctx context.Context, out any, args ...string) error {
+// Argv is herdr args on c's server: --session for any but the default one.
+func (c Client) Argv(args ...string) []string {
 	argv := []string{"herdr"}
 	if c.Session != "" && c.Session != Default {
 		argv = append(argv, "--session", c.Session)
 	}
-	b, err := c.Run.Run(ctx, "", append(argv, args...)...)
+	return append(argv, args...)
+}
+
+// call runs herdr args on c's server and decodes its JSON result into out (if non-nil).
+func (c Client) call(ctx context.Context, out any, args ...string) error {
+	b, err := c.Run.Run(ctx, "", c.Argv(args...)...)
 	if err != nil {
 		var ee *port.ExitError
 		if !errors.As(err, &ee) {

@@ -82,8 +82,8 @@ func (r *run) spawn(fs *flag.FlagSet, args []string) error {
 	}
 	// A kind the config chose and spawn can't make yet is refused, never made a worktree;
 	// a worked-out none is left to Spawn, which names why the repo isn't a checkout.
-	if kind, why := r.s.Kind(r.s.GitTop); kind != config.GitWorktree && (r.s.Workspace.Kind != "" || r.s.Workspace.Command != nil) {
-		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("workspace kind %s (%s): bs makes only git_worktree workspaces yet (none arrives with bees-13.10, command with bees-13.11)", kind, why)}
+	if kind, why := r.s.Kind(r.s.GitTop); unmade(kind) != "" && (r.s.Workspace.Kind != "" || r.s.Workspace.Command != nil) {
+		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("workspace kind %s (%s): %s", kind, why, unmade(kind))}
 	}
 	w, err := r.who(*as)
 	if err != nil {
@@ -124,7 +124,7 @@ func (r *run) done(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	if *timeout > maxWait {
-		return fmt.Errorf("%w: --timeout %s: at most %s, so bs answers before a harness's 10-minute shell call is cut", errUsage, *timeout, maxWait)
+		return fmt.Errorf("%w: --timeout %s: at most %s, so "+bsname.Cmd+" answers before a harness's 10-minute shell call is cut", errUsage, *timeout, maxWait)
 	}
 	if *report == "-" {
 		b, err := io.ReadAll(r.env.Stdin)
@@ -132,7 +132,7 @@ func (r *run) done(fs *flag.FlagSet, args []string) error {
 			return err
 		}
 		if *report = strings.TrimSpace(string(b)); *report == "" {
-			return fmt.Errorf("%w: bs done --report -: stdin was empty", errUsage)
+			return fmt.Errorf("%w: "+bsname.Cmd+" done --report -: stdin was empty", errUsage)
 		}
 	}
 	w, err := r.who(*as)
@@ -159,7 +159,7 @@ func (r *run) check(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return fmt.Errorf("%w: bs check <worker>", errUsage)
+		return fmt.Errorf("%w: "+bsname.Cmd+" check <worker>", errUsage)
 	}
 	name := core.Name(fs.Arg(0))
 	rs, err := r.c.Check(r.ctx, name, r.env.Self)
@@ -188,7 +188,7 @@ func (r *run) goal(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("%w: bs goal <worker> <goal>... | discard | --waive <check>", errUsage)
+		return fmt.Errorf("%w: "+bsname.Cmd+" goal <worker> <goal>... | discard | --waive <check>", errUsage)
 	}
 	name := core.Name(fs.Arg(0))
 	// ADR-0010 spells it bs goal <name> --waive <check>: flags after the worker too.
@@ -394,7 +394,7 @@ func (r *run) ring(c *core.Core, from, to string, p port.Priority) {
 	case errors.Is(err, core.ErrEnded):
 		fmt.Fprintf(r.out, "stored, not rung: %v, so nobody reads it unless it is spawned again\n", err)
 	default:
-		fmt.Fprintf(r.err, "bs %s: couldn't ring %s (the message is stored): %v\n", r.name, to, err)
+		fmt.Fprintf(r.err, bsname.Cmd+" %s: couldn't ring %s (the message is stored): %v\n", r.name, to, err)
 	}
 }
 
@@ -436,8 +436,9 @@ func (r *run) inbox(fs *flag.FlagSet, args []string) error {
 // the next command (Rule G): stuck (its process is gone, its start unconfirmed, or it
 // ended incomplete), kept (complete or discarded, its workspace still on disk), waived,
 // discarded, and late (a start healed after confirmation missed it). It reads the
-// record, the process table and the disk, never a check or herdr's own state, so it
-// works with herdr down: a goal complete but not yet landed shows "no" until bs end or bs
+// record, the process table and the disk, never a check, and asks herdr only to heal an
+// unconfirmed start (core.StartOf), so with herdr down that start reads unknown and the
+// rest still prints: a goal complete but not yet landed shows "no" until bs end or bs
 // prune finds it. A spawn from before goals reads --goal legacy.
 func (r *run) status(fs *flag.FlagSet, args []string) error {
 	if err := fs.Parse(args); err != nil {
@@ -503,7 +504,11 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 			}
 		}
 		dir := sp.Workspace.Dir
-		if _, err := os.Stat(dir); sp.Ended && dir != "" && errors.Is(err, os.ErrNotExist) {
+		var serr error // the workspace on disk: nil, gone, or couldn't look
+		if dir != "" {
+			_, serr = os.Stat(dir)
+		}
+		if sp.Ended && dir != "" && errors.Is(serr, os.ErrNotExist) {
 			dir += " (removed)"
 		}
 		fmt.Fprintf(tw, "%s\t--goal %s\t%s\t%s\t%s\t%s\t%s\n", sp.Name, g, state, handoff, complete, running, dir)
@@ -524,10 +529,10 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 			if discarded {
 				why = "its goal is discarded"
 			}
-			if _, err := os.Stat(sp.Workspace.Dir); err == nil {
+			if serr == nil {
 				note("kept", sp.Name, "%s, but its workspace is still on disk → %s prune removes it, or names what keeps it", why, bsname.Cmd)
-			} else if !errors.Is(err, os.ErrNotExist) {
-				errs = append(errs, fmt.Errorf("%s: can't tell whether its workspace is still on disk: %w", sp.Name, err))
+			} else if !errors.Is(serr, os.ErrNotExist) {
+				errs = append(errs, fmt.Errorf("%s: can't tell whether its workspace is still on disk: %w", sp.Name, serr))
 			}
 		}
 		if gerr == nil && !landed {

@@ -22,7 +22,7 @@ bs status                          # one line per spawn (GOAL STATE HANDOFF COMP
 bs send --project <other> queen-<other> "..."   # cross-project mail; the reply hint carries --project back
 ```
 
-`bs doctor` runs even when the config or the project can't be worked out: that is its first FAIL, the checks that need no project still run, and it prints a `skip` line for each it couldn't make. Only `git_worktree` workspaces work before bees-13.10 and 13.11: doctor fails any other kind. `bs status` reads only the logbook, the process table and the disk, so it works with herdr down.
+`bs doctor` runs even when the config or the project can't be worked out: that is its first FAIL, the checks that need no project still run, and it prints a `skip` line for each it couldn't make. Only `git_worktree` workspaces work before bees-13.10 and 13.11: doctor fails any other kind and `config init` won't write one. `bs status` reads the logbook, the process table and the disk, and asks herdr only to heal an unconfirmed start, so with herdr down that start reads `unknown` and the rest still prints.
 
 The first bs call on a logbook written by an older bs migrates it to schema 2, copying it aside to `<project>.db.pre-2` first. bs refuses a logbook where a session the old bs started is still open (it can neither ring nor see it run), naming each: end them first (`bs end <worker>` and `bs status` still run, warning).
 

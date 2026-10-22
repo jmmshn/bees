@@ -303,7 +303,7 @@ func (s *settings) checkLogbook(env Env) error {
 	}
 	for _, real := range realLogbookDirs(env.Vars) {
 		if samePath(filepath.Dir(s.Logbook), real) {
-			return &core.Exit{Code: core.ExitRefused, Err: fmt.Errorf("%w, %s (%s); nothing was read or written", ErrRealLogbook, s.Paths.LogbookDir, s.Sources["paths.logbook_dir"]),
+			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("%v, %s (%s); nothing was read or written", ErrRealLogbook, s.Paths.LogbookDir, s.Sources["paths.logbook_dir"]),
 				Next: "set paths.logbook_dir in " + filepath.Join(s.Dir, "config.toml") + " to a dir of this session's own"}
 		}
 	}
@@ -314,7 +314,7 @@ func (s *settings) checkLogbook(env Env) error {
 // project (bees-13.15), so this is outside one.
 func (s *settings) needProject() error {
 	if s.Project == "" {
-		return &core.Exit{Code: core.ExitRefused, Msg: "no project: bs isn't in a git repo and BS_PROJECT is unset", Next: "cd into the project's repo"}
+		return &core.Exit{Code: core.ExitRefused, Msg: "no project: " + bsname.Cmd + " isn't in a git repo and BS_PROJECT is unset", Next: "cd into the project's repo"}
 	}
 	return nil
 }
@@ -354,8 +354,8 @@ func (s *settings) unpinned(cmd string) error {
 	if s.PinnedDir == "" {
 		return nil
 	}
-	return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("BS_LOGBOOK_DIR=%s isn't paths.logbook_dir (%s): a pane recorded there is never found by its own bs calls; nothing was recorded", s.PinnedDir, s.ConfigDir),
-		Next: "env -u BS_LOGBOOK_DIR bs " + cmd + " ..., or set paths.logbook_dir in the session's config"}
+	return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("BS_LOGBOOK_DIR=%s isn't paths.logbook_dir (%s): a pane recorded there is never found by its own "+bsname.Cmd+" calls; nothing was recorded", s.PinnedDir, s.ConfigDir),
+		Next: "env -u BS_LOGBOOK_DIR " + bsname.Cmd + " " + cmd + " ..., or set paths.logbook_dir in the session's config"}
 }
 
 // workerPath is worker.path with ~ expanded.
@@ -365,4 +365,18 @@ func (s *settings) workerPath() []string {
 		out = append(out, s.Expand(d))
 	}
 	return out
+}
+
+// unmade says why spawn won't make a workspace of kind yet, "" for one it makes: until
+// bees-13.10 and 13.11 it makes only git worktrees. Spawn refuses on it, doctor fails on
+// it and config init won't write it.
+func unmade(kind string) string {
+	switch kind {
+	case config.GitWorktree:
+		return ""
+	case config.NoWorkspace:
+		return bsname.Cmd + " spawn makes only git_worktree workspaces until bees-13.10 brings none"
+	default:
+		return bsname.Cmd + " spawn makes only git_worktree workspaces until bees-13.11 brings command"
+	}
 }

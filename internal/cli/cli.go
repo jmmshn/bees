@@ -10,6 +10,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/jmmshn/bees/internal/bsname"
 	"github.com/jmmshn/bees/internal/core"
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/port"
@@ -146,10 +147,17 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 	}
 	fs := flag.NewFlagSet("bs "+args[0], flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	if err := cmd.run(r, fs, args[1:]); !errors.Is(err, flag.ErrHelp) {
-		return report(stderr, args[0], err)
+	badFlag := false // flag calls Usage on a flag it can't parse: a refusal, never exit 1
+	fs.Usage = func() { badFlag = true; fs.PrintDefaults() }
+	err = cmd.run(r, fs, args[1:])
+	switch {
+	case errors.Is(err, flag.ErrHelp):
+		return 0
+	case badFlag && err != nil:
+		fmt.Fprintf(stderr, "%s %s: %v\n", bsname.Cmd, args[0], err)
+		return core.ExitRefused
 	}
-	return 0
+	return report(stderr, args[0], err)
 }
 
 // report prints err for command name and returns its exit code: an *Exit's own, 2 for

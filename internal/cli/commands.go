@@ -370,10 +370,10 @@ func (r *run) ownProject(cmd, what, project string) error {
 		return nil
 	}
 	if r.s.Pane != nil {
-		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bs %s --project %s: you are %s of project %s, so your %s is in %s's logbook; only bs send crosses projects",
-			cmd, p, r.s.Pane.Who.Name, r.s.Project, what, r.s.Project), Next: "bs " + cmd + " (no --project)"}
+		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("%s %s --project %s: you are %s of project %s, so your %s is in %s's logbook; only %s send crosses projects",
+			bsname.Cmd, cmd, p, r.s.Pane.Who.Name, r.s.Project, what, r.s.Project, bsname.Cmd), Next: bsname.Cmd + " " + cmd + " (no --project)"}
 	}
-	return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bs %s --project %s: this shell is in project %s (%s); only bs send crosses projects", cmd, p, r.s.Project, r.s.ProjectFrom),
+	return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("%s %s --project %s: this shell is in project %s (%s); only %s send crosses projects", bsname.Cmd, cmd, p, r.s.Project, r.s.ProjectFrom, bsname.Cmd),
 		Next: "run it from " + p + "'s repo"}
 }
 

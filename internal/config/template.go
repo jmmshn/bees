@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+
+	"github.com/jmmshn/bees/internal/bsname"
 )
 
 // examples are the commented example a unit table gets in a written file: a table's
@@ -44,8 +46,8 @@ func Template(scope string, set map[string]string) (string, error) {
 		}
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "# bs %s config: every key this file may hold, each commented out at its default.\n", scope)
-	b.WriteString("# Uncomment a line to set it; bs config prints each value and where it came from.\n")
+	fmt.Fprintf(&b, "# bees %s config: every key this file may hold, each commented out at its default.\n", scope)
+	fmt.Fprintf(&b, "# Uncomment a line to set it; %s config prints each value and where it came from.\n", bsname.Cmd)
 	section := ""
 	for _, f := range all {
 		if !inScope(f, scope) {
@@ -55,8 +57,12 @@ func Template(scope string, set map[string]string) (string, error) {
 		if i := strings.LastIndex(f.key, "."); i >= 0 {
 			table, key = f.key[:i], f.key[i+1:]
 		}
+		unread := ""
+		if bead := f.tag.Get("unread"); bead != "" {
+			unread = " (not read by " + bsname.Cmd + " yet: " + bead + ")"
+		}
 		if f.table() {
-			fmt.Fprintf(&b, "\n# %s\n", f.tag.Get("doc"))
+			fmt.Fprintf(&b, "\n# %s%s\n", f.tag.Get("doc"), unread)
 			for _, l := range strings.Split(examples[f.key], "\n") {
 				b.WriteString("# " + l + "\n")
 			}
@@ -67,7 +73,7 @@ func Template(scope string, set map[string]string) (string, error) {
 			fmt.Fprintf(&b, "\n[%s]\n", table)
 			section = table
 		}
-		fmt.Fprintf(&b, "\n# %s\n", f.tag.Get("doc"))
+		fmt.Fprintf(&b, "\n# %s%s\n", f.tag.Get("doc"), unread)
 		if v, ok := set[f.key]; ok {
 			fmt.Fprintf(&b, "%s = %s\n", key, Quote(v))
 			continue

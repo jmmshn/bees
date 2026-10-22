@@ -83,7 +83,7 @@ func TestDoctorPasses(t *testing.T) {
 		"ok   bd: "+filepath.Join(r.bin, "bd")+" 1.1.2, store /store/.beads",
 		"ok   gh: ",
 		// bees-12.42: no GitHub remote fails nothing until a pr goal, so it's said here.
-		"WARN remote: "+r.repo+" has no GitHub remote: bs spawn refuses --goal pr")
+		"WARN remote: "+r.repo+" has no GitHub remote: bs spawn refuses --goal pr", "ok   env: no BS_* variables set")
 	if err := exec.Command("git", "-C", r.repo, "remote", "add", "origin", "git@github.com:o/toy.git").Run(); err != nil {
 		t.Fatal(err)
 	}
@@ -110,12 +110,16 @@ func TestDoctorHerdrServer(t *testing.T) {
 		t.Errorf("an older server: exit %d", code)
 	}
 	wantIn(t, out, "WARN herdr session toy: server 0.9.3 is older than client 0.9.5", "herdr --session toy server stop")
-	r.herdr.Incompatible = true
+	r.herdr.ServerVersion, r.herdr.RestartNeeded = "", true
+	if _, out := r.doctor(); !strings.Contains(out, "WARN herdr session toy: herdr says its server needs a restart") {
+		t.Errorf("restart needed:\n%s", out)
+	}
+	r.herdr.ServerVersion, r.herdr.Incompatible = "0.9.3", true
 	if code, out := r.doctor(); code != 1 || !strings.Contains(out, "FAIL herdr session toy: client 0.9.5 can't talk to server 0.9.3") {
 		t.Errorf("incompatible: exit %d\n%s", code, out)
 	}
 	r.herdr.Down = true
-	if code, out := r.doctor(); code != 1 || !strings.Contains(out, "FAIL herdr session toy: server not running (socket "+r.socket+"): start it with herdr --session toy") {
+	if code, out := r.doctor(); code != 1 || !strings.Contains(out, "FAIL herdr session toy: server not running (socket "+r.socket+"): start it with this build first on its PATH, PATH=") {
 		t.Errorf("down: exit %d\n%s", code, out)
 	}
 }
@@ -179,4 +183,36 @@ func TestDoctorNoConfigDir(t *testing.T) {
 		t.Errorf("exit %d", code)
 	}
 	wantIn(t, out, "FAIL config dir: "+r.session+" is missing for herdr session toy: bs config init writes it")
+}
+
+// A workspace kind spawn refuses until bees-13.10/13.11 fails doctor, never an ok line;
+// [workspace.command] isn't called ignored, since spawn refuses it.
+func TestDoctorFailsAKindSpawnRefuses(t *testing.T) {
+	r := newDoctorRig(t)
+	for body, want := range map[string]string{
+		"[workspace]\nkind = \"none\"\n":           "FAIL workspace: workspace.kind = none over a git checkout",
+		"[workspace.command]\ncreate = [\"jj\"]\n": "FAIL workspace: command ([workspace.command] is set",
+	} {
+		r.write("projects/mytoy.toml", body)
+		code, out := r.doctor()
+		if code != 1 || !strings.Contains(out, want) || strings.Contains(out, "bs ignores it") {
+			t.Errorf("%q: exit %d\n%s", body, code, out)
+		}
+	}
+}
+
+// With the project refused, doctor says which checks it skipped (Rule G), and a flag it
+// doesn't know is a refusal, exit 2.
+func TestDoctorSaysWhatItSkipped(t *testing.T) {
+	r := newDoctorRig(t)
+	code, out := r.doctor("BS_PROJECT=bees")
+	if code != 1 {
+		t.Errorf("exit %d", code)
+	}
+	wantIn(t, out, "FAIL project: BS_PROJECT=bees", "skip project: project, workspace and logbook dir", "skip project: gh and the GitHub remote")
+	for _, args := range [][]string{{"config", "init", "--bogus"}, {"inbox", "--bogus"}} {
+		if code, _, stderr := r.run(r.repo, nil, args...); code != 2 || !strings.Contains(stderr, "flag provided but not defined") {
+			t.Errorf("%v: exit %d %s", args, code, stderr)
+		}
+	}
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 	"slices"
 	"strings"
 	"time"
@@ -113,14 +114,14 @@ func (d Done) Text() string {
 		s += "\n" + d.Report
 	}
 	if len(d.Background) > 0 {
-		s += "\n(reported with bs done --force while it still ran background work:"
+		s += "\n(reported with " + bsname.Cmd + " done --force while it still ran background work:"
 		for _, b := range d.Background {
 			s += "\n  " + b.String()
 		}
 		s += ")"
 	}
 	if d.Unchecked != "" {
-		s += "\n(reported with bs done --force; " + d.Unchecked + ")"
+		s += "\n(reported with " + bsname.Cmd + " done --force; " + d.Unchecked + ")"
 	}
 	return s
 }

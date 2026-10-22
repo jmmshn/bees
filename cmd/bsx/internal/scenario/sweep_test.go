@@ -325,7 +325,7 @@ func TestAnUnconfirmedStartIsExit8AndEndClearsIt(t *testing.T) {
 	x.herdr.Programs["claude"] = "/bin/true"
 	x.ports.Timing.Confirm = 300 * time.Millisecond
 	x.bead("toy-1", "x")
-	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 8, "start unconfirmed", "next: bs end toy-1 --incomplete")
+	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 8, "start unconfirmed", "next: bsx end toy-1 --incomplete")
 	must(t, x.queen("end", "toy-1"), 9)                                // a verdict never handed off is incomplete
 	must(t, x.queen("end", "--incomplete", "toy-1"), 0, "ended toy-1") // the abort of a spawn that never ran (motif 5)
 	sp, _, _ := x.open().LatestSpawn(context.Background(), "toy-1")

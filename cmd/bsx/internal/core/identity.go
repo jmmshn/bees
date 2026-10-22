@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 	"slices"
 	"strings"
 	"time"
@@ -41,7 +42,7 @@ func (c *Core) Identify(ctx context.Context, env []string, self int) (Who, error
 	}
 	up, err := c.ancestors(self)
 	if err != nil {
-		return Who{}, exit(ExitCantCheck, "", err, "bs can't walk its own ancestors")
+		return Who{}, exit(ExitCantCheck, "", err, bsname.Cmd+" can't walk its own ancestors")
 	}
 	var found []Who
 	var unconfirmed []string
@@ -52,7 +53,7 @@ func (c *Core) Identify(ctx context.Context, env []string, self int) (Who, error
 		}
 		alive, err := c.Proc.Alive(r.Process)
 		if err != nil {
-			return Who{}, exit(ExitCantCheck, "", err, "bs can't tell whether %s's process runs", r.Name)
+			return Who{}, exit(ExitCantCheck, "", err, bsname.Cmd+" can't tell whether %s's process runs", r.Name)
 		}
 		if alive && slices.Contains(up, r.Process.PID) {
 			found = append(found, Who{Name: r.Name, Queen: r.Queen, Spawn: r.Spawn, Process: r.Process})
@@ -64,7 +65,7 @@ func (c *Core) Identify(ctx context.Context, env []string, self int) (Who, error
 	case len(found) > 1:
 		return Who{}, exit(ExitFail, "", nil, "pane %s on herdr session %s is recorded by %d live sessions", pane, session, len(found))
 	case len(unconfirmed) > 0:
-		return Who{}, exit(ExitStart, "bs end "+unconfirmed[0], nil, "pane %s holds %s, whose start was never confirmed (the heal arrives with bees-13.4)", pane, strings.Join(unconfirmed, ", "))
+		return Who{}, exit(ExitStart, bsname.Cmd+" end "+unconfirmed[0], nil, "pane %s holds %s, whose start was never confirmed (the heal arrives with bees-13.4)", pane, strings.Join(unconfirmed, ", "))
 	}
 	return Who{}, exit(ExitRefused, "", nil, "no live session of project %s is recorded in pane %s on herdr session %s", c.Project, pane, session)
 }
@@ -103,7 +104,7 @@ var ErrBackground = errors.New("still runs background work")
 
 // ErrNoStart is a spawn with no started entry: unconfirmed, or from before starts were
 // recorded.
-var ErrNoStart = errors.New("no start recorded (unconfirmed, or started before bs recorded starts)")
+var ErrNoStart = errors.New("no start recorded (unconfirmed, or started before " + bsname.Cmd + " recorded starts)")
 
 // ErrHarnessGone is a recorded harness process that has exited: there is nothing to walk.
 var ErrHarnessGone = errors.New("the recorded harness process has exited")

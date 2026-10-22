@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 	"strconv"
 
 	"github.com/jmmshn/bees/cmd/bsx/internal/goal"
@@ -150,7 +151,7 @@ func (c *Core) complete(ctx context.Context, sp logbook.Spawn, e logbook.Effecti
 		return false, nil, nil, err
 	}
 	if !ok || !d.Passed() {
-		return false, nil, []logbook.CheckResult{{Name: "handoff", Detail: "no bs done that passed its checks"}}, nil
+		return false, nil, []logbook.CheckResult{{Name: "handoff", Detail: "no " + bsname.Cmd + " done that passed its checks"}}, nil
 	}
 	var passed []string
 	var failed []logbook.CheckResult

@@ -212,14 +212,14 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 	fmt.Fprintln(tw, "WORKER\tGOAL\tSTATE\tRUNNING\tWORKSPACE")
 	var errs []error
 	for _, sp := range sps {
-		state := "open"
+		state := "live"
+		if sp.Ended {
+			state = "ended"
+		}
 		if _, landed, err := r.c.Logbook.LandedOf(r.ctx, sp.ID); err != nil {
 			errs = append(errs, err)
 		} else if landed {
-			state = "landed"
-		}
-		if sp.Ended {
-			state += ",ended"
+			state += ",landed"
 		}
 		running := "-"
 		if !sp.Ended {

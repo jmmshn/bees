@@ -111,3 +111,28 @@ func (l *Logbook) LatestStart(ctx context.Context, spawn ID) (s Start, ok bool, 
 	s.Harness = cmp.Or(s.Harness, DefaultHarness)
 	return s, ok, err
 }
+
+// RecordStartOnce records start s unless spawn s.Spawn already has one: then it returns
+// that start and recorded false. The check and the record share one write transaction,
+// so two heals racing record one start (motif 7).
+func (l *Logbook) RecordStartOnce(ctx context.Context, s Start) (got Start, recorded bool, err error) {
+	if s.Baseline == nil {
+		s.Baseline = []Process{}
+	}
+	err = l.write(ctx, func(tx *sql.Tx) error {
+		var data string
+		switch err := tx.QueryRowContext(ctx, `SELECT id, data FROM entries WHERE kind = 'started' AND ref = ? ORDER BY rowid DESC LIMIT 1`, string(s.Spawn)).Scan(&got.ID, &data); {
+		case err == nil:
+			got.Spawn, got.Name = s.Spawn, s.Name
+			return json.Unmarshal([]byte(data), &got)
+		case !errors.Is(err, sql.ErrNoRows):
+			return err
+		}
+		id, err := insert(ctx, tx, entry{kind: "started", actor: s.Name, subject: s.Name, ref: s.Spawn, data: s})
+		got, recorded = s, true
+		got.ID = id
+		return err
+	})
+	got.Harness = cmp.Or(got.Harness, DefaultHarness)
+	return got, recorded, err
+}

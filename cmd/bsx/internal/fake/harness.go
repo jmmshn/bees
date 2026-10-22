@@ -159,11 +159,15 @@ type Call struct {
 	Cwd  string   `json:"cwd"`
 }
 
-// Reply is what the relayed call prints and exits with.
+// Reply is what the relayed call prints and exits with; with Exec, the caller then
+// execs it, in ExecDir with ExecEnv, as bs queen's last step does.
 type Reply struct {
-	Stdout string `json:"stdout"`
-	Stderr string `json:"stderr"`
-	Code   int    `json:"code"`
+	Stdout  string   `json:"stdout"`
+	Stderr  string   `json:"stderr"`
+	Code    int      `json:"code"`
+	Exec    []string `json:"exec,omitempty"`
+	ExecDir string   `json:"exec_dir,omitempty"`
+	ExecEnv []string `json:"exec_env,omitempty"`
 }
 
 // Relay serves beesfake calls at path with handle until the test ends; pane processes

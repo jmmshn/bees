@@ -1,6 +1,7 @@
 package fake
 
 import (
+	"context"
 	"syscall"
 
 	"github.com/jmmshn/bees/cmd/bsx/internal/proc"
@@ -44,8 +45,21 @@ func (h *Herdr) Descendants(pid int) ([]proc.Process, error) {
 // Signal is the real table's: only while p is still the process recorded.
 func (h *Herdr) Signal(p proc.Process, sig syscall.Signal) error { return proc.Signal(p, sig) }
 
+// Listening is the real table's.
+func (h *Herdr) Listening(ctx context.Context, pids []int) (map[int][]int, error) {
+	return proc.Listening(ctx, pids)
+}
+
 func (h *Herdr) fault(of func(*procFaults) error) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return of(&h.procFaults)
+}
+
+// FailStarts makes every Alive and Start lookup fail with err until it is called with
+// nil: a process table bs can't read.
+func (h *Herdr) FailStarts(err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.AliveErr = err
 }

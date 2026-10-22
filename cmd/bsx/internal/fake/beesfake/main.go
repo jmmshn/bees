@@ -11,10 +11,12 @@
 //
 // A script line is a JSON array: ["bs", args...] runs a bs call as its own job (process
 // group), as a shell runs a command, and ["bs|", args...] one piped into a sibling in its
-// group (bs done | tail); ["child", tag] starts an idle child in its own group,
-// ["child-same-group", tag] one in beesfake's group, ["detach", tag] one that escapes the
-// tree; ["kill", tag] kills one; ["exit"] exits. Each step appends one JSON line to
-// results.log.
+// group (bs done | tail); ["bs&", args...] starts one without waiting (bs queen, which
+// execs), its output in a DIR/bg-*.out file the result's stdout names; ["child", tag] starts an idle child in its own
+// group, ["child-same-group", tag] one in beesfake's group, ["listen", tag] one listening
+// on a TCP port, ["detach", tag] one that escapes the tree; ["kill", tag] kills one;
+// ["cd", dir] changes the dir later calls run in; ["exit"] exits. Each step appends one
+// JSON line to results.log.
 package main
 
 import (
@@ -42,11 +44,14 @@ type Call struct {
 	Cwd  string   `json:"cwd"`
 }
 
-// Reply is the call's output and exit code.
+// Reply is the call's output and exit code, and what to exec after (bs queen).
 type Reply struct {
-	Stdout string `json:"stdout"`
-	Stderr string `json:"stderr"`
-	Code   int    `json:"code"`
+	Stdout  string   `json:"stdout"`
+	Stderr  string   `json:"stderr"`
+	Code    int      `json:"code"`
+	Exec    []string `json:"exec,omitempty"`
+	ExecDir string   `json:"exec_dir,omitempty"`
+	ExecEnv []string `json:"exec_env,omitempty"`
 }
 
 // Result is one script step's outcome.
@@ -65,6 +70,14 @@ func main() {
 		case "call":
 			os.Exit(call(os.Args[2:]))
 		case "idle":
+			select {}
+		case "listen":
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			defer ln.Close()
 			select {}
 		case "detach":
 			c := exec.Command(self(), "idle")
@@ -145,7 +158,7 @@ func harness(state string) error {
 				appendJSON(results, Result{Step: step})
 				return nil
 			}
-			appendJSON(results, run(step, kids))
+			appendJSON(results, run(state, step, kids))
 		}
 	}
 }
@@ -163,7 +176,7 @@ func rings(ln net.Listener, log string) {
 	}
 }
 
-func run(step []string, kids map[string]int) Result {
+func run(state string, step []string, kids map[string]int) Result {
 	r := Result{Step: step}
 	tag := ""
 	if len(step) > 1 {
@@ -192,6 +205,35 @@ func run(step []string, kids map[string]int) Result {
 		} else if err != nil {
 			r.Code, r.Err = -1, err.Error()
 		}
+	case "bs&":
+		f, err := os.CreateTemp(state, "bg-*.out")
+		if err != nil {
+			r.Code, r.Err = -1, err.Error()
+			break
+		}
+		defer f.Close() // the child has its own copy
+		c := exec.Command(self(), append([]string{"call"}, step[1:]...)...)
+		c.Stdout, c.Stderr, r.Stdout = f, f, f.Name()
+		c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := c.Start(); err != nil {
+			r.Code, r.Err = -1, err.Error()
+			break
+		}
+		go func() { _ = c.Wait() }() // reap it
+		r.PID = c.Process.Pid
+	case "cd":
+		if err := os.Chdir(tag); err != nil {
+			r.Code, r.Err = -1, err.Error()
+		}
+	case "listen":
+		c := exec.Command(self(), "listen")
+		c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := c.Start(); err != nil {
+			r.Code, r.Err = -1, err.Error()
+			break
+		}
+		go func() { _ = c.Wait() }()
+		kids[tag], r.PID = c.Process.Pid, c.Process.Pid
 	case "child", "child-same-group":
 		c := exec.Command(self(), "idle")
 		c.SysProcAttr = &syscall.SysProcAttr{Setpgid: step[0] == "child"}
@@ -250,5 +292,14 @@ func call(argv []string) int {
 	}
 	fmt.Print(r.Stdout)
 	fmt.Fprint(os.Stderr, r.Stderr)
+	if r.Code == 0 && len(r.Exec) > 0 {
+		if err := os.Chdir(r.ExecDir); err != nil {
+			fmt.Fprintln(os.Stderr, "beesfake call:", err)
+			return 125
+		}
+		err := syscall.Exec(r.Exec[0], r.Exec, r.ExecEnv)
+		fmt.Fprintln(os.Stderr, "beesfake call: exec:", err)
+		return 125
+	}
 	return r.Code
 }

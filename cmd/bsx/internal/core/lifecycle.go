@@ -1,16 +1,19 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/jmmshn/bees/cmd/bsx/internal/goal"
+	"github.com/jmmshn/bees/cmd/bsx/internal/herdr"
 	"github.com/jmmshn/bees/cmd/bsx/internal/logbook"
 	"github.com/jmmshn/bees/cmd/bsx/internal/proc"
 )
@@ -58,7 +61,7 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, force bool
 			case len(bg) > 0 && force:
 				d.Background = bg
 			case len(bg) > 0:
-				return d, exit(ExitBackground, "stop it, then bs done again (or bs done --force)", nil, "%s %s:\n  %s", sp.Name, ErrBackground, lines(bg))
+				return d, exit(ExitBackground, "stop it, then bs done again (or bs done --force)", nil, "%s", background(sp.Name, bg))
 			}
 			d.Checks = append(d.Checks, logbook.CheckResult{Name: name, Pass: true})
 			continue
@@ -82,14 +85,6 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, force bool
 		err = c.Logbook.RecordLanded(ctx, sp.ID, sp.Name, sp.Name, logbook.Landed{By: "done"})
 	}
 	return d, err
-}
-
-func lines[T fmt.Stringer](xs []T) string {
-	var s []string
-	for _, x := range xs {
-		s = append(s, x.String())
-	}
-	return strings.Join(s, "\n  ")
 }
 
 // EndOpts are bs end's flags.
@@ -131,7 +126,7 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 		if err != nil {
 			return err
 		}
-		_, started, err := c.Logbook.LatestStart(ctx, sp.ID)
+		_, started, err := c.StartOf(ctx, sp)
 		if err != nil {
 			return err
 		}
@@ -148,8 +143,15 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 		case err != nil:
 			return exit(ExitCantCheck, "bs end "+name+" --force", err, "bs end %s: can't check for background work", name)
 		case len(bg) > 0:
-			return exit(ExitBackground, "bs end "+name+" --force", nil, "%s %s:\n  %s", name, ErrBackground, lines(bg))
+			return exit(ExitBackground, "bs end "+name+" --force", nil, "%s", background(name, bg))
 		}
+	}
+	switch g, err := c.guests(ctx, sp); {
+	case err != nil:
+		return exit(ExitCantCheck, "bs end "+name, err, "bs end %s: can't tell what else its workspace %s holds; nothing closed", name, sp.Herdr.Workspace)
+	case len(g) > 0:
+		return exit(ExitRefused, "herdr --session "+sp.Herdr.Session+" pane move <pane> --new-workspace, then bs end "+name, nil,
+			"bs end %s: its workspace %s also holds %s, which closing it would end; nothing closed", name, sp.Herdr.Workspace, strings.Join(g, ", "))
 	}
 	h := c.herdr(sp.Herdr.Session)
 	if err := h.CloseWorkspace(ctx, sp.Herdr.Workspace); err != nil {
@@ -157,6 +159,9 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 	}
 	if err := c.stop(ctx, sp); err != nil {
 		return exit(ExitFail, "bs end "+name, err, "bs end %s: its workspace is closed but its process wouldn't stop; nothing was recorded", name)
+	}
+	if err := c.removeFiles(sp.Name); err != nil {
+		c.warn("couldn't remove %s's start files: %v", sp.Name, err)
 	}
 	// landed only for a goal bs checked: a legacy goal has no completion (ADR-0010).
 	if done && !e.IsLegacy() {
@@ -167,9 +172,83 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 	return c.Logbook.RecordEnd(ctx, by, sp.ID, logbook.Ended{Force: o.Force, Incomplete: !done})
 }
 
+// guests names the harness processes in sp's herdr workspace outside its own recorded
+// pane: another session's pane moved in (herdr pane move gives it a new id, so it is
+// never sp's pane). Closing the workspace would end them (bees-12.36, motif 12). A
+// process this logbook recorded is named by its session. Any lookup that fails is an
+// error, never "none" (motif 7).
+func (c *Core) guests(ctx context.Context, sp logbook.Spawn) ([]string, error) {
+	h := c.herdr(sp.Herdr.Session)
+	panes, err := h.Panes(ctx, sp.Herdr.Workspace)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, pane := range panes {
+		if pane == sp.Herdr.Pane {
+			continue
+		}
+		pi, err := h.ProcessInfo(ctx, pane)
+		if errors.Is(err, herdr.ErrPaneGone) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		for _, p := range pi.Foreground {
+			if p.Name != c.Harness.Kind() {
+				continue
+			}
+			who, err := c.recordedAs(ctx, p.PID)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, fmt.Sprintf("%s (pid %d, pane %s)", cmp.Or(who, "a "+p.Name+" process"), p.PID, pane))
+		}
+	}
+	return out, nil
+}
+
+// recordedAs is the session whose queen entry or open spawn's start recorded pid, if any.
+func (c *Core) recordedAs(ctx context.Context, pid int) (string, error) {
+	if q, ok, err := c.Logbook.LatestQueen(ctx, Queen(c.Project)); err != nil {
+		return "", err
+	} else if ok && q.PID == pid {
+		return q.Name, nil
+	}
+	sps, err := c.Logbook.LatestSpawns(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, sp := range sps {
+		if st, ok, err := c.Logbook.LatestStart(ctx, sp.ID); err != nil {
+			return "", err
+		} else if ok && !sp.Ended && st.PID == pid {
+			return sp.Name, nil
+		}
+	}
+	return "", nil
+}
+
+// removeFiles removes worker name's per-start files, <name>-<stem>-*: a stem starts with
+// a letter, so this never takes the files of a worker whose name extends name (bees-12
+// and bees-12-3).
+func (c *Core) removeFiles(name string) error {
+	fs, err := filepath.Glob(filepath.Join(c.CacheDir, name+"-[a-z]*-*"))
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, f := range fs {
+		if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // stop ends sp's recorded harness process if it still runs: SIGTERM, then SIGKILL.
 func (c *Core) stop(ctx context.Context, sp logbook.Spawn) error {
-	st, ok, err := c.Logbook.LatestStart(ctx, sp.ID)
+	st, ok, err := c.StartOf(ctx, sp)
 	if err != nil || !ok {
 		return err
 	}

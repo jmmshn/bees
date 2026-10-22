@@ -31,21 +31,26 @@ type settings struct {
 	ProjectFrom  string // how bs found it
 	Repo         string // the project's main checkout, "" if unknown
 	RepoFrom     string
-	GitTop       bool   // Repo is a git checkout's top level
-	Logbook      string // the logbook file
-	Worktrees    string // paths.worktrees with {repo} and ~ resolved
+	GitTop       bool       // Repo is a git checkout's top level
+	Logbook      string     // the logbook file
+	Worktrees    string     // paths.worktrees with {repo} and ~ resolved
+	Pane         *core.Pane // the recorded pane bs runs in; nil outside one
 	Warnings     []string
 }
 
-// envKeys are the BS_* variables bs reads outside a herdr pane. Inside one it reads none:
-// a pane's identity and config come from the pane (ADR-0010), and an inherited pin from
-// some other session's env is exactly what bees-12.47 and bees-13.1's probe saw leak.
+// envKeys are the BS_* variables bs reads outside a recorded herdr pane. Inside one it
+// reads none: a pane's identity and config come from the pane (ADR-0010), and an
+// inherited pin from some other session's env is exactly what bees-12.47 and bees-13.1's
+// probe saw leak.
 var envKeys = []string{"BS_PROJECT", "BS_LOGBOOK_DIR", "BS_REPOS"}
 
 // load works out env's settings: its config dir (per herdr session), its project (the
-// git repo bs runs in, else BS_PROJECT outside a pane), the files, the repo and the
-// logbook. It fails only on what no command can run past: a broken file, a refused dir.
-func load(ctx context.Context, env Env, run port.Runner) (*settings, error) {
+// logbook whose entry recorded the herdr pane bs runs in; outside a recorded pane, the
+// git repo bs runs in, else BS_PROJECT), the files, the repo and the logbook. It fails
+// only on what no command can run past: a broken file, a refused dir, a pane bs can't
+// tell the session of.
+func load(ctx context.Context, env Env, ports Ports) (*settings, error) {
+	run := ports.Run
 	dir, session, err := config.Dir(func(k string) string { return core.Getenv(env.Vars, k) })
 	if err != nil {
 		return nil, err
@@ -64,22 +69,43 @@ func load(ctx context.Context, env Env, run port.Runner) (*settings, error) {
 	} else if !fi.IsDir() {
 		return nil, fmt.Errorf("config dir %s is not a directory", dir)
 	}
-	inPane := core.Getenv(env.Vars, "HERDR_PANE_ID") != ""
+	home := core.Getenv(env.Vars, "HOME")
+	if pane := core.Getenv(env.Vars, "HERDR_PANE_ID"); pane != "" {
+		global, err := config.Load(config.Input{Dir: dir, Home: home})
+		if err != nil {
+			return nil, err
+		}
+		p, ok, err := core.ScanPanes(ctx, core.ScanIn{Dir: global.Expand(global.Paths.LogbookDir), Session: session, Pane: pane,
+			Self: env.Self, Run: run, Proc: ports.Proc, Kind: harnessProgram(global.Harness)})
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			s.Pane = &p
+		}
+	}
+	inPane := s.Pane != nil
 	overrides := map[string]string{}
 	for _, k := range envKeys {
 		v := core.Getenv(env.Vars, k)
 		switch {
 		case v == "":
 		case inPane:
-			s.Warnings = append(s.Warnings, fmt.Sprintf("ignoring %s inside a herdr pane: the pane decides", k))
+			s.Warnings = append(s.Warnings, fmt.Sprintf("ignoring %s inside %s's recorded herdr pane: the pane decides", k, s.Pane.Who.Name))
 		default:
 			overrides[k] = v
 		}
 	}
-	if err := s.findProject(ctx, env.Dir, run, overrides["BS_PROJECT"]); err != nil {
+	if inPane {
+		s.Project, s.ProjectFrom = s.Pane.Project, fmt.Sprintf("herdr pane %s, recorded for %s in %s", s.Pane.Pane, s.Pane.Who.Name, s.Pane.Logbook)
+		if s.Pane.Repo != "" {
+			s.Repo, s.RepoFrom = s.Pane.Repo, "the workspace "+s.Pane.Who.Name+"'s spawn recorded"
+		} else if err := s.cwdRepo(ctx, env.Dir, run); err != nil {
+			return nil, err
+		}
+	} else if err := s.findProject(ctx, env.Dir, run, overrides["BS_PROJECT"]); err != nil {
 		return nil, err
 	}
-	home := core.Getenv(env.Vars, "HOME")
 	l, err := config.Load(config.Input{Dir: dir, Project: s.Project, Home: home, Env: overrides})
 	if err != nil {
 		return nil, err
@@ -120,6 +146,23 @@ func (s *settings) findProject(ctx context.Context, cwd string, run port.Runner,
 	case p != s.Project:
 		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("BS_PROJECT=%s names another project than the repo you are in (%s)", pinned, s.Project),
 			Next: "env -u BS_PROJECT bsx ..., or run it from " + p + "'s repo"}
+	}
+	return nil
+}
+
+// cwdRepo takes the git repo bs runs in as the repo when it is the pane's project's: a
+// queen's entry records no repo.
+func (s *settings) cwdRepo(ctx context.Context, cwd string, run port.Runner) error {
+	if cwd == "" {
+		return nil
+	}
+	main, err := mainCheckout(ctx, run, cwd)
+	switch {
+	case errors.Is(err, errNotGit):
+	case err != nil:
+		return &core.Exit{Code: core.ExitCantCheck, Msg: "bs can't tell which project " + cwd + " is in", Err: err}
+	case config.Normalise(filepath.Base(main)) == s.Project:
+		s.Repo, s.RepoFrom = main, "the git repo bs runs in"
 	}
 	return nil
 }

@@ -157,8 +157,9 @@ func TestConfigShowsEverySourceAndTheSessionDir(t *testing.T) {
 		`goal.cl.handoff = ["clean"]  # project `)
 }
 
-// bees-12.47: an exported BS_PROJECT never silently beats the repo bs runs in; inside a
-// herdr pane every BS_* is ignored, with a warning.
+// bees-12.47: an exported BS_PROJECT never silently beats the repo bs runs in, in a herdr
+// pane no entry recorded too (bees-13.14). Inside a recorded pane every BS_* is ignored,
+// with a warning: TestBSVariablesAreIgnoredInsideARecordedPane.
 func TestBSProject(t *testing.T) {
 	r := newRig(t)
 	code, _, stderr := r.run(r.repo, []string{"BS_PROJECT=bees"}, "config")
@@ -166,13 +167,12 @@ func TestBSProject(t *testing.T) {
 		t.Errorf("mismatch: exit %d", code)
 	}
 	wantIn(t, stderr, "BS_PROJECT=bees names another project than the repo you are in (mytoy)", "next: env -u BS_PROJECT")
-	code, out, stderr := r.run(r.repo, []string{"BS_PROJECT=bees", "BS_LOGBOOK_DIR=/elsewhere", "HERDR_PANE_ID=w1:p1"}, "config")
-	if code != 0 {
-		t.Errorf("in a pane: exit %d %s", code, stderr)
+	code, _, stderr = r.run(r.repo, []string{"BS_PROJECT=bees", "HERDR_PANE_ID=w1:p1"}, "config")
+	if code != 2 {
+		t.Errorf("in an unrecorded pane: exit %d %s", code, stderr)
 	}
-	wantIn(t, stderr, "ignoring BS_PROJECT inside a herdr pane", "ignoring BS_LOGBOOK_DIR inside a herdr pane")
-	wantIn(t, out, "# project: mytoy", `paths.logbook_dir = "`+r.logbook+`"`)
-	code, out, _ = r.run("/", []string{"BS_PROJECT=other"}, "config")
+	wantIn(t, stderr, "BS_PROJECT=bees names another project than the repo you are in (mytoy)")
+	code, out, _ := r.run("/", []string{"BS_PROJECT=other"}, "config")
 	if code != 0 {
 		t.Errorf("outside any repo: exit %d", code)
 	}

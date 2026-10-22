@@ -5,6 +5,7 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"strings"
@@ -29,6 +30,14 @@ type Core struct {
 	ConfigDir   string // the config dir the spawn ran under, recorded
 	CacheDir    string // per-start files
 	Timing      Timing
+	Warn        func(msg string) // prints a fallback bs took (Rule G); nil drops it
+}
+
+// warn says a fallback bs took.
+func (c *Core) warn(format string, a ...any) {
+	if c.Warn != nil {
+		c.Warn(fmt.Sprintf(format, a...))
+	}
 }
 
 // Timing is how long the core waits. Tests shorten it.
@@ -36,17 +45,23 @@ type Timing struct {
 	Confirm    time.Duration // start confirmation: the harness process in its pane
 	Poll       time.Duration
 	SecondLook time.Duration // the gate's second look, dropping short-lived children
+	Gate       time.Duration // the whole gate check
+	AfterErr   time.Duration // after herdr's start erred: how long to look for the harness anyway (bees-12.49)
+	Busy       time.Duration // how long agent_pane_busy is retried (bees-12.33)
 	Stop       time.Duration // SIGTERM before SIGKILL
 }
 
-// DefaultTiming is ADR-0010's: confirmation within 20 s.
-var DefaultTiming = Timing{Confirm: 20 * time.Second, Poll: 200 * time.Millisecond, SecondLook: time.Second, Stop: 3 * time.Second}
+// DefaultTiming is ADR-0010's: confirmation polled every 250 ms within 20 s, 5 s after a
+// herdr error, agent_pane_busy retried for 8 s.
+var DefaultTiming = Timing{Confirm: 20 * time.Second, Poll: 250 * time.Millisecond, SecondLook: time.Second, Stop: 3 * time.Second,
+	Gate: 5 * time.Second, AfterErr: 5 * time.Second, Busy: 8 * time.Second}
 
 func (c *Core) timing() Timing {
-	t := c.Timing
+	t, d := c.Timing, DefaultTiming
 	if t.Confirm == 0 {
-		t = DefaultTiming
+		return d
 	}
+	t.Gate, t.AfterErr, t.Busy = cmp.Or(t.Gate, d.Gate), cmp.Or(t.AfterErr, d.AfterErr), cmp.Or(t.Busy, d.Busy)
 	return t
 }
 

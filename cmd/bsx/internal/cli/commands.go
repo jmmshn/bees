@@ -6,13 +6,50 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
+	"github.com/jmmshn/bees/cmd/bsx/internal/config"
 	"github.com/jmmshn/bees/cmd/bsx/internal/core"
 	"github.com/jmmshn/bees/cmd/bsx/internal/logbook"
 	"github.com/jmmshn/bees/cmd/bsx/internal/port"
 )
+
+// queen records the queen of the project in this pane and execs her harness, which keeps
+// this process's pid and start time (ADR-0010). Her bs calls find her by that pane.
+func (r *run) queen(fs *flag.FlagSet, args []string) error {
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("%w: bsx queen takes no arguments", errUsage)
+	}
+	if p := r.s.Pane; p != nil {
+		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bsx queen: this pane runs %s already", p.Who.Name)}
+	}
+	if r.c.Harness == nil {
+		return &core.Exit{Code: core.ExitRefused, Msg: "bsx queen: no harness adapter for harness = " + r.s.Harness}
+	}
+	exe, ok := lookPath(core.Getenv(r.env.Vars, "PATH"), r.c.Harness.Kind())
+	if !ok {
+		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bsx queen: %s is not on PATH", r.c.Harness.Kind())}
+	}
+	argv, err := r.c.Queen(r.ctx, core.QueenReq{Session: r.s.Session, Pane: core.Getenv(r.env.Vars, "HERDR_PANE_ID"), Self: r.env.Self, Exe: exe})
+	if err != nil {
+		return err
+	}
+	// bs sets no BS_* in a session's env (ADR-0010): her bs finds her by her pane.
+	env := slices.DeleteFunc(slices.Clone(r.env.Vars), func(kv string) bool { return strings.HasPrefix(kv, "BS_") })
+	if err := r.c.Logbook.Close(); err != nil { // exec keeps no logbook open
+		return err
+	}
+	argv[0] = exe
+	fmt.Fprintf(r.out, "%s recorded in pane %s on herdr session %s; starting %s\n", core.Queen(r.s.Project), core.Getenv(r.env.Vars, "HERDR_PANE_ID"), r.s.Session, exe)
+	return r.ports.Exec(r.s.Repo, env, argv)
+}
 
 func (r *run) spawn(fs *flag.FlagSet, args []string) error {
 	var goals list
@@ -26,7 +63,7 @@ func (r *run) spawn(fs *flag.FlagSet, args []string) error {
 		return fmt.Errorf("%w: bsx spawn --goal <goal> <bead>", errUsage)
 	}
 	if r.c.Harness == nil {
-		return &core.Exit{Code: core.ExitRefused, Msg: "bsx spawn: no harness adapter yet (claude_code arrives with bees-13.3)"}
+		return &core.Exit{Code: core.ExitRefused, Msg: "bsx spawn: no harness adapter for harness = " + r.s.Harness}
 	}
 	w, err := r.who(*as)
 	if err != nil {
@@ -70,7 +107,7 @@ func (r *run) done(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	fmt.Fprintf(r.out, "handed off to %s:\n%s\n", d.Queen, d.Text())
-	r.ring(d.Queen, "[bs] 1 unread ("+d.Name+") — run: bs inbox")
+	r.ring(r.c, d.Name, d.Queen, port.Next)
 	return nil
 }
 
@@ -129,52 +166,83 @@ func (r *run) prune(fs *flag.FlagSet, args []string) error {
 }
 
 func (r *run) send(fs *flag.FlagSet, args []string) error {
-	as := fs.String("as", "", "the sender, outside a herdr pane")
+	as := fs.String("as", "", "the sender, outside a recorded herdr pane")
+	project := fs.String("project", "", "write into another project's logbook (its session reads it there)")
+	now := fs.Bool("now", false, "ring with priority now: interrupt the recipient's current turn")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 2 {
-		return fmt.Errorf("%w: bsx send <to> <message>", errUsage)
+		return fmt.Errorf("%w: bsx send [--project P] [--now] <to> <message | ->", errUsage)
 	}
 	w, err := r.who(*as)
 	if err != nil {
 		return err
 	}
-	to := fs.Arg(0)
-	if _, err := r.c.Logbook.Send(r.ctx, w.Name, to, fs.Arg(1)); err != nil {
+	to, body := fs.Arg(0), fs.Arg(1)
+	if body == "-" {
+		b, err := io.ReadAll(r.env.Stdin)
+		if err != nil {
+			return err
+		}
+		body = strings.TrimRight(string(b), "\n")
+	}
+	c, fromProject := r.c, ""
+	if p := config.Normalise(*project); p != "" && p != r.s.Project {
+		// Cross-project mail (T11): written into p's logbook, recording the sender's project
+		// so the reply needs no project read back out of a name (motif 3).
+		path := filepath.Join(filepath.Dir(r.s.Logbook), p+".db")
+		if _, err := os.Stat(path); err != nil {
+			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bsx send --project %s: no logbook at %s; nothing stored", p, path), Err: err}
+		}
+		lb, err := logbook.Open(r.ctx, path)
+		if err != nil {
+			return err
+		}
+		defer lb.Close()
+		cc := *r.c
+		cc.Logbook, cc.Project = lb, p
+		c, fromProject = &cc, r.s.Project
+	}
+	stranger, err := c.Addressed(r.ctx, to, filepath.Dir(r.s.Logbook))
+	if err != nil {
 		return err
 	}
-	fmt.Fprintf(r.out, "sent to %s\n", to)
-	r.ring(to, "[bs] 1 unread ("+w.Name+") — run: bs inbox")
+	id, err := c.Logbook.SendFrom(r.ctx, w.Name, fromProject, to, body)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(r.out, "sent %s to %s\n", id, to)
+	if stranger {
+		fmt.Fprintf(r.err, "bsx send: warning: %s is neither %s nor a worker spawned in project %s: stored, not rung; it reads it only as a session of %s\n",
+			to, core.Queen(c.Project), c.Project, c.Project)
+		return nil
+	}
+	priority := port.Next
+	if *now {
+		priority = port.Now
+	}
+	r.ring(c, w.Name, to, priority)
 	return nil
 }
 
-// ring rings name if its recorded process runs; a ring that can't land says so and the
-// message waits for the next bs inbox (motif 10: the logbook entry is the delivery).
-func (r *run) ring(name, text string) {
-	sp, ok, err := r.c.Logbook.LatestSpawn(r.ctx, name)
-	if err != nil || !ok || sp.Ended {
-		return // a queen's ring arrives with bees-13.4
-	}
-	st, ok, err := r.c.Logbook.LatestStart(r.ctx, sp.ID)
-	if err != nil || !ok {
-		fmt.Fprintf(r.err, "bsx: %s has no confirmed start: not rung; the message waits for its bs inbox\n", name)
-		return
-	}
-	alive, err := r.c.Proc.Alive(st.Process)
-	if err == nil && !alive {
-		err = port.ErrNotRunning
-	}
-	if err == nil {
-		err = r.c.Harness.Ring(port.Target{Name: name, Session: sp.Herdr.Session, Pane: sp.Herdr.Pane, PID: st.PID}, text, port.Next)
-	}
-	if err != nil {
-		fmt.Fprintf(r.err, "bsx: not rung (%v); the message waits for %s's bs inbox\n", err, name)
+// ring rings to and says how it went. The message is already stored, so no outcome fails
+// the command: the logbook entry is the delivery, the ring only when it is read (motif 10).
+func (r *run) ring(c *core.Core, from, to string, p port.Priority) {
+	switch err := c.Ring(r.ctx, from, to, p); {
+	case err == nil:
+		fmt.Fprintf(r.out, "rung %s\n", to)
+	case errors.Is(err, port.ErrNotRunning):
+		fmt.Fprintf(r.out, "queued; %s is not running (%v): it reads this at its next bs inbox\n", to, err)
+	case errors.Is(err, port.ErrNoRing):
+		fmt.Fprintf(r.out, "stored; %s's harness has no ring, so it reads this at its next bs inbox\n", to)
+	default:
+		fmt.Fprintf(r.err, "bsx %s: couldn't ring %s (the message is stored): %v\n", r.name, to, err)
 	}
 }
 
 func (r *run) inbox(fs *flag.FlagSet, args []string) error {
-	as := fs.String("as", "", "the reader, outside a herdr pane")
+	as := fs.String("as", "", "the reader, outside a recorded herdr pane")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -193,6 +261,9 @@ func (r *run) inbox(fs *flag.FlagSet, args []string) error {
 	var ids []logbook.ID
 	for _, m := range ms {
 		fmt.Fprintf(r.out, "── %s from %s · %s\n%s\n\n", m.ID, m.From, m.TS.Local().Format("2006-01-02 15:04:05"), m.Body)
+		if m.FromProject != "" { // cross-project mail: the sender reads its own project's logbook
+			fmt.Fprintf(r.out, "   (reply with: bs send --project %s %s \"...\")\n\n", m.FromProject, m.From)
+		}
 		ids = append(ids, m.ID)
 	}
 	return r.c.Logbook.RecordReceipts(r.ctx, w.Name, ids)
@@ -211,6 +282,12 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 	tw := tabwriter.NewWriter(r.out, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "WORKER\tGOAL\tSTATE\tRUNNING\tWORKSPACE")
 	var errs []error
+	queen := core.Queen(r.s.Project)
+	if q, ok, err := r.c.Logbook.LatestQueen(r.ctx, queen); err != nil {
+		errs = append(errs, err)
+	} else if ok {
+		fmt.Fprintf(tw, "%s\t-\tqueen\t%s\tpane %s on herdr session %s\n", queen, alive(r.c.Proc.Alive(q.Process)), q.Pane, q.Session)
+	}
 	for _, sp := range sps {
 		state := "live"
 		if sp.Ended {
@@ -243,20 +320,29 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 }
 
 // running is whether sp's recorded process runs: yes, no, unconfirmed, or why bs
-// couldn't look ("couldn't look" is never "no").
+// couldn't look ("couldn't look" is never "no"). A start healed after confirmation
+// missed it reads "(late)". A failed heal probe is printed and writes nothing.
 func (r *run) running(sp logbook.Spawn) string {
-	st, ok, err := r.c.Logbook.LatestStart(r.ctx, sp.ID)
+	st, ok, err := r.c.StartOf(r.ctx, sp)
 	switch {
 	case err != nil:
 		return "unknown: " + err.Error()
 	case !ok:
 		return "unconfirmed"
 	}
-	alive, err := r.c.Proc.Alive(st.Process)
+	s := alive(r.c.Proc.Alive(st.Process))
+	if st.Late {
+		s += " (late)"
+	}
+	return s
+}
+
+// alive is a liveness lookup as status shows it.
+func alive(up bool, err error) string {
 	switch {
 	case err != nil:
 		return "unknown: " + err.Error()
-	case alive:
+	case up:
 		return "yes"
 	}
 	return "no"

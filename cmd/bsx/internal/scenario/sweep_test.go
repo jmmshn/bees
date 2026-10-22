@@ -22,10 +22,10 @@ func TestWorkersMailEachOtherAndAreRung(t *testing.T) {
 	x := newToy(t)
 	x.spawn("toy-1", "branch")
 	x.spawn("toy-2", "branch")
-	must(t, x.worker("toy-1", 1, "send", "toy-2", "rebase on mine"), 0, "sent to toy-2")
+	must(t, x.worker("toy-1", 1, "send", "toy-2", "rebase on mine"), 0, "to toy-2", "rung toy-2")
 	r := x.worker("toy-2", 1, "inbox")
 	must(t, r, 0, "from toy-1", "rebase on mine")
-	if rings := x.harness.Rings("toy-2"); len(rings) == 0 || !strings.Contains(rings[len(rings)-1], "1 unread (toy-1)") {
+	if rings := x.harness.Rings("toy-2"); len(rings) == 0 || !strings.Contains(rings[len(rings)-1], `2 unread (queen-toy, toy-1) — run: bs inbox   (reply with: bs send toy-1 "...")`) {
 		t.Fatalf("toy-2's rings: %q", rings)
 	}
 }
@@ -92,17 +92,8 @@ func TestRound11StaticGuards(t *testing.T) { later(t, "bees-13.6", "the guards m
 func TestRound11WorkersRunTheBuildUnderTest(t *testing.T) {
 	later(t, "bees-13.3", "worker.path and the live rig")
 }
-func TestRound11AMovedPaneStaysRunningAndIsRung(t *testing.T) {
-	later(t, "bees-13.4", "identity and rings of a moved pane")
-}
-func TestRound11EndRefusesAWorkspaceHoldingAnotherWorkersPane(t *testing.T) {
-	later(t, "bees-13.4", "teardown guests (bees-12.36)")
-}
 func TestRound11CrossProjectSendAndReply(t *testing.T) {
 	later(t, "bees-13.8", "cross-project mail (bees-12.38)")
-}
-func TestRound11EndForceOnAMovedWorker(t *testing.T) {
-	later(t, "bees-13.4", "stop() of a moved pane (bees-12.46)")
 }
 func TestRound11AFreshAgentSetsUpFromSetupAgentMD(t *testing.T) {
 	later(t, "bees-13.8", "SETUP-AGENT.md")
@@ -175,9 +166,6 @@ func TestPilotBug1232ANonGitQueenNeedsNoBSProject(t *testing.T) {
 func TestPilotBug1241PruneAfterEndForce(t *testing.T) {
 	later(t, "bees-13.5", "prune of a forced end, and the branch's removal")
 }
-func TestPilotBug1243APaneActsOnItsOwnProject(t *testing.T) {
-	later(t, "bees-13.4", "the pane scan across logbooks")
-}
 func TestPilotBug1245DoctorNamesAStrayBSProject(t *testing.T) { later(t, "bees-13.8", "bs doctor") }
 
 // bees-12.50, 12.52: bs done's own pipeline (bs done | tail) is the call, not background
@@ -190,10 +178,6 @@ func TestTheGateSkipsDonesOwnPipeline(t *testing.T) {
 	x.harness.Step(t, "toy-1", "bs|", "done")
 	r := x.harness.Await(t, "toy-1", 1)
 	must(t, result{r.Code, r.Stdout, r.Stderr}, 0, "handed off")
-}
-
-func TestPilotBug1250AReplyWaitLoopInTheBackground(t *testing.T) {
-	later(t, "bees-13.4", "a reply-wait loop left running with & counts; say so in the prompts")
 }
 
 // bees-12.23 is TestConcurrentFirstOpensOfANewLogbookAllSucceed (logbook); bees-12.25 (a

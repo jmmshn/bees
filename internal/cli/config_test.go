@@ -195,7 +195,7 @@ func TestUnreadKeysAreMarked(t *testing.T) {
 	r.write("projects/mytoy.toml", "[checks.lint]\nrun = [\"make\", \"lint\"]\n")
 	_, out, _ := r.run(r.repo, nil, "config")
 	wantIn(t, out, `checks.lint.run = ["make", "lint"]  # project `, "; not read by bs yet (bees-13.11)\n",
-		`worker.claude_code.model = ""  # default; not read by bs yet`+"\n")
+		`worker.claude_code.model = ""  # default`+"\n", `worker.path = []  # default; project file only`+"\n")
 	_, out, _ = r.run(r.repo, nil, "doctor")
 	wantIn(t, out, "set, but not read by bs yet (bees-13.11): bs ignores it")
 	if strings.Contains(out, "guards") {

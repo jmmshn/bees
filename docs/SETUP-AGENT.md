@@ -60,7 +60,7 @@ bs config init
 bs config init --project
 ```
 
-Keys `bs config` marks `not read by bs yet` do nothing yet: leave them unset.
+Keys `bs config` marks `not read by bs yet` (custom goals, `[checks]`, `[workspace.command]`: bees-13.11) do nothing yet: leave them unset.
 
 Your own shell may carry `BS_*` variables from another bees session; `bs doctor` names each one. Run bs from your shell with them unset (`env -u BS_PROJECT …`). A key with no flag is in the written file, commented out: uncomment it there.
 

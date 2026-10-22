@@ -106,13 +106,13 @@ type Prune struct {
 
 // Worker holds every worker's harness tables and bs spawn's own settings.
 type Worker struct {
-	Path       []string   `toml:"path" scope:"project" path:"dir" unread:"" doc:"dirs put first on every worker's PATH (a live test's build under test)"`
+	Path       []string   `toml:"path" scope:"project" path:"dir" doc:"dirs put first on every worker's PATH (a live test's build under test)"`
 	ClaudeCode ClaudeCode `toml:"claude_code"`
 }
 
 // ClaudeCode holds the settings bs passes to Claude Code.
 type ClaudeCode struct {
-	Model string `toml:"model" scope:"both" unread:"" doc:"the model Claude Code starts on (claude --model); empty: Claude Code's default"`
+	Model string `toml:"model" scope:"both" doc:"the model Claude Code starts on (claude --model); empty: Claude Code's default"`
 }
 
 // The workspace kinds.

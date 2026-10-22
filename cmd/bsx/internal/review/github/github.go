@@ -172,10 +172,11 @@ func (h Host) View(ctx context.Context, dir string, r port.Ref) (port.Change, er
 	return c, nil
 }
 
-// CI is gh pr checks; "no checks reported" is none.
+// CI is gh pr checks --required; "No required checks reported on the '<head>' branch"
+// (probed on gh 2.102) is none.
 func (h Host) CI(ctx context.Context, dir string, c port.Change) ([]port.CICheck, error) {
-	out, err := h.gh(ctx, dir, "pr", "checks", c.URL, "--json", "name,bucket")
-	if said(err, "no checks reported") {
+	out, err := h.gh(ctx, dir, "pr", "checks", c.URL, "--required", "--json", "name,bucket")
+	if said(err, "equired checks reported") || said(err, "no checks reported") {
 		return nil, nil
 	} else if err != nil {
 		return nil, err
@@ -197,21 +198,6 @@ func (h Host) api(ctx context.Context, dir, path string, v any) error {
 		return fmt.Errorf("gh api %s: %w", path, err)
 	}
 	return nil
-}
-
-// BaseCI is the check runs and commit statuses on the tip of c's base.
-func (h Host) BaseCI(ctx context.Context, dir string, c port.Change) (int, error) {
-	n := 0
-	for _, what := range []string{"check-runs", "status"} {
-		var v struct {
-			Total int `json:"total_count"`
-		}
-		if err := h.api(ctx, dir, "repos/"+c.Repo+"/commits/"+url.PathEscape(c.Base)+"/"+what, &v); err != nil {
-			return 0, err
-		}
-		n += v.Total
-	}
-	return n, nil
 }
 
 func (h Host) Behind(ctx context.Context, dir string, c port.Change) (int, error) {

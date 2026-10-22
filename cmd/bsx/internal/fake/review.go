@@ -27,12 +27,12 @@ type CLHost struct {
 	mu       sync.Mutex
 	RepoName string // the repo every checkout belongs to; "" is none
 	Offline  bool
-	// BaseChecks are the CI checks on trunk's tip; Protected says trunk is protected.
-	BaseChecks     int
+	// TrunkProtected says trunk is protected.
 	TrunkProtected bool
 	changes        map[int]*clChange
 	parents        map[string][]string // commit → its parents
 	made           map[string]clMade   // commits Commit made: where and when
+	patch          map[string]string   // commit → its patch; a rebased copy keeps it, a merge has none
 	heads          map[string]string   // checkout dir → its head commit
 	trunk          string              // trunk's tip
 	n              int
@@ -40,9 +40,10 @@ type CLHost struct {
 
 type clChange struct {
 	port.Change
-	CI     []port.CICheck
-	next   *[]port.CICheck // replaces CI once CI has answered (CLHost.Next)
-	landed string          // the trunk commit it landed as
+	CI       []port.CICheck  // required ones: CI answers only these
+	Optional []port.CICheck  // checks no branch protection requires
+	next     *[]port.CICheck // replaces CI once CI has answered (CLHost.Next)
+	landed   string          // the trunk commit it landed as
 }
 
 type clMade struct {
@@ -57,7 +58,7 @@ var (
 
 func (h *CLHost) init() {
 	if h.parents == nil {
-		h.changes, h.parents, h.made, h.heads = map[int]*clChange{}, map[string][]string{}, map[string]clMade{}, map[string]string{}
+		h.changes, h.parents, h.made, h.heads, h.patch = map[int]*clChange{}, map[string][]string{}, map[string]clMade{}, map[string]string{}, map[string]string{}
 		h.trunk = "t0"
 		h.parents["t0"] = nil
 	}
@@ -85,8 +86,31 @@ func (h *CLHost) Commit(dir string) string {
 	h.init()
 	id := h.newCommit(h.head(dir))
 	h.made[id] = clMade{dir: dir, at: time.Now()}
+	h.patch[id] = "p" + id
 	h.heads[dir] = id
 	return id
+}
+
+// Rebase replays dir's commits that onto lacks on top of onto, as a pull --rebase does:
+// copies with the same patches, written by no one, and dir's head moves to the last.
+func (h *CLHost) Rebase(dir, onto string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.init()
+	have := h.ancestors(onto)
+	var todo []string
+	for c := h.head(dir); !slices.Contains(have, c); c = h.parents[c][0] {
+		if len(h.parents[c]) == 1 {
+			todo = append([]string{c}, todo...)
+		}
+	}
+	head := onto
+	for _, c := range todo {
+		id := h.newCommit(head)
+		h.patch[id] = h.patch[c]
+		head = id
+	}
+	h.heads[dir] = head
 }
 
 // Sync brings trunk into dir: a merge commit made there.
@@ -122,6 +146,7 @@ func (h *CLHost) Trunk() {
 	defer h.mu.Unlock()
 	h.init()
 	h.trunk = h.newCommit(h.trunk)
+	h.patch[h.trunk] = "p" + h.trunk
 }
 
 // Upload points change n (made open when new) at dir's head and returns its URL.
@@ -139,12 +164,19 @@ func (h *CLHost) Upload(dir string, n int, draft bool) string {
 	return c.URL
 }
 
-// Set changes change n: its state (open, merged, closed), CI, or notes.
+// Set changes change n: its state (open, merged, closed), required CI, or notes.
 func (h *CLHost) Set(n int, f func(c *port.Change, ci *[]port.CICheck)) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	c := h.changes[n]
 	f(&c.Change, &c.CI)
+}
+
+// SetOptional sets change n's checks that nothing requires: bs never reads them.
+func (h *CLHost) SetOptional(n int, ci []port.CICheck) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.changes[n].Optional = ci
 }
 
 // Land submits change n: its head lands on trunk.
@@ -247,12 +279,6 @@ func (h *CLHost) Next(n int, ci []port.CICheck) {
 	h.changes[n].next = &ci
 }
 
-func (h *CLHost) BaseCI(context.Context, string, port.Change) (int, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.BaseChecks, h.offline()
-}
-
 func (h *CLHost) Behind(_ context.Context, dir string, c port.Change) (int, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -346,6 +372,20 @@ func (h *CLHost) Branch(_ context.Context, _ string, name string) (string, bool,
 
 // Pushed: a CL host has no local branches to push.
 func (*CLHost) Pushed(context.Context, string, string) (string, bool, error) { return "", false, nil }
+
+// PatchIDs is each commit's patch; every commit is in memory, so none is missing.
+func (h *CLHost) PatchIDs(_ context.Context, _ string, commits []string) (map[string]string, []string, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.init()
+	ids := map[string]string{}
+	for _, c := range commits {
+		if p := h.patch[c]; p != "" {
+			ids[c] = p
+		}
+	}
+	return ids, nil, nil
+}
 
 func (h *CLHost) Has(_ context.Context, _ string, commit string) (bool, error) {
 	h.mu.Lock()

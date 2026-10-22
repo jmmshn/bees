@@ -84,7 +84,7 @@ const (
 	PRWorkspaceCommit = "pr_workspace_commit" // each one's range holds a workspace commit
 	PRPushed          = "pr_pushed"           // the PR's head is the pushed workspace commit
 	PRCurrent         = "pr_current"          // current with its own base
-	CIGreen           = "ci_green"            // gh pr checks all pass
+	CIGreen           = "ci_green"            // every required CI check passes
 	PRMerged          = "pr_merged"           // every handed-off PR merged
 	PRClosed          = "pr_merged_or_closed" // every handed-off PR merged or closed
 	PushMoved         = "push_moved"          // the target's head descends from a workspace commit
@@ -142,13 +142,13 @@ func resolve(typ, state, target string) Part {
 	case "pr:ready":
 		p.Handoff, p.AtHandoff, p.Prune = prHandoff, true, []string{PRMerged}
 	case "pr:draft":
-		p.Handoff, p.AtHandoff, p.Prune = []string{PRExists, PRWorkspaceCommit, PRPushed, CIGreen}, true, []string{PRClosed}
+		p.Handoff, p.AtHandoff, p.Prune = []string{PRExists, PRWorkspaceCommit, PRPushed}, true, []string{PRClosed}
 	case "push:":
 		p.Handoff, p.Complete, p.Prune = []string{PushMoved, PRCurrent, CIGreen}, []string{PRMerged}, []string{PRMerged}
 	case "push:ready":
 		p.Handoff, p.AtHandoff, p.Prune = []string{PushMoved, PRCurrent, CIGreen}, true, []string{PRMerged}
 	case "push:draft":
-		p.Handoff, p.AtHandoff, p.Prune = []string{PushMoved, CIGreen}, true, []string{PRClosed}
+		p.Handoff, p.AtHandoff, p.Prune = []string{PushMoved}, true, []string{PRClosed}
 	case "review:":
 		p.Handoff, p.AtHandoff = []string{ReviewComment}, true
 	case "verdict:":

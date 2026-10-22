@@ -165,7 +165,7 @@ func (h *fakeHerdr) ProcessInfo(ctx context.Context, pane string) (worker.PanePr
 	pi := worker.PaneProcesses{Shell: h.shellOf(pane)}
 	for name, p := range h.agents {
 		if pr := h.procs[h.pids[name]]; p == pane && pr != nil && pr.alive {
-			pi.Foreground = append(pi.Foreground, worker.PaneProcess{PID: h.pids[name], Name: pr.name})
+			pi.Foreground = append(pi.Foreground, worker.PaneProcess{PID: h.pids[name], Name: pr.name, Argv: []string{pr.name, "--name", name}})
 		}
 	}
 	return pi, nil
@@ -498,6 +498,7 @@ type rig struct {
 
 func newRig(t *testing.T) rig {
 	t.Helper()
+	t.Cleanup(worker.HardErrWait(50 * time.Millisecond))
 	ctx := context.Background()
 	dir := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache"))
@@ -2174,8 +2175,8 @@ func TestAStartRefusesAHarnessAlreadyInThePane(t *testing.T) {
 	if _, err := r.lb.RecordSpawn(ctx, "queen-bees", logbook.Spawn{Name: "bees-8", Bead: "bees-8", Label: "spawn and end", Workspace: ws.ID, Pane: ws.Pane, Worktree: ws.Path, Branch: "bees-8", Repo: r.repo}, ""); err != nil {
 		t.Fatal(err)
 	}
-	r.h.mu.Lock()
-	r.h.pids["bees-8"], r.h.agents["bees-8"] = r.h.spawnProc("claude", shell(ws.Pane)), ws.Pane
+	r.h.mu.Lock() // a claude of another session's name: not this worker's, so never adopted
+	r.h.pids["someone-else"], r.h.agents["someone-else"] = r.h.spawnProc("claude", shell(ws.Pane)), ws.Pane
 	r.h.mu.Unlock()
 	if _, err := r.fleet.Spawn(ctx, "bees-8", ""); !errors.Is(err, worker.ErrRunning) {
 		t.Fatalf("err = %v, want ErrRunning from the pane's claude", err)
@@ -2185,7 +2186,7 @@ func TestAStartRefusesAHarnessAlreadyInThePane(t *testing.T) {
 		t.Fatalf("herdr down: err = %v, want ErrHerdrDown (fail closed)", err)
 	}
 	r.h.listErr = nil
-	r.h.exit("bees-8")
+	r.h.exit("someone-else")
 	if st, err := r.fleet.Spawn(ctx, "bees-8", ""); err != nil || !st.Resumed {
 		t.Fatalf("after it exited: %+v, %v; want a restart", st, err)
 	}
@@ -2212,9 +2213,9 @@ func TestEndRefusesAMovedWorker(t *testing.T) {
 	}
 }
 
-// bees-12.10: a resume whose start was never confirmed leaves the previous start's dead
-// pid newest; the harness it launched may still come up in the pane, and then the next
-// spawn refuses instead of starting a twin beside it (motif 7).
+// bees-12.10, bees-12.49: a resume whose start was never confirmed leaves the previous
+// start's dead pid newest; the harness it launched may still come up in the pane, and then
+// the next spawn adopts it (herdr's argv names it) instead of starting a twin (motif 7).
 func TestAnUnconfirmedResumeIsNotTwinned(t *testing.T) {
 	ctx := context.Background()
 	r := newRig(t)
@@ -2229,8 +2230,9 @@ func TestAnUnconfirmedResumeIsNotTwinned(t *testing.T) {
 	r.h.mu.Lock() // it came up late, after bs stopped looking
 	r.h.pids["bees-8"], r.h.agents["bees-8"] = r.h.spawnProc("claude", shell("w1:p1")), "w1:p1"
 	r.h.mu.Unlock()
-	if _, err := r.fleet.Spawn(ctx, "bees-8", ""); !errors.Is(err, worker.ErrRunning) || !strings.Contains(err.Error(), "no start of") {
-		t.Fatalf("err = %v, want ErrRunning for the unrecorded harness in the pane", err)
+	starts := len(r.h.started)
+	if st, err := r.fleet.Spawn(ctx, "bees-8", ""); err != nil || !st.Adopted || len(r.h.started) != starts {
+		t.Fatalf("spawn = %+v, %v; want the late harness adopted, no new launch", st, err)
 	}
 }
 
@@ -2606,5 +2608,44 @@ func TestEndForceStopsAMovedWorker(t *testing.T) {
 				t.Fatalf("err=%v, alive=%v, ended=%v, %d signals; want stopped (%s) and ended", err, alive, sp.Ended, signals, c.stopped)
 			}
 		})
+	}
+}
+
+// bees-12.49: herdr erred on a launch that started all the same (S18: "named agent no
+// longer owns the target terminal"): the start is recorded and the spawn succeeds, with
+// herdr's error as a warning, so no second spawn twins it.
+func TestALaunchHerdrFailedButThatStartedIsRecorded(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	r.h.failStart, r.h.liveAnyway = errors.New("herdr agent: named agent bees-8 no longer owns the target terminal"), true
+	st, err := r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	if err != nil || st.Warn == nil || !strings.Contains(st.Warn.Error(), "started all the same") {
+		t.Fatalf("spawn = %+v, %v; want started, herdr's error as a warning", st, err)
+	}
+	sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8")
+	if s, ok, _ := r.lb.LatestStart(ctx, sp.ID); !ok || s.PID != r.h.pids["bees-8"] {
+		t.Fatalf("start = %+v, %v; want it recorded", s, ok)
+	}
+}
+
+// bees-12.49: a worker whose earlier spawn started it without recording a start is adopted
+// by the next spawn (herdr's argv names it): its start is recorded, nothing new launches.
+func TestASpawnAdoptsItsOwnUnrecordedHarness(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	ws, _ := r.h.CreateWorktree(ctx, r.repo, "", "bees-8", filepath.Join(r.repo+"-WT", "bees-8"), "spawn and end")
+	if _, err := r.lb.RecordSpawn(ctx, "queen-bees", logbook.Spawn{Name: "bees-8", Bead: "bees-8", Label: "spawn and end", Workspace: ws.ID, Pane: ws.Pane, Worktree: ws.Path, Branch: "bees-8", Repo: r.repo, Harness: "claude_code"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	r.h.mu.Lock()
+	r.h.pids["bees-8"], r.h.agents["bees-8"] = r.h.spawnProc("claude", shell(ws.Pane)), ws.Pane
+	r.h.mu.Unlock()
+	st, err := r.fleet.Spawn(ctx, "bees-8", "")
+	if err != nil || !st.Adopted || len(r.h.started) != 0 {
+		t.Fatalf("spawn = %+v, %v, %d starts; want it adopted, nothing launched", st, err, len(r.h.started))
+	}
+	sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8")
+	if s, ok, _ := r.lb.LatestStart(ctx, sp.ID); !ok || s.PID != r.h.pids["bees-8"] {
+		t.Fatalf("start = %+v, %v; want the adopted process recorded", s, ok)
 	}
 }

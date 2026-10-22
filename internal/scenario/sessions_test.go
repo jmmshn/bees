@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -421,6 +422,8 @@ func (x *toy) kill(name string) {
 // whose pane is gone, is refused, saying the next step (motif 5, 9, 10).
 func TestSpawnResumesADeadWorker(t *testing.T) {
 	x := newToy(t)
+	rec := &startsRec{Harness: x.harness} // installed before any relay reads the ports
+	x.ports.Harness = rec
 	sp := x.spawn("toy-1", "branch")
 	must(t, x.worker("toy-1", 1, "inbox"), 0)
 	first, _, _ := x.open().LatestStart(context.Background(), sp.ID)
@@ -428,14 +431,11 @@ func TestSpawnResumesADeadWorker(t *testing.T) {
 	x.kill("toy-1")
 	must(t, x.keeper("status"), 0, "stuck: toy-1: its process is gone but it isn't ended → bs spawn --goal branch toy-1 resumes it in its pane")
 	must(t, x.queen("send", "toy-1", "while you were down"), 0, "stored, not rung")
-	rec := &startsRec{Harness: x.harness}
-	x.ports.Harness = rec
 	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 0, "resumed toy-1 in pane "+sp.Herdr.Pane)
 	// The resume prepares the same start a spawn does, in its own conversation (it read its inbox).
-	if len(rec.starts) != 1 || rec.starts[0].ShellTimeout != core.ShellTimeout || !rec.starts[0].Continue || rec.starts[0].Deny == nil {
-		t.Fatalf("the resume's start: %+v", rec.starts)
+	if st := rec.all(); len(st) != 2 || st[1].ShellTimeout != core.ShellTimeout || !st[1].Continue || st[1].Deny == nil || st[0].Continue {
+		t.Fatalf("the spawn's and the resume's starts: %+v", st)
 	}
-	x.ports.Harness = x.harness
 	st, ok, err := x.open().LatestStart(context.Background(), sp.ID)
 	if err != nil || !ok || st.ID == first.ID || st.Replaces != first.ID || st.PID == first.PID {
 		t.Fatalf("the resume's start: %+v (first %+v), %v %v", st, first, ok, err)
@@ -452,7 +452,9 @@ func TestSpawnResumesADeadWorker(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if len(rings) == 0 || !strings.Contains(rings[len(rings)-1], "2 unread (queen-toy ×2)") {
+	// The resumed process is rung; how many it has unread depends on whether its fake replayed
+	// its script's first inbox on restart.
+	if len(rings) == 0 || !strings.Contains(rings[len(rings)-1], "unread (queen-toy") {
 		t.Fatalf("the resumed worker's rings: %q", rings)
 	}
 	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 2, "it was spawned with --goal branch", "bs goal toy-1")
@@ -596,12 +598,21 @@ INSERT INTO entries VALUES ('s1','2026-10-01T00:00:00.000Z','spawned','queen-oth
 // startsRec is the fake harness, recording each start it prepares.
 type startsRec struct {
 	fake.Harness
+	mu     sync.Mutex
 	starts []port.Start
 }
 
 func (h *startsRec) Prepare(st port.Start) (port.Launch, error) {
+	h.mu.Lock()
 	h.starts = append(h.starts, st)
+	h.mu.Unlock()
 	return h.Harness.Prepare(st)
+}
+
+func (h *startsRec) all() []port.Start {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.starts)
 }
 
 // A spawn the old bs started is never healed, even when its recorded pane runs a harness

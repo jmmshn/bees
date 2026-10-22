@@ -157,6 +157,30 @@ func (x *toy) next(r result) result {
 	return x.queen(f[1:]...)
 }
 
+// stuck runs, as the queen and word for word, the command status's stuck: line for worker
+// gives first: every hint bs prints must be one bs accepts.
+func (x *toy) stuck(worker string) result {
+	x.t.Helper()
+	r := x.keeper("status")
+	_, line, ok := strings.Cut(r.String(), "stuck: "+worker+": ")
+	if !ok {
+		x.t.Fatalf("no stuck: line for %s in\n%s", worker, r)
+	}
+	line, _, _ = strings.Cut(line, "\n")
+	_, cmd, ok := strings.Cut(line, "→ ")
+	if !ok {
+		x.t.Fatalf("stuck: %q names no command", line)
+	}
+	for _, stop := range []string{" resumes it", ", or ", " if ", " ("} {
+		cmd, _, _ = strings.Cut(cmd, stop)
+	}
+	f := strings.Fields(cmd)
+	if len(f) < 2 || f[0] != "bs" {
+		x.t.Fatalf("stuck: %q is no bs command", cmd)
+	}
+	return x.queen(f[1:]...)
+}
+
 // keeper runs bs args from the keeper's shell (outside any pane), as queen-toy where a
 // command needs a session.
 func (x *toy) keeper(args ...string) result {

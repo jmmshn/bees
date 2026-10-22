@@ -553,7 +553,7 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 		case running == "no start recorded (legacy)":
 			note("stuck", sp.Name, "started by the old bs, which recorded no process → %s end %s", bsname.Cmd, sp.Name)
 		case running == "unconfirmed":
-			note("stuck", sp.Name, "its start was never confirmed → %s end %s --incomplete", bsname.Cmd, sp.Name)
+			note("stuck", sp.Name, "its start was never confirmed → %s end --incomplete %s", bsname.Cmd, sp.Name)
 		case strings.HasPrefix(running, "no"):
 			next := bsname.Cmd + " end " + sp.Name
 			if !landed {

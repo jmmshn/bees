@@ -259,12 +259,16 @@ func (r *run) oldSessions() error {
 	if err != nil || what == "" {
 		return err
 	}
+	end := bsname.Cmd + " end <worker>"
+	if r.s.Pane == nil { // the keeper's shell: no pane says who ends them
+		end = bsname.Cmd + " end --as " + core.Queen(r.s.Project) + " <worker>"
+	}
 	if r.name == "end" || r.name == "status" {
-		fmt.Fprintf(r.err, "%s %s: warning: %s\n  next: %s end <worker> for each\n", bsname.Cmd, r.name, what, bsname.Cmd)
+		fmt.Fprintf(r.err, "%s %s: warning: %s\n  next: %s for each\n", bsname.Cmd, r.name, what, end)
 		return nil
 	}
 	return &core.Exit{Code: core.ExitRefused, Msg: what + "; nothing was recorded or migrated",
-		Next: fmt.Sprintf("%s end <worker> for each (it names the herdr workspace to close by hand), then run this again", bsname.Cmd)}
+		Next: end + " for each (it names the herdr workspace to close by hand), then run this again"}
 }
 
 // oldSessionsAt names, read-only, the sessions the old bs started that are still open in

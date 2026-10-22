@@ -107,17 +107,17 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 		rs, cant = c.look(sp, Handed{PRs: d.PRs, Answer: h.Answer, Report: h.Report}).stage(lookCtx, e, func(p goal.Part) []string { return p.Handoff })
 		// Out of time after waiting is still pending; a first look that couldn't run is 6.
 		if cant != nil && waited && lookCtx.Err() != nil {
-			return d, exit(ExitWaited, bsname.Cmd+" done --wait again, or ask the queen", nil, "still pending after %s (%s ran out of time)", o.Wait, cant.Name)
+			return d, exit(ExitWaited, bsname.Cmd+" done --wait"+prFlags(d.PRs)+", or ask the queen", nil, "still pending after %s (%s ran out of time)", o.Wait, cant.Name)
 		}
 		if cant != nil {
-			return d, exit(ExitCantCheck, bsname.Cmd+" done again once it can run", errors.New(cant.Err), "check %s couldn't run", cant.Name)
+			return d, exit(ExitCantCheck, bsname.Cmd+" done"+prFlags(d.PRs)+" again once it can run", errors.New(cant.Err), "check %s couldn't run", cant.Name)
 		}
 		if o.Wait <= 0 || !pendingOnly(rs) {
 			break
 		}
 		left := time.Until(deadline)
 		if left <= 0 {
-			return d, exit(ExitWaited, bsname.Cmd+" done --wait again, or ask the queen", nil, "still pending after %s:\n  %s", o.Wait, strings.Join(pendingLines(rs), "\n  "))
+			return d, exit(ExitWaited, bsname.Cmd+" done --wait"+prFlags(d.PRs)+", or ask the queen", nil, "still pending after %s:\n  %s", o.Wait, strings.Join(pendingLines(rs), "\n  "))
 		}
 		c.warn("still pending (%s); asking again in %s", strings.Join(pendingLines(rs), "; "), min(c.timing().CIPoll, left).Round(time.Second))
 		if err := sleep(lookCtx, min(c.timing().CIPoll, left)); err != nil {
@@ -221,6 +221,16 @@ func (c *Core) handedPRs(g goal.Goal, prev []string, h Handed) ([]string, error)
 		return nil, exit(ExitRefused, bsname.Cmd+" done --pr <url>", nil, "--goal %s hands off PRs, and none is handed off", g)
 	}
 	return out, nil
+}
+
+// prFlags is " --pr <url>" for each PR: a next: that repeats bs done names the PRs it
+// handed, so it runs as printed even when nothing was recorded yet.
+func prFlags(prs []string) string {
+	var b strings.Builder
+	for _, u := range prs {
+		b.WriteString(" --pr " + u)
+	}
+	return b.String()
 }
 
 // EndOpts are bs end's flags.

@@ -143,7 +143,7 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 		// can't be re-cut there, so an amend never adds a push target.
 		for _, p := range g.Parts {
 			if p.Type == "push" && !slices.ContainsFunc(e.Parts, func(o goal.Part) bool { return o.Type == "push" && o.Target == p.Target }) {
-				return logbook.Effective{}, exit(ExitRefused, bsname.Cmd+" end "+req.Name+", then "+bsname.Cmd+" spawn --goal "+p.String(), nil,
+				return logbook.Effective{}, exit(ExitRefused, bsname.Cmd+" end --incomplete "+req.Name+", then "+bsname.Cmd+" spawn --goal "+p.String()+" "+sp.Bead, nil,
 					"--goal %s: a push goal's workspace starts at its target's head, and %s's was made for --goal %s", p, req.Name, e.Goal)
 			}
 		}

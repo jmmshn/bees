@@ -18,10 +18,11 @@ func TestAVerdictReachesTheQueensInbox(t *testing.T) {
 	x := newToy(t)
 	sp := x.spawn("toy-1", "verdict")
 	must(t, x.worker("toy-1", 1, "done", "--report", "it holds"), 7, "--answer yes|no is missing")
-	must(t, x.worker("toy-1", 2, "done", "--answer", "yes", "--report", "-"), 2, "stdin was empty")
-	must(t, x.worker("toy-1", 3, "done", "--answer", "no"), 7, "--report <text>|- is missing")
-	must(t, x.worker("toy-1", 4, "done", "--answer", "no", "--report", "  "), 7, "--report <text>|- is missing")
-	must(t, x.worker("toy-1", 5, "done", "--answer", "no", "--report", "the cache is never read"), 0)
+	must(t, x.worker("toy-1", 2, "done", "--answer", "YES", "--report", "it holds"), 7, `--answer must be yes or no (got "YES")`)
+	must(t, x.worker("toy-1", 3, "done", "--answer", "yes", "--report", "-"), 2, "stdin was empty")
+	must(t, x.worker("toy-1", 4, "done", "--answer", "no"), 7, "--report <text>|- is missing")
+	must(t, x.worker("toy-1", 5, "done", "--answer", "no", "--report", "  "), 7, "--report <text>|- is missing")
+	must(t, x.worker("toy-1", 6, "done", "--answer", "no", "--report", "the cache is never read"), 0)
 	must(t, x.queen("inbox"), 0, "done: toy-1 answer no", "the cache is never read")
 	must(t, x.queen("end", "toy-1"), 0)
 	x.write(filepath.Join(sp.Workspace.Dir, "verdict.md"), "draft")
@@ -42,8 +43,9 @@ func TestOnlyAVerdictTakesAReport(t *testing.T) {
 	must(t, x.worker("toy-2", 1, "done", "--answer", "yes"), 2, "takes no --answer or --report", "bs send queen-toy")
 }
 
-// A note goal needs the bead's notes or design changed since spawn; a label or status
-// change touches neither. A report left in the worktree keeps it at prune, named.
+// A note goal needs the bead's notes or design changed since spawn: other fields, a
+// label or status among them, aren't hashed (the fake has none; the live test changed a
+// label). A report left in the worktree keeps it at prune, named.
 func TestANoteGoalNeedsTheBeadsNotesChanged(t *testing.T) {
 	x := newToy(t)
 	sp := x.spawn("toy-1", "note")
@@ -98,4 +100,23 @@ func TestAGoalMessageStaysWithItsSpawn(t *testing.T) {
 	if strings.Contains(r.String(), "discarded") {
 		t.Fatalf("the new spawn reads the old spawn's discard:\n%s", r)
 	}
+}
+
+// A report in an ignored scratch/ is hidden from git status: prune still keeps its
+// worktree and names it, so nobody loses it unseen (five pilot reports were, bees-13.7).
+func TestPruneKeepsIgnoredFiles(t *testing.T) {
+	x := newToy(t)
+	x.write(filepath.Join(x.repo, ".git", "info", "exclude"), "/scratch/\n")
+	sp := x.spawn("toy-1", "verdict")
+	if err := os.MkdirAll(filepath.Join(sp.Workspace.Dir, "scratch"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	x.write(filepath.Join(sp.Workspace.Dir, "scratch", "report.md"), "the findings")
+	must(t, x.worker("toy-1", 1, "done", "--answer", "yes", "--report", "see scratch/report.md"), 0)
+	must(t, x.queen("end", "toy-1"), 0)
+	must(t, x.queen("prune"), 3, "kept", "ignored files", "scratch/")
+	if err := os.RemoveAll(filepath.Join(sp.Workspace.Dir, "scratch")); err != nil {
+		t.Fatal(err)
+	}
+	must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir)
 }

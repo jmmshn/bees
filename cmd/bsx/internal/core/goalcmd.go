@@ -138,8 +138,13 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 		if _, err := c.resolveReview(ctx, &g, what); err != nil {
 			return logbook.Effective{}, err
 		}
-		if err := c.refuse(g, sp.Workspace, sp.At, what); err != nil {
+		if err := c.refuse(g, sp.Workspace, what); err != nil {
 			return logbook.Effective{}, err
+		}
+		// Only a spawn from before bs froze its bead has none: nothing to tell a change from.
+		if sp.At == nil && (slices.Contains(g.Types(), "note") || slices.Contains(g.Types(), "beads")) {
+			return logbook.Effective{}, exit(ExitRefused, "bs goal "+sp.Name+" discard (the keeper), then bs end "+sp.Name+" and bs spawn --goal "+g.String()+" "+sp.Bead, nil,
+				"%s --goal %s: it was spawned before bs froze its bead, so there is nothing to tell a change from", what, g)
 		}
 		change.Goal = &g
 	}

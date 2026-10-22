@@ -80,7 +80,7 @@ Grammar `<type>[:<state>][=<target>]`; the target is everything after the first 
 | `pr:draft` | same | each PR exists, holds a workspace commit, pushed, CI green (keeper, 2026-10-22) | at handoff | every PR merged or closed |
 | `push=<url>` | — | the target's head moved to a commit descending from a workspace commit; current; CI | target merged | as `pr` |
 | `review=<url>` | — | a comment on the target since spawn carrying `bs:<spawn id>` | at handoff | at once |
-| `verdict` | `--answer yes\|no --report <text>\|-` | both present | at handoff | at once |
+| `verdict` | `--answer yes\|no --report <text>\|-` | the answer yes or no, the report not blank | at handoff | at once |
 | `note` | — | the bead's notes or design differ from the hash taken at spawn | at handoff | at once |
 | `beads` | — | a bead created since spawn under the bead | at handoff | at once |
 | `branch` | — | the recorded branch ahead of base, clean | merged into base (the pilot's three proofs) | same |

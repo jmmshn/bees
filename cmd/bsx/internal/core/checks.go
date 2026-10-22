@@ -71,8 +71,10 @@ func (k *look) run(ctx context.Context, p goal.Part, name string) (bool, string,
 	switch name {
 	case goal.VerdictGiven:
 		switch {
-		case h.Answer != "yes" && h.Answer != "no":
+		case h.Answer == "":
 			return false, "--answer yes|no is missing", nil
+		case h.Answer != "yes" && h.Answer != "no":
+			return false, fmt.Sprintf("--answer must be yes or no (got %q)", h.Answer), nil
 		case strings.TrimSpace(h.Report) == "":
 			return false, "--report <text>|- is missing", nil
 		}
@@ -113,10 +115,11 @@ func (k *look) run(ctx context.Context, p goal.Part, name string) (bool, string,
 	return false, "", fmt.Errorf("no check %s", name)
 }
 
-// frozen is the bead as spawn froze it; an error on a spawn recorded before bs froze it.
+// frozen is the bead as spawn froze it. bs goal refuses note and beads on a spawn without
+// one, so none here is a broken record, never "unchanged".
 func (k *look) frozen() (*logbook.BeadAt, error) {
 	if k.sp.At == nil {
-		return nil, fmt.Errorf("%s was spawned before bs froze its bead: bs end it, then bs spawn it again", k.sp.Name)
+		return nil, fmt.Errorf("spawn %s recorded no bead_at", k.sp.ID)
 	}
 	return k.sp.At, nil
 }
@@ -149,6 +152,7 @@ func (k *look) beadCreated(ctx context.Context) (bool, string, error) {
 		return false, "", err
 	}
 	kids = slices.DeleteFunc(kids, func(id string) bool { return slices.Contains(at.Children, id) })
+	slices.Sort(kids) // bd lists them in no fixed order
 	if len(kids) == 0 {
 		return false, fmt.Sprintf("no bead was created under %s since spawn", k.sp.Bead), nil
 	}

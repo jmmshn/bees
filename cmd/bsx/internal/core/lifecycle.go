@@ -544,6 +544,13 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 		} else if !r.Pass {
 			return keep(false, "%s", r.Detail)
 		}
+		// git status hides ignored files, and a report in an ignored scratch/ is how five
+		// pilot reports were lost (bees-13.7): never remove what nobody has looked at.
+		if ign, err := c.ignored(ctx, ws.Dir); err != nil {
+			return keep(true, "can't list ignored files: %v", err)
+		} else if ign != "" {
+			return keep(false, "ignored files in %s: %s; look at them, remove what is wanted nowhere, then bs prune again", ws.Dir, ign)
+		}
 		if _, err := c.git(ctx, ws.Repo, "worktree", "remove", ws.Dir); err != nil {
 			return keep(true, "git worktree remove: %v", err)
 		}
@@ -575,6 +582,21 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 		c.warn("can't tell whether origin/%s exists: %v", ws.Branch, err)
 	}
 	return p
+}
+
+// ignored is the ignored files in dir, as porcelainPaths names them, or "".
+func (c *Core) ignored(ctx context.Context, dir string) (string, error) {
+	b, err := c.Run.Run(ctx, dir, "git", "-C", dir, "status", "--porcelain", "--ignored")
+	if err != nil {
+		return "", err
+	}
+	var ign strings.Builder
+	for line := range strings.Lines(string(b)) {
+		if strings.HasPrefix(line, "!! ") {
+			ign.WriteString(line)
+		}
+	}
+	return porcelainPaths(ign.String()), nil
 }
 
 // heldByChange reports whether one of prs, handed off under a pr goal, holds sp's branch

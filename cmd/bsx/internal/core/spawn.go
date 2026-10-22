@@ -64,7 +64,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 	if err != nil {
 		return logbook.Spawn{}, err
 	}
-	if err := c.refuse(g, ws, at, "bs spawn"); err != nil {
+	if err := c.refuse(g, ws, "bs spawn"); err != nil {
 		return logbook.Spawn{}, err
 	}
 	deny, err := c.deny(ctx)
@@ -104,19 +104,14 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 	return sp, nil
 }
 
-// refuse runs the spawn-time refusals of goal g that need no network, in workspace ws
-// with the bead as spawn found it (at), for bs spawn and every bs goal amend (cmd names
-// which).
-func (c *Core) refuse(g goal.Goal, ws logbook.Workspace, at *logbook.BeadAt, cmd string) error {
+// refuse runs the spawn-time refusals of goal g that need no network, in workspace ws,
+// for bs spawn and every bs goal amend (cmd names which).
+func (c *Core) refuse(g goal.Goal, ws logbook.Workspace, cmd string) error {
 	for _, p := range g.Parts {
 		switch p.Type {
 		case "branch", "pr":
 			if ws.Branch == "" {
 				return exit(ExitRefused, "", nil, "%s --goal %s: a %s workspace with no branch has none to hand off", cmd, p, ws.Kind)
-			}
-		case "note", "beads":
-			if at == nil {
-				return exit(ExitRefused, "bs end the worker, then bs spawn --goal "+p.String()+" again", nil, "%s --goal %s: it was spawned before bs froze its bead, so there is nothing to tell a change from", cmd, p)
 			}
 		}
 	}
@@ -129,7 +124,7 @@ func (c *Core) refuse(g goal.Goal, ws logbook.Workspace, at *logbook.BeadAt, cmd
 func (c *Core) beadAt(ctx context.Context, bead port.Bead) (*logbook.BeadAt, error) {
 	kids, err := c.Beads.Children(ctx, bead.ID)
 	if err != nil {
-		return nil, refusedOrCant(err, "bd list --parent "+bead.ID, "bs spawn: can't list the beads under %s", bead.ID)
+		return nil, exit(ExitCantCheck, "bd list --parent "+bead.ID, err, "bs spawn: can't list the beads under %s", bead.ID)
 	}
 	return &logbook.BeadAt{Note: noteHash(bead), Children: kids}, nil
 }

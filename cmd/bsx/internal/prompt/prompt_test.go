@@ -66,7 +66,7 @@ func TestNonPRGoalsSayWhereTheReportGoes(t *testing.T) {
 	for g, want := range map[string]string{
 		"verdict": "bs done --answer yes|no --report",
 		"note":    "bd update <bead> --append-notes",
-		"beads":   "bs bead new --parent <bead>",
+		"beads":   "bd create --force --parent <bead>",
 	} {
 		got := prompt.Text(prompt.Worker, "web2", "none", []string{g})
 		if !strings.Contains(got, want) || g != "beads" && !strings.Contains(got, "never leave") && !strings.Contains(got, "Never leave") {

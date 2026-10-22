@@ -56,14 +56,17 @@ func (r *run) queen(fs *flag.FlagSet, args []string) error {
 	}
 	argv[0] = exe
 	fmt.Fprintf(r.out, "%s recorded in pane %s on herdr session %s; starting %s\n", core.Queen(r.s.Project), core.Getenv(r.env.Vars, "HERDR_PANE_ID"), r.s.Session, exe)
-	return r.ports.Exec(r.s.Repo, env, argv)
+	if err := r.ports.Exec(r.s.Repo, env, argv); err != nil {
+		return &core.Exit{Code: core.ExitFail, Msg: fmt.Sprintf("couldn't start %s (her entry names this pid, which exits: harmless)", exe), Err: err, Next: bsname.Cmd + " doctor"}
+	}
+	return nil
 }
 
 func (r *run) spawn(fs *flag.FlagSet, args []string) error {
 	var goals list
 	fs.Var(&goals, "goal", "what the worker hands off (repeatable)")
 	label := fs.String("label", "", "its herdr label (default: the bead's title)")
-	as := fs.String("as", "", "the queen, outside a herdr pane")
+	as := fs.String("as", "", "the queen, outside a recorded herdr pane")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -100,7 +103,7 @@ func (r *run) done(fs *flag.FlagSet, args []string) error {
 	answer := fs.String("answer", "", "a verdict goal's answer: yes or no")
 	report := fs.String("report", "", "a verdict goal's report, or - to read it from stdin")
 	force := fs.Bool("force", false, "hand off while background work runs (waives that gate only)")
-	as := fs.String("as", "", "the worker, outside a herdr pane")
+	as := fs.String("as", "", "the worker, outside a recorded herdr pane")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -130,7 +133,7 @@ func (r *run) done(fs *flag.FlagSet, args []string) error {
 func (r *run) end(fs *flag.FlagSet, args []string) error {
 	force := fs.Bool("force", false, "end while background work runs (waives that gate only)")
 	incomplete := fs.Bool("incomplete", false, "end an incomplete goal; prune completes it later")
-	as := fs.String("as", "", "the queen, outside a herdr pane")
+	as := fs.String("as", "", "the queen, outside a recorded herdr pane")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -150,7 +153,7 @@ func (r *run) end(fs *flag.FlagSet, args []string) error {
 }
 
 func (r *run) prune(fs *flag.FlagSet, args []string) error {
-	as := fs.String("as", "", "the queen, outside a herdr pane")
+	as := fs.String("as", "", "the queen, outside a recorded herdr pane")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -224,9 +227,11 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 		// Cross-project mail (T11): written into p's logbook, recording the sender's project
 		// so the reply needs no project read back out of a name (motif 3).
 		path := filepath.Join(filepath.Dir(r.s.Logbook), p+".db")
-		if _, err := os.Stat(path); err != nil {
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf(bsname.Cmd+" send --project %s: no logbook at %s; nothing stored", p, path), Err: err,
-				Next: "check the project name: " + bsname.Cmd + " bead ls names it, and its queen starts its logbook"}
+				Next: "check the project name against the logbooks: ls " + filepath.Dir(path)}
+		} else if err != nil {
+			return &core.Exit{Code: core.ExitCantCheck, Msg: fmt.Sprintf(bsname.Cmd+" send --project %s: can't read %s; nothing stored", p, path), Err: err, Next: bsname.Cmd + " doctor"}
 		}
 		lb, err := logbook.Open(r.ctx, path)
 		if err != nil {
@@ -265,9 +270,7 @@ func (r *run) ring(c *core.Core, from, to string, p port.Priority) {
 	switch err := c.Ring(r.ctx, from, to, p); {
 	case err == nil:
 		fmt.Fprintf(r.out, "rung %s\n", to)
-	case errors.Is(err, port.ErrNotRunning):
-		fmt.Fprintf(r.out, "stored, not rung (%v): %s reads it at its next "+bsname.Cmd+" inbox\n", err, to)
-	case errors.Is(err, port.ErrNoRing):
+	case errors.Is(err, port.ErrNotRunning), errors.Is(err, port.ErrNoRing):
 		fmt.Fprintf(r.out, "stored, not rung (%v): %s reads it at its next "+bsname.Cmd+" inbox\n", err, to)
 	case errors.Is(err, core.ErrEnded):
 		fmt.Fprintf(r.out, "stored, not rung: %v, so nobody reads it unless it is spawned again\n", err)

@@ -24,7 +24,8 @@ type Queen struct {
 	Session string `json:"session"` // herdr session; "" in a pilot (v1) entry reads as DefaultSession
 	Pane    string `json:"pane"`
 	Process
-	Exe string `json:"exe,omitempty"`
+	Exe  string `json:"exe,omitempty"`
+	Repo string `json:"repo,omitempty"` // the repo she started in: her bs's repo, wherever she cds (bees-12.43)
 }
 
 // RecordQueen records queen q, unless the newest queen entry of q.Name is one alive

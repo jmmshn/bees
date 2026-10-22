@@ -166,6 +166,9 @@ func (r *run) ring(name, text string) {
 	if err == nil && !alive {
 		err = port.ErrNotRunning
 	}
+	if err == nil && r.c.Harness == nil { // bsx's own main until bees-13.3's adapter
+		err = port.ErrNoRing
+	}
 	if err == nil {
 		err = r.c.Harness.Ring(port.Target{Name: name, Session: sp.Herdr.Session, Pane: sp.Herdr.Pane, PID: st.PID}, text, port.Next)
 	}

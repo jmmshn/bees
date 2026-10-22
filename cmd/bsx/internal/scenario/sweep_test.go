@@ -374,3 +374,12 @@ func TestSpawnOfNoSuchBeadIsRefused(t *testing.T) {
 	x := newToy(t)
 	must(t, x.queen("spawn", "--goal", "verdict", "toy-404"), 2, "no bead toy-404", "next: bd show toy-404")
 }
+
+// With no harness adapter (bsx's main until bees-13.3), mail to a running worker is
+// stored and says it wasn't rung, never a panic.
+func TestSendWithNoHarnessStoresAndSaysNotRung(t *testing.T) {
+	x := newToy(t)
+	x.spawn("toy-1", "verdict")
+	x.ports.Harness = nil
+	must(t, x.queen("send", "toy-1", "hi"), 0, "not rung", "has no ring")
+}

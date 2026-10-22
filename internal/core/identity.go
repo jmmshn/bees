@@ -36,7 +36,7 @@ type Pane struct {
 	Logbook       string
 	Who           Who
 	Repo          string // a worker's recorded workspace repo; "" for a queen
-	Unconfirmed   bool   // a worker with no start yet, whose harness runs above bs: Identify heals it
+	Unconfirmed   bool   // a worker with no live start (none yet, or its process died), whose harness runs above bs: Identify heals it
 }
 
 // ScanIn is what ScanPanes reads: the pane, the calling bs, and the ports to look with.
@@ -83,7 +83,15 @@ func ScanPanes(ctx context.Context, in ScanIn) (Pane, bool, error) {
 		for _, r := range recs {
 			p := Pane{Session: in.Session, Pane: in.Pane, Project: project, Logbook: path,
 				Who: Who{Name: r.Name, Queen: r.Queen, Spawn: r.Spawn, Process: r.Process}, Repo: r.Repo}
-			if !r.HasProcess {
+			alive := false
+			if r.HasProcess {
+				if alive, err = in.Proc.Alive(r.Process); err != nil {
+					return Pane{}, false, exit(ExitCantCheck, bsname.Cmd+" doctor", err, bsname.Cmd+" can't tell whether %s's process runs", r.Name)
+				}
+			}
+			// A worker with no start, or whose recorded process died (restarted by hand in
+			// its pane), counts when its harness runs here above in.Self: Identify heals it.
+			if !alive {
 				if r.Queen || in.Kind == "" {
 					continue
 				}
@@ -104,11 +112,7 @@ func ScanPanes(ctx context.Context, in ScanIn) (Pane, bool, error) {
 				found = append(found, p)
 				continue
 			}
-			alive, err := in.Proc.Alive(r.Process)
-			if err != nil {
-				return Pane{}, false, exit(ExitCantCheck, bsname.Cmd+" doctor", err, bsname.Cmd+" can't tell whether %s's process runs", r.Name)
-			}
-			if alive && slices.Contains(up, r.Process.PID) {
+			if slices.Contains(up, r.Process.PID) {
 				found = append(found, p)
 			}
 		}
@@ -171,7 +175,7 @@ func (c *Core) Identify(ctx context.Context, p Pane, self int) (Who, error) {
 		return Who{}, exit(ExitRefused, bsname.Cmd+" status", nil, "%s's entry for pane %s closed while bs looked", p.Who.Name, p.Pane)
 	}
 	r := recs[i]
-	if !r.HasProcess {
+	if !r.HasProcess || p.Unconfirmed {
 		sp, err := c.Logbook.Spawn(ctx, r.Spawn)
 		if err != nil {
 			return Who{}, err

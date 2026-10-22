@@ -456,3 +456,29 @@ func TestRespawnReusesAKeptWorkspace(t *testing.T) {
 	}
 	must(t, x.worker("toy-1", 1, "done"), 0, "branch_ahead: 1 commit ahead of main")
 }
+
+// A worker restarted in its pane by hand (claude --resume, not bs spawn) runs with --name
+// <worker>: bs treats its dead recorded start like none and heals the new one from the
+// pane, so status shows it running, it is rung, and its own bs calls know it (bees-13.9,
+// A2; bakeoff S11).
+func TestAWorkerRestartedByHandIsHealed(t *testing.T) {
+	x := newToy(t)
+	sp := x.spawn("toy-1", "branch")
+	first, _, _ := x.open().LatestStart(context.Background(), sp.ID)
+	x.kill("toy-1")
+	// The hand restart: the same harness argv in the same pane, with no bs in between.
+	if _, err := x.herdr.Run(context.Background(), "", "herdr", "--session", x.session, "agent", "start", "toy-1", "--kind", "claude", "--pane", sp.Herdr.Pane,
+		"--timeout", "5000", "--", "--name", "toy-1", "--state", x.harness.Dir("toy-1")); err != nil {
+		t.Fatal(err)
+	}
+	r := x.keeper("status")
+	if !strings.HasPrefix(cell(r.out, "toy-1", "RUNNING"), "yes") || !strings.Contains(r.String(), "started outside bs: recorded late") {
+		t.Fatalf("status after a hand restart:\n%s", r)
+	}
+	st, ok, err := x.open().LatestStart(context.Background(), sp.ID)
+	if err != nil || !ok || st.Replaces != first.ID || !st.Late {
+		t.Fatalf("the healed start: %+v (first %s), %v %v", st, first.ID, ok, err)
+	}
+	must(t, x.queen("send", "toy-1", "still there?"), 0, "rung toy-1")
+	must(t, x.worker("toy-1", 1, "inbox"), 0, "still there?")
+}

@@ -212,24 +212,38 @@ func (c *Core) recordStart(ctx context.Context, sp logbook.Spawn, p proc.Process
 
 // StartOf is open spawn sp's newest start. A spawn with none, whose start confirmation
 // missed it, is healed (ADR-0010): when its recorded pane runs the harness with --name
-// sp.Name in its argv, that process is recorded as its start, marked late. A heal whose
-// probe fails is an error and writes nothing; one that finds nothing is ok false.
+// sp.Name in its argv, that process is recorded as its start, marked late. A start whose
+// process died counts as none (a worker restarted by hand in its pane, bees-13.9): the
+// harness found there is recorded as replacing it; with none found the dead start stands.
+// A heal whose probe fails is an error and writes nothing; one that finds nothing for a
+// spawn with no start is ok false.
 func (c *Core) StartOf(ctx context.Context, sp logbook.Spawn) (logbook.Start, bool, error) {
 	st, ok, err := c.Logbook.LatestStart(ctx, sp.ID)
-	if err != nil || ok || sp.Ended {
+	if err != nil || sp.Ended {
 		return st, ok, err
+	}
+	var replaces logbook.ID
+	if ok {
+		if alive, err := c.Proc.Alive(st.Process); err != nil || alive {
+			return st, true, nil // a lookup that fails is the caller's to report, by its own Alive
+		}
+		replaces = st.ID
 	}
 	p, found, err := c.own(ctx, sp)
 	if err != nil {
-		return st, false, fmt.Errorf("can't look for %s's harness in pane %s to heal its start: %w", sp.Name, sp.Herdr.Pane, err)
+		return st, ok, fmt.Errorf("can't look for %s's harness in pane %s to heal its start: %w", sp.Name, sp.Herdr.Pane, err)
 	}
 	if !found {
-		return st, false, nil
+		return st, ok, nil
 	}
-	st, recorded, err := c.recordStart(ctx, sp, p, true, "")
+	healed, recorded, err := c.recordStart(ctx, sp, p, true, replaces)
 	if err != nil || !recorded { // another trigger healed it first: its record stands
-		return st, err == nil, err
+		return healed, err == nil, err
 	}
-	c.warn("%s's start was never confirmed; found it running in pane %s (pid %d): recorded late", sp.Name, sp.Herdr.Pane, p.PID)
-	return st, true, nil
+	if replaces != "" {
+		c.warn("%s's recorded process (pid %d) is gone, and pane %s runs it again (pid %d), started outside bs: recorded late", sp.Name, st.PID, sp.Herdr.Pane, p.PID)
+	} else {
+		c.warn("%s's start was never confirmed; found it running in pane %s (pid %d): recorded late", sp.Name, sp.Herdr.Pane, p.PID)
+	}
+	return healed, true, nil
 }

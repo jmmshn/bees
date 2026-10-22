@@ -80,7 +80,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 		return logbook.Spawn{}, false, err
 	}
 	// Prepare is pure, so it runs before anything is made: a refused launch leaves nothing.
-	launch, err := c.Harness.Prepare(port.Start{Role: port.Worker, Name: name, Dir: ws.Dir, PromptFile: "{{prompt.md}}", Doorbell: doorbell(name, bead.ID, req.By), Path: c.WorkerPath, Deny: deny, ShellTimeout: ShellTimeout})
+	launch, err := c.Harness.Prepare(c.workerStart(name, ws.Dir, doorbell(name, bead.ID, req.By), deny))
 	if err != nil {
 		return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s: its harness refused the launch; nothing was made", name)
 	}
@@ -181,16 +181,19 @@ func (c *Core) resume(ctx context.Context, sp logbook.Spawn, bead port.Bead, req
 	} else if err != nil {
 		return exit(ExitCantCheck, "", err, "%s: can't look at its pane %s; nothing started", sp.Name, sp.Herdr.Pane)
 	}
-	h := c.harnessOf(sp.Harness)
-	if h == nil {
-		return exit(ExitRefused, "", nil, "%s: no adapter for its recorded harness %s; nothing started", sp.Name, sp.Harness)
+	// launch starts the configured harness: a spawn recorded on another is refused, never
+	// restarted on a harness that can't resume its conversation (ADR-0010's switch refusal).
+	if sp.Harness != c.HarnessName {
+		return exit(ExitRefused, bsname.Cmd+" end --incomplete "+sp.Name+", then "+bsname.Cmd+" spawn", nil,
+			"%s was spawned on harness %s, and this bs starts %s; nothing started", sp.Name, sp.Harness, c.HarnessName)
 	}
 	deny, err := c.deny(ctx)
 	if err != nil {
 		return err
 	}
-	launch, err := h.Prepare(port.Start{Role: port.Worker, Name: sp.Name, Dir: sp.Workspace.Dir, PromptFile: "{{prompt.md}}",
-		Doorbell: doorbell(sp.Name, bead.ID, sp.By), Continue: sp.Read, Record: sp.Record, Path: c.WorkerPath, Deny: deny})
+	st0 := c.workerStart(sp.Name, sp.Workspace.Dir, doorbell(sp.Name, bead.ID, sp.By), deny)
+	st0.Continue, st0.Record = sp.Read, sp.Record
+	launch, err := c.Harness.Prepare(st0)
 	if err != nil {
 		return exit(ExitRefused, "", err, "%s: its harness refused the restart; nothing started", sp.Name)
 	}
@@ -227,6 +230,14 @@ func (c *Core) kept(ctx context.Context, ended *logbook.Spawn, dir string) (bool
 		return false, err
 	}
 	return head == ended.Workspace.Branch, nil
+}
+
+// workerStart is the start of worker name in dir that every launch of it prepares, a first
+// spawn's and a resume's alike: one place for its prompt file, PATH, guards and shell
+// timeout.
+func (c *Core) workerStart(name, dir, bell string, deny []string) port.Start {
+	return port.Start{Role: port.Worker, Name: name, Dir: dir, PromptFile: "{{prompt.md}}", Doorbell: bell,
+		Path: c.WorkerPath, Deny: deny, ShellTimeout: ShellTimeout}
 }
 
 // refuse runs the spawn-time refusals of goal g that need no network, in workspace ws,

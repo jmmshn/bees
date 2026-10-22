@@ -218,7 +218,11 @@ func (r *run) openLogbook() (*logbook.Logbook, error) {
 		return lb, err
 	}
 	lb, created, err := logbook.Create(r.ctx, r.s.Logbook)
-	r.created = created && err == nil // said once the command succeeds
+	r.created = created && err == nil   // said once the command succeeds
+	if r.created && r.name == "queen" { // bs queen execs the harness and never returns to say it
+		fmt.Fprintf(r.err, "%s queen: new logbook for project %s at %s\n", bsname.Cmd, r.s.Project, r.s.Logbook)
+		r.created = false
+	}
 	return lb, err
 }
 

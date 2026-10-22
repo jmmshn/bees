@@ -12,8 +12,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jmmshn/bees/internal/core"
+	"github.com/jmmshn/bees/internal/fake"
 	"github.com/jmmshn/bees/internal/herdr"
 	"github.com/jmmshn/bees/internal/logbook"
+	"github.com/jmmshn/bees/internal/port"
 )
 
 // Sessions (bees-13.4): pane identity across logbooks, liveness, the queen, start
@@ -424,7 +427,14 @@ func TestSpawnResumesADeadWorker(t *testing.T) {
 	x.kill("toy-1")
 	must(t, x.keeper("status"), 0, "stuck: toy-1: its process is gone but it isn't ended → bs spawn --goal branch toy-1 resumes it in its pane")
 	must(t, x.queen("send", "toy-1", "while you were down"), 0, "stored, not rung")
+	rec := &startsRec{Harness: x.harness}
+	x.ports.Harness = rec
 	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 0, "resumed toy-1 in pane "+sp.Herdr.Pane)
+	// The resume prepares the same start a spawn does, in its own conversation (it read its inbox).
+	if len(rec.starts) != 1 || rec.starts[0].ShellTimeout != core.ShellTimeout || !rec.starts[0].Continue || rec.starts[0].Deny == nil {
+		t.Fatalf("the resume's start: %+v", rec.starts)
+	}
+	x.ports.Harness = x.harness
 	st, ok, err := x.open().LatestStart(context.Background(), sp.ID)
 	if err != nil || !ok || st.ID == first.ID || st.Replaces != first.ID || st.PID == first.PID {
 		t.Fatalf("the resume's start: %+v (first %+v), %v %v", st, first, ok, err)
@@ -580,4 +590,15 @@ INSERT INTO entries VALUES ('s1','2026-10-01T00:00:00.000Z','spawned','queen-oth
 	if _, err := os.Stat(other + ".pre-2"); !os.IsNotExist(err) {
 		t.Fatalf("send migrated the other project's logbook: %v", err)
 	}
+}
+
+// startsRec is the fake harness, recording each start it prepares.
+type startsRec struct {
+	fake.Harness
+	starts []port.Start
+}
+
+func (h *startsRec) Prepare(st port.Start) (port.Launch, error) {
+	h.starts = append(h.starts, st)
+	return h.Harness.Prepare(st)
 }

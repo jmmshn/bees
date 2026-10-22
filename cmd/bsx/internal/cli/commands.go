@@ -103,11 +103,15 @@ func (r *run) done(fs *flag.FlagSet, args []string) error {
 	wait := fs.Bool("wait", r.name == "handoff", "while CI is still running (or the host hasn't shown a push yet), wait for it (up to --timeout), then hand off or name what failed")
 	timeout := fs.Duration("timeout", 8*time.Minute, "how long --wait waits, at most 9m (a harness's shell call may run 10)")
 	as := fs.String("as", "", "the worker, outside a herdr pane")
+	project := fs.String("project", "", "refused unless it names your own project: a handoff goes to your own queen")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("%w: bsx done takes no arguments; say it with --report (got %q)", errUsage, strings.Join(fs.Args(), " "))
+	}
+	if err := r.ownProject("done", "handoff", *project); err != nil {
+		return err
 	}
 	if *timeout > maxWait {
 		return fmt.Errorf("%w: --timeout %s: at most %s, so bs answers before a harness's 10-minute shell call is cut", errUsage, *timeout, maxWait)
@@ -313,7 +317,8 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 	c, fromProject := r.c, ""
 	if p := config.Normalise(*project); p != "" && p != r.s.Project {
 		// Cross-project mail (T11): written into p's logbook, recording the sender's project
-		// so the reply needs no project read back out of a name (motif 3).
+		// so the reply needs no project read back out of a name (motif 3). Only the
+		// recipient's logbook changes: the sender stays who it is in its own project.
 		path := filepath.Join(filepath.Dir(r.s.Logbook), p+".db")
 		if _, err := os.Stat(path); err != nil {
 			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bsx send --project %s: no logbook at %s; nothing stored", p, path), Err: err,
@@ -350,6 +355,22 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 	return nil
 }
 
+// ownProject refuses cmd --project naming (what: the noun for what cmd reads or writes) another project than the caller's (T11): only
+// bs send writes across projects. A session's mail and handoff are in its own project's
+// logbook, and inside a recorded pane that project is the pane's.
+func (r *run) ownProject(cmd, what, project string) error {
+	p := config.Normalise(project)
+	if p == "" || p == r.s.Project {
+		return nil
+	}
+	if r.s.Pane != nil {
+		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bsx %s --project %s: you are %s of project %s, so your %s is in %s's logbook; only bsx send crosses projects",
+			cmd, p, r.s.Pane.Who.Name, r.s.Project, what, r.s.Project), Next: "bsx " + cmd + " (no --project)"}
+	}
+	return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bsx %s --project %s: this shell is in project %s (%s); only bsx send crosses projects", cmd, p, r.s.Project, r.s.ProjectFrom),
+		Next: "run it from " + p + "'s repo"}
+}
+
 // ring rings to and says how it went. The message is already stored, so no outcome fails
 // the command: the logbook entry is the delivery, the ring only when it is read (motif 10).
 func (r *run) ring(c *core.Core, from, to string, p port.Priority) {
@@ -367,7 +388,11 @@ func (r *run) ring(c *core.Core, from, to string, p port.Priority) {
 
 func (r *run) inbox(fs *flag.FlagSet, args []string) error {
 	as := fs.String("as", "", "the reader, outside a recorded herdr pane")
+	project := fs.String("project", "", "refused unless it names your own project: your mail is in your own project's logbook")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := r.ownProject("inbox", "mail", *project); err != nil {
 		return err
 	}
 	w, err := r.who(*as)
@@ -395,10 +420,13 @@ func (r *run) inbox(fs *flag.FlagSet, args []string) error {
 
 // status lists each worker's latest spawn: its goal, whether it ended, its handoff,
 // whether its goal is complete (landed, and by what), and whether its recorded process
-// runs; then a stuck: line with the next command for each worker that can't move on its
-// own (Rule G). It reads the record and the process table, never a check: a goal
-// complete but not yet landed shows "no" until bs end or bs prune finds it. A spawn from
-// before goals reads --goal legacy.
+// runs. Then one line per worker the table alone would leave a question about, each with
+// the next command (Rule G): stuck (its process is gone, its start unconfirmed, or it
+// ended incomplete), kept (complete or discarded, its workspace still on disk), waived,
+// discarded, and late (a start healed after confirmation missed it). It reads the
+// record, the process table and the disk, never a check or herdr's own state, so it
+// works with herdr down: a goal complete but not yet landed shows "no" until bs end or bs
+// prune finds it. A spawn from before goals reads --goal legacy.
 func (r *run) status(fs *flag.FlagSet, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -410,7 +438,10 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 	tw := tabwriter.NewWriter(r.out, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "WORKER\tGOAL\tSTATE\tHANDOFF\tCOMPLETE\tRUNNING\tWORKSPACE")
 	var errs []error
-	var stuck []string
+	var notes []string
+	note := func(kind, name, format string, a ...any) {
+		notes = append(notes, kind+": "+name+": "+fmt.Sprintf(format, a...))
+	}
 	queen := core.Queen(r.s.Project)
 	if q, ok, err := r.c.Logbook.LatestQueen(r.ctx, queen); err != nil {
 		errs = append(errs, err)
@@ -450,34 +481,62 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 			running = r.running(sp)
 		}
 		g, discarded := sp.Goal.String(), false
-		if e, err := r.c.Logbook.Goal(r.ctx, sp); err != nil { // the newest amend, not the spawn's goal
-			errs = append(errs, err)
+		e, gerr := r.c.Logbook.Goal(r.ctx, sp) // the newest amend, not the spawn's goal
+		if gerr != nil {
+			errs = append(errs, gerr)
 		} else {
 			g, discarded = e.String(), e.Discarded
 			if e.Discarded {
 				g += " (discarded)"
 			}
 		}
-		fmt.Fprintf(tw, "%s\t--goal %s\t%s\t%s\t%s\t%s\t%s\n", sp.Name, g, state, handoff, complete, running, sp.Workspace.Dir)
+		dir := sp.Workspace.Dir
+		if _, err := os.Stat(dir); sp.Ended && dir != "" && errors.Is(err, os.ErrNotExist) {
+			dir += " (removed)"
+		}
+		fmt.Fprintf(tw, "%s\t--goal %s\t%s\t%s\t%s\t%s\t%s\n", sp.Name, g, state, handoff, complete, running, dir)
 		switch {
 		case lerr != nil: // couldn't read whether it landed: never read as "no" (Rule G)
 		case running == "unconfirmed":
-			stuck = append(stuck, fmt.Sprintf("%s: its start was never confirmed → bs end %s --incomplete", sp.Name, sp.Name))
+			note("stuck", sp.Name, "its start was never confirmed → bs end %s --incomplete", sp.Name)
 		case strings.HasPrefix(running, "no"):
 			next := "bs end " + sp.Name
 			if !landed {
 				next += " (--incomplete if its goal isn't complete)"
 			}
-			stuck = append(stuck, fmt.Sprintf("%s: its process is gone but it isn't ended → %s", sp.Name, next))
-		case sp.Ended && !landed && !sp.Legacy() && !discarded:
-			stuck = append(stuck, fmt.Sprintf("%s: ended with its goal incomplete → bs prune completes it once --goal %s holds", sp.Name, g))
+			note("stuck", sp.Name, "its process is gone but it isn't ended → %s", next)
+		case sp.Ended && !landed && !sp.Legacy() && !discarded && gerr == nil:
+			note("stuck", sp.Name, "ended with its goal incomplete → bs prune completes it once --goal %s holds", g)
+		case sp.Ended && (landed || discarded) && sp.Workspace.Kind == "git_worktree" && sp.Workspace.Dir != "":
+			why := "its goal is complete"
+			if discarded {
+				why = "its goal is discarded"
+			}
+			if _, err := os.Stat(sp.Workspace.Dir); err == nil {
+				note("kept", sp.Name, "%s, but its workspace is still on disk → bs prune removes it, or names what keeps it", why)
+			} else if !errors.Is(err, os.ErrNotExist) {
+				errs = append(errs, fmt.Errorf("%s: can't tell whether its workspace is still on disk: %w", sp.Name, err))
+			}
+		}
+		if gerr == nil && !landed {
+			if len(e.Waived) > 0 {
+				note("waived", sp.Name, "%s no longer checked → bs goal %s %s puts it back", strings.Join(e.Waived, ", "), sp.Name, e.String())
+			}
+			if discarded && !sp.Ended {
+				note("discarded", sp.Name, "the keeper discarded its goal: the work is wanted nowhere → bs end %s", sp.Name)
+			}
+		}
+		if st, ok, err := r.c.Logbook.LatestStart(r.ctx, sp.ID); err != nil {
+			errs = append(errs, err)
+		} else if ok && st.Late && !sp.Ended {
+			note("late", sp.Name, "its start was recorded late, after confirmation missed it (pid %d) → nothing to do; bs end %s if it misbehaves", st.PID, sp.Name)
 		}
 	}
 	if err := tw.Flush(); err != nil {
 		return err
 	}
-	for _, s := range stuck {
-		fmt.Fprintln(r.out, "stuck: "+s)
+	for _, n := range notes {
+		fmt.Fprintln(r.out, n)
 	}
 	return errors.Join(errs...)
 }

@@ -176,22 +176,37 @@ func TestBSProject(t *testing.T) {
 		t.Errorf("in an unrecorded pane: exit %d %s", code, stderr)
 	}
 	wantIn(t, stderr, "BS_PROJECT=bees names another project than the repo you are in (mytoy)")
-	code, out, _ := r.run("/", []string{"BS_PROJECT=other"}, "config")
+	// bees-12.45: doctor names the variable and the way out, never "no repo".
+	code, out, _ := r.run(r.repo, []string{"BS_PROJECT=bees"}, "doctor")
+	if code != 1 {
+		t.Errorf("doctor: exit %d", code)
+	}
+	wantIn(t, out, "FAIL project: BS_PROJECT=bees names another project than the repo you are in (mytoy)", "the checks below run on the global file alone", "next: env -u BS_PROJECT", "WARN env: BS_PROJECT is set in this shell")
+	_, out, _ = r.run(r.repo, []string{"BS_LOGBOOK=/x"}, "doctor")
+	wantIn(t, out, "WARN env: BS_LOGBOOK is set, and bs reads no such variable")
+	code, out, _ = r.run("/", []string{"BS_PROJECT=other"}, "config")
 	if code != 0 {
 		t.Errorf("outside any repo: exit %d", code)
 	}
 	wantIn(t, out, "# project: other (env BS_PROJECT)")
 }
 
+// A broken file refuses every command but doctor, which names it as a FAIL and runs the
+// checks that need no config.
 func TestBrokenFileRefusesEveryCommand(t *testing.T) {
 	r := newRig(t)
 	r.write("config.toml", "[paths]\nlogbook_dir = \""+r.logbook+"\"\nrepo = \"/x\"\n")
-	for _, cmd := range []string{"config", "status", "doctor"} {
+	for _, cmd := range []string{"config", "status", "inbox"} {
 		code, _, stderr := r.run(r.repo, nil, cmd)
 		if code != 2 || !strings.Contains(stderr, "paths.repo belongs in the project file") {
 			t.Errorf("%s: exit %d %s", cmd, code, stderr)
 		}
 	}
+	code, out, _ := r.run(r.repo, nil, "doctor")
+	if code != 1 {
+		t.Errorf("doctor: exit %d", code)
+	}
+	wantIn(t, out, "FAIL config: "+filepath.Join(r.session, "config.toml")+": paths.repo belongs in the project file", "the checks below run on the defaults", "herdr")
 }
 
 // gitless runs every command as if git weren't installed.
@@ -214,4 +229,51 @@ func TestAFailingGitIsNotNoProject(t *testing.T) {
 	if code, out, stderr := r.run(t.TempDir(), nil, "config"); code != 0 || !strings.Contains(out, "# project: none") {
 		t.Errorf("outside a repo: exit %d %s %s", code, out, stderr)
 	}
+}
+
+// bsx config init writes the session's global file, then a project's, each loading as
+// written; it refuses what bs would refuse of the file, and never overwrites one.
+func TestConfigInit(t *testing.T) {
+	r := newRig(t)
+	if err := os.RemoveAll(r.session); err != nil {
+		t.Fatal(err)
+	}
+	global := filepath.Join(r.session, "config.toml")
+	code, _, stderr := r.run(r.repo, nil, "config", "init")
+	if code != 2 {
+		t.Errorf("on the real logbook dir: exit %d", code)
+	}
+	wantIn(t, stderr, "paths.logbook_dir would be the real logbooks' dir", "next: bsx config init --logbook-dir")
+	if _, err := os.Stat(global); !os.IsNotExist(err) {
+		t.Fatalf("a refused init wrote %s: %v", global, err)
+	}
+	code, out, stderr := r.run(r.repo, nil, "config", "init", "--logbook-dir", r.logbook, "--harness", "claude_code")
+	if code != 0 {
+		t.Fatalf("exit %d %s", code, stderr)
+	}
+	wantIn(t, out, "wrote "+global)
+	code, out, _ = r.run(r.repo, nil, "config")
+	if code != 0 {
+		t.Fatalf("config: exit %d", code)
+	}
+	wantIn(t, out, `paths.logbook_dir = "`+r.logbook+`"  # global `+global, `harness = "claude_code"  # global `+global, `review.host = "github"  # default`)
+	if code, _, stderr = r.run(r.repo, nil, "config", "init", "--logbook-dir", r.logbook); code != 2 || !strings.Contains(stderr, global+" already exists; nothing was written") {
+		t.Errorf("a second init: exit %d %s", code, stderr)
+	}
+	for _, args := range [][]string{{"--project", "--harness", "claude_code"}, {"--project", "--repo", "/nonexistent/notes"}, {"--project", "--workspace", "jj"}} {
+		code, _, stderr := r.run(r.repo, nil, append([]string{"config", "init"}, args...)...)
+		if code != 2 {
+			t.Errorf("%v: exit %d %s", args, code, stderr)
+		}
+	}
+	code, out, stderr = r.run(r.repo, nil, "config", "init", "--project", "--workspace", "none", "--repo", r.repo)
+	if code != 0 {
+		t.Fatalf("--project: exit %d %s", code, stderr)
+	}
+	project := filepath.Join(r.session, "projects", "mytoy.toml")
+	wantIn(t, out, "wrote "+project)
+	_, out, _ = r.run(r.repo, nil, "config")
+	wantIn(t, out, `workspace.kind = "none"  # project `+project, "# workspace kind: none (workspace.kind, project "+project+")")
+	b, _ := os.ReadFile(project)
+	wantIn(t, string(b), "# path = []", `repo = "`+r.repo+`"`)
 }

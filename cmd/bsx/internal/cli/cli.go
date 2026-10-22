@@ -62,6 +62,7 @@ commands:
   inbox   [--as S]                                         print unread mail
   status                                                   list workers and their goals
   config                                                   every setting and where it came from
+  config  init [--project] [--harness H] [--logbook-dir D] [--repos D] [--worktrees D] [--workspace K] [--repo D]   write a commented config file
   doctor                                                   check what bsx needs
 `
 
@@ -78,6 +79,9 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 		return core.ExitRefused
 	}
 	s, err := load(ctx, env, ports)
+	if err != nil && args[0] == "doctor" { // doctor says what broke, and checks the rest
+		s, err = broken(env, err)
+	}
 	if err != nil { // a bad file or a refused dir: refused before anything changed
 		fmt.Fprintf(stderr, "bsx %s: %v\n", args[0], err)
 		var x *core.Exit
@@ -87,6 +91,9 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 		return core.ExitRefused
 	}
 	for _, w := range s.Warnings {
+		if s.Missing && len(args) > 1 && args[0] == "config" && args[1] == "init" {
+			continue // config init writes the missing dir
+		}
 		fmt.Fprintf(stderr, "bsx %s: warning: %s\n", args[0], w)
 	}
 	if s.Missing && cmd.writes {

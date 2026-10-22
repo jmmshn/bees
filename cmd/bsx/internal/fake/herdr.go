@@ -4,6 +4,7 @@
 package fake
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -38,6 +39,14 @@ type Herdr struct {
 	// InfoFails is how many next pane process-info calls fail as an unreachable server
 	// would: a start confirmation or heal that can't look.
 	InfoFails int
+	// Down: no server runs; every command refuses as server_not_running, and status says
+	// "not running" with exit 0 (probed, 0.9.5).
+	Down bool
+	// Version is the client's version, ServerVersion the running server's (both 0.9.5
+	// when unset); Socket is the path status names for the server's socket.
+	Version, ServerVersion, Socket string
+	// Incompatible: the server's endpoint protocol isn't the client's.
+	Incompatible bool
 	// RefuseNext makes the next call of this command ("workspace report-metadata") fail
 	// with herdr's error envelope, as a server-side failure would.
 	RefuseNext string
@@ -94,8 +103,14 @@ func (h *Herdr) Run(ctx context.Context, dir string, argv ...string) ([]byte, er
 	if len(args) >= 2 && args[0] == "--session" {
 		session, args = args[1], args[2:]
 	}
+	if len(args) == 1 && args[0] == "status" {
+		return h.status(session), nil
+	}
 	if len(args) < 2 {
 		return nil, usage("usage: herdr <group> <command>")
+	}
+	if h.Down {
+		return nil, refusal(strings.Join(args[:2], ":"), "server_not_running", "no herdr server is running for session %s", session)
 	}
 	s := h.server(session)
 	if cmd := args[0] + " " + args[1]; cmd == h.RefuseNext {
@@ -124,6 +139,19 @@ func (h *Herdr) Run(ctx context.Context, dir string, argv ...string) ([]byte, er
 		return nil, err
 	}
 	return f(s, session, fl)
+}
+
+// status is herdr status's text: the client, then the server of session (0.9.5's layout).
+func (h *Herdr) status(session string) []byte {
+	v := cmp.Or(h.Version, "0.9.5")
+	server := "  status: not running\n"
+	if !h.Down {
+		sv := cmp.Or(h.ServerVersion, v)
+		compatible := map[bool]string{true: "no", false: "yes"}[h.Incompatible]
+		server = fmt.Sprintf("  status: running\n  version: %s\n  endpoint_compatible: %s\n", sv, compatible)
+	}
+	return []byte(fmt.Sprintf("client:\n  version: %s\n  channel: stable\n\nserver:\n%s  socket: %s\n\nupdate:\n  restart_needed: no\n  server_binary_stale: %s\n",
+		v, server, h.Socket, map[bool]string{true: "no", false: "yes"}[h.ServerVersion == "" || h.ServerVersion == v]))
 }
 
 // flags is a parsed herdr command line: positionals, repeatable --flags, and what

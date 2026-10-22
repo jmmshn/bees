@@ -1,24 +1,35 @@
 package cli
 
 import (
+	"cmp"
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/jmmshn/bees/cmd/bsx/internal/config"
 	"github.com/jmmshn/bees/cmd/bsx/internal/core"
-	"github.com/jmmshn/bees/cmd/bsx/internal/herdr"
+	"github.com/jmmshn/bees/cmd/bsx/internal/port"
+	"github.com/jmmshn/bees/cmd/bsx/internal/proc"
+	"github.com/jmmshn/bees/cmd/bsx/internal/review/github"
 )
 
 // config prints every setting as TOML, key = value, with its source and any scope limit
 // in a trailing comment, after a header of what bs worked out around it: so a line can be
 // copied into the file the header names.
 func (r *run) config(fs *flag.FlagSet, args []string) error {
+	if len(args) > 0 && args[0] == "init" {
+		return r.configInit(fs, args[1:])
+	}
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -61,80 +72,451 @@ func (r *run) config(fs *flag.FlagSet, args []string) error {
 	return nil
 }
 
-// doctor checks what bsx needs, one line each: ok, WARN or FAIL, a FAIL saying what to do.
-// Any FAIL exits 1. More checks come with the setup bead (ADR-0010 Config).
+// configInit writes the session's global config file, or with --project a project's,
+// holding every key it may set under a comment, commented out at its default; its flags
+// set the step-2 answers of docs/SETUP-AGENT.md. It refuses a file Load would refuse, and
+// before the swap a logbook dir that is the real one, and never overwrites a file.
+func (r *run) configInit(fs *flag.FlagSet, args []string) error {
+	fs.Init("bsx config init", flag.ContinueOnError)
+	project := fs.Bool("project", false, "write the project's file, projects/<project>.toml, instead of the global config.toml")
+	set := map[string]string{}
+	for _, f := range []struct{ name, key, usage string }{
+		{"harness", "harness", "harness (global file): claude_code"},
+		{"logbook-dir", "paths.logbook_dir", "paths.logbook_dir (global file): where the logbooks live"},
+		{"repos", "paths.repos", "paths.repos (global file): a directory of repos"},
+		{"worktrees", "paths.worktrees", "paths.worktrees: where git_worktree workspaces go"},
+		{"workspace", "workspace.kind", "workspace.kind: git_worktree | none | command (default: worked out)"},
+		{"repo", "paths.repo", "paths.repo (project file): the project's directory, when bs isn't run in it"},
+	} {
+		fs.Func(f.name, f.usage, func(v string) error { set[f.key] = v; return nil })
+	}
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("%w: bsx config init [--project] [--harness H] [--logbook-dir D] [--repos D] [--worktrees D] [--workspace K] [--repo D]", errUsage)
+	}
+	scope, path := "global", filepath.Join(r.s.Dir, "config.toml")
+	if *project {
+		if r.s.Project == "" {
+			return &core.Exit{Code: core.ExitRefused, Msg: "bsx config init --project: no project: bs isn't in a git repo and BS_PROJECT is unset",
+				Next: "run it in the project's repo, or with BS_PROJECT=<project> outside any repo"}
+		}
+		scope, path = "project", filepath.Join(r.s.Dir, "projects", r.s.Project+".toml")
+	}
+	text, err := config.Template(scope, set)
+	if err != nil {
+		return fmt.Errorf("%w: %v", errUsage, err)
+	}
+	if err := r.initRefusals(scope, set, text); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	// Written aside, then linked into place, which fails on an existing file: a failed
+	// write leaves no half file that every retry would refuse.
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".config-init-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.WriteString(text); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Link(tmp.Name(), path); errors.Is(err, os.ErrExist) {
+		return &core.Exit{Code: core.ExitRefused, Msg: path + " already exists; nothing was written", Next: "edit it, or move it aside to write a fresh one"}
+	} else if err != nil {
+		return err
+	}
+	fmt.Fprintf(r.out, "wrote %s; bsx config shows what bs reads\n", path)
+	return nil
+}
+
+// initRefusals refuses what bs would refuse of text, the file config init is about to
+// write as scope: a value Load refuses (read over the global file, for a project's), a
+// paths.repo that isn't a directory (bs never makes one), and before the swap a logbook
+// dir that is the real logbooks'.
+func (r *run) initRefusals(scope string, set map[string]string, text string) error {
+	dir, err := os.MkdirTemp("", "bsx-config-init-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	in := config.Input{Dir: dir, Home: core.Getenv(r.env.Vars, "HOME")}
+	file := filepath.Join(dir, "config.toml")
+	if scope == "project" {
+		in.Project, file = r.s.Project, filepath.Join(dir, "projects", r.s.Project+".toml")
+		if err := os.Mkdir(filepath.Dir(file), 0o700); err != nil {
+			return err
+		}
+		switch b, err := os.ReadFile(filepath.Join(r.s.Dir, "config.toml")); {
+		case err == nil:
+			if err := os.WriteFile(filepath.Join(dir, "config.toml"), b, 0o600); err != nil {
+				return err
+			}
+		case !errors.Is(err, os.ErrNotExist): // unreadable is not absent (Rule G)
+			return err
+		}
+	}
+	if err := os.WriteFile(file, []byte(text), 0o600); err != nil {
+		return err
+	}
+	l, err := config.Load(in)
+	if err != nil {
+		return &core.Exit{Code: core.ExitRefused, Msg: "bsx config init: nothing was written", Err: errors.New(strings.ReplaceAll(err.Error(), dir, r.s.Dir))}
+	}
+	if repo := set["paths.repo"]; repo != "" {
+		switch fi, err := os.Stat(l.Expand(repo)); {
+		case errors.Is(err, os.ErrNotExist) || err == nil && !fi.IsDir():
+			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bsx config init: --repo %s: no such directory; nothing was written", repo), Next: "make it first: bs never does"}
+		case err != nil:
+			return &core.Exit{Code: core.ExitCantCheck, Msg: "bsx config init: can't look at --repo " + repo + "; nothing was written", Err: err}
+		}
+	}
+	if scope == "global" {
+		lb := l.Expand(l.Paths.LogbookDir)
+		for _, real := range realLogbookDirs(r.env.Vars) {
+			if samePath(lb, real) {
+				return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bsx config init: paths.logbook_dir would be the real logbooks' dir, %s, which bsx refuses until the swap (bees-13.9); nothing was written", lb),
+					Next: "bsx config init --logbook-dir <a dir of this session's own>"}
+			}
+		}
+	}
+	return nil
+}
+
+// doctor checks what bsx needs, one line each: ok, WARN (bs works, with a caveat) or
+// FAIL (a bs command would refuse or misbehave), a FAIL or WARN saying what to do. Any
+// FAIL exits 1. r.s.Broken, the error that stopped bs reading the config, is a FAIL of its
+// own, and the checks that need no config still run on the defaults.
 func (r *run) doctor(fs *flag.FlagSet, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	s, failed := r.s, 0
-	line := func(level, name, format string, a ...any) {
-		if level == "FAIL" {
-			failed++
-		}
-		fmt.Fprintf(r.out, "%-4s %s: %s\n", level, name, fmt.Sprintf(format, a...))
+	if fs.NArg() != 0 {
+		return fmt.Errorf("%w: bsx doctor takes no arguments", errUsage)
 	}
-	if s.Missing {
-		line("FAIL", "config dir", "%s is missing for herdr session %s: mkdir -p it and write its config.toml", s.Dir, s.Session)
-	} else {
-		line("ok", "config dir", "%s (herdr session %s)", s.Dir, s.Session)
-	}
+	d := &doctor{r: r, path: core.Getenv(r.env.Vars, "PATH")}
+	s := r.s
 	switch {
-	case s.Project == "":
-		line("WARN", "project", "none: run in its repo")
-	case s.Repo == "":
-		line("WARN", "repo", "project %s has no repo: run in it, or set paths.repo", s.Project)
+	case s.Broken != nil && s.GlobalBroken:
+		d.line("FAIL", "config", "%s; the checks below run on the defaults", strings.ReplaceAll(s.Broken.Error(), "\n", "\n     "))
+	case s.Broken != nil:
+		d.line("FAIL", "project", "%s; the checks below run on the global file alone", strings.ReplaceAll(s.Broken.Error(), "\n", "\n     "))
+	case s.Missing:
+		d.line("FAIL", "config dir", "%s is missing for herdr session %s: bsx config init writes it", s.Dir, s.Session)
 	default:
-		line("ok", "project", "%s, repo %s", s.Project, s.Repo)
-	}
-	if s.Workspace.Kind == config.NoWorkspace && s.GitTop {
-		line("WARN", "workspace", "workspace.kind = none over a git checkout: workers share it with no branch (bees-12.28)")
-	}
-	if s.Project != "" {
-		dir := filepath.Dir(s.Logbook)
-		switch err := s.checkLogbook(r.env); {
-		case err != nil:
-			line("FAIL", "logbook dir", "%v", err)
-		case syscall.Access(dir, wOK) == nil:
-			line("ok", "logbook dir", "%s is writable", dir)
-		default:
-			if _, err := os.Stat(dir); os.IsNotExist(err) {
-				line("ok", "logbook dir", "%s: made at the first write", dir)
-			} else {
-				line("FAIL", "logbook dir", "%s isn't writable", dir)
+		var files []string
+		for _, f := range s.Files {
+			state := ""
+			if !f.Exists {
+				state = " (missing: defaults)"
 			}
+			files = append(files, f.Scope+" "+f.Path+state)
 		}
+		d.line("ok", "config", "herdr session %s: %s", s.Session, strings.Join(files, ", "))
 	}
-	path := core.Getenv(r.env.Vars, "PATH")
-	for _, p := range []struct{ name, program string }{{"harness " + s.Harness, harnessProgram(s.Harness)}, {"herdr", "herdr"}} {
-		if at, ok := lookPath(path, p.program); ok {
-			line("ok", p.name, "%s", at)
-		} else {
-			line("FAIL", p.name, "%s is not on PATH", p.program)
-		}
+	if s.Broken == nil {
+		d.project()
 	}
-	if _, err := (herdr.Client{Run: r.ports.Run, Session: s.Session}).Panes(r.ctx, ""); err != nil {
-		line("FAIL", "herdr server", "session %s doesn't answer: %v", s.Session, err)
-	} else {
-		line("ok", "herdr server", "session %s answers", s.Session)
-	}
-	if c := s.Workspace.Command; c != nil && len(c.Missing()) > 0 {
-		line("FAIL", "workspace.command", "%s unset: spawn refuses a command workspace without them", strings.Join(c.Missing(), ", "))
-	}
-	for _, a := range s.argvs() {
-		if _, ok := lookPath(path, a[1]); !ok {
-			line("FAIL", a[0], "%s is not on PATH", a[1])
-		}
+	d.harness()
+	d.herdr()
+	d.bd()
+	if s.Broken == nil {
+		d.review()
+		d.commands()
 	}
 	for _, kv := range r.env.Vars {
-		if k, _, _ := strings.Cut(kv, "="); strings.HasPrefix(k, "BS_") {
-			line("WARN", "env", "%s is set: bs sets no BS_* in a session's env, and ignores it inside a herdr pane", k)
+		k, _, _ := strings.Cut(kv, "=")
+		switch {
+		case !strings.HasPrefix(k, "BS_"):
+		case !slices.Contains(envKeys, k):
+			d.line("WARN", "env", "%s is set, and bs reads no such variable: a leftover from an older bs; unset it", k)
+		case s.Pane != nil:
+			d.line("WARN", "env", "%s is set in %s's pane, where bs ignores it: bs sets no BS_* in a session's env, so it leaked from the shell that started herdr; unset it there", k, s.Pane.Who.Name)
+		default:
+			d.line("WARN", "env", "%s is set in this shell and applies to every bs command run from it: unset it unless you meant it (bs sets no BS_* itself)", k)
 		}
 	}
-	if failed > 0 {
-		return &core.Exit{Code: core.ExitFail, Msg: fmt.Sprintf("%d check(s) failed", failed)}
+	if d.failed > 0 {
+		return &core.Exit{Code: core.ExitFail, Msg: fmt.Sprintf("%d check(s) failed", d.failed)}
 	}
 	return nil
+}
+
+// doctor is one bsx doctor run: the caller's PATH, and how many checks failed.
+type doctor struct {
+	r      *run
+	path   string
+	failed int
+}
+
+func (d *doctor) line(level, name, format string, a ...any) {
+	if level == "FAIL" {
+		d.failed++
+	}
+	fmt.Fprintf(d.r.out, "%-4s %s: %s\n", level, name, fmt.Sprintf(format, a...))
+}
+
+// minVersion is the oldest release of each tool bs works with, by program.
+var minVersion = map[string]string{
+	"claude": "2.1.296", // cross-session messaging, which the doorbell rides on
+	"bd":     "1.1.0",   // bd query
+}
+
+// version runs program --version, found on the caller's PATH, and returns the first x.y.z
+// it prints and where the program is, refusing one older than minVersion.
+func (d *doctor) version(program string) (at, v string, err error) {
+	at, ok := lookPath(d.path, program)
+	if !ok {
+		return "", "", fmt.Errorf("%s is not on PATH: install it (docs/SETUP-AGENT.md, step 3)", program)
+	}
+	ctx, cancel := context.WithTimeout(d.r.ctx, 5*time.Second)
+	defer cancel()
+	out, err := d.r.ports.Run.Run(ctx, "", at, "--version")
+	if err != nil {
+		return at, "", fmt.Errorf("%s --version: %w", at, err)
+	}
+	if v = semver.FindString(string(out)); v == "" {
+		return at, "", fmt.Errorf("%s --version printed no version: %s", at, strings.TrimSpace(string(out)))
+	}
+	if min, ok := minVersion[program]; ok && older(v, min) {
+		return at, v, fmt.Errorf("%s %s is older than %s, the oldest bs works with: upgrade it (docs/SETUP-AGENT.md, step 3)", at, v, min)
+	}
+	return at, v, nil
+}
+
+// semver is the first x.y.z in a --version line.
+var semver = regexp.MustCompile(`\d+\.\d+\.\d+`)
+
+// older reports whether version a (x.y.z) is before b. Both come from semver, so each
+// part is digits and Atoi can't fail.
+func older(a, b string) bool {
+	as, bs := strings.Split(a, "."), strings.Split(b, ".")
+	for i := range 3 {
+		x, _ := strconv.Atoi(as[i])
+		y, _ := strconv.Atoi(bs[i])
+		if x != y {
+			return x < y
+		}
+	}
+	return false
+}
+
+// project checks the project, its repo and workspace kind, and its logbook dir.
+func (d *doctor) project() {
+	s := d.r.s
+	switch {
+	case s.Project == "":
+		d.line("WARN", "project", "none: run in its repo (or with BS_PROJECT=<project> outside any repo); project checks skipped")
+		return
+	case s.Repo == "":
+		d.line("WARN", "repo", "project %s (%s) has no repo: run in it, or set paths.repo in its project file", s.Project, s.ProjectFrom)
+	default:
+		kind, why := s.Kind(s.GitTop)
+		d.line("ok", "project", "%s (%s), repo %s, workspace %s (%s)", s.Project, s.ProjectFrom, s.Repo, kind, why)
+	}
+	if kind, _ := s.Kind(s.GitTop); kind == config.NoWorkspace && s.GitTop {
+		d.line("WARN", "workspace", "workspace.kind = none over a git checkout: workers share %s with no branch of their own (bees-12.28); drop the override for git_worktree", s.Repo)
+	}
+	if c := s.Workspace.Command; c != nil && len(c.Missing()) > 0 {
+		d.line("FAIL", "workspace.command", "%s unset: spawn refuses a command workspace without them", strings.Join(c.Missing(), ", "))
+	}
+	dir := filepath.Dir(s.Logbook)
+	switch err := s.checkLogbook(d.r.env); {
+	case err != nil:
+		d.line("FAIL", "logbook dir", "%v; set paths.logbook_dir in %s", err, filepath.Join(s.Dir, "config.toml"))
+	case syscall.Access(dir, wOK) == nil:
+		d.line("ok", "logbook dir", "%s is writable", dir)
+	default:
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			d.line("ok", "logbook dir", "%s: made at the first write", dir)
+		} else {
+			d.line("FAIL", "logbook dir", "%s isn't writable", dir)
+		}
+	}
+}
+
+// harness checks the configured harness's program and version, and the modes of its ring
+// sockets (ADR-0009 T3) when it can tell them.
+func (d *doctor) harness() {
+	s := d.r.s
+	name := "harness " + s.Harness
+	at, v, err := d.version(harnessProgram(s.Harness))
+	if err != nil {
+		d.line("FAIL", name, "%v", err)
+	} else {
+		d.line("ok", name, "%s %s", at, v)
+	}
+	h := d.r.ports.Harness
+	if h == nil && d.r.ports.NewHarness != nil {
+		h = d.r.ports.NewHarness(s.Harness, "")
+	}
+	m, ok := h.(interface {
+		Modes(home string) (string, error)
+	})
+	if !ok {
+		return
+	}
+	if what, err := m.Modes(core.Getenv(d.r.env.Vars, "HOME")); err != nil {
+		d.line("FAIL", "ring sockets", "%v: another user could ring a session; chmod it (0700 a dir, 0600 a file)", err)
+	} else {
+		d.line("ok", "ring sockets", "%s", what)
+	}
+}
+
+// herdr checks the session's herdr server: running, its endpoint compatible with the
+// client, not older than the client (bs's herdr probes ran on the client's version,
+// bees-12.44), and its socket closed to everyone else (T3).
+func (d *doctor) herdr() {
+	s := d.r.s
+	name := "herdr session " + s.Session
+	if at, ok := lookPath(d.path, "herdr"); !ok {
+		d.line("FAIL", "herdr", "herdr is not on PATH")
+		return
+	} else {
+		d.line("ok", "herdr", "%s", at)
+	}
+	ctx, cancel := context.WithTimeout(d.r.ctx, 5*time.Second)
+	defer cancel()
+	argv := []string{"herdr", "status"}
+	if s.Session != config.DefaultSession {
+		argv = []string{"herdr", "--session", s.Session, "status"}
+	}
+	out, err := d.r.ports.Run.Run(ctx, "", argv...)
+	if err != nil {
+		d.line("FAIL", name, "%s: %v", strings.Join(argv, " "), err)
+		return
+	}
+	st := herdrStatus(string(out))
+	switch {
+	case st["server.status"] != "running":
+		d.line("FAIL", name, "server %s (socket %s): start it with herdr --session %s, then run bs in one of its panes", cmp.Or(st["server.status"], "status unknown"), st["server.socket"], s.Session)
+		return
+	case st["server.endpoint_compatible"] == "no":
+		d.line("FAIL", name, "client %s can't talk to server %s: restart the server (herdr --session %s server stop, then start it again)", st["client.version"], st["server.version"], s.Session)
+	case semver.MatchString(st["server.version"]) && semver.MatchString(st["client.version"]) && older(st["server.version"], st["client.version"]):
+		d.line("WARN", name, "server %s is older than client %s, still running the binary it started from: restart it (herdr --session %s server stop, then start it again) when no session you need runs; bs's herdr probes ran on the client's version", st["server.version"], st["client.version"], s.Session)
+	default:
+		d.line("ok", name, "server %s running, client %s", st["server.version"], st["client.version"])
+	}
+	switch sock := st["server.socket"]; sock {
+	case "":
+		d.line("FAIL", "herdr socket", "herdr status named no socket")
+	default:
+		if err := proc.Private(sock); err != nil {
+			d.line("FAIL", "herdr socket", "%v: a socket open to others lets them drive this herdr; chmod 600 it, or restart the server", err)
+		} else {
+			d.line("ok", "herdr socket", "%s is the user's alone", sock)
+		}
+	}
+}
+
+// herdrStatus is herdr status's text as section.key → value.
+func herdrStatus(out string) map[string]string {
+	m, section := map[string]string{}, ""
+	for _, l := range strings.Split(out, "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(l), ":")
+		switch {
+		case !ok:
+		case !strings.HasPrefix(l, " "):
+			section = k
+		default:
+			m[section+"."+k] = strings.TrimSpace(v)
+		}
+	}
+	return m
+}
+
+// bd checks bd's version and that it finds a store from the project's repo (else here):
+// bs bead and the bead checks of note and beads goals read it.
+func (d *doctor) bd() {
+	at, v, err := d.version("bd")
+	if err != nil {
+		d.line("FAIL", "bd", "%v", err)
+		return
+	}
+	dir := cmp.Or(d.r.s.Repo, d.r.env.Dir)
+	ctx, cancel := context.WithTimeout(d.r.ctx, 5*time.Second)
+	defer cancel()
+	out, err := d.r.ports.Run.Run(ctx, dir, at, "where")
+	var ee *port.ExitError
+	switch {
+	case errors.As(err, &ee):
+		d.line("FAIL", "bd", "%s %s, but bd where finds no store from %s: %v; set BEADS_DIR (docs/SETUP-AGENT.md, step 3)", at, v, dir, err)
+		return
+	case err != nil:
+		d.line("FAIL", "bd", "%s %s, but bd where couldn't run from %s: %v", at, v, dir, err)
+		return
+	}
+	store, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
+	d.line("ok", "bd", "%s %s, store %s", at, v, store)
+}
+
+// review checks what a pr, push or review goal needs of the review host: on GitHub, gh
+// logged in and a GitHub remote in the repo (bs spawn refuses those goals without one,
+// bees-12.42).
+func (d *doctor) review() {
+	s := d.r.s
+	if s.Review.Host != github.Name {
+		return
+	}
+	at, v, err := d.version("gh")
+	switch {
+	case err != nil:
+		d.line("WARN", "gh", "%v: pr, push and review goals need it; branch, verdict, note and beads don't", err)
+	default:
+		ctx, cancel := context.WithTimeout(d.r.ctx, 10*time.Second)
+		defer cancel()
+		var ee *port.ExitError
+		if _, err := d.r.ports.Run.Run(ctx, "", at, "auth", "status"); errors.As(err, &ee) {
+			d.line("WARN", "gh", "%s %s, but not logged in (%v): run gh auth login", at, v, err)
+		} else if err != nil { // couldn't look: never "not logged in" (Rule G)
+			d.line("WARN", "gh", "%s %s, but gh auth status couldn't run: %v", at, v, err)
+		} else {
+			d.line("ok", "gh", "%s %s, logged in", at, v)
+		}
+	}
+	if s.Repo == "" || !s.GitTop {
+		return
+	}
+	rev := d.r.ports.Review
+	if rev == nil {
+		rev = github.Host{Run: d.r.ports.Run}
+	}
+	switch repo, ok, err := rev.Repo(d.r.ctx, s.Repo); {
+	case err != nil:
+		d.line("FAIL", "remote", "can't read %s's git remotes: %v", s.Repo, err)
+	case !ok:
+		d.line("WARN", "remote", "%s has no GitHub remote: bs spawn refuses --goal pr, push= and review= here (branch, verdict, note and beads work); add one with git remote add origin <url>", s.Repo)
+	default:
+		d.line("ok", "remote", "%s for pr goals", repo)
+	}
+}
+
+// commands checks that every argv the config names starts a program on the caller's
+// PATH: the one bs done, end and prune hand a cmd: check, which runs with only PATH, HOME
+// and LANG.
+func (d *doctor) commands() {
+	argvs := d.r.s.argvs()
+	if len(argvs) == 0 {
+		return
+	}
+	missing := 0
+	for _, a := range argvs {
+		if _, ok := lookPath(d.path, a[1]); !ok {
+			d.line("FAIL", a[0], "%s is not on PATH, the one a check runs with", a[1])
+			missing++
+		}
+	}
+	if missing == 0 {
+		d.line("ok", "commands", "%d argv in the config, each argv[0] on PATH", len(argvs))
+	}
 }
 
 // wOK is access(2)'s W_OK: the dir is writable.

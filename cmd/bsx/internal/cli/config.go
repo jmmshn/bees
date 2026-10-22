@@ -37,6 +37,29 @@ type settings struct {
 	Pane         *core.Pane // the recorded pane bs runs in; nil outside one
 	PinnedDir    string     // BS_LOGBOOK_DIR, applied outside a recorded pane; "" when unset
 	Warnings     []string
+	Broken       error // why bs couldn't work out its settings: bs doctor still runs
+	GlobalBroken bool  // with Broken: the global file didn't read either, so doctor runs on the defaults
+}
+
+// broken is the settings bs doctor runs on when load failed with err: the session's dir
+// and the default config, so the checks that need no config still run.
+func broken(env Env, err error) (*settings, error) {
+	getenv := func(k string) string { return core.Getenv(env.Vars, k) }
+	dir, session, derr := config.Dir(getenv)
+	if derr != nil || errors.Is(err, ErrDefaultConfig) {
+		return nil, err
+	}
+	// The global file alone, when it reads: a refused project (bees-12.45) leaves the
+	// machine checks on the keeper's own settings, not the defaults.
+	l, gerr := config.Load(config.Input{Dir: dir, Home: getenv("HOME")})
+	if gerr != nil {
+		l = config.Defaults(getenv("HOME"))
+	}
+	s := &settings{Loaded: l, Dir: dir, Session: session, Broken: err, GlobalBroken: gerr != nil}
+	if _, serr := os.Stat(dir); errors.Is(serr, os.ErrNotExist) {
+		s.Missing = true
+	}
+	return s, nil
 }
 
 // envKeys are the BS_* variables bs reads outside a recorded herdr pane. Inside one it
@@ -63,8 +86,8 @@ func load(ctx context.Context, env Env, ports Ports) (*settings, error) {
 	s := &settings{Dir: dir, Session: session}
 	if fi, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
 		s.Missing = true
-		s.Warnings = append(s.Warnings, fmt.Sprintf("%v %s: %s is missing, so only status, config and doctor run, on the defaults\n  next: mkdir -p %s and write its config.toml (the live-test skill's setup.sh does)",
-			errNoConfigDir, session, dir, dir))
+		s.Warnings = append(s.Warnings, fmt.Sprintf("%v %s: %s is missing, so only status, config and doctor run, on the defaults\n  next: bsx config init --logbook-dir <dir>",
+			errNoConfigDir, session, dir))
 	} else if err != nil {
 		return nil, err
 	} else if !fi.IsDir() {

@@ -188,7 +188,7 @@ func TestAMissedStartIsHealedLate(t *testing.T) {
 	}
 	x.herdr.InfoFails = 0
 	r = x.keeper("status")
-	must(t, r, 0, "toy-1's start was never confirmed; found it running")
+	must(t, r, 0, "toy-1's start was never confirmed; found it running", "late: toy-1: its start was recorded late, after confirmation missed it")
 	if cell(r.out, "toy-1", "RUNNING") != "yes (late)" {
 		t.Fatalf("status:\n%s", r)
 	}

@@ -20,7 +20,7 @@ Setup:
 
 - makes a git repo at `~/.cache/bees-live/<toy>/<toy>` (or under `$BEES_LIVE`, symlinks resolved), outside every repo so bees' `CLAUDE.md` stays out of the toy's sessions, with git `user.name` set to the toy id (bd's `created_by` on every bead the toy's sessions file, so teardown can note one filed elsewhere);
 - writes the toy's config, `~/.config/bees/sessions/<toy>/config.toml`, with `paths.logbook_dir = <run>/logbooks`. `bsx` in a pane on herdr session `<toy>` reads that dir and nothing else of `~/.config/bees` (ADR-0010). Edit it, or add `projects/<toy>.toml`, before your check;
-- starts the toy's own herdr server, `herdr --session <toy> server`, from `env -i` plus `PATH` (your build first), `HOME`, `TERM`, `LANG` and `SHELL`: no `BS_*` or `HERDR_*` of your shell reaches its panes. XDG is left alone (a separate XDG home broke the keeper's shell and overflowed `sun_path`);
+- starts the toy's own herdr server, `herdr --session <toy> server`, from `env -i` plus `PATH` (your build first), `HOME`, `TERM`, `LANG` and `SHELL`, plus any `XDG_*` you have set: no `BS_*` or `HERDR_*` of your shell reaches its panes. XDG is left as you have it (a separate XDG home broke the keeper's shell and overflowed `sun_path`), so the toy reads the config dir setup wrote;
 - opens a workspace there on the repo, and records in live.json which `bsx` and `bs` its shell runs (`pane_bsx`, `pane_bs`): your shell's rc runs in the pane and may put dirs ahead of your build;
 - with a `bs` build and no `--no-queen`, starts `bs queen` in that pane with your build first on its PATH, answers the folder-trust prompt, and exits 0 only once the queen is up and idle. `bsx` has no queen yet (bees-13.4), so a bsx-only build gets the shell pane.
 

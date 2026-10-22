@@ -30,6 +30,15 @@ func wantErr(t *testing.T, err error, parts ...string) {
 	}
 }
 
+func getenv(env []string, key string) string {
+	for i := len(env) - 1; i >= 0; i-- {
+		if v, ok := strings.CutPrefix(env[i], key+"="); ok {
+			return v
+		}
+	}
+	return ""
+}
+
 func TestDirPerSession(t *testing.T) {
 	for _, c := range []struct {
 		env          []string
@@ -44,7 +53,7 @@ func TestDirPerSession(t *testing.T) {
 		{env: []string{"HOME=/h", "HERDR_SESSION=../x"}, err: "can't name a config dir"},
 		{env: nil, err: "neither"},
 	} {
-		dir, session, err := Dir(c.env)
+		dir, session, err := Dir(func(k string) string { return getenv(c.env, k) })
 		if c.err != "" {
 			wantErr(t, err, c.err)
 			continue
@@ -144,7 +153,7 @@ replace = true
 	if c := l.Workspace.Command; c == nil || c.Create[0] != "hg" || c.Timeout != "" {
 		t.Errorf("workspace.command = %+v", c)
 	}
-	if l.Kind(true) != CommandKind || l.Goal["cl"].Handoff[1] != "cmd:cl_submitted" || !l.Guards.Replace {
+	if k, _ := l.Kind(true); k != CommandKind || l.Goal["cl"].Handoff[1] != "cmd:cl_submitted" || !l.Guards.Replace {
 		t.Errorf("config = %+v", l.Config)
 	}
 	var keys []string
@@ -180,20 +189,45 @@ handoff = ["clean"]
 handoff = ["cmd:nope", "made_up"]
 `)
 	_, err := Load(Input{Dir: dir, Home: "/h"})
-	wantErr(t, err, "[workspace.command] clean: an argv is required", `timeout = "soon"`,
+	wantErr(t, err, `[workspace.command] timeout = "soon"`,
 		"[checks.empty] run: an argv is required", "[goal.pr] pr is a built-in goal type",
 		`[goal.cl] handoff: "cmd:nope" names no [checks.nope]`, `"made_up" is no built-in check`)
 }
 
+// A [workspace.command] missing a key loads, so bs config and doctor can show it; spawn
+// refuses it.
+func TestCommandMissingLoads(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "config.toml"), "[workspace.command]\ncreate = [\"jj\"]\n")
+	l, err := Load(Input{Dir: dir, Home: "/h"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(l.Workspace.Command.Missing(), " "); got != "remove clean dir" {
+		t.Errorf("missing = %q", got)
+	}
+}
+
 func TestKind(t *testing.T) {
-	var c Config
-	if c.Kind(true) != GitWorktree || c.Kind(false) != NoWorkspace {
-		t.Error("worked-out kind")
+	l := &Loaded{Sources: map[string]Source{}}
+	if k, _ := l.Kind(true); k != GitWorktree {
+		t.Error("in a git checkout:", k)
 	}
-	c.Workspace.Kind = NoWorkspace
-	if c.Kind(true) != NoWorkspace {
-		t.Error("override")
+	if k, _ := l.Kind(false); k != NoWorkspace {
+		t.Error("outside one:", k)
 	}
+	l.Workspace.Kind = NoWorkspace
+	if k, why := l.Kind(true); k != NoWorkspace || !strings.HasPrefix(why, "workspace.kind") {
+		t.Error("override:", k, why)
+	}
+}
+
+// A project file spelled another way is refused: bs would never read it (ADR-0008).
+func TestMisnamedProjectFile(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "projects", "jobflow-ray.toml"), "")
+	_, err := Load(Input{Dir: dir, Project: "jobflowray", Home: "/h"})
+	wantErr(t, err, "jobflow-ray.toml: bs never reads it; rename it to "+filepath.Join(dir, "projects", "jobflowray.toml"))
 }
 
 func TestQuote(t *testing.T) {

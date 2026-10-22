@@ -89,8 +89,18 @@ elif jq -e --arg d "$run/" 'any(.result.panes[]; (.cwd // "") + "/" | startswith
 	leak "a pane of the keeper's herdr is open in $run"
 fi
 # A process the server's stop missed (a detached child) still sits in the run dir.
+# Teardown's own ancestors (a keeper shell cd'd into $run/keeper) are not the toy's.
 if [ -d /proc ]; then
-	stray=$(for c in /proc/[0-9]*/cwd; do d=$(readlink "$c" 2>/dev/null) || continue; [[ $d/ == "$run"/* ]] && echo "${c//[^0-9]/}"; done | tr '\n' ' ')
+	stray=$(
+		mine=" " p=$BASHPID # this subshell, teardown and up
+		while [ "${p:-0}" -gt 1 ]; do mine+="$p " p=$(awk '{print $4}' "/proc/$p/stat" 2>/dev/null); done
+		# No pipeline: its subshells would sit in the run dir too.
+		for c in /proc/[0-9]*/cwd; do
+			d=$(readlink "$c" 2>/dev/null) || continue
+			pid=${c//[^0-9]/}
+			[[ $d/ == "$run"/* && $mine != *" $pid "* ]] && printf '%s ' "$pid"
+		done
+	)
 	[ -z "$stray" ] || leak "processes still running in $run: $stray"
 fi
 left=$(ls -d "$store/$toy".db* "$cache/$toy"-* "$repo" "$config" "$projects/$enc"-* 2>/dev/null | tr '\n' ' ')

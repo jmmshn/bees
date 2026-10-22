@@ -43,9 +43,14 @@ git -C "$repo" add -A && git -C "$repo" commit -qm "toy"
 mkdir -p "$config"
 printf '[paths]\nlogbook_dir = "%s"\n' "$run/logbooks" >"$config/config.toml"
 # The toy's own herdr server, from a bare env: no BS_* or HERDR_* of this shell reaches its
-# panes (bees-13.1's probe saw the launcher's leak). XDG stays unset, so the keeper's
-# shell rc and herdr's socket paths work as they do for the keeper.
-env -i PATH="$bin:$PATH" HOME="$HOME" TERM="${TERM:-xterm-256color}" LANG="${LANG:-C.UTF-8}" SHELL="${SHELL:-/bin/sh}" \
+# panes (bees-13.1's probe saw the launcher's leak). XDG is left as the keeper has it, set
+# or not, so the toy's panes read the config dir written above and herdr's socket paths
+# work as they do for the keeper.
+xdg=()
+for k in XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME XDG_RUNTIME_DIR; do
+	[ -z "${!k:-}" ] || xdg+=("$k=${!k}")
+done
+env -i PATH="$bin:$PATH" HOME="$HOME" TERM="${TERM:-xterm-256color}" LANG="${LANG:-C.UTF-8}" SHELL="${SHELL:-/bin/sh}" "${xdg[@]}" \
 	setsid herdr --session "$toy" server </dev/null >"$run/keeper/herdr-server.log" 2>&1 &
 for _ in $(seq 50); do h workspace list >/dev/null 2>&1 && break; sleep 0.2; done
 h workspace list >/dev/null || { echo "setup: herdr --session $toy never answered; see $run/keeper/herdr-server.log" >&2; exit 1; }
@@ -56,8 +61,9 @@ record pane "$pane"
 # Which bs and bsx the pane's shell runs: its rc may put dirs ahead of the build (motif 14).
 h pane run "$pane" "{ command -v bsx || echo none; command -v bs || echo none; } >$(printf %q "$run/keeper/pane-which")" >/dev/null
 for _ in $(seq 50); do [ -s "$run/keeper/pane-which" ] && break; sleep 0.2; done
-record pane_bsx "$(sed -n 1p "$run/keeper/pane-which" 2>/dev/null)"
-record pane_bs "$(sed -n 2p "$run/keeper/pane-which" 2>/dev/null)"
+# "unknown", never "": the pane's shell didn't answer in 10 s (motif 11).
+record pane_bsx "$(sed -n 1p "$run/keeper/pane-which" 2>/dev/null | grep . || echo unknown)"
+record pane_bs "$(sed -n 2p "$run/keeper/pane-which" 2>/dev/null | grep . || echo unknown)"
 if [ $queen = 0 ]; then
 	cat "$run/live.json"
 	exit 0

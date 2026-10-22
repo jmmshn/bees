@@ -3,8 +3,10 @@ package cli
 import (
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 
@@ -46,7 +48,8 @@ func (r *run) config(fs *flag.FlagSet, args []string) error {
 	} else {
 		fmt.Fprintf(w, "# repo: %s (%s)\n# worktrees: %s\n", s.Repo, s.RepoFrom, s.Worktrees)
 	}
-	fmt.Fprintf(w, "# workspace kind: %s (%s)\n", s.Kind(s.GitTop), s.kindWhy())
+	kind, why := s.Kind(s.GitTop)
+	fmt.Fprintf(w, "# workspace kind: %s (%s)\n", kind, why)
 	fmt.Fprintf(w, "# cache: %s\n", r.ports.CacheDir)
 	for _, f := range s.Fields() {
 		limit := ""
@@ -56,19 +59,6 @@ func (r *run) config(fs *flag.FlagSet, args []string) error {
 		fmt.Fprintf(w, "%s = %s  # %s%s\n", f.Key, f.Value, f.Source, limit)
 	}
 	return nil
-}
-
-// kindWhy says how bs worked out the workspace kind.
-func (s *settings) kindWhy() string {
-	switch {
-	case s.Workspace.Kind != "":
-		return "workspace.kind, " + s.Sources["workspace.kind"].String()
-	case s.Workspace.Command != nil:
-		return "[workspace.command] is set, " + s.Sources["workspace.command"].String()
-	case s.GitTop:
-		return "worked out: the repo is a git checkout's top level"
-	}
-	return "worked out: no repo that is a git checkout's top level"
 }
 
 // doctor checks what bsx needs, one line each: ok, WARN or FAIL, a FAIL saying what to do.
@@ -105,7 +95,7 @@ func (r *run) doctor(fs *flag.FlagSet, args []string) error {
 		switch err := s.checkLogbook(r.env); {
 		case err != nil:
 			line("FAIL", "logbook dir", "%v", err)
-		case syscall.Access(dir, 2) == nil:
+		case syscall.Access(dir, wOK) == nil:
 			line("ok", "logbook dir", "%s is writable", dir)
 		default:
 			if _, err := os.Stat(dir); os.IsNotExist(err) {
@@ -128,9 +118,12 @@ func (r *run) doctor(fs *flag.FlagSet, args []string) error {
 	} else {
 		line("ok", "herdr server", "session %s answers", s.Session)
 	}
+	if c := s.Workspace.Command; c != nil && len(c.Missing()) > 0 {
+		line("FAIL", "workspace.command", "%s unset: spawn refuses a command workspace without them", strings.Join(c.Missing(), ", "))
+	}
 	for _, a := range s.argvs() {
-		if _, ok := lookPath(path, a.program); !ok {
-			line("FAIL", a.key, "%s is not on PATH", a.program)
+		if _, ok := lookPath(path, a[1]); !ok {
+			line("FAIL", a[0], "%s is not on PATH", a[1])
 		}
 	}
 	for _, kv := range r.env.Vars {
@@ -144,16 +137,24 @@ func (r *run) doctor(fs *flag.FlagSet, args []string) error {
 	return nil
 }
 
-// argvs is argv[0] of every command the config names, by its key.
-func (s *settings) argvs() []struct{ key, program string } {
-	var out []struct{ key, program string }
-	if c := s.Workspace.Command; c != nil {
-		for key, argv := range map[string][]string{"create": c.Create, "remove": c.Remove, "clean": c.Clean} {
-			out = append(out, struct{ key, program string }{"workspace.command." + key, argv[0]})
+// wOK is access(2)'s W_OK: the dir is writable.
+const wOK = 2
+
+// argvs is every command the config names, as {key, argv[0]}, in key order.
+func (s *settings) argvs() [][2]string {
+	var out [][2]string
+	add := func(key string, argv []string) {
+		if len(argv) > 0 && argv[0] != "" {
+			out = append(out, [2]string{key, argv[0]})
 		}
 	}
-	for name, c := range s.Checks {
-		out = append(out, struct{ key, program string }{"checks." + name + ".run", c.Run[0]})
+	if c := s.Workspace.Command; c != nil {
+		add("workspace.command.create", c.Create)
+		add("workspace.command.remove", c.Remove)
+		add("workspace.command.clean", c.Clean)
+	}
+	for _, name := range slices.Sorted(maps.Keys(s.Checks)) {
+		add("checks."+name+".run", s.Checks[name].Run)
 	}
 	return out
 }

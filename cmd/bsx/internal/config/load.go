@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -20,12 +21,13 @@ const DefaultSession = "default"
 // RepoPlaceholder, at the start of paths.worktrees, is the main checkout.
 const RepoPlaceholder = "{repo}"
 
-// Dir is the config dir of a caller with env (ADR-0010 live rig): <base>/bees, base being
-// XDG_CONFIG_HOME, else ~/.config, on every OS; a pane on a herdr session other than
-// default reads <base>/bees/sessions/<session> instead. It returns the session too.
-func Dir(env []string) (dir, session string, err error) {
-	base := Getenv(env, "XDG_CONFIG_HOME")
-	switch home := Getenv(env, "HOME"); {
+// Dir is the config dir of a caller whose env getenv reads (ADR-0010 live rig):
+// <base>/bees, base being XDG_CONFIG_HOME, else ~/.config, on every OS; a pane on a herdr
+// session other than default reads <base>/bees/sessions/<session> instead. It returns
+// the session too.
+func Dir(getenv func(string) string) (dir, session string, err error) {
+	base := getenv("XDG_CONFIG_HOME")
+	switch home := getenv("HOME"); {
 	case base != "" && !filepath.IsAbs(base):
 		return "", "", fmt.Errorf("XDG_CONFIG_HOME=%s is not an absolute path", base)
 	case base == "" && home == "":
@@ -33,7 +35,7 @@ func Dir(env []string) (dir, session string, err error) {
 	case base == "":
 		base = filepath.Join(home, ".config")
 	}
-	session = Getenv(env, "HERDR_SESSION")
+	session = getenv("HERDR_SESSION")
 	if session == "" || session == DefaultSession {
 		return filepath.Join(base, "bees"), DefaultSession, nil
 	}
@@ -41,17 +43,6 @@ func Dir(env []string) (dir, session string, err error) {
 		return "", "", fmt.Errorf("HERDR_SESSION %q can't name a config dir", session)
 	}
 	return filepath.Join(base, "bees", "sessions", session), session, nil
-}
-
-// Getenv is key's value in env, the last one set winning, as in a process.
-func Getenv(env []string, key string) string {
-	v := ""
-	for _, kv := range env {
-		if k, val, ok := strings.Cut(kv, "="); ok && k == key {
-			v = val
-		}
-	}
-	return v
 }
 
 // Input is what Load reads.
@@ -105,10 +96,11 @@ func Load(in Input) (*Loaded, error) {
 		}
 	}
 	files := []File{{Scope: "global", Path: filepath.Join(in.Dir, "config.toml")}}
+	var errs []error
 	if in.Project != "" {
 		files = append(files, File{Scope: "project", Path: filepath.Join(in.Dir, "projects", in.Project+".toml")})
+		errs = append(errs, misnamed(filepath.Join(in.Dir, "projects"), in.Project))
 	}
-	var errs []error
 	for _, file := range files {
 		ok, err := l.decodeFile(root, file)
 		file.Exists = ok
@@ -128,7 +120,7 @@ func Load(in Input) (*Loaded, error) {
 		f.v.SetString(val)
 		l.Sources[f.key] = Source{Kind: "env", Where: name}
 	}
-	for _, name := range slices.Sorted(mapKeys(l.Goal)) {
+	for _, name := range slices.Sorted(maps.Keys(l.Goal)) {
 		if err := l.Goal[name].check(name, l.Checks); err != nil {
 			errs = append(errs, fmt.Errorf("%s: [goal.%s] %w", l.Sources["goal."+name].Where, name, err))
 		}
@@ -136,14 +128,30 @@ func Load(in Input) (*Loaded, error) {
 	return l, errors.Join(errs...)
 }
 
-func mapKeys[V any](m map[string]V) func(func(string) bool) {
-	return func(yield func(string) bool) {
-		for k := range m {
-			if !yield(k) {
-				return
-			}
+// misnamed refuses a file in dir that names project in another spelling
+// (projects/jobflow-ray.toml for project jobflowray): bs would never read it.
+func misnamed(dir, project string) error {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, e := range entries {
+		stem, ok := strings.CutSuffix(e.Name(), ".toml")
+		if ok && stem != project && Normalise(stem) == project {
+			errs = append(errs, fmt.Errorf("%s: bs never reads it; rename it to %s",
+				filepath.Join(dir, e.Name()), filepath.Join(dir, project+".toml")))
 		}
 	}
+	return errors.Join(errs...)
+}
+
+// Normalise is a repo's project name: lowercased, - and _ dropped (R27⁶).
+func Normalise(repo string) string {
+	return strings.NewReplacer("-", "", "_", "").Replace(strings.ToLower(repo))
 }
 
 // decodeFile lays one file's keys over root. A missing file sets nothing; an unreadable
@@ -355,6 +363,9 @@ type leaf struct {
 
 func (f leaf) table() bool { return f.v.Kind() == reflect.Map || f.v.Kind() == reflect.Pointer }
 
+// checker is a unit table that checks itself.
+var checker = reflect.TypeFor[interface{ check() error }]()
+
 // leaves walks v's fields in declaration order: a plain struct is a table of settings;
 // a string, bool or list of strings is a setting; a pointer or map is a unit table.
 func leaves(v reflect.Value, prefix string) []leaf {
@@ -365,7 +376,17 @@ func leaves(v reflect.Value, prefix string) []leaf {
 		switch sf.Type.Kind() {
 		case reflect.Struct:
 			out = append(out, leaves(v.Field(i), key+".")...)
-		case reflect.String, reflect.Bool, reflect.Pointer, reflect.Map:
+		case reflect.String:
+			out = append(out, leaf{key, sf.Tag, v.Field(i)})
+		case reflect.Bool:
+			if sf.Tag.Get("env") != "" || sf.Tag.Get("default") != "" || sf.Tag.Get("path") != "" {
+				panic("config: " + key + ": a bool takes no env, default or path")
+			}
+			out = append(out, leaf{key, sf.Tag, v.Field(i)})
+		case reflect.Pointer, reflect.Map:
+			if sf.Type.Kind() == reflect.Pointer && !sf.Type.Implements(checker) {
+				panic("config: " + key + ": a pointer table needs a check method")
+			}
 			out = append(out, leaf{key, sf.Tag, v.Field(i)})
 		case reflect.Slice:
 			if sf.Type.Elem().Kind() != reflect.String || sf.Tag.Get("env") != "" || sf.Tag.Get("default") != "" {

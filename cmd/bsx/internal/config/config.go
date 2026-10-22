@@ -108,35 +108,41 @@ const (
 	CommandKind = "command"
 )
 
-// Kind is the workspace kind, worked out (Rule D): the override, else command when
-// [workspace.command] is set, else git_worktree when the project dir is the top level of
-// a git checkout, else none.
-func (c Config) Kind(gitTop bool) string {
+// Kind is the workspace kind, worked out (Rule D), and why: the override, else command
+// when [workspace.command] is set, else git_worktree when the project dir is the top level
+// of a git checkout, else none.
+func (l *Loaded) Kind(gitTop bool) (kind, why string) {
 	switch {
-	case c.Workspace.Kind != "":
-		return c.Workspace.Kind
-	case c.Workspace.Command != nil:
-		return CommandKind
+	case l.Workspace.Kind != "":
+		return l.Workspace.Kind, "workspace.kind, " + l.Sources["workspace.kind"].String()
+	case l.Workspace.Command != nil:
+		return CommandKind, "[workspace.command] is set, " + l.Sources["workspace.command"].String()
 	case gitTop:
-		return GitWorktree
+		return GitWorktree, "worked out: the repo is a git checkout's top level"
 	}
-	return NoWorkspace
+	return NoWorkspace, "worked out: no repo that is a git checkout's top level"
 }
 
-func (c *Command) check() error {
-	var errs []error
+// check checks only what config can know. A missing argv or dir is refused where it
+// would run, at spawn (ADR-0010), so bs config and doctor still show the table.
+func (c *Command) check() error { return checkTimeout(c.Timeout) }
+
+// Missing names each of c's required keys left unset: create, remove, clean (exits 0
+// when nothing would be lost) and dir.
+func (c *Command) Missing() []string {
+	var out []string
 	for _, a := range []struct {
 		key  string
 		argv []string
 	}{{"create", c.Create}, {"remove", c.Remove}, {"clean", c.Clean}} {
 		if len(a.argv) == 0 || a.argv[0] == "" {
-			errs = append(errs, fmt.Errorf("%s: an argv is required", a.key))
+			out = append(out, a.key)
 		}
 	}
 	if c.Dir == "" {
-		errs = append(errs, errors.New("dir: required, e.g. \"{repo}-WS/{name}\""))
+		out = append(out, "dir")
 	}
-	return errors.Join(append(errs, checkTimeout(c.Timeout))...)
+	return out
 }
 
 func (g GoalType) check(name string, checks map[string]Check) error {

@@ -189,3 +189,25 @@ func TestBrokenFileRefusesEveryCommand(t *testing.T) {
 		}
 	}
 }
+
+// gitless runs every command as if git weren't installed.
+type gitless struct{}
+
+func (gitless) Run(context.Context, string, ...string) ([]byte, error) {
+	return nil, exec.ErrNotFound
+}
+
+// Rule G: a git that can't run is "couldn't look" (exit 6), never "no project".
+func TestAFailingGitIsNotNoProject(t *testing.T) {
+	r := newRig(t)
+	var out, errb bytes.Buffer
+	code := Run(context.Background(), Env{Vars: r.env, Dir: r.repo, Self: os.Getpid()}, Ports{Run: gitless{}}, []string{"config"}, &out, &errb)
+	if code != 6 {
+		t.Errorf("exit %d, want 6: %s", code, errb.String())
+	}
+	wantIn(t, errb.String(), "can't tell which project")
+	// Outside any repo is an answer: config runs on the global file.
+	if code, out, stderr := r.run(t.TempDir(), nil, "config"); code != 0 || !strings.Contains(out, "# project: none") {
+		t.Errorf("outside a repo: exit %d %s %s", code, out, stderr)
+	}
+}

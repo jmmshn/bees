@@ -46,7 +46,7 @@ var envKeys = []string{"BS_PROJECT", "BS_LOGBOOK_DIR", "BS_REPOS"}
 // git repo bs runs in, else BS_PROJECT outside a pane), the files, the repo and the
 // logbook. It fails only on what no command can run past: a broken file, a refused dir.
 func load(ctx context.Context, env Env, run port.Runner) (*settings, error) {
-	dir, session, err := config.Dir(env.Vars)
+	dir, session, err := config.Dir(func(k string) string { return core.Getenv(env.Vars, k) })
 	if err != nil {
 		return nil, err
 	}
@@ -104,11 +104,16 @@ func load(ctx context.Context, env Env, run port.Runner) (*settings, error) {
 // beat the repo you are in.
 func (s *settings) findProject(ctx context.Context, cwd string, run port.Runner, pinned string) error {
 	if cwd != "" {
-		if main, err := mainCheckout(ctx, run, cwd); err == nil {
-			s.Project, s.ProjectFrom, s.Repo, s.RepoFrom = normalise(filepath.Base(main)), "the git repo at "+main, main, "the git repo bs runs in"
+		main, err := mainCheckout(ctx, run, cwd)
+		switch {
+		case errors.Is(err, errNotGit):
+		case err != nil: // "couldn't look" is never "no project" (Rule G)
+			return &core.Exit{Code: core.ExitCantCheck, Msg: "bs can't tell which project " + cwd + " is in", Err: err}
+		default:
+			s.Project, s.ProjectFrom, s.Repo, s.RepoFrom = config.Normalise(filepath.Base(main)), "the git repo at "+main, main, "the git repo bs runs in"
 		}
 	}
-	switch p := normalise(pinned); {
+	switch p := config.Normalise(pinned); {
 	case p == "":
 	case s.Project == "":
 		s.Project, s.ProjectFrom = p, "env BS_PROJECT"
@@ -133,17 +138,38 @@ func (s *settings) findRepo(ctx context.Context, run port.Runner) error {
 			return fmt.Errorf("paths.repos %s: %w", dir, err)
 		}
 		for _, e := range es {
-			if e.IsDir() && normalise(e.Name()) == s.Project {
+			if e.IsDir() && config.Normalise(e.Name()) == s.Project {
 				s.Repo, s.RepoFrom = filepath.Join(dir, e.Name()), "paths.repos, "+s.Sources["paths.repos"].String()
 				break
 			}
 		}
 	}
-	if s.Repo != "" {
-		top, err := run.Run(ctx, s.Repo, "git", "-C", s.Repo, "rev-parse", "--show-toplevel")
-		s.GitTop = err == nil && samePath(strings.TrimSpace(string(top)), s.Repo)
+	if s.Repo == "" {
+		return nil
+	}
+	top, err := run.Run(ctx, s.Repo, "git", "-C", s.Repo, "rev-parse", "--show-toplevel")
+	switch err := notGit(err); {
+	case errors.Is(err, errNotGit):
+	case err != nil: // a failing git must not quietly make the kind none
+		return &core.Exit{Code: core.ExitCantCheck, Msg: "bs can't tell whether " + s.Repo + " is a git checkout", Err: err}
+	default:
+		s.GitTop = samePath(strings.TrimSpace(string(top)), s.Repo)
 	}
 	return nil
+}
+
+// errNotGit is a dir git says is in no repo, or a dir that doesn't exist: an answer, not
+// a failure to look.
+var errNotGit = errors.New("not in a git repo")
+
+// notGit is err as errNotGit when git's answer was "not a git repository" (or no such
+// dir); any other failure, git missing included, stays as it is.
+func notGit(err error) error {
+	var ee *port.ExitError
+	if errors.As(err, &ee) && (strings.Contains(string(ee.Stderr), "not a git repository") || strings.Contains(string(ee.Stderr), "No such file or directory")) {
+		return errNotGit
+	}
+	return err
 }
 
 // mainCheckout is the main checkout of the git repo holding dir: a linked worktree names
@@ -151,7 +177,7 @@ func (s *settings) findRepo(ctx context.Context, run port.Runner) error {
 func mainCheckout(ctx context.Context, run port.Runner, dir string) (string, error) {
 	out, err := run.Run(ctx, dir, "git", "-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
-		return "", err
+		return "", notGit(err)
 	}
 	common := strings.TrimSpace(string(out))
 	if filepath.Base(common) != ".git" {
@@ -173,11 +199,6 @@ func (s *settings) checkLogbook(env Env) error {
 		}
 	}
 	return nil
-}
-
-// normalise is a repo's project name: lowercased, - and _ dropped.
-func normalise(repo string) string {
-	return strings.NewReplacer("-", "", "_", "").Replace(strings.ToLower(repo))
 }
 
 // realLogbookDirs are where the real logbooks may be: bs's default, ~/.local/share/bees

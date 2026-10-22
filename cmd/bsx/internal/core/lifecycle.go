@@ -51,17 +51,20 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, force bool
 		}
 		if name == goal.NoBackground {
 			bg, err := c.Background(ctx, sp, self)
+			r := logbook.CheckResult{Name: name, Pass: true}
 			switch {
 			case err != nil && force:
 				d.Unchecked = err.Error()
+				r = logbook.CheckResult{Name: name, Err: err.Error(), Waived: true}
 			case err != nil:
 				return d, exit(ExitCantCheck, bsname.Cmd+" done --force", err, bsname.Cmd+" done: can't check %s for background work", sp.Name)
 			case len(bg) > 0 && force:
 				d.Background = bg
+				r = logbook.CheckResult{Name: name, Detail: ErrBackground.Error(), Waived: true}
 			case len(bg) > 0:
 				return d, exit(ExitBackground, "stop it, then "+bsname.Cmd+" done again (or "+bsname.Cmd+" done --force)", nil, "%s %s:\n  %s", sp.Name, ErrBackground, lines(bg))
 			}
-			d.Checks = append(d.Checks, logbook.CheckResult{Name: name, Pass: true})
+			d.Checks = append(d.Checks, r)
 			continue
 		}
 		r := c.check(ctx, sp, name, h)

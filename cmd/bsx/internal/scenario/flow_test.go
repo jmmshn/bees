@@ -54,15 +54,17 @@ func TestSpawnHandoffEndPruneOnABranchGoal(t *testing.T) {
 }
 
 // The background-work gate on real processes: a child the start didn't see refuses bs
-// done (exit 5) and names it; --force hands off anyway and records it; a killed child
-// clears it; a detached one escapes (the speed bump ADR-0010 accepts).
+// done (exit 5) and names it; --force hands off anyway and records the gate as waived,
+// never passed; a killed child clears it; a detached one escapes, still running (the
+// speed bump ADR-0010 accepts).
 func TestTheGateRefusesBackgroundWork(t *testing.T) {
 	x := newToy(t)
+	ctx := context.Background()
 	sp := x.spawn("toy-1", "branch")
 	x.commit(sp.Workspace.Dir, "work.txt")
 	x.harness.Step(t, "toy-1", "child", "server")
 	kid := x.harness.Await(t, "toy-1", 1).PID
-	st, _, _ := x.open().LatestStart(context.Background(), sp.ID)
+	st, _, _ := x.open().LatestStart(ctx, sp.ID)
 	if ds, _ := x.herdr.Descendants(st.PID); !slices.ContainsFunc(ds, func(p proc.Process) bool { return p.PID == kid }) {
 		t.Fatalf("the child %d isn't running under the harness: %+v", kid, ds)
 	}
@@ -71,20 +73,32 @@ func TestTheGateRefusesBackgroundWork(t *testing.T) {
 	if !strings.Contains(r.String(), "pid "+strconv.Itoa(kid)) {
 		t.Fatalf("gate doesn't name pid %d:\n%s", kid, r)
 	}
+	must(t, x.worker("toy-1", 3, "done", "--force"), 0, "handed off")
+	d, _, _ := x.open().LatestDone(ctx, sp.ID)
+	if c := d.Checks[0]; c.Name != goal.NoBackground || c.Pass || !c.Waived ||
+		!slices.ContainsFunc(d.Background, func(b proc.Background) bool { return b.PID == kid }) {
+		t.Fatalf("a forced done records %+v, background %+v; want no_background waived, not passed, naming %d", c, d.Background, kid)
+	}
 	x.harness.Step(t, "toy-1", "kill", "server")
-	x.harness.Await(t, "toy-1", 3)
-	x.harness.Step(t, "toy-1", "detach", "escapee")
 	x.harness.Await(t, "toy-1", 4)
-	must(t, x.worker("toy-1", 5, "done"), 0, "handed off")
+	x.harness.Step(t, "toy-1", "detach", "escapee")
+	esc := x.harness.Await(t, "toy-1", 5).PID
+	if _, err := proc.Start(esc); err != nil {
+		t.Fatalf("the detached child %d isn't running: %v", esc, err)
+	}
+	must(t, x.worker("toy-1", 6, "done"), 0, "handed off")
+	if d, _, _ := x.open().LatestDone(ctx, sp.ID); !d.Checks[0].Pass {
+		t.Fatalf("a clean done records %+v", d.Checks[0])
+	}
 }
 
-// --force waives the gate and nothing else, and the done records what ran.
+// --force waives the gate and nothing else: an unmet handoff check still refuses.
 func TestDoneForceWaivesOnlyTheGate(t *testing.T) {
 	x := newToy(t)
 	x.spawn("toy-1", "branch")
 	x.harness.Step(t, "toy-1", "child", "server")
 	x.harness.Await(t, "toy-1", 1)
-	must(t, x.worker("toy-1", 2, "done", "--force"), 7, goal.BranchAhead) // still unmet
+	must(t, x.worker("toy-1", 2, "done", "--force"), 7, goal.BranchAhead)
 }
 
 // A verdict goal completes at handoff: done lands it, and end needs no merge.

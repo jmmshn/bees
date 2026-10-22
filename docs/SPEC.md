@@ -28,11 +28,17 @@ Platform: Linux and macOS (R47).
 ## Layout
 
 ```text
-cmd/bs/                   subcommands, flags, output
-internal/logbook/          the entries table
-internal/project/          which project, logbook and repo; which session am I
-internal/worker/           Fleet.Spawn / Fleet.End; Herdr and Beads ports with CLI adapters
-internal/harness/claude/   registry lookup, auth token, NDJSON ring
+cmd/bs/                    main: the machine's ports
+internal/cli/              subcommands, flags, output; config and project resolution
+internal/core/             spawn, start, identity, the gate, done, end, prune, mail
+internal/logbook/          the entries table (schema 2) and its migration
+internal/goal/, checks/    goals and their handoff, complete and prune checks
+internal/port/             the Harness, Review, VCS, Beads and Runner ports
+internal/harness/claude/   the claude_code adapter: launch, settings, ring
+internal/herdr/, proc/     herdr's CLI; process parents and start times
+internal/review/github/, vcs/git/   the GitHub review host and git
+internal/guards/, prompt/  a worker's deny list; the role prompts and fragments
+internal/fake/, scenario/  stateful fakes and the scenario suite (ADR-0010 Tests)
 ```
 
 ## Logbook

@@ -88,18 +88,21 @@ a lost ring only delays a message, and a doubled one can't deliver it twice.
 ## Commands
 
 ```text
-bs queen                      start claude --name queen-<project> in the repo
+bs queen                      record this pane's queen, then exec the harness in the repo
 bs epic <title>               create the project's next epic, <project>-<n>
 bs bead ls | new …            list the project's beads, or file one under an epic
-bs spawn --label L <bead> …   start a worker per bead, in parallel, each in its own herdr workspace
+bs spawn --goal G --label L <bead>   start a worker in its own herdr workspace, its goal fixed
+bs done [--pr URL]… | --answer … --report …   (a worker) hand off; bs checks the goal
+bs check <worker>             run a worker's handoff checks again; writes nothing
+bs goal <worker> <goal>…      amend a live goal; --waive <check>; discard (the keeper)
 bs send [--now] <to> <body|-> store a message, then ring <to>
-bs inbox [--peek]             print unread; without --peek, record receipts
-bs status [--json]            sessions, running or not, and unread counts
-bs end [--force] <worker|bead> remove its recorded workspace, keep its branch; --force discards uncommitted files
-bs prune [--dry-run]          delete ended workers' local branches once merged
-bs config [--project p]       print every setting as TOML, with where each value came from
+bs inbox                      print unread and record receipts
+bs status                     each worker's goal, handoff, completion, liveness; what is stuck
+bs end [--force] [--incomplete] <worker>   end a worker once its goal is complete; keep its workspace
+bs prune                      remove ended workers' workspaces once their goal's prune rule holds
+bs config [init]              print every setting and its source; init writes a commented file
+bs doctor                     check what bs needs
 bs version                    print the commit bs was built from
-bs init                       create the logbook (bs queen and spawn do too; others refuse without one)
 ```
 
 Every command takes `--project`; `send`, `inbox`, `spawn` and `end` take `--as <session>`
@@ -203,15 +206,16 @@ flowchart LR
     C -- no --> E2["error: read its pane"]
 ```
 
-`bs end bees-2-1` removes only the workspace recorded in that `spawned` entry and writes
-`ended`; it keeps the branch. `bs prune` later deletes ended workers' local branches once
-their work is on main, including after a rebase or squash merge.
+`bs end bees-2-1` is the completion gate: once the goal recorded in that `spawned` entry is
+complete it writes `landed` and `ended`, closes the recorded herdr workspace and keeps the
+worktree. `bs prune` later removes ended workers' worktrees and local branches once their
+goal's prune rule holds, including after a rebase or squash merge ([ADR-0010](docs/adr/0010-core-rebuild.md)).
 
 ### The logbook is the only truth
 
 ```text
 entries(id, ts, kind, actor, subject, ref, data)      -- insert-only, STRICT
-kind ∈ message | received | spawned | ended            (rang: v1)
+kind ∈ message | received | spawned | ended | queen | started | goal | done | landed   (rang: v1)
 
 unread(s) = messages to s with no 'received' entry from s, in insertion order
 ```

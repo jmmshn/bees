@@ -67,7 +67,7 @@ func (r *run) spawn(fs *flag.FlagSet, args []string) error {
 	fs.Var(&goals, "goal", "what the worker hands off (repeatable)")
 	label := fs.String("label", "", "its herdr label (default: the bead's title)")
 	as := fs.String("as", "", "the queen, outside a recorded herdr pane")
-	if err := fs.Parse(args); err != nil {
+	if err := parse(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -107,7 +107,7 @@ func (r *run) done(fs *flag.FlagSet, args []string) error {
 	report := fs.String("report", "", "a verdict goal's report, or - to read it from stdin")
 	force := fs.Bool("force", false, "hand off while background work runs (waives that gate only)")
 	as := fs.String("as", "", "the worker, outside a recorded herdr pane")
-	if err := fs.Parse(args); err != nil {
+	if err := parse(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
@@ -137,7 +137,7 @@ func (r *run) end(fs *flag.FlagSet, args []string) error {
 	force := fs.Bool("force", false, "end while background work runs (waives that gate only)")
 	incomplete := fs.Bool("incomplete", false, "end an incomplete goal; prune completes it later")
 	as := fs.String("as", "", "the queen, outside a recorded herdr pane")
-	if err := fs.Parse(args); err != nil {
+	if err := parse(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
@@ -157,7 +157,7 @@ func (r *run) end(fs *flag.FlagSet, args []string) error {
 
 func (r *run) prune(fs *flag.FlagSet, args []string) error {
 	as := fs.String("as", "", "the queen, outside a recorded herdr pane")
-	if err := fs.Parse(args); err != nil {
+	if err := parse(fs, args); err != nil {
 		return err
 	}
 	w, err := r.who(*as)
@@ -171,6 +171,11 @@ func (r *run) prune(fs *flag.FlagSet, args []string) error {
 	code := 0
 	for _, p := range ps {
 		switch {
+		case p.Removed && p.Why != "":
+			fmt.Fprintf(r.out, "removed %s (%s); %s\n", p.Dir, p.Name, p.Why)
+			code = max(code, core.ExitKept)
+		case p.Removed && p.Branch != "":
+			fmt.Fprintf(r.out, "removed %s (%s) and its branch %s\n", p.Dir, p.Name, p.Branch)
 		case p.Removed:
 			fmt.Fprintf(r.out, "removed %s (%s)\n", p.Dir, p.Name)
 		case p.Unknown:
@@ -191,7 +196,7 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 	as := fs.String("as", "", "the sender, outside a recorded herdr pane")
 	project := fs.String("project", "", "write into another project's logbook (its session reads it there)")
 	now := fs.Bool("now", false, "ring with priority now: interrupt the recipient's current turn")
-	if err := fs.Parse(args); err != nil {
+	if err := parse(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 2 {
@@ -201,7 +206,7 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 	if err != nil {
 		return err
 	}
-	to, body := fs.Arg(0), fs.Arg(1)
+	to, body := core.Name(fs.Arg(0)), fs.Arg(1) // a bead id names its worker (ADR-0006)
 	if body == "-" {
 		b, err := io.ReadAll(r.env.Stdin)
 		if err != nil {
@@ -268,7 +273,7 @@ func (r *run) ring(c *core.Core, from, to string, p port.Priority) {
 
 func (r *run) inbox(fs *flag.FlagSet, args []string) error {
 	as := fs.String("as", "", "the reader, outside a recorded herdr pane")
-	if err := fs.Parse(args); err != nil {
+	if err := parse(fs, args); err != nil {
 		return err
 	}
 	w, err := r.who(*as)
@@ -297,7 +302,7 @@ func (r *run) inbox(fs *flag.FlagSet, args []string) error {
 // status lists each worker's latest spawn: its goal, whether it landed or ended, and
 // whether its recorded process runs. A spawn from before goals reads --goal legacy.
 func (r *run) status(fs *flag.FlagSet, args []string) error {
-	if err := fs.Parse(args); err != nil {
+	if err := parse(fs, args); err != nil {
 		return err
 	}
 	sps, err := r.c.Logbook.LatestSpawns(r.ctx)
@@ -352,6 +357,8 @@ func (r *run) running(sp logbook.Spawn) string {
 	switch {
 	case err != nil:
 		return "unknown: " + err.Error()
+	case !ok && sp.Legacy():
+		return "no start recorded (legacy)"
 	case !ok:
 		return "unconfirmed"
 	}

@@ -55,8 +55,8 @@ const DefaultTimeout = 60 * time.Second
 var placeholder = regexp.MustCompile(`^\{([a-z][a-z0-9_]*)\}$`)
 
 // Fill returns argv with each whole-argument {key} replaced by vals[key]. argv[0] is
-// never a placeholder. A ref git couldn't check is ErrCantRun, not ErrBadArgv.
-func Fill(argv []string, vals map[string]Value) ([]string, error) {
+// never a placeholder. A ref git couldn't check (within ctx) is ErrCantRun, not ErrBadArgv.
+func Fill(ctx context.Context, argv []string, vals map[string]Value) ([]string, error) {
 	if len(argv) == 0 || argv[0] == "" {
 		return nil, fmt.Errorf("%w: empty argv", ErrBadArgv)
 	}
@@ -82,7 +82,7 @@ func Fill(argv []string, vals map[string]Value) ([]string, error) {
 		case strings.HasPrefix(v.S, "-"):
 			return nil, fmt.Errorf("%w: argument %d: %s = %q starts with -", ErrBadArgv, i, a, v.S)
 		case v.Ref:
-			if ok, err := refOK(v.S); err != nil {
+			if ok, err := refOK(ctx, v.S); err != nil {
 				return nil, fmt.Errorf("%w: argument %d: checking %s = %q: %w", ErrCantRun, i, a, v.S, err)
 			} else if !ok {
 				return nil, fmt.Errorf("%w: argument %d: %s = %q isn't a valid git ref", ErrBadArgv, i, a, v.S)
@@ -95,8 +95,8 @@ func Fill(argv []string, vals map[string]Value) ([]string, error) {
 
 // refOK reports whether git check-ref-format accepts s as a branch name. A git that
 // couldn't run or answer is an error, never "bad ref" (Rule G).
-func refOK(s string) (bool, error) {
-	_, err := port.Exec{}.Run(context.Background(), "", "git", "check-ref-format", "--branch", s)
+func refOK(ctx context.Context, s string) (bool, error) {
+	_, err := port.Exec{}.Run(ctx, "", "git", "check-ref-format", "--branch", s)
 	var ee *port.ExitError
 	if errors.As(err, &ee) {
 		return false, nil
@@ -119,7 +119,7 @@ func env() []string {
 // error; a refused argv is ErrBadArgv; a command that couldn't start, or ran past its
 // timeout (ErrTimeout, its whole process group killed), is ErrCantRun.
 func Run(ctx context.Context, c Cmd, dir string, vals map[string]Value) (Result, error) {
-	argv, err := Fill(c.Argv, vals)
+	argv, err := Fill(ctx, c.Argv, vals)
 	if err != nil {
 		return Result{}, err
 	}
@@ -135,8 +135,7 @@ func Run(ctx context.Context, c Cmd, dir string, vals map[string]Value) (Result,
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	var out bytes.Buffer
 	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = dir, env(), &out, &out
-	port.Group(cmd)
-	err = cmd.Run()
+	err = port.RunGroup(cmd)
 	var ee *exec.ExitError
 	switch {
 	case ctx.Err() == context.DeadlineExceeded:

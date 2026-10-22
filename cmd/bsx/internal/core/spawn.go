@@ -79,8 +79,15 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 	if sp.ID, err = c.Logbook.RecordSpawn(ctx, req.By, sp, brief(bead, g)); err != nil {
 		// No record: take back the worktree this spawn made, or a second spawn would find
 		// it with nothing to prune it (motif 8).
-		if rerr := c.herdr(session).RemoveWorktree(context.WithoutCancel(ctx), hw.ID, true); rerr != nil {
+		// The branch goes too: spawn found none, so this one holds nothing but its base.
+		rctx := context.WithoutCancel(ctx)
+		if rerr := c.herdr(session).RemoveWorktree(rctx, hw.ID, true); rerr != nil {
 			err = errors.Join(err, fmt.Errorf("and its worktree %s stays: %w", ws.Dir, rerr))
+		} else if rerr := c.dropBranch(rctx, ws.Repo, ws.Branch); rerr != nil {
+			err = errors.Join(err, fmt.Errorf("and its branch %s stays: %w", ws.Branch, rerr))
+		}
+		if errors.Is(err, logbook.ErrAlreadySpawned) {
+			return logbook.Spawn{}, exit(ExitRefused, bsname.Cmd+" end "+name, err, "another spawn of %s was recorded first", name)
 		}
 		return logbook.Spawn{}, exit(ExitFail, "", err, "%s: couldn't record the spawn", name)
 	}
@@ -123,11 +130,20 @@ func (c *Core) workspace(ctx context.Context, name string) (logbook.Workspace, e
 	}
 	base, err := c.git(ctx, c.Repo, "symbolic-ref", "--short", "HEAD")
 	if err != nil {
-		return logbook.Workspace{}, exit(ExitRefused, "git -C "+c.Repo+" switch main", err, "%s has no branch checked out to cut from", c.Repo)
+		return logbook.Workspace{}, refusedOrCant(err, "git -C "+c.Repo+" switch main", "%s has no branch checked out to cut from", c.Repo)
 	}
 	dir := filepath.Join(c.Worktrees, name)
 	if _, err := os.Stat(dir); err == nil {
 		return logbook.Workspace{}, exit(ExitRefused, bsname.Cmd+" prune", nil, "%s already exists", dir)
+	}
+	// The branch is cut fresh: one left by an earlier worker would fail herdr's
+	// worktree add after the checks, or hand this worker its commits.
+	switch _, err := c.git(ctx, c.Repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+name); {
+	case err == nil:
+		return logbook.Workspace{}, exit(ExitRefused, bsname.Cmd+" prune (it deletes a merged worker's branch), or git -C "+c.Repo+" branch -d "+name, nil,
+			"%s already has a branch %s", c.Repo, name)
+	case !isExit(err, 1):
+		return logbook.Workspace{}, exit(ExitCantCheck, bsname.Cmd+" doctor", err, "can't tell whether %s has a branch %s", c.Repo, name)
 	}
 	return logbook.Workspace{Kind: "git_worktree", Dir: dir, Repo: c.Repo, Branch: name, Base: base}, nil
 }
@@ -173,6 +189,25 @@ func brief(b port.Bead, g goal.Goal) string {
 // doorbell is a worker's first prompt: who it is, and where to read and reply.
 func doorbell(name, bead, queen string) string {
 	return fmt.Sprintf(`[%s] you are %s, working on %s — run: %s inbox   (reply with: %s send %s "...")`, bsname.Cmd, name, bead, bsname.Cmd, bsname.Cmd, queen)
+}
+
+// dropBranch deletes branch from repo if it is still there (herdr's worktree remove may
+// have taken it already). Callers have proven it holds nothing to keep.
+func (c *Core) dropBranch(ctx context.Context, repo, branch string) error {
+	switch _, err := c.git(ctx, repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch); {
+	case isExit(err, 1):
+		return nil
+	case err != nil:
+		return err
+	}
+	_, err := c.git(ctx, repo, "branch", "-D", branch)
+	return err
+}
+
+// isExit reports whether err is a command that ran and exited with code.
+func isExit(err error, code int) bool {
+	var ee *port.ExitError
+	return errors.As(err, &ee) && ee.Code == code
 }
 
 // refusedOrCant is a refusal (exit 2) when the tool ran and said no, and "can't check"

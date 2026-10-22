@@ -29,7 +29,7 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, force bool
 		return logbook.Done{}, exit(ExitRefused, "", nil, bsname.Cmd+" done is a worker's handoff; %s is a queen", who.Name)
 	}
 	if who.Spawn == "" {
-		return logbook.Done{}, exit(ExitRefused, bsname.Cmd+" status", nil, bsname.Cmd+" done: no open spawn for %s", who.Name)
+		return logbook.Done{}, exit(ExitRefused, bsname.Cmd+" status", nil, "no open spawn for %s", who.Name)
 	}
 	sp, err := c.Logbook.Spawn(ctx, who.Spawn)
 	if err != nil {
@@ -85,12 +85,11 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, force bool
 	if len(failed) > 0 {
 		return d, exit(ExitHandoff, "fix it, then "+bsname.Cmd+" done again", nil, "%d handoff checks failed:\n  %s", len(failed), strings.Join(failed, "\n  "))
 	}
-	if d.ID, err = c.Logbook.RecordDone(ctx, d); err != nil {
-		return d, err
-	}
+	var landed *logbook.Landed
 	if !slices.ContainsFunc(e.Parts, func(p goal.Part) bool { return !p.AtHandoff }) {
-		err = c.Logbook.RecordLanded(ctx, sp.ID, sp.Name, sp.Name, logbook.Landed{By: "done"})
+		landed = &logbook.Landed{By: "done"}
 	}
+	d.ID, err = c.Logbook.RecordDone(ctx, d, landed)
 	return d, err
 }
 
@@ -113,6 +112,10 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 		return exit(ExitRefused, bsname.Cmd+" status", nil, "no worker %s", name)
 	case sp.Ended:
 		return exit(ExitRefused, bsname.Cmd+" prune", nil, "%s has already ended", name)
+	case sp.Herdr.Session == logbook.DefaultSession:
+		// A spawn there (every legacy one) is a real worker of the shared bs: its workspace
+		// and pid are not a toy's to close or signal.
+		return exit(ExitRefused, "", nil, "%s runs on herdr's default session, which is bs's until the swap (bees-13.9)", name)
 	}
 	e, err := c.Logbook.Goal(ctx, sp)
 	if err != nil {
@@ -289,7 +292,8 @@ func (c *Core) stop(ctx context.Context, sp logbook.Spawn) error {
 type Pruned struct {
 	Name, Dir string
 	Removed   bool
-	Why       string // why it was kept
+	Branch    string // the merged branch it deleted with the workspace
+	Why       string // why it was kept, or why a removed workspace's branch stays
 	Unknown   bool   // it couldn't check
 }
 
@@ -354,5 +358,14 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn) Pruned {
 		return keep(true, "git worktree remove: %v", err)
 	}
 	p.Removed = true
+	// A branch proven merged goes with its workspace, or the bead's next spawn finds it.
+	// A discarded one stays: its commits are nobody's to delete.
+	if !e.Discarded && slices.Contains(e.Prune(), goal.BranchMerged) && sp.Workspace.Branch != "" {
+		if err := c.dropBranch(ctx, sp.Workspace.Repo, sp.Workspace.Branch); err != nil {
+			p.Why = fmt.Sprintf("its branch %s stays: %v", sp.Workspace.Branch, err)
+		} else {
+			p.Branch = sp.Workspace.Branch
+		}
+	}
 	return p
 }

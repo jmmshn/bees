@@ -7,6 +7,7 @@ package scenario_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -116,6 +117,17 @@ func (x *toy) git(dir string, args ...string) string {
 		x.t.Fatalf("git %v: %v: %s", args, err, out)
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// hasBranch reports whether the toy's repo has branch name.
+func (x *toy) hasBranch(name string) bool {
+	x.t.Helper()
+	err := exec.Command("git", "-C", x.repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+name).Run()
+	var ee *exec.ExitError
+	if err != nil && !errors.As(err, &ee) {
+		x.t.Fatal(err)
+	}
+	return err == nil
 }
 
 // result is one bsx call's outcome.

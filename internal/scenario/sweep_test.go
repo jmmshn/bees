@@ -313,12 +313,30 @@ func TestCustomGoalsAreFrozenAtSpawn(t *testing.T) {
 
 // Rule G.
 
-// The default session runs on the keeper's own config, files or not; a herdr --session
-// without its config dir is refused.
+// A missing logbook is refused, untouched, by every command but bs queen and bs spawn,
+// which start a project and say so: a deleted logbook never comes back empty without a
+// word (R48, bees-8.12, motif 14; bees-13.26).
+func TestOnlyQueenAndSpawnStartALogbook(t *testing.T) {
+	x := newToy(t)
+	for _, args := range [][]string{{"status"}, {"inbox", "--as", "queen-toy"}, {"send", "--as", "queen-toy", "toy-1", "hi"}, {"end", "--as", "queen-toy", "toy-1"}, {"prune", "--as", "queen-toy"}} {
+		must(t, x.keeper(args...), 2, "no logbook for project toy at "+x.logbook, "next: bs queen")
+		if _, err := os.Stat(x.logbook); !os.IsNotExist(err) {
+			t.Fatalf("%v created the logbook: %v", args, err)
+		}
+	}
+	x.bead("toy-1", "work")
+	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 0, "new empty logbook for project toy at "+x.logbook)
+	if r := x.keeper("status"); r.code != 0 || strings.Contains(r.String(), "new empty logbook") {
+		t.Fatalf("status once it exists:\n%s", r)
+	}
+}
+
+// The default session runs on the keeper's own config, files or not, and its default
+// logbook dir; a herdr --session without its config dir is refused.
 func TestTheDefaultSessionRunsAndAMissingSessionDirIsRefused(t *testing.T) {
 	x := newToy(t)
 	x.env = append(x.env, "HERDR_SESSION=")
-	must(t, x.keeper("status"), 0, "WORKER")
+	must(t, x.keeper("status"), 2, "no logbook for project toy at ", "/home/.local/share/bees/toy.db") // the keeper's default dir
 	x.env = append(x.env, "HERDR_SESSION=nosuch")
 	must(t, x.keeper("status"), 2, "warning: no config dir for this herdr session nosuch")
 }
@@ -361,7 +379,7 @@ func TestAnUnconfirmedStartIsExit8AndEndClearsIt(t *testing.T) {
 // logbook makes the record fail after herdr made the worktree.
 func TestASpawnThatCantBeRecordedLeavesNoWorktree(t *testing.T) {
 	x := newToy(t)
-	must(t, x.keeper("status"), 0) // creates the logbook
+	x.start()
 	if err := os.Chmod(x.logbook, 0o400); err != nil {
 		t.Fatal(err)
 	}

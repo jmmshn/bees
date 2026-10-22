@@ -69,7 +69,7 @@ Rules:
 - Entries are only inserted, never updated or deleted.
 - Each write is one `BEGIN IMMEDIATE` transaction; concurrent writers wait on the busy timeout instead of failing.
 - A receipt id is deterministic and written with `INSERT OR IGNORE`, so a duplicate is a no-op.
-- `Open` creates the file, table and indexes if missing. The old bs let only `bs init`, `queen` and `spawn` do that, refusing a missing logbook elsewhere (exit 2, R48); since the swap (R53) any command that opens a logbook creates it (bees-13.26 tracks bringing R48 back).
+- `Open` creates the file, table and indexes if missing. Only `bs queen` and `spawn` call it on a missing file (`bs init` too, until the swap), and say so on stderr; every other command refuses one (exit 2), so a deleted logbook is never silently recreated empty (R48).
 - Unread is always this query, in insertion order (`rowid`). Never use a cursor or a time window.
 
 ```sql

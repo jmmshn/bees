@@ -118,6 +118,7 @@ func TestSendReadsAMessageFromStdin(t *testing.T) {
 // there as outside herdr, and without it bs says so.
 func TestAnUnrecordedPaneTakesAs(t *testing.T) {
 	x := newToy(t)
+	x.start()
 	x.shell(x.session, "keeper", x.repo)
 	must(t, x.worker("keeper", 1, "send", "--as", "keeper", "queen-toy", "hi"), 0, "to queen-toy")
 	must(t, x.worker("keeper", 2, "inbox"), 2, "not in a recorded herdr pane: name the session with --as")

@@ -210,6 +210,7 @@ func TestDoctorSaysWhatItSkipped(t *testing.T) {
 		t.Errorf("exit %d", code)
 	}
 	wantIn(t, out, "FAIL project: BS_PROJECT=bees", "skip project: project, workspace and logbook dir", "skip project: gh and the GitHub remote")
+	r.start()
 	for _, args := range [][]string{{"config", "init", "--bogus"}, {"inbox", "--bogus"}} {
 		if code, _, stderr := r.run(r.repo, nil, args...); code != 2 || !strings.Contains(stderr, "flag provided but not defined") {
 			t.Errorf("%v: exit %d %s", args, code, stderr)

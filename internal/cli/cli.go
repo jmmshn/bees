@@ -116,6 +116,9 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 		if err := s.checkLogbook(env); err != nil {
 			return report(stderr, args[0], err)
 		}
+		if err := r.missingLogbook(); err != nil {
+			return report(stderr, args[0], err)
+		}
 		if err := r.oldSessions(); err != nil {
 			return report(stderr, args[0], err)
 		}
@@ -190,13 +193,30 @@ func report(stderr io.Writer, name string, err error) int {
 
 var errUsage = errors.New("usage")
 
+// missingLogbook refuses a command on a project with no logbook file, since opening one
+// creates it and a deleted logbook would come back empty without a word (R48, bees-8.12,
+// motif 14). bs queen and bs spawn start a project: they create it, and say so.
+func (r *run) missingLogbook() error {
+	switch _, err := os.Stat(r.s.Logbook); {
+	case err == nil:
+		return nil
+	case !errors.Is(err, os.ErrNotExist):
+		return cantRead(err)
+	case r.name == "queen" || r.name == "spawn":
+		fmt.Fprintf(r.err, "%s %s: new empty logbook for project %s at %s\n", bsname.Cmd, r.name, r.s.Project, r.s.Logbook)
+		return nil
+	}
+	return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("no logbook for project %s at %s; nothing was read or written", r.s.Project, r.s.Logbook),
+		Next: bsname.Cmd + " queen starts the project; if it had a queen or workers, the logbook was deleted or paths.logbook_dir moved: restore the file rather than start afresh"}
+}
+
 // oldSessions refuses, before the logbook is opened (and so migrated), a command on a
 // logbook where a session the old bs started is still open: this bs can neither ring it
 // nor see it run (bees-13.9; ADR-0010: end them first). bs end, the way out, and bs
 // status only warn.
 func (r *run) oldSessions() error {
 	if _, err := os.Stat(r.s.Logbook); errors.Is(err, os.ErrNotExist) {
-		return nil
+		return nil // bs queen or spawn about to start it
 	}
 	lb, err := logbook.OpenReadOnly(r.ctx, r.s.Logbook)
 	if err != nil {

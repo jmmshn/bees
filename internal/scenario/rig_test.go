@@ -164,6 +164,17 @@ func (x *toy) bead(id, title string) {
 }
 
 // open opens the toy's logbook read-only, for assertions on entries.
+// start makes the toy's logbook, as a first bs queen would: other commands refuse a
+// missing one (R48).
+func (x *toy) start() {
+	x.t.Helper()
+	lb, err := logbook.Open(context.Background(), x.logbook)
+	if err != nil {
+		x.t.Fatal(err)
+	}
+	lb.Close()
+}
+
 func (x *toy) open() *logbook.Logbook {
 	x.t.Helper()
 	lb, err := logbook.OpenReadOnly(context.Background(), x.logbook)

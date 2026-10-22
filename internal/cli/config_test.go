@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/port"
 )
 
@@ -41,6 +42,16 @@ func newRig(t *testing.T) *rig {
 	}
 	r.write("config.toml", "[paths]\nlogbook_dir = \""+r.logbook+"\"\n")
 	return r
+}
+
+// start makes the rig project's logbook, as a first bs queen would (R48).
+func (r *rig) start() {
+	r.t.Helper()
+	lb, err := logbook.Open(context.Background(), filepath.Join(r.logbook, "mytoy.db"))
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	lb.Close()
 }
 
 func (r *rig) write(name, body string) {
@@ -93,9 +104,15 @@ func TestRefusesTheRealLogbookDir(t *testing.T) {
 		}
 	}
 	r.write("config.toml", "[paths]\nlogbook_dir = \""+r.logbook+"\"\n")
+	r.start()
 	if code, _, stderr := r.run(r.repo, nil, "status"); code != 0 {
 		t.Fatalf("a toy's own logbook dir: exit %d %s", code, stderr)
 	}
+	lb, err := logbook.Open(context.Background(), filepath.Join(real, "mytoy.db")) // the default session's own
+	if err != nil {
+		t.Fatal(err)
+	}
+	lb.Close()
 	for _, s := range []string{"HERDR_SESSION=", "HERDR_SESSION=default"} {
 		code, _, stderr := r.run(r.repo, []string{s}, "status")
 		if code != 0 || strings.Contains(stderr, "warning") {

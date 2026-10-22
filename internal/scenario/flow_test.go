@@ -105,6 +105,7 @@ func TestDoneForceWaivesOnlyTheGate(t *testing.T) {
 // where to look, never a database error.
 func TestDoneForNoOpenSpawnIsRefused(t *testing.T) {
 	x := newToy(t)
+	x.start()
 	must(t, x.keeper("done", "--as", "toy-7"), 2, "no open spawn for toy-7", "next: bs status")
 	x.spawn("toy-1", "verdict")
 	must(t, x.worker("toy-1", 1, "done", "--answer", "yes", "--report", "ok"), 0)

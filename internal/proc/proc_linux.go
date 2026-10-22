@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -32,10 +33,14 @@ func Start(pid int) (string, error) {
 	return f[19], nil
 }
 
+// exited reports whether err from reading /proc/<pid> means the process is gone: ENOENT,
+// or ESRCH for one that exited during the read.
+func exited(err error) bool { return os.IsNotExist(err) || errors.Is(err, syscall.ESRCH) }
+
 // stat returns the fields of /proc/<pid>/stat after the command name.
 func stat(pid int) ([]string, error) {
 	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-	if os.IsNotExist(err) {
+	if exited(err) {
 		return nil, fmt.Errorf("pid %d: %w", pid, ErrGone)
 	} else if err != nil {
 		return nil, err
@@ -51,7 +56,7 @@ func stat(pid int) ([]string, error) {
 // Name is pid's command name (/proc/<pid>/comm).
 func Name(pid int) (string, error) {
 	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
-	if os.IsNotExist(err) {
+	if exited(err) {
 		return "", fmt.Errorf("pid %d: %w", pid, ErrGone)
 	}
 	return strings.TrimSpace(string(b)), err
@@ -98,7 +103,7 @@ func Descendants(pid int) ([]Process, error) {
 // has none, reads as its name.
 func Command(pid int) (string, error) {
 	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
-	if os.IsNotExist(err) {
+	if exited(err) {
 		return "", fmt.Errorf("pid %d: %w", pid, ErrGone)
 	} else if err != nil {
 		return "", err
@@ -140,7 +145,7 @@ func Listening(ctx context.Context, pids []int) (map[int][]int, error) {
 			return nil, err
 		}
 		fds, err := os.ReadDir(fmt.Sprintf("/proc/%d/fd", pid))
-		if os.IsNotExist(err) {
+		if exited(err) {
 			continue
 		} else if err != nil {
 			return nil, err

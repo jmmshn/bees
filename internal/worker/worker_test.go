@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -63,6 +64,8 @@ type fakeHerdr struct {
 	moved       map[string]int // a moved pane's id → the shell it kept
 	closedPanes []string
 	cwds        map[string]string // pane → the directory its shell works in, for PanesUnder
+	signalled   []syscall.Signal
+	stubborn    map[int]bool // pids that ignore signals
 }
 
 // fakeProc is a process: a pid with a start time, a name and a parent, alive until it exits.
@@ -234,6 +237,21 @@ func (h *fakeHerdr) Name(pid int) (string, error) {
 
 func (h *fakeHerdr) Exe(pid int) (string, error) { return "/fake/" + fmt.Sprint(pid), nil }
 
+// Signal ends p unless it is one of stubborn's, as a process that ignores signals.
+func (h *fakeHerdr) Signal(p proc.Process, sig syscall.Signal) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	pr := h.procs[p.PID]
+	if pr == nil || !pr.alive || pr.start != p.Start {
+		return proc.ErrGone
+	}
+	h.signalled = append(h.signalled, sig)
+	if !h.stubborn[p.PID] {
+		pr.alive = false
+	}
+	return nil
+}
+
 // Descendants is every live process below pid, level by level, as proc's is.
 func (h *fakeHerdr) Descendants(pid int) ([]proc.Process, error) {
 	h.mu.Lock()
@@ -311,12 +329,24 @@ func (h *fakeHerdr) movePaneInto(name, ws string) {
 	h.workspaces = slices.DeleteFunc(h.workspaces, func(w worker.Workspace) bool { return w.Pane == old })
 }
 
-// Panes lists ws's root pane and any agent's pane moved into it.
+// Panes lists ws's root pane and any agent's pane moved into it; "" lists every pane.
 func (h *fakeHerdr) Panes(ctx context.Context, ws string) ([]string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.listErr != nil {
 		return nil, h.listErr
+	}
+	if ws == "" {
+		var all []string
+		for _, w := range h.workspaces {
+			all = append(all, w.Pane)
+		}
+		for _, p := range h.agents {
+			if _, moved := h.moved[p]; moved && !slices.Contains(all, p) {
+				all = append(all, p)
+			}
+		}
+		return all, nil
 	}
 	i := slices.IndexFunc(h.workspaces, func(w worker.Workspace) bool { return w.ID == ws })
 	if i < 0 {
@@ -2306,10 +2336,10 @@ func TestEndAllForceKillsNoGuest(t *testing.T) {
 		t.Fatalf("kept = %q, removed = %v; want bees-9 kept for its guests", kept, r.h.removed)
 	}
 	r.h.mu.Lock()
-	alive := r.h.procs[stranger].alive && r.h.procs[r.h.pids["bees-8"]].alive
+	strangerAlive, bees8Alive := r.h.procs[stranger].alive, r.h.procs[r.h.pids["bees-8"]].alive
 	r.h.mu.Unlock()
-	if !alive {
-		t.Fatal("a guest was killed")
+	if !strangerAlive || bees8Alive { // bees-8, ended with --force, is stopped where it ran (bees-12.46)
+		t.Fatalf("stranger alive = %v, bees-8 alive = %v; want the stranger kept and the ended bees-8 stopped", strangerAlive, bees8Alive)
 	}
 }
 
@@ -2526,5 +2556,55 @@ func TestAWorkerOnAnotherHarnessEndsButIsNotResumed(t *testing.T) {
 	}
 	if st, err := r.fleet.Spawn(ctx, "bees-8", ""); err != nil || st.Resumed {
 		t.Fatalf("spawn after the end = %+v, %v; want a fresh start on claude_code", st, err)
+	}
+}
+
+// bees-12.46: bs end --force on a moved worker stops its recorded process wherever it runs
+// (it closes the pane holding it, else signals it), so the end recorded is no zombie; if
+// the process won't stop, nothing is recorded.
+func TestEndForceStopsAMovedWorker(t *testing.T) {
+	defer worker.StopWait(20 * time.Millisecond)()
+	for _, c := range []struct {
+		name     string
+		hide     bool // herdr no longer lists the pane it runs in
+		stubborn bool
+		stopped  string // substring of Ending.Stopped; "" means refused
+		signals  int
+	}{
+		{name: "pane found", stopped: "closed pane w2:p"},
+		{name: "pane not listed", hide: true, stopped: "sent it terminated", signals: 1},
+		{name: "won't die", hide: true, stubborn: true, signals: 2},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := context.Background()
+			r := newRig(t)
+			_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+			_, _ = r.fleet.Spawn(ctx, "bees-9", "second worker")
+			r.h.movePaneInto("bees-8", "w2") // its workspace closes; it runs on in bees-9's
+			pid := r.h.pids["bees-8"]
+			r.h.mu.Lock()
+			if c.hide {
+				delete(r.h.moved, r.h.agents["bees-8"])
+			}
+			if c.stubborn {
+				r.h.stubborn = map[int]bool{pid: true}
+			}
+			r.h.mu.Unlock()
+			err := r.fleet.End(ctx, "bees-8", worker.EndOpts{Force: true})
+			r.h.mu.Lock()
+			alive, signals := r.h.procs[pid].alive, len(r.h.signalled)
+			r.h.mu.Unlock()
+			sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8")
+			if c.stopped == "" {
+				if err == nil || sp.Ended || signals != c.signals {
+					t.Fatalf("err=%v, ended=%v, %d signals; want refused, nothing recorded, %d signals", err, sp.Ended, signals, c.signals)
+				}
+				return
+			}
+			es, _ := r.fleet.EndAll(ctx, worker.EndOpts{}) // bees-9 only: bees-8 is ended
+			if err != nil || alive || !sp.Ended || signals != c.signals || len(es) != 1 {
+				t.Fatalf("err=%v, alive=%v, ended=%v, %d signals; want stopped (%s) and ended", err, alive, sp.Ended, signals, c.stopped)
+			}
+		})
 	}
 }

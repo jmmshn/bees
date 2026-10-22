@@ -261,7 +261,11 @@ func (HerdrCLI) Panes(ctx context.Context, workspace string) ([]string, error) {
 			} `json:"panes"`
 		} `json:"result"`
 	}
-	code, err := herdr(ctx, &r, "pane", "list", "--workspace", workspace)
+	args := []string{"pane", "list"}
+	if workspace != "" {
+		args = append(args, "--workspace", workspace)
+	}
+	code, err := herdr(ctx, &r, args...)
 	if code == "workspace_not_found" {
 		return nil, nil
 	}

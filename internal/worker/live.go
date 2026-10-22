@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"syscall"
 	"time"
 
 	"github.com/jmmshn/bees/internal/logbook"
@@ -46,6 +47,7 @@ type Procs interface {
 	Parent(pid int) (int, error)
 	Command(pid int) (string, error)
 	Listening(ctx context.Context, pids []int) (map[int][]int, error)
+	Signal(p proc.Process, sig syscall.Signal) error // only while p is the recorded process
 }
 
 // SystemProcs is internal/proc.
@@ -58,6 +60,9 @@ func (SystemProcs) Exe(pid int) (string, error)                 { return proc.Ex
 func (SystemProcs) Descendants(pid int) ([]proc.Process, error) { return proc.Descendants(pid) }
 func (SystemProcs) Parent(pid int) (int, error)                 { return proc.Parent(pid) }
 func (SystemProcs) Command(pid int) (string, error)             { return proc.Command(pid) }
+func (SystemProcs) Signal(p proc.Process, sig syscall.Signal) error {
+	return proc.Signal(p, sig)
+}
 func (SystemProcs) Listening(ctx context.Context, pids []int) (map[int][]int, error) {
 	return proc.Listening(ctx, pids)
 }
@@ -286,4 +291,61 @@ func (f Fleet) inPane(ctx context.Context, pane string) ([]proc.Process, error) 
 		out = append(out, ds...)
 	}
 	return out, nil
+}
+
+// stopWait bounds each wait for a stopped process to exit.
+var stopWait = 5 * time.Second
+
+// stop ends the recorded process p wherever it runs now (a moved pane), for bs end
+// --force (bees-12.46): it closes the herdr pane that holds it, else sends it SIGTERM,
+// then SIGKILL, each only while p is still the recorded process. It says how, or errs
+// when p still runs: then the end must not be recorded (motif 7).
+func (f Fleet) stop(ctx context.Context, p proc.Process) (string, error) {
+	gone := func() bool {
+		deadline := time.Now().Add(stopWait)
+		for {
+			alive, err := f.Procs.Alive(p)
+			if err == nil && !alive {
+				return true
+			}
+			if time.Now().After(deadline) {
+				return false
+			}
+			select {
+			case <-ctx.Done():
+				return false
+			case <-time.After(watchEvery):
+			}
+		}
+	}
+	panes, err := f.H.Panes(ctx, "")
+	if err != nil {
+		return "", fmt.Errorf("can't find the pane it runs in: %w", err)
+	}
+	for _, pane := range panes {
+		ps, err := f.inPane(ctx, pane)
+		if err != nil {
+			return "", err
+		}
+		if slices.Contains(ps, p) {
+			if err := f.H.ClosePane(ctx, pane); err != nil {
+				return "", fmt.Errorf("closing pane %s: %w", pane, err)
+			}
+			if gone() {
+				return "closed pane " + pane, nil
+			}
+			break
+		}
+	}
+	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL} {
+		if err := f.Procs.Signal(p, sig); errors.Is(err, proc.ErrGone) {
+			return "it exited", nil
+		} else if err != nil {
+			return "", err
+		}
+		if gone() {
+			return fmt.Sprintf("sent it %s (pid %d)", sig, p.PID), nil
+		}
+	}
+	return "", fmt.Errorf("pid %d still runs after SIGKILL", p.PID)
 }

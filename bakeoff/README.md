@@ -17,15 +17,16 @@ bakeoff/mkrun.sh c 3                       # fresh toy repo + bare origin + lead
 # play cards/S3.md by hand, or tell a keeper agent: "read cards/DRIVER.md, then play cards/S3.md against <run dir>"
 bakeoff/observe.sh ~/.cache/bees-bakeoff/runs/t3c   # snapshot: lead, worker panes, branches
 bakeoff/collect.sh ~/.cache/bees-bakeoff/runs/t3c   # metrics.json: wall time, keeper turns, interventions, tokens, leftovers, check
-bs end --all --project t3c                         # arm c, after collect.sh: ends the workers the run's logbook recorded
+cd ~/.cache/bees-bakeoff/runs/t3c/t3c && bs status   # arm c, after collect.sh: then for each worker still recorded,
+bs end --as queen-t3c --force [--incomplete] <worker>  # end it (--incomplete when its goal isn't complete)
 ```
 
 - **A one-off live check is not a card.** To exercise a bs change by hand, use the `live-test` skill (`.claude/skills/live-test/SKILL.md`): its own toy project, a scripted teardown and a leak check.
 - **Location of runs.** Runs live in `$BAKEOFF_RUNS`, which defaults to `~/.cache/bees-bakeoff/runs`. That directory is outside any repo on purpose: Claude walks up parent directories for `CLAUDE.md`, so a toy repo placed inside bees would load bees' dogfood rules into every lead.
-- **Which bs.** Arm c runs the `bs` on PATH. To replay a branch's prompts without installing it (only the queen installs bs), build it and pass its path: `go build -o bin/bs ./cmd/bs && BAKEOFF_BS=bin/bs bakeoff/mkrun.sh c 1`. The queen inherits that PATH, so its spawns (and the worker prompt they carry) use that build; spawned workers start in fresh herdr shells and run the shared `bs` for their own `bs send`/`bs inbox`.
-- **Project names.** A toy repo's directory is `t<script><arm>`, and that is its bs project name, so bees runs never touch the real `bees` logbook.
+- **Which bs.** Arm c runs the `bs` on PATH. To replay a branch's prompts without installing it (only the queen installs bs), build it and pass its path: `go build -o bin/bs ./cmd/bs && BAKEOFF_BS=bin/bs bakeoff/mkrun.sh c 1`. The queen inherits that PATH, and `mkrun.sh` gives the run a config home of its own (`<run>/xdg`) whose project file sets `worker.path` to the build's directory, so her workers run it too.
+- **Project names.** A toy repo's directory is `t<script><arm>`, and that is its bs project name, so bees runs never touch the real `bees` logbook. Logbooks outlive their runs, so a replay passes `BAKEOFF_TAG=<letters>` (`t1cp`): an older round's `t1c.db` would hand the new queen its recorded workers.
 - **Toy repo setup.**
-  - `fixtures/toy/` is the starting tree. It includes an `AGENTS.md` that says to push the branch and report the sha instead of opening a PR, and a `.claude/settings.json` that sets auto mode and accepts cross-session messages.
+  - `fixtures/toy/` is the starting tree. It includes an `AGENTS.md` that says to push the branch and report the sha instead of opening a PR (its origin is a bare repo, so arm c's queen has no `pr` goal to give: `bs spawn` refuses one without a GitHub remote), and a `.claude/settings.json` that sets auto mode and accepts cross-session messages.
   - `fixtures/golden/` holds the expected results.
   - `check.sh` grades a run against them.
 - **Setup steps the harness does for the keeper.**

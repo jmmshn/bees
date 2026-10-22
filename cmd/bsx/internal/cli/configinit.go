@@ -32,7 +32,7 @@ func (r *run) configInit(fs *flag.FlagSet, args []string) error {
 	} {
 		fs.Func(f.name, f.usage, func(v string) error { set[f.key] = v; return nil })
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parse(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {

@@ -30,7 +30,7 @@ import (
 // FAIL exits 1. r.s.Broken, the error that stopped bs reading the config, is a FAIL of its
 // own, and the checks that need no config still run on the defaults.
 func (r *run) doctor(fs *flag.FlagSet, args []string) error {
-	if err := fs.Parse(args); err != nil {
+	if err := parse(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
@@ -79,12 +79,12 @@ func (r *run) doctor(fs *flag.FlagSet, args []string) error {
 		}
 		switch {
 		case !strings.HasPrefix(k, "BS_"):
-		case !slices.Contains(envKeys, k):
-			d.line("WARN", "env", "%s is set: %s doesn't read it (the shared bs may); it does nothing here", k, bsname.Cmd)
 		case s.Pane != nil:
 			d.line("WARN", "env", "%s is set in %s's pane, where %s ignores it: %s sets no BS_* in a session's env, so it leaked from the shell that started herdr", k, s.Pane.Who.Name, bsname.Cmd, bsname.Cmd)
+		case !slices.Contains(envKeys, k):
+			d.line("WARN", "env", "%s is set; %s doesn't read it (the shared bs may): it does nothing here", k, bsname.Cmd)
 		default:
-			d.line("WARN", "env", "%s is set in this shell and applies to every %s command run from it: unset it here unless you meant it", k, bsname.Cmd)
+			d.line("WARN", "env", "%s is set and overrides the config here (outside a herdr pane), for every %s command run from this shell: unset it unless you meant it", k, bsname.Cmd)
 		}
 	}
 	if stray == 0 {
@@ -164,13 +164,15 @@ func (d *doctor) project() {
 		return
 	case s.Repo == "":
 		d.line("WARN", "repo", "project %s (%s) has no repo: run in it, or set paths.repo in its project file", s.Project, s.ProjectFrom)
+	case s.RepoMissing:
+		d.line("FAIL", "repo", "%s (%s) doesn't exist: set paths.repo to the project's checkout", s.Repo, s.RepoFrom)
 	default:
-		kind, why := s.Kind(s.GitTop)
+		kind, why, _ := s.Kind(s.GitTop)
 		d.line("ok", "project", "%s (%s), repo %s, workspace %s (%s)", s.Project, s.ProjectFrom, s.Repo, kind, why)
 	}
 	// A kind spawn won't make yet is a spawn refused, said here first.
-	switch kind, why := s.Kind(s.GitTop); {
-	case unmade(kind) == "" || s.Repo == "":
+	switch kind, why, _ := s.Kind(s.GitTop); {
+	case unmade(kind) == "" || s.Repo == "" || s.RepoMissing:
 	case kind == config.NoWorkspace && s.GitTop:
 		d.line("FAIL", "workspace", "workspace.kind = none over a git checkout (%s): %s, and workers would share %s with no branch of their own (bees-12.28); drop the override for git_worktree", why, unmade(kind), s.Repo)
 	case kind == config.NoWorkspace:
@@ -348,7 +350,7 @@ func (d *doctor) unread() {
 	unread := map[string][]string{}
 	for _, f := range d.r.s.Fields() {
 		// [workspace.command] is not ignored: spawn refuses it (the workspace line).
-		if f.Unread != "" && f.Source.Kind != "default" && !strings.HasPrefix(f.Key, "workspace.command") {
+		if f.Unread != "" && !f.Unset && f.Source.Kind != "default" && !strings.HasPrefix(f.Key, "workspace.command") {
 			unread[f.Unread] = append(unread[f.Unread], f.Key)
 		}
 	}

@@ -22,7 +22,11 @@ type rig struct {
 
 func newRig(t *testing.T) *rig {
 	t.Helper()
-	root := t.TempDir()
+	// git reports the repo with symlinks resolved (macOS: /var is /private/var).
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	r := &rig{t: t, home: filepath.Join(root, "home"), cfg: filepath.Join(root, "cfg"), repo: filepath.Join(root, "my-toy"),
 		logbook: filepath.Join(root, "logbooks")}
 	r.session = filepath.Join(r.cfg, "bees", "sessions", "toy")

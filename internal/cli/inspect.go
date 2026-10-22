@@ -34,7 +34,7 @@ func (r *run) config(fs *flag.FlagSet, args []string) error {
 		fmt.Fprintf(w, "# %s file: %s%s\n", f.Scope, f.Path, state)
 	}
 	if s.Project == "" {
-		fmt.Fprintln(w, "# project: none (run in its repo, or set BS_PROJECT outside a herdr pane): global file only")
+		fmt.Fprintln(w, "# project: none (run in its repo, or set BS_PROJECT outside a recorded herdr pane): global file only")
 	} else {
 		fmt.Fprintf(w, "# project: %s (%s)\n# logbook: %s (paths.logbook_dir, %s)\n", s.Project, s.ProjectFrom, s.Logbook, s.Sources["paths.logbook_dir"])
 	}

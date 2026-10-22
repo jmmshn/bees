@@ -35,3 +35,23 @@ func TestRepoOfReadsEveryRemoteForm(t *testing.T) {
 		}
 	}
 }
+
+// RepoOf reads OWNER/REPO from each spelling of a github.com remote, and nothing from
+// any other host: gh is asked with --repo, never the upstream gh would pick for a fork.
+func TestRepoOfReadsEachSpelling(t *testing.T) {
+	for url, want := range map[string]string{
+		"https://github.com/o/r.git":   "o/r",
+		"https://github.com/o/r":       "o/r",
+		"git@github.com:o/r.git":       "o/r",
+		"ssh://git@github.com/o/r.git": "o/r",
+		"git@gh-work:o/r.git":          "",
+		"https://ghe.example.com/o/r":  "",
+		"https://github.com/o":         "",
+		"/srv/git/github.com-mirror/r": "",
+		"https://github.com/o/r/extra": "",
+	} {
+		if got, _ := github.RepoOf(url); got != want {
+			t.Errorf("RepoOf(%q) = %q; want %q", url, got, want)
+		}
+	}
+}

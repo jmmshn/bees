@@ -138,6 +138,12 @@ func TestAPaneActsOnItsOwnProjectWhereverItsCwdIs(t *testing.T) {
 		must(t, x.worker("toy-1", 2*i+2, "status"), 0, "toy-1")
 	}
 	must(t, x.worker("toy-1", 5, "inbox"), 0, "You own toy-1")
+	// The queen too: her entry records the repo she started in, so a spawn from anywhere
+	// still has one.
+	x.startQueen()
+	x.bead("toy-2", "work on toy-2")
+	x.harness.Step(t, "queen-toy", "cd", os.TempDir())
+	must(t, x.queenRuns(2, "spawn", "--goal", "verdict", "toy-2"), 0, "spawned toy-2")
 }
 
 // bees-12.43 across logbooks: the pane scan reads every <project>.db read-only, skips a
@@ -199,10 +205,10 @@ func TestAMissedStartIsHealedLate(t *testing.T) {
 	x.ports.Timing.Confirm, x.ports.Timing.AfterErr = 300*time.Millisecond, 300*time.Millisecond
 	x.bead("toy-1", "work on toy-1")
 	x.herdr.FailStarts(errors.New("ps: can't read the table"))
-	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 8, "start unconfirmed", "can't read the table")
+	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 6, "can't look for its harness", "can't read the table")
 	x.herdr.FailStarts(nil)
 	sp, _, _ := x.open().LatestSpawn(context.Background(), "toy-1")
-	x.herdr.InfoFails = 1000
+	x.herdr.FailInfo(1000)
 	r := x.keeper("status")
 	if !strings.HasPrefix(cell(r.out, "toy-1", "RUNNING"), "unknown: can't look for toy-1's harness") {
 		t.Fatalf("status with herdr down:\n%s", r)
@@ -210,7 +216,7 @@ func TestAMissedStartIsHealedLate(t *testing.T) {
 	if _, ok, _ := x.open().LatestStart(context.Background(), sp.ID); ok {
 		t.Fatal("a failed heal probe wrote a start")
 	}
-	x.herdr.InfoFails = 0
+	x.herdr.FailInfo(0)
 	r = x.keeper("status")
 	must(t, r, 0, "toy-1's start was never confirmed; found it running", "late: toy-1: its start was recorded late, after confirmation missed it")
 	if cell(r.out, "toy-1", "RUNNING") != "yes (late)" {
@@ -228,9 +234,25 @@ func TestAWorkersFirstCallHealsItsStart(t *testing.T) {
 	x.ports.Timing.Confirm, x.ports.Timing.AfterErr = 300*time.Millisecond, 300*time.Millisecond
 	x.bead("toy-1", "work on toy-1")
 	x.herdr.FailStarts(errors.New("ps: can't read the table"))
-	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 8)
+	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 6)
 	x.herdr.FailStarts(nil)
 	must(t, x.worker("toy-1", 1, "inbox"), 0, "You own toy-1", "recorded late")
+}
+
+// A start healed late has no baseline: work begun before the heal can't be told from its
+// own, so the gate fails closed (exit 6) and names --force, rather than pass it.
+func TestAStartHealedLateFailsTheGateClosed(t *testing.T) {
+	x := newToy(t)
+	x.ports.Timing.Confirm, x.ports.Timing.AfterErr = 300*time.Millisecond, 300*time.Millisecond
+	x.bead("toy-1", "work on toy-1")
+	x.herdr.FailStarts(errors.New("ps: can't read the table"))
+	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 6)
+	x.herdr.FailStarts(nil)
+	x.harness.Step(t, "toy-1", "listen", "server")
+	x.harness.Await(t, "toy-1", 1)
+	must(t, x.worker("toy-1", 2, "done", "--answer", "yes", "--report", "ok"), 6, "recorded late", "it began with are unknown", "next: bs done --force")
+	must(t, x.worker("toy-1", 3, "done", "--force", "--answer", "yes", "--report", "ok"), 0)
+	must(t, x.keeper("end", "--as", "queen-toy", "toy-1"), 6, "it began with are unknown", "next: bs end toy-1 --force")
 }
 
 // bees-12.38: a message for another project's session, whose logbook is in the logbook
@@ -299,8 +321,7 @@ func TestPilotBug1250AReplyWaitLoopInTheBackground(t *testing.T) {
 	sp := x.spawn("toy-1", "branch")
 	x.commit(sp.Workspace.Dir, "work.txt")
 	x.harness.Step(t, "toy-1", "listen", "server")
-	x.harness.Await(t, "toy-1", 1)
-	time.Sleep(200 * time.Millisecond) // it binds its port
+	x.harness.Await(t, "toy-1", 1) // the step returns once its port is bound
 	must(t, x.worker("toy-1", 2, "done"), 5, "still runs background work", "listening :", "a reply-wait loop too")
 }
 

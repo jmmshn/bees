@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/jmmshn/bees/internal/port"
@@ -89,7 +90,9 @@ func (a Adapter) Ring(t port.Target, text string, p port.Priority) error {
 // may read its settings files again after startup. Claude reads settings.local.json from
 // the main checkout even in a worktree, so per-worker settings can't live in the repo, and
 // the auto mode classifier reads autoMode only from user, managed or --settings settings.
-// It pins no env: the worker's bs finds its project from its herdr pane (ADR-0010).
+// Its only env is the shell timeout (BASH_DEFAULT_TIMEOUT_MS and BASH_MAX_TIMEOUT_MS, Claude
+// Code's 2-minute default otherwise cuts bs done --wait); the worker's bs finds its
+// project from its herdr pane (ADR-0010).
 //
 // Every autoMode list keeps "$defaults": a list without it replaces the built-in rules
 // (force push, exfiltration). The deny rules run before the classifier; a rule's * matches
@@ -106,6 +109,10 @@ func workerSettings(st port.Start) (string, error) {
 			"allow":       {"$defaults"},
 		},
 		"permissions": map[string][]string{"deny": deny},
+	}
+	if st.ShellTimeout > 0 {
+		ms := strconv.FormatInt(st.ShellTimeout.Milliseconds(), 10)
+		s["env"] = map[string]string{"BASH_DEFAULT_TIMEOUT_MS": ms, "BASH_MAX_TIMEOUT_MS": ms}
 	}
 	if len(st.Path) > 0 {
 		h, err := pathHook(st.Path)

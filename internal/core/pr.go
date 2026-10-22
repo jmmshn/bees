@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -15,9 +16,10 @@ import (
 	"github.com/jmmshn/bees/internal/port"
 )
 
-// workspaceCommits is every commit made in sp's workspace since the first spawn that
-// recorded its directory, as its VCS reads them: the only commits a handed-off change may
-// be judged by, so a typo can't name another worker's PR (ADR-0010).
+// workspaceCommits is every commit written in sp's workspace since the first spawn that
+// recorded its directory, as its VCS reads them: with their rebased copies (madeHere),
+// the only commits a handed-off change may be judged by, so a typo can't name another
+// worker's PR (ADR-0010).
 func (c *Core) workspaceCommits(ctx context.Context, sp logbook.Spawn) ([]string, error) {
 	since, ok, err := c.Logbook.FirstSpawnAt(ctx, sp.Workspace.Dir)
 	if err != nil {
@@ -38,14 +40,23 @@ type look struct {
 	views map[string]port.Change
 	errs  map[string]error
 	wc    []string
+	wcIDs map[string]bool // wc's patch-ids
 	wcErr error
 	wcOK  bool
-	// pending is set by a ci_green that failed only on checks still running.
-	pending bool
+	lags  map[string]string // change URL → lag's answer
 }
 
+// outcome is a check's answer: failed, passed, or pending (not failed, not passed yet).
+type outcome uint8
+
+const (
+	failed outcome = iota
+	passed
+	pending
+)
+
 func (c *Core) look(sp logbook.Spawn, h Handed) *look {
-	return &look{c: c, sp: sp, h: h, views: map[string]port.Change{}, errs: map[string]error{}}
+	return &look{c: c, sp: sp, h: h, views: map[string]port.Change{}, errs: map[string]error{}, lags: map[string]string{}}
 }
 
 // at is where the review host is asked: the project's checkout, which outlives a
@@ -68,12 +79,69 @@ func (k *look) view(ctx context.Context, r port.Ref) (port.Change, error) {
 	return v, nil
 }
 
+// commits is the commits written in the workspace, and their patch-ids.
 func (k *look) commits(ctx context.Context) ([]string, error) {
 	if !k.wcOK {
-		k.wc, k.wcErr = k.c.workspaceCommits(ctx, k.sp)
 		k.wcOK = true
+		if k.wc, k.wcErr = k.c.workspaceCommits(ctx, k.sp); k.wcErr != nil {
+			return nil, k.wcErr
+		}
+		ids, _, err := k.c.VCS.PatchIDs(ctx, k.sp.Workspace.Dir, k.wc)
+		if err != nil {
+			k.wcErr = err
+			return nil, err
+		}
+		k.wcIDs = map[string]bool{}
+		for _, id := range ids {
+			k.wcIDs[id] = true
+		}
 	}
 	return k.wc, k.wcErr
+}
+
+// madeHere is those of cs made in the workspace: written there, or a rebased copy of one
+// (the same patch-id; a pull --rebase, a rebase -i or the host's "Update branch" makes
+// them), never a commit pulled or fast-forwarded in (keeper, 2026-10-22). A commit the
+// workspace lacks is fetched from v's host first.
+func (k *look) madeHere(ctx context.Context, v port.Change, cs []string) ([]string, error) {
+	wc, err := k.commits(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out, rest []string
+	for _, c := range cs {
+		if slices.Contains(wc, c) {
+			out = append(out, c)
+		} else {
+			rest = append(rest, c)
+		}
+	}
+	if len(rest) == 0 || len(k.wcIDs) == 0 {
+		return out, nil
+	}
+	dir := k.sp.Workspace.Dir
+	ids, missing, err := k.c.VCS.PatchIDs(ctx, dir, rest)
+	if err == nil && len(missing) > 0 {
+		if err = k.c.Review.Fetch(ctx, dir, v); err == nil {
+			var more map[string]string
+			if ids == nil {
+				ids = map[string]string{}
+			}
+			if more, missing, err = k.c.VCS.PatchIDs(ctx, dir, missing); err == nil && len(missing) > 0 {
+				err = fmt.Errorf("%s lacks %s even after fetching %s", dir, strings.Join(missing, ", "), v.URL)
+			}
+			maps.Copy(ids, more)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range rest {
+		if id := ids[c]; id != "" && k.wcIDs[id] {
+			out = append(out, c)
+		}
+	}
+	return out, nil
 }
 
 // refs is the changes part p's checks read: a pr part's handed-off ones, a push or
@@ -104,215 +172,241 @@ func isPRCheck(name string) bool {
 	return false
 }
 
-// prCheck runs change check name over each of p's changes: it passes when every one does;
-// a change that couldn't be looked at is an error, never a fail (Rule G).
-func (k *look) prCheck(ctx context.Context, p goal.Part, name string) (bool, string, error) {
+// prCheck runs change check name over each of p's changes: it passes when every one does,
+// and is pending when the rest are; a change that couldn't be looked at is an error, never
+// a fail (Rule G).
+func (k *look) prCheck(ctx context.Context, p goal.Part, name string) (outcome, string, error) {
 	refs, err := k.refs(p)
 	if err != nil {
-		return false, "", err
+		return failed, "", err
 	}
 	if len(refs) == 0 {
-		return false, "no PR handed off: " + bsname.Cmd + " done --pr <url>", nil
+		return failed, "no PR handed off: " + bsname.Cmd + " done --pr <url>", nil
 	}
 	var fails, oks []string
-	allPending := true
+	o := passed
 	for _, r := range refs {
-		k.pending = false
-		ok, why, err := k.one(ctx, name, r)
+		ro, why, err := k.one(ctx, name, r)
 		switch {
 		case err != nil:
-			return false, "", fmt.Errorf("%s: %w", r.URL, err)
-		case !ok:
-			allPending = allPending && k.pending
+			return failed, "", fmt.Errorf("%s: %w", r.URL, err)
+		case ro != passed:
+			if o != failed {
+				o = ro
+			}
 			fails = append(fails, r.URL+": "+why)
 		case why != "":
 			oks = append(oks, r.URL+": "+why)
 		}
 	}
-	k.pending = len(fails) > 0 && allPending
-	if len(fails) > 0 {
-		return false, strings.Join(fails, "; "), nil
+	if o != passed {
+		return o, strings.Join(fails, "; "), nil
 	}
-	return true, strings.Join(oks, "; "), nil
+	return passed, strings.Join(oks, "; "), nil
 }
 
-func (k *look) one(ctx context.Context, name string, r port.Ref) (bool, string, error) {
+func (k *look) one(ctx context.Context, name string, r port.Ref) (outcome, string, error) {
 	v, err := k.view(ctx, r)
 	if errors.Is(err, port.ErrNoChange) {
-		return false, "no such change in " + r.Repo, nil
+		return failed, "no such change in " + r.Repo, nil
 	} else if err != nil {
-		return false, "", err
+		return failed, "", err
 	}
 	c, dir := k.c, k.sp.Workspace.Dir
 	switch name {
 	case goal.PRExists:
-		return true, "", nil
+		return passed, "", nil
 	case goal.PROpen:
-		return unless(v.State == "open", v.State)
+		return unless(v.State == port.Open, v.State)
 	case goal.PRNotDraft:
 		return unless(!v.Draft, "a draft: mark it ready")
 	case goal.PRMerged:
-		return unless(v.State == "merged", v.State)
+		return unless(v.State == port.Merged, v.State)
 	case goal.PRClosed:
-		return unless(v.State == "merged" || v.State == "closed", v.State)
+		return unless(v.State == port.Merged || v.State == port.Closed, v.State)
 	case goal.PRWorkspaceCommit:
-		wc, err := k.commits(ctx)
+		mine, err := k.madeHere(ctx, v, v.Commits)
 		if err != nil {
-			return false, "", err
+			return failed, "", err
 		}
-		if slices.ContainsFunc(v.Commits, func(cm string) bool { return slices.Contains(wc, cm) }) {
-			return true, "", nil
+		if len(mine) > 0 {
+			return passed, "", nil
 		}
-		return false, fmt.Sprintf("none of its %d commits was made in %s: is it another worker's?", len(v.Commits), dir), nil
+		return failed, fmt.Sprintf("none of its %d commits was made in %s: is it another worker's?", len(v.Commits), dir), nil
 	case goal.PRPushed:
 		tip, ok, err := c.VCS.Branch(ctx, dir, v.Head)
 		switch {
 		case err != nil:
-			return false, "", err
+			return failed, "", err
 		case ok && tip != v.HeadCommit:
 			return k.unpushed(ctx, v, tip)
 		case ok:
-			return true, "", nil
+			return passed, "", nil
 		}
 		// No local branch of that name (pushed from a detached HEAD, or a host with no
 		// branches): its head must be a commit made here.
-		wc, err := k.commits(ctx)
+		mine, err := k.madeHere(ctx, v, []string{v.HeadCommit})
 		if err != nil {
-			return false, "", err
+			return failed, "", err
 		}
-		if !slices.Contains(wc, v.HeadCommit) {
-			return false, fmt.Sprintf("its head %s is no commit made in %s", short(v.HeadCommit), dir), nil
+		if len(mine) == 0 {
+			return failed, fmt.Sprintf("its head %s is no commit made in %s", oid(v.HeadCommit), dir), nil
 		}
-		return true, "", nil
-	case goal.PRCurrent:
+		return passed, "", nil
+	case goal.PRCurrent, goal.CIGreen:
+		// What the host says of a head the workspace has pushed past is about the old one.
+		if up, err := k.lag(ctx, v); err != nil {
+			return failed, "", err
+		} else if up != "" {
+			return pending, fmt.Sprintf("pending: %s still shows %s, not %s pushed since", c.Review.Name(), oid(v.HeadCommit), oid(up)), nil
+		}
+		if name == goal.CIGreen {
+			return k.ciGreen(ctx, v)
+		}
 		n, err := c.Review.Behind(ctx, k.at(), v)
 		if err != nil {
-			return false, "", err
+			return failed, "", err
 		}
 		return unless(n == 0, fmt.Sprintf("%d commits behind %s: bring %s in, then push", n, v.Base, v.Base))
-	case goal.CIGreen:
-		return k.ciGreen(ctx, v)
 	case goal.PushMoved:
 		return k.pushMoved(ctx, v)
 	case goal.ReviewComment:
 		mark, since := "bs:"+string(k.sp.ID), k.sp.TS.Truncate(time.Second)
 		if slices.ContainsFunc(v.Notes, func(n port.Note) bool { return !n.At.Before(since) && strings.Contains(n.Body, mark) }) {
-			return true, "", nil
+			return passed, "", nil
 		}
-		return false, "no comment or review since the spawn carries " + mark, nil
+		return failed, "no comment or review since the spawn carries " + mark, nil
 	}
-	return false, "", fmt.Errorf("no check %s", name)
+	return failed, "", fmt.Errorf("no check %s", name)
+}
+
+// lag is the commit the workspace pushed v's head to while the host still shows an older
+// head (GitHub lags a push by seconds, seen live): a commit made here that descends from
+// the host's head. "" when the host shows what was pushed, or the workspace can't say.
+func (k *look) lag(ctx context.Context, v port.Change) (string, error) {
+	if up, ok := k.lags[v.URL]; ok {
+		return up, nil
+	}
+	c, dir := k.c, k.sp.Workspace.Dir
+	up, ok, err := c.VCS.Pushed(ctx, dir, v.Head)
+	if err != nil || !ok || up == v.HeadCommit || v.State != port.Open {
+		return "", err
+	}
+	if has, err := c.VCS.Has(ctx, dir, v.HeadCommit); err != nil || !has {
+		return "", err
+	}
+	if mine, err := k.madeHere(ctx, v, []string{up}); err != nil || len(mine) == 0 {
+		return "", err
+	}
+	ahead, err := c.VCS.Descends(ctx, dir, v.HeadCommit, up)
+	if err != nil || !ahead {
+		return "", err
+	}
+	k.lags[v.URL] = up
+	return up, nil
 }
 
 // unpushed says why a change's head isn't the local branch's tip. The host's head holding
 // commits the branch lacks (someone pushed onto it, or "Update branch") is a fail that says
 // to pull them, never pending: waiting would never end (motif 5). The branch ahead of the
-// host's head is pending when it was pushed already (the host lags a push by seconds,
-// seen live), else "push it".
-func (k *look) unpushed(ctx context.Context, v port.Change, tip string) (bool, string, error) {
+// host's head is pending when it was pushed already (lag), else "push it".
+func (k *look) unpushed(ctx context.Context, v port.Change, tip string) (outcome, string, error) {
 	c, dir, host := k.c, k.sp.Workspace.Dir, k.c.Review.Name()
 	has, err := c.VCS.Has(ctx, dir, v.HeadCommit)
 	if err != nil {
-		return false, "", err
+		return failed, "", err
 	}
 	ahead := false
 	if has {
 		if ahead, err = c.VCS.Descends(ctx, dir, v.HeadCommit, tip); err != nil {
-			return false, "", err
+			return failed, "", err
 		}
 	}
 	if !ahead {
-		return false, fmt.Sprintf("its head %s on %s has commits %s lacks (at %s): pull them, then push", short(v.HeadCommit), host, v.Head, short(tip)), nil
+		return failed, fmt.Sprintf("its head %s on %s has commits %s lacks (at %s): pull them, then push", oid(v.HeadCommit), host, v.Head, oid(tip)), nil
 	}
-	up, pushed, err := c.VCS.Pushed(ctx, dir, v.Head)
-	if err != nil {
-		return false, "", err
+	if up, err := k.lag(ctx, v); err != nil {
+		return failed, "", err
+	} else if up == tip {
+		return pending, fmt.Sprintf("pending: %s was pushed at %s, and %s still shows %s", v.Head, oid(tip), host, oid(v.HeadCommit)), nil
 	}
-	if pushed && up == tip {
-		k.pending = true
-		return false, fmt.Sprintf("pending: %s was pushed at %s, and %s still shows %s", v.Head, short(tip), host, short(v.HeadCommit)), nil
-	}
-	return false, fmt.Sprintf("%s is at %s here and at %s on %s: push it", v.Head, short(tip), short(v.HeadCommit), host), nil
+	return failed, fmt.Sprintf("%s is at %s here and at %s on %s: push it", v.Head, oid(tip), oid(v.HeadCommit), host), nil
 }
 
-// ciGreen is every CI check passing (skipped ones count). None registered is pending
-// while the base's tip has checks, since CI hasn't picked the change up yet; with none
-// there either it passes vacuously, and says so.
-func (k *look) ciGreen(ctx context.Context, v port.Change) (bool, string, error) {
+// ciGreen is every required CI check passing (skipped ones count; keeper, 2026-10-22).
+// None required is a vacuous pass, and says so.
+func (k *look) ciGreen(ctx context.Context, v port.Change) (outcome, string, error) {
 	cs, err := k.c.Review.CI(ctx, k.at(), v)
 	if err != nil {
-		return false, "", err
+		return failed, "", err
 	}
 	if len(cs) == 0 {
-		n, err := k.c.Review.BaseCI(ctx, k.at(), v)
-		if err != nil {
-			return false, "", err
-		}
-		if n > 0 {
-			k.pending = true
-			return false, fmt.Sprintf("pending: no checks registered yet, while %s's tip has %d", v.Base, n), nil
-		}
-		return true, "vacuous pass: neither it nor " + v.Base + " has CI checks", nil
+		return passed, "vacuous pass: no required checks", nil
 	}
-	var fail, pending []string
+	var fail, wait []string
 	for _, c := range cs {
 		switch c.Bucket {
-		case "pass", "skipping":
-		case "pending":
-			pending = append(pending, c.Name)
+		case port.CIPass, port.CISkipping:
+		case port.CIPending:
+			wait = append(wait, c.Name)
 		default:
 			fail = append(fail, c.Name)
 		}
 	}
-	k.pending = len(fail) == 0 && len(pending) > 0
 	var why []string
 	if len(fail) > 0 {
 		why = append(why, "failing: "+strings.Join(fail, ", "))
 	}
-	if len(pending) > 0 {
-		why = append(why, "pending: "+strings.Join(pending, ", "))
+	if len(wait) > 0 {
+		why = append(why, "pending: "+strings.Join(wait, ", "))
 	}
-	return unless(len(why) == 0, strings.Join(why, "; "))
+	switch {
+	case len(fail) > 0:
+		return failed, strings.Join(why, "; "), nil
+	case len(wait) > 0:
+		return pending, strings.Join(why, "; "), nil
+	}
+	return passed, "", nil
 }
 
-// pushMoved is the target's head descending from a commit made in the workspace; a head
-// the workspace lacks is fetched first.
-func (k *look) pushMoved(ctx context.Context, v port.Change) (bool, string, error) {
+// pushMoved is the target holding a commit made in the workspace (madeHere): its head
+// moved onto the workspace's work. Pushed while the host still shows the old head is
+// pending (lag).
+func (k *look) pushMoved(ctx context.Context, v port.Change) (outcome, string, error) {
 	c, dir := k.c, k.sp.Workspace.Dir
 	wc, err := k.commits(ctx)
 	if err != nil {
-		return false, "", err
-	}
-	if slices.Contains(wc, v.HeadCommit) {
-		return true, "", nil
+		return failed, "", err
 	}
 	if len(wc) == 0 {
-		return false, "nothing was committed in " + dir, nil
+		return failed, "nothing was committed in " + dir, nil
 	}
-	if has, err := c.VCS.Has(ctx, dir, v.HeadCommit); err != nil {
-		return false, "", err
-	} else if !has {
-		if err := c.Review.Fetch(ctx, dir, v); err != nil {
-			return false, "", err
-		}
+	if mine, err := k.madeHere(ctx, v, v.Commits); err != nil {
+		return failed, "", err
+	} else if len(mine) > 0 {
+		return passed, "", nil
 	}
-	for _, w := range wc {
-		if in, err := c.VCS.Descends(ctx, dir, w, v.HeadCommit); err != nil {
-			return false, "", err
-		} else if in {
-			return true, "", nil
-		}
+	if up, err := k.lag(ctx, v); err != nil {
+		return failed, "", err
+	} else if up != "" {
+		return pending, fmt.Sprintf("pending: %s was pushed at %s, and %s still shows %s", v.Head, oid(up), c.Review.Name(), oid(v.HeadCommit)), nil
 	}
-	return false, fmt.Sprintf("its head %s descends from no commit made in %s: %s", short(v.HeadCommit), dir, c.Review.PushHint(ctx, dir, v)), nil
+	return failed, fmt.Sprintf("its head %s holds no commit made in %s: %s", oid(v.HeadCommit), dir, c.Review.PushHint(ctx, dir, v)), nil
 }
 
-// unless is a check's outcome: why it failed, only when it did. A passing check says
-// nothing, so its detail never reads as a failure (motif 11).
-func unless(ok bool, why string) (bool, string, error) {
+// of is ok as an outcome.
+func of(ok bool) outcome {
 	if ok {
-		return true, "", nil
+		return passed
 	}
-	return false, why, nil
+	return failed
 }
 
-func short(oid string) string { return oid[:min(len(oid), 9)] }
+func unless(ok bool, why string) (outcome, string, error) {
+	if ok {
+		return passed, "", nil
+	}
+	return failed, why, nil
+}
+
+func oid(id string) string { return id[:min(len(id), 9)] }

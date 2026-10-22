@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/jmmshn/bees/internal/proc"
 )
@@ -80,6 +81,9 @@ type Start struct {
 	Record     map[string]string // the spawn's recorded Launch.Record, on a resume
 	Deny       []string          // the guard rules, harness-neutral, built by the core; none for the queen
 	Path       []string          // absolute dirs first on the PATH of the session's shell commands
+	// ShellTimeout is how long one shell command of the session runs before its harness
+	// cuts it, by default too: bs done --wait's whole wait fits in one (0: the harness's own).
+	ShellTimeout time.Duration
 }
 
 // Launch is what Prepare returns. The core writes each of Files (0600, in the cache dir,

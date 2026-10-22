@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jmmshn/bees/internal/harness/claude"
 	"github.com/jmmshn/bees/internal/port"
@@ -87,5 +88,21 @@ func TestPrepareBuildsTheArgv(t *testing.T) {
 	l, err = claude.Adapter{}.Prepare(port.Start{Role: port.Queen, Name: "queen-bees", Continue: true})
 	if err != nil || !slices.Equal(l.Args, []string{"--continue", "--name", "queen-bees"}) || len(l.Files) != 0 {
 		t.Fatalf("queen: %q %v %v", l.Args, l.Files, err)
+	}
+}
+
+// A worker's shell calls run as long as bs done --wait needs, by default too: Claude
+// Code's own default (2 minutes) would cut a handoff's wait (eng-review of #108).
+func TestShellTimeoutIsTheWorkersEnv(t *testing.T) {
+	s := workerSettings(t, port.Start{ShellTimeout: 10 * time.Minute})
+	var env map[string]string
+	if err := json.Unmarshal(s["env"], &env); err != nil {
+		t.Fatal(err)
+	}
+	if env["BASH_DEFAULT_TIMEOUT_MS"] != "600000" || env["BASH_MAX_TIMEOUT_MS"] != "600000" || len(env) != 2 {
+		t.Fatalf("env = %v, want both bash timeouts at 600000 and nothing else", env)
+	}
+	if s := workerSettings(t, port.Start{}); s["env"] != nil {
+		t.Fatalf("env = %s, want none without a ShellTimeout", s["env"])
 	}
 }

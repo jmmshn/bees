@@ -29,9 +29,8 @@ func (c *Core) check(ctx context.Context, sp logbook.Spawn, name string, h Hande
 // check runs check name of part p. The gate is run by its callers, who know self.
 func (k *look) check(ctx context.Context, p goal.Part, name string) logbook.CheckResult {
 	r := logbook.CheckResult{Name: name}
-	k.pending = false
-	pass, detail, err := k.run(ctx, p, name)
-	r.Pass, r.Detail, r.Pending = pass && err == nil, detail, !pass && err == nil && k.pending
+	o, detail, err := k.run(ctx, p, name)
+	r.Pass, r.Detail, r.Pending = o == passed && err == nil, detail, o == pending && err == nil
 	if err != nil {
 		r.Err = err.Error()
 	}
@@ -64,7 +63,7 @@ func (k *look) stage(ctx context.Context, e logbook.Effective, of func(goal.Part
 	return out, nil
 }
 
-func (k *look) run(ctx context.Context, p goal.Part, name string) (bool, string, error) {
+func (k *look) run(ctx context.Context, p goal.Part, name string) (outcome, string, error) {
 	c, ws, h := k.c, k.sp.Workspace, k.h
 	if isPRCheck(name) {
 		return k.prCheck(ctx, p, name)
@@ -73,13 +72,13 @@ func (k *look) run(ctx context.Context, p goal.Part, name string) (bool, string,
 	case goal.VerdictGiven:
 		switch {
 		case h.Answer == "":
-			return false, "--answer yes|no is missing", nil
+			return failed, "--answer yes|no is missing", nil
 		case h.Answer != "yes" && h.Answer != "no":
-			return false, fmt.Sprintf("--answer must be yes or no (got %q)", h.Answer), nil
+			return failed, fmt.Sprintf("--answer must be yes or no (got %q)", h.Answer), nil
 		case strings.TrimSpace(h.Report) == "":
-			return false, "--report <text>|- is missing", nil
+			return failed, "--report <text>|- is missing", nil
 		}
-		return true, "", nil
+		return passed, "", nil
 	case goal.NoteChanged:
 		return k.noteChanged(ctx)
 	case goal.BeadCreated:
@@ -88,36 +87,37 @@ func (k *look) run(ctx context.Context, p goal.Part, name string) (bool, string,
 		// Not c.git: trimming would cut the first line's status column.
 		b, err := c.Run.Run(ctx, ws.Dir, "git", "-C", ws.Dir, "status", "--porcelain")
 		if err != nil {
-			return false, "", err
+			return failed, "", err
 		}
 		if out := string(b); out != "" {
-			return false, "uncommitted or untracked files in " + ws.Dir + ": " + porcelainPaths(out), nil
+			return failed, "uncommitted or untracked files in " + ws.Dir + ": " + porcelainPaths(out), nil
 		}
-		return true, "", nil
+		return passed, "", nil
 	case goal.BranchAhead:
 		base, err := c.base(ctx, ws)
 		if err != nil {
-			return false, "", err
+			return failed, "", err
 		}
-		out, err := c.git(ctx, ws.Dir, "rev-list", "--count", base+".."+ws.Branch)
+		out, err := c.git(ctx, ws.Dir, "rev-list", "--count", base+"..refs/heads/"+ws.Branch)
 		if err != nil {
-			return false, "", err
+			return failed, "", err
 		}
 		n, err := strconv.Atoi(out)
 		if err != nil {
-			return false, "", fmt.Errorf("git rev-list --count: %q", out)
+			return failed, "", fmt.Errorf("git rev-list --count: %q", out)
 		}
 		if n == 0 {
-			return false, fmt.Sprintf("%s has no commit that %s lacks", ws.Branch, base), nil
+			return failed, fmt.Sprintf("%s has no commit that %s lacks", ws.Branch, short(base)), nil
 		}
 		if n == 1 {
-			return true, "1 commit ahead of " + base, nil
+			return passed, "1 commit ahead of " + short(base), nil
 		}
-		return true, fmt.Sprintf("%d commits ahead of %s", n, base), nil
+		return passed, fmt.Sprintf("%d commits ahead of %s", n, short(base)), nil
 	case goal.BranchMerged:
-		return c.merged(ctx, ws)
+		ok, why, err := c.merged(ctx, ws)
+		return of(ok), why, err
 	}
-	return false, "", fmt.Errorf("no check %s", name)
+	return failed, "", fmt.Errorf("no check %s", name)
 }
 
 // frozen is the bead as spawn froze it. bs goal refuses note and beads on a spawn without
@@ -130,38 +130,38 @@ func (k *look) frozen() (*logbook.BeadAt, error) {
 }
 
 // noteChanged reports whether the bead's notes or design differ from spawn's hash.
-func (k *look) noteChanged(ctx context.Context) (bool, string, error) {
+func (k *look) noteChanged(ctx context.Context) (outcome, string, error) {
 	at, err := k.frozen()
 	if err != nil {
-		return false, "", err
+		return failed, "", err
 	}
 	id := k.sp.Bead
 	b, err := k.c.Beads.Show(ctx, id)
 	if err != nil {
-		return false, "", err
+		return failed, "", err
 	}
 	if noteHash(b) == at.Note {
-		return false, fmt.Sprintf("%s's notes and design are as they were at spawn (a label or status change doesn't count): bd update %s --append-notes \"<text>\"", id, id), nil
+		return failed, fmt.Sprintf("%s's notes and design are as they were at spawn (a label or status change doesn't count): bd update %s --append-notes \"<text>\"", id, id), nil
 	}
-	return true, fmt.Sprintf("%s's notes or design changed: bd show %s", id, id), nil
+	return passed, fmt.Sprintf("%s's notes or design changed: bd show %s", id, id), nil
 }
 
 // beadCreated reports whether a bead under the bead isn't among those spawn found there.
-func (k *look) beadCreated(ctx context.Context) (bool, string, error) {
+func (k *look) beadCreated(ctx context.Context) (outcome, string, error) {
 	at, err := k.frozen()
 	if err != nil {
-		return false, "", err
+		return failed, "", err
 	}
 	kids, err := k.c.Beads.Children(ctx, k.sp.Bead)
 	if err != nil {
-		return false, "", err
+		return failed, "", err
 	}
 	kids = slices.DeleteFunc(kids, func(id string) bool { return slices.Contains(at.Children, id) })
 	slices.Sort(kids) // bd lists them in no fixed order
 	if len(kids) == 0 {
-		return false, fmt.Sprintf("no bead was created under %s since spawn", k.sp.Bead), nil
+		return failed, fmt.Sprintf("no bead was created under %s since spawn", k.sp.Bead), nil
 	}
-	return true, "created under " + k.sp.Bead + ": " + strings.Join(kids, ", "), nil
+	return passed, "created under " + k.sp.Bead + ": " + strings.Join(kids, ", "), nil
 }
 
 // porcelainPaths is the paths git status --porcelain listed, the first ten of them.

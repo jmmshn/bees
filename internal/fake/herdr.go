@@ -36,9 +36,9 @@ type Herdr struct {
 	// "timeout" (herdr gave up waiting for ready, bees-12.49) or "lost" (the terminal went
 	// away mid-start; the code is not probed).
 	StartFails string
-	// InfoFails is how many next pane process-info calls fail as an unreachable server
-	// would: a start confirmation or heal that can't look.
-	InfoFails int
+	// infoFails is how many next pane process-info calls fail as an unreachable server
+	// would: a start confirmation or heal that can't look. FailInfo sets it.
+	infoFails int
 	// Down: no server runs; every command refuses as server_not_running, and status says
 	// "not running" with exit 0 (probed, 0.9.5).
 	Down bool

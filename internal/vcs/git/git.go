@@ -30,15 +30,15 @@ func exited(err error, code int) bool {
 	return errors.As(err, &ee) && ee.Code == code
 }
 
-// writesCommit is a HEAD reflog subject that wrote a commit: commit (amend, initial,
-// merge…), a rebase's pick, squash, fixup, reword or continue (a pull --rebase's too: it
-// replays the workspace's own commits), a cherry-pick, revert or am, and a merge that
-// made a merge commit. Never checkout, reset, a pull's merge or a fast-forward: those
-// move HEAD to commits made elsewhere (ADR-0010).
-var writesCommit = regexp.MustCompile(`^(commit( \([^)]*\))?|(rebase( -i)?|pull --rebase) \((pick|squash|fixup|reword|continue)\)|cherry-pick|revert|am): |^merge [^:]*: Merge made by `)
+// writesCommit is a HEAD reflog subject of a commit the worker wrote: commit, amend,
+// initial, a merge commit (one that ended a conflict, or "Merge made by"), and a revert.
+// Never a rebase's pick, a pull, a cherry-pick, am, checkout, reset or fast-forward: those
+// move HEAD to commits, or copies of patches, written elsewhere. A rebased copy of a
+// written commit is matched by its patch-id instead (PatchIDs; keeper, 2026-10-22).
+var writesCommit = regexp.MustCompile(`^(commit( \((amend|initial|merge)\))?|revert): |^merge [^:]*: Merge made by `)
 
 // Commits reads dir's HEAD reflog (a worktree's own) for the entries since since that
-// wrote a commit.
+// wrote a commit (writesCommit).
 func (v VCS) Commits(ctx context.Context, dir string, since time.Time) ([]string, error) {
 	out, err := v.git(ctx, dir, "log", "--walk-reflogs", "--date=unix", "--format=%H%x1f%gd%x1f%gs", "HEAD")
 	if err != nil {
@@ -74,17 +74,71 @@ func (v VCS) Branch(ctx context.Context, dir, name string) (string, bool, error)
 	return tip, err == nil, err
 }
 
-// Pushed is the tip of name's upstream remote-tracking branch, which a git push updates.
+// Pushed is the tip of a remote-tracking branch named name, which a git push updates
+// (from a detached HEAD too): name's upstream when it is one of them, else the one tip
+// they share. Two remotes' copies that disagree say nothing.
 func (v VCS) Pushed(ctx context.Context, dir, name string) (string, bool, error) {
 	up, err := v.git(ctx, dir, "for-each-ref", "--format=%(upstream)", "refs/heads/"+name)
-	if err != nil || up == "" {
+	if err != nil {
 		return "", false, err
 	}
-	tip, err := v.git(ctx, dir, "rev-parse", "--verify", "--quiet", up)
-	if exited(err, 1) {
-		return "", false, nil // its upstream was never fetched or pushed
+	out, err := v.git(ctx, dir, "for-each-ref", "--format=%(objectname) %(refname)", "refs/remotes/*/"+name)
+	if err != nil {
+		return "", false, err
 	}
-	return tip, err == nil, err
+	var tips []string
+	for line := range strings.Lines(out) {
+		tip, ref, _ := strings.Cut(strings.TrimSpace(line), " ")
+		if strings.Count(ref, "/") != strings.Count(name, "/")+3 {
+			continue // refs/remotes/a/b/<name>: remote a's branch b/<name>
+		}
+		if ref == up {
+			return tip, true, nil
+		}
+		if !slices.Contains(tips, tip) {
+			tips = append(tips, tip)
+		}
+	}
+	if len(tips) != 1 {
+		return "", false, nil
+	}
+	return tips[0], true, nil
+}
+
+// PatchIDs is git patch-id --stable of each of commits dir has, read in two calls: which
+// of them dir has (rev-list --ignore-missing), then their patches through git patch-id. A
+// merge, shown with no patch (--diff-merges=off), has none.
+func (v VCS) PatchIDs(ctx context.Context, dir string, commits []string) (map[string]string, []string, error) {
+	if len(commits) == 0 {
+		return nil, nil, nil
+	}
+	out, err := v.git(ctx, dir, append([]string{"rev-list", "--no-walk=unsorted", "--ignore-missing"}, commits...)...)
+	if err != nil {
+		return nil, nil, err
+	}
+	have := strings.Fields(out)
+	var missing []string
+	for _, c := range commits {
+		if !slices.Contains(have, c) {
+			missing = append(missing, c)
+		}
+	}
+	if len(have) == 0 {
+		return nil, missing, nil
+	}
+	// sh only for the pipe: dir and the commits are its arguments, never its script.
+	script := `set -e; p=$(git -C "$0" log --no-walk=unsorted --diff-merges=off --no-color -p "$@"); printf '%s\n' "$p" | git patch-id --stable`
+	b, err := v.Run.Run(ctx, dir, append([]string{"sh", "-c", script, dir}, have...)...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("git patch-id in %s: %w", dir, err)
+	}
+	ids := map[string]string{}
+	for line := range strings.Lines(string(b)) {
+		if id, c, ok := strings.Cut(strings.TrimSpace(line), " "); ok {
+			ids[c] = id
+		}
+	}
+	return ids, missing, nil
 }
 
 // Has: git cat-file -e says a missing object with exit 128 and "Not a valid object

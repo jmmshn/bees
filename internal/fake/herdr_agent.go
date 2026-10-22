@@ -146,8 +146,8 @@ func (h *Herdr) agentStart(s *server, session string, f flags) ([]byte, error) {
 // agent runs, the agent as the foreground process; else the idle shell.
 func (h *Herdr) processInfo(s *server, _ string, f flags) ([]byte, error) {
 	id, _ := f.get("--pane")
-	if h.InfoFails > 0 {
-		h.InfoFails--
+	if h.infoFails > 0 {
+		h.infoFails--
 		return nil, errors.New("herdr: server not reachable")
 	}
 	_, p := s.pane(id)

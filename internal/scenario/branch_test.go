@@ -216,7 +216,7 @@ func TestEndIncompleteIsTheWayOutWhileGitHubIsDown(t *testing.T) {
 	must(t, x.worker("toy-1", 1, "done"), 0)
 	x.gh.Offline = true
 	must(t, x.queen("end", "toy-1"), 6, "next: bs end toy-1 --incomplete")
-	must(t, x.queen("end", "--incomplete", "toy-1"), 0, "ending it --incomplete", "ended toy-1")
+	must(t, x.queen("end", "--incomplete", "toy-1"), 0, "treating it as incomplete", "ended toy-1")
 }
 
 // A goal whose prune rule passes at once (verdict) still never loses a branch's commits:

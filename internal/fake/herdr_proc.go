@@ -63,3 +63,10 @@ func (h *Herdr) FailStarts(err error) {
 	defer h.mu.Unlock()
 	h.AliveErr = err
 }
+
+// FailInfo makes the next n pane process-info calls fail as an unreachable server would.
+func (h *Herdr) FailInfo(n int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.infoFails = n
+}

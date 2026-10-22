@@ -280,6 +280,56 @@ func (c Client) Panes(ctx context.Context, workspace string) ([]string, error) {
 	return out, nil
 }
 
+// Workspaces lists every workspace, with Path the checkout it is open on ("" for one
+// opened on no worktree).
+func (c Client) Workspaces(ctx context.Context) ([]Workspace, error) {
+	var r struct {
+		Result struct {
+			Workspaces []struct {
+				ID       string `json:"workspace_id"`
+				Label    string `json:"label"`
+				Worktree struct {
+					Path string `json:"checkout_path"`
+				} `json:"worktree"`
+			} `json:"workspaces"`
+		} `json:"result"`
+	}
+	if err := c.call(ctx, &r, "workspace", "list"); err != nil {
+		return nil, err
+	}
+	var out []Workspace
+	for _, w := range r.Result.Workspaces {
+		out = append(out, Workspace{ID: w.ID, Label: w.Label, Path: w.Worktree.Path})
+	}
+	return out, nil
+}
+
+// PaneDir is a pane and where it works: its shell's cwd and its foreground process's.
+type PaneDir struct {
+	ID, Cwd, ForegroundCwd string
+}
+
+// PaneDirs lists every pane, in any workspace, with where it works.
+func (c Client) PaneDirs(ctx context.Context) ([]PaneDir, error) {
+	var r struct {
+		Result struct {
+			Panes []struct {
+				ID            string `json:"pane_id"`
+				Cwd           string `json:"cwd"`
+				ForegroundCwd string `json:"foreground_cwd"`
+			} `json:"panes"`
+		} `json:"result"`
+	}
+	if err := c.call(ctx, &r, "pane", "list"); err != nil {
+		return nil, err
+	}
+	var out []PaneDir
+	for _, p := range r.Result.Panes {
+		out = append(out, PaneDir{ID: p.ID, Cwd: p.Cwd, ForegroundCwd: p.ForegroundCwd})
+	}
+	return out, nil
+}
+
 // ClosePane closes pane; one already gone is closed.
 func (c Client) ClosePane(ctx context.Context, pane string) error {
 	return gone(c.call(ctx, nil, "pane", "close", pane), "pane_not_found")

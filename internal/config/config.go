@@ -20,7 +20,7 @@ import (
 //   - toml: its key within its table;
 //   - scope: which file may set it: global, project or both;
 //   - default: its value when nothing sets it (absent means ""); a list's is one item;
-//   - env: the variable that overrides both files outside a herdr pane (optional);
+//   - env: the variable that overrides both files outside a recorded herdr pane (optional);
 //   - enum: its allowed values, separated by | ("" always passes where it is the default);
 //   - path: a path: "dir", or "{repo}" when it may begin with the {repo} placeholder;
 //   - glob: present on a pattern over paths relative to a worktree (path.Match syntax);

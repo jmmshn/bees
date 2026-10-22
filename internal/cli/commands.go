@@ -523,7 +523,7 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 		case strings.HasPrefix(running, "no"):
 			next := bsname.Cmd + " end " + sp.Name
 			if !landed {
-				next += " (--incomplete if its goal isn't complete)"
+				next = bsname.Cmd + " end --incomplete " + sp.Name + " if its goal isn't complete"
 			}
 			note("stuck", sp.Name, "its process is gone but it isn't ended → %s spawn --goal %s %s resumes it in its pane, or %s", bsname.Cmd, g, sp.Bead, next)
 		case lerr != nil || gerr != nil || derr != nil: // couldn't read it: never read as "no" (Rule G)

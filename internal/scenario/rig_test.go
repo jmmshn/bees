@@ -139,6 +139,24 @@ type result struct {
 
 func (r result) String() string { return r.out + r.stderr }
 
+// next runs the first command of r's next: line as the queen, word for word: what bs
+// suggests must be what bs accepts.
+func (x *toy) next(r result) result {
+	x.t.Helper()
+	_, line, ok := strings.Cut(r.String(), "next: ")
+	if !ok {
+		x.t.Fatalf("no next: in\n%s", r)
+	}
+	line, _, _ = strings.Cut(line, "\n")
+	line, _, _ = strings.Cut(line, ", then ")
+	line, _, _ = strings.Cut(line, " (")
+	f := strings.Fields(line)
+	if len(f) < 2 || f[0] != "bs" {
+		x.t.Fatalf("next: %q is no bs command", line)
+	}
+	return x.queen(f[1:]...)
+}
+
 // keeper runs bs args from the keeper's shell (outside any pane), as queen-toy where a
 // command needs a session.
 func (x *toy) keeper(args ...string) result {

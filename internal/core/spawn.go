@@ -155,7 +155,7 @@ func (c *Core) resume(ctx context.Context, sp logbook.Spawn, bead port.Bead, req
 		}
 	}
 	if _, err := c.herdr(sp.Herdr.Session).ProcessInfo(ctx, sp.Herdr.Pane); errors.Is(err, herdr.ErrPaneGone) {
-		return exit(ExitRefused, bsname.Cmd+" end "+sp.Name+" --incomplete, then "+bsname.Cmd+" spawn", nil,
+		return exit(ExitRefused, bsname.Cmd+" end --incomplete "+sp.Name+", then "+bsname.Cmd+" spawn", nil,
 			"%s: its pane %s is gone from herdr session %s, so there is nowhere to resume it; nothing started", sp.Name, sp.Herdr.Pane, sp.Herdr.Session)
 	} else if err != nil {
 		return exit(ExitCantCheck, "", err, "%s: can't look at its pane %s; nothing started", sp.Name, sp.Herdr.Pane)

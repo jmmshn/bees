@@ -186,7 +186,7 @@ func (c *Core) Identify(ctx context.Context, p Pane, self int) (Who, error) {
 		case err != nil:
 			return Who{}, exit(ExitCantCheck, "herdr --session "+p.Session+" pane process-info --pane "+p.Pane, err, "pane %s holds %s, whose start was never confirmed", p.Pane, r.Name)
 		case !ok:
-			return Who{}, exit(ExitStart, bsname.Cmd+" end "+r.Name+" --incomplete", nil, "pane %s holds %s, whose start was never confirmed and whose harness "+bsname.Cmd+" can't find there", p.Pane, r.Name)
+			return Who{}, exit(ExitStart, bsname.Cmd+" end --incomplete "+r.Name, nil, "pane %s holds %s, whose start was never confirmed and whose harness "+bsname.Cmd+" can't find there", p.Pane, r.Name)
 		}
 		r.Process = st.Process
 	}

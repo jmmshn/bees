@@ -252,7 +252,7 @@ func TestAStartHealedLateFailsTheGateClosed(t *testing.T) {
 	x.harness.Await(t, "toy-1", 1)
 	must(t, x.worker("toy-1", 2, "done", "--answer", "yes", "--report", "ok"), 6, "recorded late", "it began with are unknown", "next: bs done --force")
 	must(t, x.worker("toy-1", 3, "done", "--force", "--answer", "yes", "--report", "ok"), 0)
-	must(t, x.keeper("end", "--as", "queen-toy", "toy-1"), 6, "it began with are unknown", "next: bs end toy-1 --force")
+	must(t, x.keeper("end", "--as", "queen-toy", "toy-1"), 6, "it began with are unknown", "next: bs end --force toy-1")
 }
 
 // bees-12.38: a message for another project's session, whose logbook is in the logbook
@@ -361,7 +361,7 @@ func TestRound11EndOnAMovedWorker(t *testing.T) {
 	if fs, _ := filepath.Glob(filepath.Join(x.ports.CacheDir, "toy-1-*")); len(fs) == 0 {
 		t.Fatal("no start files to remove")
 	}
-	must(t, x.queen("end", "toy-1"), 2, "moved out of its workspace", "nothing closed", "bs end toy-1 --force")
+	must(t, x.queen("end", "toy-1"), 2, "moved out of its workspace", "nothing closed", "bs end --force toy-1")
 	if _, ok := x.herdr.Agent("toy", "toy-1"); !ok {
 		t.Fatal("a refused end stopped toy-1")
 	}
@@ -450,7 +450,7 @@ func TestSpawnResumesADeadWorker(t *testing.T) {
 	if _, err := x.herdr.Run(context.Background(), "", "herdr", "--session", x.session, "workspace", "close", sp2.Herdr.Workspace); err != nil {
 		t.Fatal(err)
 	}
-	must(t, x.queen("spawn", "--goal", "branch", "toy-2"), 2, "pane "+sp2.Herdr.Pane+" is gone", "bs end toy-2 --incomplete")
+	must(t, x.queen("spawn", "--goal", "branch", "toy-2"), 2, "pane "+sp2.Herdr.Pane+" is gone", "bs end --incomplete toy-2")
 }
 
 // A bead whose last spawn ended incomplete, its worktree and branch kept, spawns again on
@@ -465,8 +465,9 @@ func TestRespawnReusesAKeptWorkspace(t *testing.T) {
 	if _, err := x.herdr.Run(context.Background(), "", "herdr", "--session", x.session, "workspace", "close", sp.Herdr.Workspace); err != nil {
 		t.Fatal(err)
 	}
-	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 2, "next: bs end toy-1 --incomplete, then bs spawn")
-	must(t, x.queen("end", "--incomplete", "toy-1"), 0, "ended toy-1")
+	r := x.queen("spawn", "--goal", "branch", "toy-1")
+	must(t, r, 2, "next: bs end --incomplete toy-1, then bs spawn")
+	must(t, x.next(r), 0, "ended toy-1") // the literal next: text, as the queen would type it
 	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 0, "spawned toy-1", "on its kept worktree and branch toy-1")
 	sp2, _, err := x.open().LatestSpawn(context.Background(), "toy-1")
 	if err != nil || sp2.ID == sp.ID || sp2.Workspace.Dir != sp.Workspace.Dir || sp2.Workspace.Branch != "toy-1" || sp2.Workspace.Base != sp.Workspace.Base {

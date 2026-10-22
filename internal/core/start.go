@@ -23,7 +23,7 @@ import (
 // Timing.AfterErr, since herdr can give up while it runs (bees-12.49, adopted). replaces is
 // the dead start a resume restarts, "" on a first start.
 func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch, replaces logbook.ID) error {
-	next := bsname.Cmd + " end " + sp.Name + " --incomplete"
+	next := bsname.Cmd + " end --incomplete " + sp.Name
 	args, err := c.writeFiles(sp.Name, l)
 	if err != nil {
 		return exit(ExitStart, next, err, "%s: couldn't write its start files", sp.Name)

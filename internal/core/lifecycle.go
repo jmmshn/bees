@@ -249,7 +249,7 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 	done, passed, failed, err := c.complete(ctx, sp, e)
 	switch {
 	case err != nil && !o.Incomplete:
-		return exit(ExitCantCheck, bsname.Cmd+" end "+name+" --incomplete", err, "%s: can't tell whether its goal is complete", name)
+		return exit(ExitCantCheck, bsname.Cmd+" end --incomplete "+name, err, "%s: can't tell whether its goal is complete", name)
 	case err != nil:
 		// --incomplete is the way out while a check can't run (motif 5); prune completes it.
 		c.warn("can't tell whether %s's goal is complete (%v): treating it as incomplete", name, err)
@@ -262,7 +262,7 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 		for _, f := range failed {
 			why = append(why, f.Name+": "+f.Detail)
 		}
-		return exit(ExitIncomplete, bsname.Cmd+" end "+name+" --incomplete", nil, "%s: its goal (--goal %s) is not complete:\n  %s", name, e.Goal, strings.Join(why, "\n  "))
+		return exit(ExitIncomplete, bsname.Cmd+" end --incomplete "+name, nil, "%s: its goal (--goal %s) is not complete:\n  %s", name, e.Goal, strings.Join(why, "\n  "))
 	}
 	// --incomplete is the abort, handed off or not (motif 5): it keeps the workspace, and
 	// prune, which removes only landed or discarded work, is the guard.
@@ -271,9 +271,9 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 		case errors.Is(err, ErrHarnessGone): // its children were reparented away: nothing to walk
 		case errors.Is(err, ErrNoStart): // nothing recorded to walk: an unconfirmed spawn
 		case err != nil:
-			return exit(ExitCantCheck, bsname.Cmd+" end "+name+" --force", err, "%s: can't check for background work", name)
+			return exit(ExitCantCheck, bsname.Cmd+" end --force "+name, err, "%s: can't check for background work", name)
 		case len(bg) > 0:
-			return exit(ExitBackground, bsname.Cmd+" end "+name+" --force", nil, "%s", background(name, bg))
+			return exit(ExitBackground, bsname.Cmd+" end --force "+name, nil, "%s", background(name, bg))
 		}
 	}
 	// The old bs's spawn recorded no process, and herdr reuses workspace ids once its server
@@ -292,7 +292,7 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 	case err != nil:
 		return exit(ExitCantCheck, bsname.Cmd+" end "+name, err, "%s: can't tell whether its pane is still in its workspace %s; nothing closed", name, sp.Herdr.Workspace)
 	case pid != 0 && !o.Force:
-		return exit(ExitRefused, bsname.Cmd+" end "+name+" --force (stops pid "+strconv.Itoa(pid)+" wherever it runs)", nil,
+		return exit(ExitRefused, bsname.Cmd+" end --force "+name+" (stops pid "+strconv.Itoa(pid)+" wherever it runs)", nil,
 			"%s: its pane %s moved out of its workspace %s, and its process (pid %d) still runs there; nothing closed", name, sp.Herdr.Pane, sp.Herdr.Workspace, pid)
 	}
 	switch g, err := c.guests(ctx, sp); {

@@ -217,7 +217,7 @@ func TestEndIncompleteIsTheWayOutWhileGitHubIsDown(t *testing.T) {
 	x.commit(sp.Workspace.Dir, "work.txt")
 	must(t, x.worker("toy-1", 1, "done"), 0)
 	x.gh.Offline = true
-	must(t, x.queen("end", "toy-1"), 6, "next: bs end toy-1 --incomplete")
+	must(t, x.queen("end", "toy-1"), 6, "next: bs end --incomplete toy-1")
 	must(t, x.queen("end", "--incomplete", "toy-1"), 0, "treating it as incomplete", "ended toy-1")
 }
 

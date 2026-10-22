@@ -559,7 +559,15 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 			if !landed {
 				next = bsname.Cmd + " end --incomplete " + sp.Name + " if its goal isn't complete"
 			}
-			note("stuck", sp.Name, "its process is gone but it isn't ended → %s spawn --goal %s %s resumes it in its pane, or %s", bsname.Cmd, g, sp.Bead, next)
+			if discarded || gerr != nil { // nothing to resume for: only the end
+				note("stuck", sp.Name, "its process is gone but it isn't ended → %s", next)
+			} else {
+				var flags []string
+				for _, p := range e.Parts {
+					flags = append(flags, "--goal "+p.String())
+				}
+				note("stuck", sp.Name, "its process is gone but it isn't ended → %s spawn %s %s resumes it in its pane, or %s", bsname.Cmd, strings.Join(flags, " "), sp.Bead, next)
+			}
 		case lerr != nil || gerr != nil || derr != nil: // couldn't read it: never read as "no" (Rule G)
 		case sp.Ended && !landed && !sp.Legacy() && !discarded && !handed:
 			// Completion needs a passing handoff, and an ended worker hands nothing off.

@@ -23,9 +23,8 @@ func (Exec) Run(ctx context.Context, dir string, argv ...string) ([]byte, error)
 	defer cancel()
 	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	cmd.Dir, cmd.Stdout, cmd.Stderr, cmd.WaitDelay = dir, &stdout, &stderr, time.Second
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.Dir, cmd.Stdout, cmd.Stderr = dir, &stdout, &stderr
+	Group(cmd)
 	err := cmd.Run()
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return nil, fmt.Errorf("%s: no answer within %s", strings.Join(argv, " "), ExecTimeout)
@@ -35,4 +34,13 @@ func (Exec) Run(ctx context.Context, dir string, argv ...string) ([]byte, error)
 		return stdout.Bytes(), &ExitError{Argv: argv, Code: ee.ExitCode(), Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}
 	}
 	return stdout.Bytes(), err
+}
+
+// Group puts cmd in its own process group and kills that whole group when cmd's context
+// ends: a child that forked a grandchild holding the pipe must not outlive the bound
+// (motif 15).
+func Group(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = time.Second
 }

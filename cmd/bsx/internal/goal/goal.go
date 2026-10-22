@@ -208,11 +208,6 @@ func (g Goal) Complete() []string {
 // Prune is every prune check of g.
 func (g Goal) Prune() []string { return g.union(func(p Part) []string { return p.Prune }) }
 
-// AtHandoff reports whether some part of g is complete only once its handoff passed.
-func (g Goal) AtHandoff() bool {
-	return slices.ContainsFunc(g.Parts, func(p Part) bool { return p.AtHandoff })
-}
-
 func (g Goal) union(of func(Part) []string, first ...string) []string {
 	out := slices.Clone(first)
 	for _, p := range g.Parts {

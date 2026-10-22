@@ -84,7 +84,7 @@ func (g *GH) Run(_ context.Context, _ string, argv ...string) ([]byte, error) {
 		"url": pr.URL, "state": pr.State, "isDraft": pr.Draft, "headRefName": pr.Head, "headRefOid": pr.HeadOID,
 		"baseRefName": pr.Base, "author": map[string]string{"login": pr.Author},
 	}
-	var cs []any
+	cs := []any{} // gh says [] for none, never null
 	for _, c := range pr.Comments {
 		cs = append(cs, map[string]any{"author": map[string]string{"login": c.Author}, "body": c.Body, "createdAt": c.At.UTC().Format(time.RFC3339)})
 	}

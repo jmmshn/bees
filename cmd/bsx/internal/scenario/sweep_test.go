@@ -149,10 +149,36 @@ func TestBSVariablesAreIgnoredInsideARecordedPane(t *testing.T) {
 // refuses a token herdr would cut.
 
 // The live-test and docs bugs belong to the rig and setup beads.
-func TestPilotBugsOfTheLiveRig(t *testing.T) {
-	later(t, "bees-13.3", "the rig: 12.19, 12.22, 12.24, 12.26, 12.30, 12.34, 12.35, 12.40")
+func TestPilotBug1219AToyHasItsOwnConfigBeforeItsQueen(t *testing.T) {
+	later(t, "bees-13.3", "the rig: 12.19")
 }
-func TestPilotBugsOfSetupDocs(t *testing.T) { later(t, "bees-13.8", "SETUP-AGENT.md: 12.42, 12.48") }
+func TestPilotBug1222ToysDontLoadTheKeepersClaudeMD(t *testing.T) {
+	later(t, "bees-13.3", "the rig: 12.22")
+}
+func TestPilotBug1224AToyQueenSpawnsOnTheBuildUnderTest(t *testing.T) {
+	later(t, "bees-13.3", "the rig: 12.24")
+}
+func TestPilotBug1226ToyWorkersReadTheToysConfig(t *testing.T) {
+	later(t, "bees-13.3", "the rig: 12.26")
+}
+func TestPilotBug1230TeardownFindsEveryLeak(t *testing.T) {
+	later(t, "bees-13.3", "the rig: 12.30")
+}
+func TestPilotBug1234SetupTakesAGitToysConfig(t *testing.T) {
+	later(t, "bees-13.3", "the rig: 12.34")
+}
+func TestPilotBug1235ANonGitToyStartsAQueen(t *testing.T) {
+	later(t, "bees-13.3", "the rig: 12.35")
+}
+func TestPilotBug1240TeardownOfANestedWorkspace(t *testing.T) {
+	later(t, "bees-13.3", "the rig: 12.40")
+}
+func TestPilotBug1242SetupAgentDocGaps(t *testing.T) {
+	later(t, "bees-13.8", "SETUP-AGENT.md: 12.42")
+}
+func TestPilotBug1248SetupAgentRound11Notes(t *testing.T) {
+	later(t, "bees-13.8", "SETUP-AGENT.md: 12.48")
+}
 func TestPilotBug1251PromptFriction(t *testing.T) {
 	later(t, "bees-13.9", "the role prompts rewritten (12.51); positional bs done is TestDoneRefusesAPositionalReport")
 }
@@ -374,6 +400,9 @@ func TestSpawnRefusesABranchThatAlreadyExists(t *testing.T) {
 }
 
 func TestSpawnRefusesAPRGoalWithoutARemote(t *testing.T) { later(t, "bees-13.6", "remote refusals") }
+func TestSpawnRefusesABranchGoalInAWorkspaceWithNoBranch(t *testing.T) {
+	later(t, "bees-13.10", "workspace none: a branch goal there has no branch to check")
+}
 func TestSpawnRefusesACustomArgv0NotOnPath(t *testing.T) { later(t, "bees-13.11", "cmd: checks") }
 func TestSpawnRefusesACommandKindWithoutClean(t *testing.T) {
 	later(t, "bees-13.11", "[workspace.command]")

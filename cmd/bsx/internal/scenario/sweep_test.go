@@ -273,6 +273,8 @@ INSERT INTO entries VALUES ('s1','2026-10-01T00:00:00.000Z','spawned','queen-toy
 	}
 	r := x.keeper("status")
 	must(t, r, 0, "--goal legacy", "no start recorded (legacy)")
+	// It froze no bead: an amend to note has nothing to tell a change from, and says the way out.
+	must(t, x.keeper("goal", "toy-9", "note"), 2, "spawned before bs froze its bead", "bsx goal toy-9 discard (the keeper), then bsx end toy-9 and bsx spawn --goal note toy-9")
 	if _, err := os.Stat(x.logbook + ".pre-2"); err != nil {
 		t.Fatalf("no copy aside: %v", err)
 	}
@@ -313,8 +315,6 @@ INSERT INTO entries VALUES ('e%[1]s','2026-10-01T00:00:01.000Z','ended','queen-t
 		t.Fatalf("prune removed the unmerged %s: %v", open, err)
 	}
 }
-
-func TestNoteAndBeadsGoals(t *testing.T) { later(t, "bees-13.7", "note and beads goals") }
 func TestCustomGoalsAreFrozenAtSpawn(t *testing.T) {
 	later(t, "bees-13.11", "[goal.<name>] and cmd: checks frozen in spawned")
 }

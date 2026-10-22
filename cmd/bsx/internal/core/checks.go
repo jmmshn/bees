@@ -21,13 +21,6 @@ type Handed struct {
 	Report   string
 }
 
-// errNotBuilt is a built-in check whose feature lands in a later bead: it can't run,
-// which is never a pass (Rule G).
-func errNotBuilt(bead string) error { return fmt.Errorf("not built yet (%s)", bead) }
-
-// notBuilt is each built-in check of a later bead.
-var notBuilt = map[string]string{goal.NoteChanged: "bees-13.7", goal.BeadCreated: "bees-13.7"}
-
 // check runs one built-in check of sp outside any goal part (prune's clean check).
 func (c *Core) check(ctx context.Context, sp logbook.Spawn, name string, h Handed) logbook.CheckResult {
 	return c.look(sp, h).check(ctx, goal.Part{}, name)
@@ -72,21 +65,24 @@ func (k *look) stage(ctx context.Context, e logbook.Effective, of func(goal.Part
 
 func (k *look) run(ctx context.Context, p goal.Part, name string) (outcome, string, error) {
 	c, ws, h := k.c, k.sp.Workspace, k.h
-	if b, ok := notBuilt[name]; ok {
-		return failed, "", errNotBuilt(b)
-	}
 	if isPRCheck(name) {
 		return k.prCheck(ctx, p, name)
 	}
 	switch name {
 	case goal.VerdictGiven:
 		switch {
-		case h.Answer != "yes" && h.Answer != "no":
+		case h.Answer == "":
 			return failed, "--answer yes|no is missing", nil
-		case h.Report == "":
+		case h.Answer != "yes" && h.Answer != "no":
+			return failed, fmt.Sprintf("--answer must be yes or no (got %q)", h.Answer), nil
+		case strings.TrimSpace(h.Report) == "":
 			return failed, "--report <text>|- is missing", nil
 		}
 		return passed, "", nil
+	case goal.NoteChanged:
+		return k.noteChanged(ctx)
+	case goal.BeadCreated:
+		return k.beadCreated(ctx)
 	case goal.Clean:
 		// Not c.git: trimming would cut the first line's status column.
 		b, err := c.Run.Run(ctx, ws.Dir, "git", "-C", ws.Dir, "status", "--porcelain")
@@ -124,6 +120,50 @@ func (k *look) run(ctx context.Context, p goal.Part, name string) (outcome, stri
 	return failed, "", fmt.Errorf("no check %s", name)
 }
 
+// frozen is the bead as spawn froze it. bs goal refuses note and beads on a spawn without
+// one, so none here is a broken record, never "unchanged".
+func (k *look) frozen() (*logbook.BeadAt, error) {
+	if k.sp.At == nil {
+		return nil, fmt.Errorf("spawn %s recorded no bead_at", k.sp.ID)
+	}
+	return k.sp.At, nil
+}
+
+// noteChanged reports whether the bead's notes or design differ from spawn's hash.
+func (k *look) noteChanged(ctx context.Context) (outcome, string, error) {
+	at, err := k.frozen()
+	if err != nil {
+		return failed, "", err
+	}
+	id := k.sp.Bead
+	b, err := k.c.Beads.Show(ctx, id)
+	if err != nil {
+		return failed, "", err
+	}
+	if noteHash(b) == at.Note {
+		return failed, fmt.Sprintf("%s's notes and design are as they were at spawn (a label or status change doesn't count): bd update %s --append-notes \"<text>\"", id, id), nil
+	}
+	return passed, fmt.Sprintf("%s's notes or design changed: bd show %s", id, id), nil
+}
+
+// beadCreated reports whether a bead under the bead isn't among those spawn found there.
+func (k *look) beadCreated(ctx context.Context) (outcome, string, error) {
+	at, err := k.frozen()
+	if err != nil {
+		return failed, "", err
+	}
+	kids, err := k.c.Beads.Children(ctx, k.sp.Bead)
+	if err != nil {
+		return failed, "", err
+	}
+	kids = slices.DeleteFunc(kids, func(id string) bool { return slices.Contains(at.Children, id) })
+	slices.Sort(kids) // bd lists them in no fixed order
+	if len(kids) == 0 {
+		return failed, fmt.Sprintf("no bead was created under %s since spawn", k.sp.Bead), nil
+	}
+	return passed, "created under " + k.sp.Bead + ": " + strings.Join(kids, ", "), nil
+}
+
 // porcelainPaths is the paths git status --porcelain listed, the first ten of them.
 func porcelainPaths(out string) string {
 	var paths []string
@@ -132,6 +172,11 @@ func porcelainPaths(out string) string {
 			paths = append(paths, strings.TrimSpace(line[3:]))
 		}
 	}
+	return firstTen(paths)
+}
+
+// firstTen is paths, the first ten of them and how many more.
+func firstTen(paths []string) string {
 	if len(paths) > 10 {
 		return strings.Join(paths[:10], ", ") + fmt.Sprintf(" and %d more", len(paths)-10)
 	}

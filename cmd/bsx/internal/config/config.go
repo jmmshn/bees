@@ -18,10 +18,11 @@ import (
 //
 //   - toml: its key within its table;
 //   - scope: which file may set it: global, project or both;
-//   - default: its value when nothing sets it (absent means "");
+//   - default: its value when nothing sets it (absent means ""); a list's is one item;
 //   - env: the variable that overrides both files outside a recorded herdr pane (optional);
 //   - enum: its allowed values, separated by | ("" always passes where it is the default);
 //   - path: a path: "dir", or "{repo}" when it may begin with the {repo} placeholder;
+//   - glob: present on a pattern over paths relative to a worktree (path.Match syntax);
 //   - unread: present when bsx doesn't act on the key yet; its value names the bead that
 //     wires it. bs config marks it and bs doctor warns when a file sets it;
 //   - doc: what it means, for bs config init (bees-13.8) to write as a comment.
@@ -38,6 +39,7 @@ type Config struct {
 	Review    Review              `toml:"review"`
 	Queen     Role                `toml:"queen"`
 	Worker    Worker              `toml:"worker"`
+	Prune     Prune               `toml:"prune"`
 }
 
 // Paths says where bs keeps its files and finds repos.
@@ -95,6 +97,11 @@ type Review struct {
 // Role holds the queen's harness tables.
 type Role struct {
 	ClaudeCode ClaudeCode `toml:"claude_code"`
+}
+
+// Prune is what bs prune lets go.
+type Prune struct {
+	Ignore []string `toml:"ignore" scope:"both" default:"bin/" glob:"" doc:"ignored files in a worktree that prune removes with it (build output), as .gitignore spells them: a pattern ending in / is a directory and all under it, one with no other / matches at any depth, one with an inner / from the worktree's top; frozen at spawn. Every other ignored file keeps the worktree, named (a report in an ignored scratch/)"`
 }
 
 // Worker holds every worker's harness tables and bs spawn's own settings.

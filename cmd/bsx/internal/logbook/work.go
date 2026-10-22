@@ -66,6 +66,12 @@ func (l *Logbook) Goal(ctx context.Context, sp Spawn) (Effective, error) {
 	return e, rows.Err()
 }
 
+// SaysWhere reports whether c passed saying where the handoff put its work (a note, new
+// beads): the queen's inbox shows it with the done.
+func (c CheckResult) SaysWhere() bool {
+	return c.Pass && c.Detail != "" && (c.Name == goal.NoteChanged || c.Name == goal.BeadCreated)
+}
+
 // CheckResult is one check's outcome. A check that couldn't run has Err set and is
 // neither pass nor fail ("couldn't look" is never "no", Rule G).
 type CheckResult struct {
@@ -116,6 +122,11 @@ func (d Done) Text() string {
 	}
 	if d.Report != "" {
 		s += "\n" + d.Report
+	}
+	for _, c := range d.Checks {
+		if c.SaysWhere() {
+			s += "\n" + c.Detail
+		}
 	}
 	if len(d.Background) > 0 {
 		s += "\n(reported with " + bsname.Cmd + " done --force while it still ran background work:"

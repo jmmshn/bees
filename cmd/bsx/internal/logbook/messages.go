@@ -23,6 +23,12 @@ func (l *Logbook) Send(ctx context.Context, from, to, body string) (ID, error) {
 	return l.SendFrom(ctx, from, "", to, body)
 }
 
+// SendAbout is Send of a message about spawn: like its brief, it stops being unread once
+// that spawn ends, so a later spawn of the same name never reads it.
+func (l *Logbook) SendAbout(ctx context.Context, from, to string, spawn ID, body string) (ID, error) {
+	return insert(ctx, l.db, entry{kind: "message", actor: from, subject: to, ref: spawn, data: map[string]string{"body": body}})
+}
+
 // SendFrom is Send from a session of project fromProject, writing into another project's
 // logbook: the entry records it, so the reply needs no project read back out of a name
 // (motif 3). "" is the logbook's own project.

@@ -150,6 +150,11 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 		if err := c.refuse(g, sp.Workspace); err != nil {
 			return logbook.Effective{}, err
 		}
+		// Only a spawn from before bs froze its bead has none: nothing to tell a change from.
+		if sp.At == nil && slices.ContainsFunc(g.Parts, goal.Part.ReadsBead) {
+			return logbook.Effective{}, exit(ExitRefused, bsname.Cmd+" goal "+sp.Name+" discard (the keeper), then "+bsname.Cmd+" end "+sp.Name+" and "+bsname.Cmd+" spawn --goal "+g.String()+" "+sp.Bead, nil,
+				"%s --goal %s: it was spawned before bs froze its bead, so there is nothing to tell a change from", what, g)
+		}
 		change.Goal = &g
 	}
 	if _, err := c.Logbook.RecordGoal(ctx, sp.ID, sp.Name, change); err != nil {
@@ -175,7 +180,7 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 	case change.Waive != "":
 		body = fmt.Sprintf("%s waived the %s check of your goal (--goal %s)", req.By, change.Waive, e.Goal)
 	}
-	_, err = c.Logbook.Send(ctx, req.By, sp.Name, body)
+	_, err = c.Logbook.SendAbout(ctx, req.By, sp.Name, sp.ID, body)
 	return e, err
 }
 

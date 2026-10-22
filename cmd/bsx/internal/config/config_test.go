@@ -280,3 +280,28 @@ func TestQuote(t *testing.T) {
 		t.Error(got)
 	}
 }
+
+// prune.ignore defaults to one item, a project file overrides the global one whole, an
+// empty list clears the default, and a pattern path.Match can't read, or one anchored
+// with a leading /, is refused naming its file.
+func TestPruneIgnore(t *testing.T) {
+	dir := t.TempDir()
+	global, proj := filepath.Join(dir, "config.toml"), filepath.Join(dir, "projects", "toy.toml")
+	l, err := Load(Input{Dir: dir, Project: "toy", Home: "/h"})
+	if err != nil || strings.Join(l.Prune.Ignore, ",") != "bin/" || l.Sources["prune.ignore"].String() != "default" {
+		t.Fatalf("default: %q from %s, %v", l.Prune.Ignore, l.Sources["prune.ignore"], err)
+	}
+	write(t, global, "[prune]\nignore = [\"bin/\", \"*.o\"]\n")
+	write(t, proj, "[prune]\nignore = [\"build/\"]\n")
+	if l, err = Load(Input{Dir: dir, Project: "toy", Home: "/h"}); err != nil || strings.Join(l.Prune.Ignore, ",") != "build/" ||
+		l.Sources["prune.ignore"].String() != "project "+proj {
+		t.Fatalf("project: %q from %s, %v", l.Prune.Ignore, l.Sources["prune.ignore"], err)
+	}
+	write(t, proj, "[prune]\nignore = []\n")
+	if l, err = Load(Input{Dir: dir, Project: "toy", Home: "/h"}); err != nil || len(l.Prune.Ignore) != 0 {
+		t.Fatalf("cleared: %q, %v", l.Prune.Ignore, err)
+	}
+	write(t, proj, "[prune]\nignore = [\"[bin\", \"/bin/\", \"a//b\"]\n")
+	_, err = Load(Input{Dir: dir, Project: "toy", Home: "/h"})
+	wantErr(t, err, proj+`: prune.ignore = "[bin": not a path pattern`, `prune.ignore = "/bin/"`, `prune.ignore = "a//b"`)
+}

@@ -48,6 +48,12 @@ type Part struct {
 // Reviewed reports whether p's checks read changes on the review host.
 func (p Part) Reviewed() bool { return p.Type == "pr" || p.Type == "push" || p.Type == "review" }
 
+// TakesReport reports whether p's handoff takes --answer and --report.
+func (p Part) TakesReport() bool { return p.Type == "verdict" }
+
+// ReadsBead reports whether p's checks read the bead as spawn froze it.
+func (p Part) ReadsBead() bool { return p.Type == "note" || p.Type == "beads" }
+
 // String is the part as --goal spells it.
 func (p Part) String() string {
 	s := p.Type
@@ -95,7 +101,7 @@ const (
 	PRClosed          = "pr_merged_or_closed" // every handed-off PR merged or closed
 	PushMoved         = "push_moved"          // the target's head descends from a workspace commit
 	ReviewComment     = "review_comment"      // a comment on the target since spawn carries bs:<spawn id>
-	VerdictGiven      = "verdict_given"       // --answer and --report present
+	VerdictGiven      = "verdict_given"       // --answer yes or no, and a report not blank
 	NoteChanged       = "note_changed"        // the bead's notes or design differ from spawn's hash
 	BeadCreated       = "bead_created"        // a bead created under the bead since spawn
 	BranchAhead       = "branch_ahead"        // the recorded branch is ahead of its base

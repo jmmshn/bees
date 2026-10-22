@@ -35,6 +35,7 @@ type Core struct {
 	CacheDir    string   // per-start files
 	WorkerPath  []string // worker.path: dirs first on a worker's PATH
 	Guards      config.Guards
+	PruneIgnore []string    // prune.ignore, which spawn freezes: ignored files prune removes with a worktree
 	Review      port.Review // review.host: where changes are reviewed and land; never nil
 	VCS         port.VCS    // the workspace's version control, as the goal checks read it
 	Timing      Timing

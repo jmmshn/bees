@@ -16,9 +16,9 @@ var gitWords = regexp.MustCompile(`(?i)\b(git|branch(es)?|commits?|worktrees?|me
 // workspace with a goal that isn't git's reads no git wording (bees-12.29).
 // The queen's side, every goal type under none, is bees-13.19.
 func TestANonGitWorkerReadsNoGitWording(t *testing.T) {
-	got := prompt.Text(prompt.Worker, "web2", "none", []string{"verdict"})
+	got := prompt.Text(prompt.Worker, "web2", "none", []string{"verdict", "note", "beads"})
 	if m := gitWords.FindAllString(got, -1); m != nil {
-		t.Errorf("worker prompt under none with --goal verdict says %q:\n%s", m, got)
+		t.Errorf("worker prompt under none with --goal verdict, note, beads says %q:\n%s", m, got)
 	}
 }
 
@@ -54,9 +54,24 @@ func TestFragmentsSplitPerRole(t *testing.T) {
 
 // A goal type with no fragment yet still names how to hand it off; each type appears once.
 func TestAGoalWithNoFragmentStillSaysBsDone(t *testing.T) {
-	got := prompt.Text(prompt.Worker, "web2", "git_worktree", []string{"verdict", "branch", "branch"})
-	if !strings.Contains(got, "`--goal verdict`: `bsx done` checks it") || strings.Count(got, "`--goal branch`:") != 1 {
+	got := prompt.Text(prompt.Worker, "web2", "git_worktree", []string{"cl", "branch", "branch"})
+	if !strings.Contains(got, "`--goal cl`: `bsx done` checks it") || strings.Count(got, "`--goal branch`:") != 1 {
 		t.Fatalf("prompt:\n%s", got)
+	}
+}
+
+// A verdict or note worker is told where its report goes, never a file (bees-13.7: five
+// reports left in scratch/ were lost). A beads worker writes no report: its beads are it.
+func TestNonPRGoalsSayWhereTheReportGoes(t *testing.T) {
+	for g, want := range map[string]string{
+		"verdict": "bsx done --answer yes|no --report",
+		"note":    "bd update <bead> --append-notes",
+		"beads":   "bd create --force --parent <bead>",
+	} {
+		got := prompt.Text(prompt.Worker, "web2", "none", []string{g})
+		if !strings.Contains(got, want) || (g != "beads" && !strings.Contains(got, "never leave") && !strings.Contains(got, "Never leave")) {
+			t.Errorf("--goal %s worker prompt lacks %q or the scratch warning:\n%s", g, want, got)
+		}
 	}
 }
 

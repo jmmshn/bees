@@ -3,6 +3,7 @@ package core
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"maps"
@@ -55,6 +56,10 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 	case ok && !prev.Ended:
 		return logbook.Spawn{}, exit(ExitRefused, bsname.Cmd+" end "+name, nil, "%s is already spawned and not ended", name)
 	}
+	at, err := c.beadAt(ctx, bead)
+	if err != nil {
+		return logbook.Spawn{}, err
+	}
 	target, err := c.resolveReview(ctx, &g)
 	if err != nil {
 		return logbook.Spawn{}, err
@@ -94,7 +99,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 	sp := logbook.Spawn{
 		Name: name, By: req.By, Bead: bead.ID, Label: label, Harness: c.HarnessName,
 		Herdr: logbook.Pane{Session: session, Workspace: hw.ID, Pane: hw.Pane}, Workspace: ws,
-		Goal: g, ConfigDir: c.ConfigDir,
+		Goal: g, ConfigDir: c.ConfigDir, At: at, PruneIgnore: c.PruneIgnore,
 	}
 	sp.Record = launch.Record
 	if sp.ID, err = c.Logbook.RecordSpawn(ctx, req.By, sp, brief(bead, g, target, c.Guards.AllowMergeInto)); err != nil {
@@ -119,11 +124,26 @@ func (c *Core) refuse(g goal.Goal, ws logbook.Workspace) error {
 			if ws.Branch == "" {
 				return exit(ExitRefused, "", nil, "--goal %s: a %s workspace with no branch has none to hand off", p, ws.Kind)
 			}
-		case "note", "beads":
-			return exit(ExitRefused, "", nil, "--goal %s: arrives with bees-13.7", p)
 		}
 	}
 	return nil
+}
+
+// beadAt is bead as spawn finds it: the hash of its notes and design, and the beads under
+// it. Every spawn freezes it, whatever its goal, so an amend to note or beads checks
+// against the spawn.
+func (c *Core) beadAt(ctx context.Context, bead port.Bead) (*logbook.BeadAt, error) {
+	kids, err := c.Beads.Children(ctx, bead.ID)
+	if err != nil {
+		return nil, exit(ExitCantCheck, "bd list --parent "+bead.ID, err, "can't list the beads under %s", bead.ID)
+	}
+	return &logbook.BeadAt{Note: noteHash(bead), Children: kids}, nil
+}
+
+// noteHash is the sha256 of b's notes and design, hex: what a note goal must change. A
+// label or status change leaves it alone.
+func noteHash(b port.Bead) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(b.Notes+"\x00"+b.Design)))
 }
 
 // target is a push goal's change as spawn found it: the workspace starts at its head,

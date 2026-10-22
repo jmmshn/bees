@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -88,7 +89,9 @@ func Load(in Input) (*Loaded, error) {
 	root := reflect.ValueOf(&l.Config).Elem()
 	for _, f := range leaves(root, "") {
 		f.v.SetZero()
-		if d := f.tag.Get("default"); d != "" {
+		if d := f.tag.Get("default"); d != "" && f.v.Kind() == reflect.Slice {
+			f.v.Set(reflect.ValueOf([]string{d})) // a list's default is one item
+		} else if d != "" {
 			f.v.SetString(d)
 		}
 		if !f.table() {
@@ -258,6 +261,11 @@ func (l *Loaded) check(f leaf, val string) error {
 	if enum := f.tag.Get("enum"); enum != "" && !slices.Contains(strings.Split(enum, "|"), val) {
 		return fmt.Errorf("%s = %q: must be one of %s", f.key, val, strings.ReplaceAll(enum, "|", ", "))
 	}
+	if _, ok := f.tag.Lookup("glob"); ok {
+		if _, err := path.Match(val, ""); err != nil || strings.HasPrefix(val, "/") || strings.Contains(val, "//") {
+			return fmt.Errorf("%s = %q: not a path pattern relative to the worktree (path.Match syntax, no leading /)", f.key, val)
+		}
+	}
 	if kind := f.tag.Get("path"); kind != "" {
 		return l.checkPath(f.key, val, kind)
 	}
@@ -412,8 +420,8 @@ func leaves(v reflect.Value, prefix string) []leaf {
 			}
 			out = append(out, leaf{key, sf.Tag, v.Field(i)})
 		case reflect.Slice:
-			if sf.Type.Elem().Kind() != reflect.String || sf.Tag.Get("env") != "" || sf.Tag.Get("default") != "" {
-				panic("config: " + key + ": a list holds strings, with no env or default")
+			if sf.Type.Elem().Kind() != reflect.String || sf.Tag.Get("env") != "" {
+				panic("config: " + key + ": a list holds strings, with no env (a default is one item)")
 			}
 			out = append(out, leaf{key, sf.Tag, v.Field(i)})
 		default:

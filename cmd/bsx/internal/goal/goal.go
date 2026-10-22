@@ -105,6 +105,11 @@ var builtins = []string{NoBackground, PRExists, PROpen, PRNotDraft, PRWorkspaceC
 // IsCheck reports whether name is a built-in check.
 func IsCheck(name string) bool { return slices.Contains(builtins, name) }
 
+// BuiltinTypes is every built-in goal type a queen may give at spawn, in a fixed order.
+func BuiltinTypes() []string {
+	return []string{"pr", "push", "review", "verdict", "note", "beads", "branch"}
+}
+
 // IsType reports whether name is a built-in goal type, or one never given at spawn.
 func IsType(name string) bool {
 	_, ok := types[name]

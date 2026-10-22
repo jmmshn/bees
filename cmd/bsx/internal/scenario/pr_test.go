@@ -79,7 +79,7 @@ type backend interface {
 	open(x *toy, n int, dir, head string, draft bool) string // publish dir's head as change n
 	update(x *toy, n int, dir string)                        // push dir's head onto change n
 	ci(x *toy, n int, buckets ...string)                     // pass, fail or pending
-	ciLater(x *toy, n int, after time.Duration, buckets ...string)
+	ciLater(x *toy, n int, buckets ...string)                // CI as given once bs has seen it as it is
 	baseChecks(x *toy, k int)
 	behind(x *toy)           // trunk moves on elsewhere
 	sync(x *toy, dir string) // bring trunk into dir, with a commit
@@ -130,12 +130,14 @@ func (ghBackend) ci(x *toy, n int, buckets ...string) {
 	}
 	ci(states...)(x.gh.PRs[ghBackend{}.url(n)])
 }
-func (ghBackend) ciLater(x *toy, n int, after time.Duration, buckets ...string) {
+func (ghBackend) ciLater(x *toy, n int, buckets ...string) {
 	var states []string
 	for _, b := range buckets {
 		states = append(states, map[string]string{"pass": "SUCCESS", "fail": "FAILURE", "pending": "PENDING"}[b])
 	}
-	time.AfterFunc(after, func() { x.gh.Edit(ghBackend{}.url(n), ci(states...)) })
+	var next fake.PR
+	ci(states...)(&next)
+	x.gh.Edit(ghBackend{}.url(n), func(pr *fake.PR) { pr.Next = &next.CI })
 }
 func (ghBackend) baseChecks(x *toy, k int) { x.gh.BaseChecks = map[string]int{"main": k} }
 func (ghBackend) behind(x *toy) {
@@ -187,8 +189,12 @@ func (b *clBackend) ci(_ *toy, n int, buckets ...string) {
 		}
 	})
 }
-func (b *clBackend) ciLater(x *toy, n int, after time.Duration, buckets ...string) {
-	time.AfterFunc(after, func() { b.ci(x, n, buckets...) })
+func (b *clBackend) ciLater(_ *toy, n int, buckets ...string) {
+	var next []port.CICheck
+	for i, s := range buckets {
+		next = append(next, port.CICheck{Name: fmt.Sprintf("job%d", i+1), Bucket: s})
+	}
+	b.h.Next(n, next)
 }
 func (b *clBackend) baseChecks(_ *toy, k int) { b.h.BaseChecks = k }
 func (b *clBackend) behind(*toy)              { b.h.Trunk() }
@@ -297,7 +303,7 @@ func TestPRReadyAndDraft(t *testing.T) {
 		must(t, x.queen("end", "toy-2"), 0)
 		must(t, x.queen("prune"), 3, url+": open")
 		b.close(x, 2)
-		must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir+" and branch toy-2")
+		must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir+" and branch toy-2", "its work is on "+url)
 	})
 }
 
@@ -450,11 +456,12 @@ func TestDoneWaitsForCI(t *testing.T) {
 		b.ci(x, 1, "pending")
 		must(t, x.worker("toy-1", 1, "done", "--pr", url), 10, "next: bs done --wait")
 		must(t, x.worker("toy-1", 2, "done", "--wait", "--timeout", "1s", "--pr", url), 11, "still pending after 1s", "pending: job1")
-		b.ciLater(x, 1, 300*time.Millisecond, "pass", "fail")
-		must(t, x.worker("toy-1", 3, "done", "--wait", "--pr", url), 7, "failing: job2", "still pending (")
+		must(t, x.worker("toy-1", 3, "done", "--wait", "--timeout", "20m", "--pr", url), 2, "at most 9m0s")
+		b.ciLater(x, 1, "pass", "fail")
+		must(t, x.worker("toy-1", 4, "done", "--wait", "--pr", url), 7, "failing: job2", "still pending (")
 		b.ci(x, 1, "pending")
-		b.ciLater(x, 1, 300*time.Millisecond, "pass")
-		must(t, x.worker("toy-1", 4, "handoff", "--wait", "--pr", url), 0, "handed off to queen-toy")
+		b.ciLater(x, 1, "pass")
+		must(t, x.worker("toy-1", 5, "handoff", "--pr", url), 0, "handed off to queen-toy") // handoff is done --wait
 		b.ci(x, 1, "pending")
 		must(t, x.keeper("check", "toy-1"), 10, "FAIL ci_green", "pending: job1")
 	})
@@ -469,6 +476,11 @@ func TestWaiversHoldAtEndAndAmendsAreRefused(t *testing.T) {
 		b.commit(x, sp.Workspace.Dir)
 		url := b.open(x, 1, sp.Workspace.Dir, "toy-1", false)
 		must(t, x.worker("toy-1", 1, "done", "--pr", url), 0)
+		// An amend tells the worker its new goal's fragments, and a review's marker.
+		must(t, x.keeper("goal", "toy-1", "pr", "review="+url), 0)
+		must(t, x.worker("toy-1", 2, "inbox"), 0, "now --goal pr review="+url, "bs:"+string(sp.ID), "## Goal", "--goal review=<url>")
+		must(t, x.keeper("goal", "toy-1", "push="+url), 2, "starts at its target's head")
+		must(t, x.keeper("goal", "toy-1", "pr"), 0)
 		b.close(x, 1)
 		must(t, x.keeper("goal", "toy-1", "push="+url), 2, "bs goal toy-1 --goal push="+url, "not open")
 		must(t, x.queen("end", "toy-1"), 9, "closed")
@@ -509,7 +521,8 @@ func TestAMixedGoalHoldsEveryPart(t *testing.T) {
 
 // GitHub lags a push by seconds (seen live): a branch pushed to its upstream that the PR
 // doesn't show yet is pending (exit 10, --wait rides it out), never "push it"; one never
-// pushed still is.
+// pushed still is; a PR head holding commits the branch lacks says pull, never pending
+// (a --wait on it would never end).
 func TestAPushTheHostHasntSeenYetIsPending(t *testing.T) {
 	x := newToy(t)
 	b := ghBackend{}
@@ -527,4 +540,13 @@ func TestAPushTheHostHasntSeenYetIsPending(t *testing.T) {
 	must(t, x.worker("toy-1", 3, "done", "--wait", "--pr", url), 0)
 	b.commit(x, dir)
 	must(t, x.worker("toy-1", 4, "done", "--wait", "--pr", url), 7, "push it")
+
+	// Someone pushed onto the PR (or "Update branch"): the host is ahead, never pending.
+	x.git(dir, "push", "-q", "origin", "toy-1")
+	other := filepath.Join(filepath.Dir(x.repo), "helper")
+	x.git(x.repo, "fetch", "-q", "origin")
+	x.git(x.repo, "worktree", "add", "-q", "--detach", other, "origin/toy-1")
+	b.commit(x, other)
+	x.push(other, "toy-1")
+	must(t, x.worker("toy-1", 5, "done", "--wait", "--timeout", "1s", "--pr", url), 7, "has commits toy-1 lacks", "pull them, then push")
 }

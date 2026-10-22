@@ -70,6 +70,7 @@ func TestPilotBug1220MergeGrantOnAnUnprotectedRepo(t *testing.T) {
 	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 2, "protected")
 	x.gh.Protected = map[string]bool{"main": true}
 	x.spawn("toy-1", "branch")
+	must(t, x.worker("toy-1", 1, "inbox"), 0, "merge your own change when its base matches stack/*")
 	deny := x.deny("toy-1")
 	if g, ok := guards.Denies(deny, "gh pr merge 3"); ok {
 		t.Errorf("the merge grant left %q", g)

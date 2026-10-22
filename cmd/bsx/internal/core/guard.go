@@ -10,8 +10,9 @@ import (
 )
 
 // guardIn is what the guards of a worker in c.Repo are built from: the workspace kind,
-// the repo's default branch names and, only when the config grants merges, GitHub's word
-// on whether the default branch is protected. A lookup that fails is an error, never
+// the repo's default branch names, the review host's merge and approve globs and, only
+// when the config grants merges, the host's word on whether the default branch is
+// protected. A lookup that fails is an error, never
 // "unprotected" or "no default branch" (Rule G).
 func (c *Core) guardIn(ctx context.Context) (guards.In, error) {
 	in := guards.In{Kind: cmp.Or(c.Kind, config.GitWorktree), Git: true}
@@ -25,10 +26,7 @@ func (c *Core) guardIn(ctx context.Context) (guards.In, error) {
 		return in, err
 	}
 	in.DefaultBranches = guards.DefaultBranches(origin, head)
-	if c.Review == nil {
-		return in, nil // no review host: no merge to deny, nothing protects a default branch
-	}
-	in.MergeDeny = c.Review.MergeDeny()
+	in.MergeDeny, in.ApproveDeny = c.Review.MergeDeny(), c.Review.ApproveDeny()
 	if len(c.Guards.AllowMergeInto) == 0 {
 		return in, nil
 	}

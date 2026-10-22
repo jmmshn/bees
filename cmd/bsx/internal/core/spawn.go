@@ -76,7 +76,11 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 	if err != nil {
 		return logbook.Spawn{}, exit(ExitRefused, "", err, "bs spawn %s: its harness refused the launch; nothing was made", name)
 	}
-	launch.Files = withPrompt(launch.Files, prompt.Text(prompt.Worker, c.Project, ws.Kind, g.Types()))
+	text := prompt.Text(prompt.Worker, c.Project, ws.Kind, g.Types())
+	if slices.ContainsFunc(g.Parts, goal.Part.Reviewed) {
+		text += prompt.Host(prompt.Worker, c.Review.Name())
+	}
+	launch.Files = withPrompt(launch.Files, text)
 	label := cmp.Or(req.Label, bead.Title)
 	session := cmp.Or(req.Session, logbook.DefaultSession)
 	hw, err := c.makeWorkspace(ctx, session, &ws, target, c.Project+" · "+label)
@@ -94,7 +98,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 		Goal: g, ConfigDir: c.ConfigDir, At: at,
 	}
 	sp.Record = launch.Record
-	if sp.ID, err = c.Logbook.RecordSpawn(ctx, req.By, sp, brief(bead, g, target)); err != nil {
+	if sp.ID, err = c.Logbook.RecordSpawn(ctx, req.By, sp, brief(bead, g, target, c.Guards.AllowMergeInto)); err != nil {
 		err = errors.Join(err, c.unmake(context.WithoutCancel(ctx), session, hw.ID, ws))
 		return logbook.Spawn{}, exit(ExitFail, "", err, "bs spawn %s: couldn't record the spawn", name)
 	}
@@ -157,9 +161,6 @@ func (c *Core) resolveReview(ctx context.Context, g *goal.Goal, cmd string) (*ta
 		p := &g.Parts[i]
 		if !p.Reviewed() {
 			continue
-		}
-		if c.Review == nil {
-			return nil, exit(ExitRefused, "bsx config", nil, "%s --goal %s: no review host is configured", cmd, p)
 		}
 		repo, ok, err := c.Review.Repo(ctx, c.Repo)
 		switch {
@@ -227,9 +228,6 @@ func (c *Core) workspace(ctx context.Context, name string, detached bool) (logbo
 	if c.Repo == "" {
 		return logbook.Workspace{}, exit(ExitRefused, "", nil, "bs spawn: project %s has no repo: run it in the repo, or set paths.repo", c.Project)
 	}
-	if c.Kind != "" && c.Kind != "git_worktree" {
-		return logbook.Workspace{}, exit(ExitRefused, "bsx config", nil, "bs spawn: workspace kind %s isn't built yet (none: bees-13.10, command: bees-13.11)", c.Kind)
-	}
 	top, err := c.git(ctx, c.Repo, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return logbook.Workspace{}, refusedOrCant(err, "", "bs spawn: %s is not a git checkout (workspace none arrives with bees-13.10)", c.Repo)
@@ -240,6 +238,11 @@ func (c *Core) workspace(ctx context.Context, name string, detached bool) (logbo
 	}
 	if top != c.Repo && top != real {
 		return logbook.Workspace{}, exit(ExitRefused, "", nil, "bs spawn: %s is inside the checkout %s, not its top level; set paths.repo to it", c.Repo, top)
+	}
+	// The checks above say what to fix when the kind was worked out as none; this one
+	// names a kind set by hand.
+	if c.Kind != "" && c.Kind != "git_worktree" {
+		return logbook.Workspace{}, exit(ExitRefused, "bs config", nil, "bs spawn: workspace kind %s (%s) isn't built yet (none: bees-13.10, command: bees-13.11)", c.Kind, c.KindWhy)
 	}
 	base, err := c.git(ctx, c.Repo, "symbolic-ref", "--short", "HEAD")
 	if err != nil {
@@ -299,8 +302,11 @@ func (c *Core) writeFiles(name string, l port.Launch) ([]string, error) {
 	return args, nil
 }
 
-func brief(b port.Bead, g goal.Goal, t *target) string {
+func brief(b port.Bead, g goal.Goal, t *target, mergeInto []string) string {
 	s := fmt.Sprintf("You own %s: %s\n\nYour goal: --goal %s. Hand it off with bs done when it holds.\n", b.ID, b.Title, g)
+	if len(mergeInto) > 0 { // the guard can't see a PR's base: the brief says which (guards.allow_merge_into)
+		s += fmt.Sprintf("The keeper lets you merge your own change when its base matches %s; check its base first, and never merge into the default branch.\n", strings.Join(mergeInto, " or "))
+	}
 	for _, p := range g.Parts {
 		switch {
 		case p.Type == "review":

@@ -24,6 +24,18 @@ _Avoid_: done report, delivery
 A goal whose state has been reached, a merged PR by default; bs finds it and records it as `landed`. Only then may the bead close.
 _Avoid_: landed (as a verb the keeper types), finished, merged (for non-PR goals)
 
+**Review host**:
+Where a project's changes (pull requests, CLs) are reviewed and land, set by `review.host`: GitHub by default. bs reads PR goals' evidence (state, CI, comments) only through it (ADR-0010 Amendment 1).
+_Avoid_: forge, remote, GitHub (for the general idea)
+
+**Workspace commit**:
+A commit made in a worker's workspace since it was first spawned there, as its VCS records it (git: the HEAD reflog's commit, rebase, cherry-pick, revert, am and merge-commit entries; never a checkout, reset or fast-forward). A handed-off change must hold one.
+_Avoid_: own commit, worker commit
+
+**Pending**:
+A handoff check not failed but not passed yet: CI still running, or the review host not yet showing a push. Only pending left is exit 10, and `bs done --wait` waits it out.
+_Avoid_: waiting, in progress
+
 **Bead**:
 One unit of work in the shared tracker, named `<project>-N[.M…]`.
 _Avoid_: issue, ticket, task

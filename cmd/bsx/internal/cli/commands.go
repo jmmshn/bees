@@ -100,14 +100,17 @@ func (r *run) done(fs *flag.FlagSet, args []string) error {
 	answer := fs.String("answer", "", "a verdict goal's answer: yes or no")
 	report := fs.String("report", "", "a verdict goal's report, or - to read it from stdin")
 	force := fs.Bool("force", false, "hand off while background work runs (waives that gate only)")
-	wait := fs.Bool("wait", false, "while CI is still running (or the host hasn't shown a push yet), wait for it (up to --timeout), then hand off or name what failed")
-	timeout := fs.Duration("timeout", 8*time.Minute, "how long --wait waits (under the 10 min a harness's shell call may take)")
+	wait := fs.Bool("wait", r.name == "handoff", "while CI is still running (or the host hasn't shown a push yet), wait for it (up to --timeout), then hand off or name what failed")
+	timeout := fs.Duration("timeout", 8*time.Minute, "how long --wait waits, at most 9m (a harness's shell call may run 10)")
 	as := fs.String("as", "", "the worker, outside a herdr pane")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("%w: bsx done takes no arguments; say it with --report (got %q)", errUsage, strings.Join(fs.Args(), " "))
+	}
+	if *timeout > maxWait {
+		return fmt.Errorf("%w: --timeout %s: at most %s, so bs answers before a harness's 10-minute shell call is cut", errUsage, *timeout, maxWait)
 	}
 	if *report == "-" {
 		b, err := io.ReadAll(r.env.Stdin)
@@ -201,6 +204,9 @@ func (r *run) goal(fs *flag.FlagSet, args []string) error {
 	return nil
 }
 
+// maxWait bounds bs done --timeout.
+const maxWait = 9 * time.Minute
+
 // waitFor is how long bs done waits for CI: --timeout with --wait, else not at all.
 func waitFor(wait bool, timeout time.Duration) time.Duration {
 	if !wait {
@@ -255,6 +261,9 @@ func (r *run) prune(fs *flag.FlagSet, args []string) error {
 		}
 		if len(did) > 0 {
 			fmt.Fprintf(r.out, "removed %s (%s)\n", strings.Join(did, " and "), p.Name)
+		}
+		if p.Deleted && p.Held != "" {
+			fmt.Fprintf(r.out, "  its work is on %s\n", p.Held)
 		}
 		if p.Remote != "" {
 			fmt.Fprintf(r.out, "  left %s: bs never touches a remote branch; it is the keeper's\n", p.Remote)
@@ -449,8 +458,7 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 				g += " (discarded)"
 			}
 		}
-		dir := sp.Workspace.Dir
-		fmt.Fprintf(tw, "%s\t--goal %s\t%s\t%s\t%s\t%s\t%s\n", sp.Name, g, state, handoff, complete, running, dir)
+		fmt.Fprintf(tw, "%s\t--goal %s\t%s\t%s\t%s\t%s\t%s\n", sp.Name, g, state, handoff, complete, running, sp.Workspace.Dir)
 		switch {
 		case lerr != nil: // couldn't read whether it landed: never read as "no" (Rule G)
 		case running == "unconfirmed":

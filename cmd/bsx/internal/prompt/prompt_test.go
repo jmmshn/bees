@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jmmshn/bees/cmd/bsx/internal/goal"
 	"github.com/jmmshn/bees/cmd/bsx/internal/prompt"
 )
 
@@ -13,19 +14,18 @@ var gitWords = regexp.MustCompile(`(?i)\b(git|branch(es)?|commits?|worktrees?|me
 
 // The role prompts and the shared parts name no VCS: a worker in a none or command
 // workspace with a goal that isn't git's reads no git wording (bees-12.29).
+// The queen's side, every goal type under none, is bees-13.19.
 func TestANonGitWorkerReadsNoGitWording(t *testing.T) {
-	for _, r := range []prompt.Role{prompt.Worker, prompt.Queen} {
-		got := prompt.Text(r, "web2", "none", []string{"verdict", "note", "beads"})
-		if m := gitWords.FindAllString(got, -1); m != nil {
-			t.Errorf("%s prompt under none with --goal verdict, note, beads says %q:\n%s", r, m, got)
-		}
+	got := prompt.Text(prompt.Worker, "web2", "none", []string{"verdict", "note", "beads"})
+	if m := gitWords.FindAllString(got, -1); m != nil {
+		t.Errorf("worker prompt under none with --goal verdict, note, beads says %q:\n%s", m, got)
 	}
 }
 
 // Each role reads the shared lead and its own part of each fragment, never the other's.
 func TestFragmentsSplitPerRole(t *testing.T) {
 	w := prompt.Text(prompt.Worker, "web2", "git_worktree", []string{"branch"})
-	q := prompt.Text(prompt.Queen, "web2", "git_worktree", prompt.Goals())
+	q := prompt.Text(prompt.Queen, "web2", "git_worktree", goal.BuiltinTypes())
 	for _, c := range []struct {
 		text string
 		has  []string
@@ -33,7 +33,7 @@ func TestFragmentsSplitPerRole(t *testing.T) {
 	}{
 		{w, []string{"bs send queen-web2", "## Workspace", "its own git worktree", "Commit everything you hand off", "## Goal\n", "`--goal branch`", "Your goal is your branch"},
 			[]string{"## Goals", "bs prune` removes", "merge it into its base"}},
-		{q, []string{"queen-web2", "bs spawn --goal", "## Workspace", "its own git worktree", "bs prune` removes", "## Goals", "merge it into its base"},
+		{q, []string{"queen-web2", "bs spawn --goal", "## Workspace", "its own git worktree", "bs prune` removes", "## Goals", "merge it into its base", "`--goal pr`:", "`--goal verdict`:"},
 			[]string{"Commit everything you hand off", "Your goal is your branch"}},
 	} {
 		for _, h := range c.has {
@@ -72,5 +72,22 @@ func TestNonPRGoalsSayWhereTheReportGoes(t *testing.T) {
 		if !strings.Contains(got, want) || g != "beads" && !strings.Contains(got, "never leave") && !strings.Contains(got, "Never leave") {
 			t.Errorf("--goal %s worker prompt lacks %q or the scratch warning:\n%s", g, want, got)
 		}
+	}
+}
+
+// The goal fragments name no review host's commands; the host fragment does, by role.
+func TestGoalFragmentsLeaveCommandsToTheHost(t *testing.T) {
+	w := prompt.Text(prompt.Worker, "web2", "git_worktree", []string{"pr", "push", "review"})
+	for _, host := range []string{"gh pr", "github"} {
+		if strings.Contains(strings.ToLower(w), host) {
+			t.Errorf("a goal fragment names %q:\n%s", host, w)
+		}
+	}
+	hw, hq := prompt.Host(prompt.Worker, "github"), prompt.Host(prompt.Queen, "github")
+	if !strings.Contains(hw, "gh pr create") || strings.Contains(hw, "gh pr merge") || !strings.Contains(hq, "gh pr merge") {
+		t.Errorf("github's host fragment by role:\nworker %s\nqueen %s", hw, hq)
+	}
+	if prompt.Host(prompt.Worker, "fakecl") != "" {
+		t.Error("a host with no fragment got one")
 	}
 }

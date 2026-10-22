@@ -29,11 +29,12 @@ type Core struct {
 	Repo        string   // paths.repo: the project's checkout
 	Worktrees   string   // where git_worktree workspaces go: <Worktrees>/<name>
 	Kind        string   // the workspace kind, worked out or set (config.Kind)
+	KindWhy     string   // how config came to it
 	ConfigDir   string   // the config dir the spawn ran under, recorded
 	CacheDir    string   // per-start files
 	WorkerPath  []string // worker.path: dirs first on a worker's PATH
 	Guards      config.Guards
-	Review      port.Review // review.host: where changes are reviewed and land
+	Review      port.Review // review.host: where changes are reviewed and land; never nil
 	VCS         port.VCS    // the workspace's version control, as the goal checks read it
 	Timing      Timing
 	Warn        func(msg string) // prints a fallback bs took (Rule G); nil drops it

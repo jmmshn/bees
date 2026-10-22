@@ -82,10 +82,21 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 	}
 	d.Checks = append(d.Checks, logbook.CheckResult{Name: goal.NoBackground, Pass: true})
 	deadline, waited := time.Now().Add(o.Wait), false
+	lookCtx := ctx
+	if o.Wait > 0 {
+		// The looks are bounded, the last included, so bs answers before the caller's
+		// shell call is cut (motif 15); recording a handoff that passed is not.
+		var cancel context.CancelFunc
+		lookCtx, cancel = context.WithDeadline(ctx, deadline.Add(waitGrace))
+		defer cancel()
+	}
 	var rs []logbook.CheckResult
 	for {
 		var cant *logbook.CheckResult
-		rs, cant = c.look(sp, Handed{PRs: d.PRs, Answer: h.Answer, Report: h.Report}).stage(ctx, e, func(p goal.Part) []string { return p.Handoff })
+		rs, cant = c.look(sp, Handed{PRs: d.PRs, Answer: h.Answer, Report: h.Report}).stage(lookCtx, e, func(p goal.Part) []string { return p.Handoff })
+		if cant != nil && o.Wait > 0 && lookCtx.Err() != nil {
+			return d, exit(ExitWaited, "bs done --wait again, or ask the queen", nil, "bs done --wait: still pending after %s (%s ran out of time)", o.Wait, cant.Name)
+		}
 		if cant != nil {
 			return d, exit(ExitCantCheck, "bs done again once it can run", errors.New(cant.Err), "bs done: check %s couldn't run", cant.Name)
 		}
@@ -97,7 +108,7 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 			return d, exit(ExitWaited, "bs done --wait again, or ask the queen", nil, "bs done --wait: still pending after %s:\n  %s", o.Wait, strings.Join(pendingLines(rs), "\n  "))
 		}
 		c.warn("still pending (%s); asking again in %s", strings.Join(pendingLines(rs), "; "), min(c.timing().CIPoll, left).Round(time.Second))
-		if err := sleep(ctx, min(c.timing().CIPoll, left)); err != nil {
+		if err := sleep(lookCtx, min(c.timing().CIPoll, left)); err != nil {
 			return d, err
 		}
 		waited = true
@@ -127,6 +138,9 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 	}
 	return d, err
 }
+
+// waitGrace is how long the last look of a bs done --wait may run past its deadline.
+const waitGrace = 45 * time.Second
 
 // DoneOpts are bs done's flags.
 type DoneOpts struct {
@@ -165,9 +179,6 @@ func (c *Core) handedPRs(g goal.Goal, prev []string, h Handed) ([]string, error)
 	}
 	repo := g.Parts[i].Repo
 	canon := func(u string) (string, error) {
-		if c.Review == nil {
-			return "", exit(ExitRefused, "bsx config", nil, "bs done: no review host is configured")
-		}
 		r, err := c.Review.Parse(u)
 		if err != nil {
 			return "", exit(ExitRefused, "", err, "bs done")
@@ -206,7 +217,7 @@ func (c *Core) handedPRs(g goal.Goal, prev []string, h Handed) ([]string, error)
 
 // EndOpts are bs end's flags.
 type EndOpts struct {
-	Force      bool // waive the gate, and nothing else
+	Force      bool // waive the gate and the moved-pane refusal (stopping it where it runs), and nothing else
 	Incomplete bool // end an incomplete goal anyway; prune completes it later
 }
 
@@ -433,13 +444,14 @@ type Pruned struct {
 	Branch    string // its branch, when it had one
 	Deleted   bool   // its local branch was deleted
 	Remote    string // the remote branch of the same name, left alone: remote branches are the keeper's (bees-1.34)
+	Held      string // the handed-off change that holds the branch's work, when that released it
 	Why       string // why it, or its branch, was kept
 	Unknown   bool   // it couldn't check
 }
 
-// Prune removes each ended spawn's workspace, then its local branch, once its frozen prune
-// rule passes (or it is discarded: the branch then stays) and the workspace holds no
-// uncommitted or untracked files, completing a goal ended --incomplete on the way. A
+// Prune removes each ended spawn's workspace once its frozen prune rule passes (or it is
+// discarded) and it holds no uncommitted or untracked files, then its local branch once
+// that is proven merged (or discarded), completing a goal ended --incomplete on the way. A
 // workspace whose directory is already gone still has its branch pruned, so nothing is
 // kept forever (bees-12.41). It never touches a remote branch, and names what it kept and
 // why.
@@ -559,15 +571,18 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 	if !branch {
 		return p
 	}
-	release := e.Discarded
+	// The prune rule's branch_merged, when it ran and passed, is the proof: one gh call,
+	// not two. A merged (or closed draft) handed-off change holding the tip is another.
+	release := e.Discarded || slices.Contains(e.Prune(), goal.BranchMerged)
 	if !release && slices.ContainsFunc(e.Parts, func(p goal.Part) bool { return p.Type == "pr" }) {
 		d, _, err := c.Logbook.LatestDone(ctx, sp.ID)
 		if err != nil {
 			return keep(true, "%v", err)
 		}
-		if release, err = c.heldByChange(ctx, sp, d.PRs, slices.Contains(e.Prune(), goal.PRClosed)); err != nil {
+		if p.Held, err = c.heldByChange(ctx, sp, d.PRs, slices.Contains(e.Prune(), goal.PRClosed)); err != nil {
 			return keep(true, "can't tell whether a handed-off change holds branch %s: %v", ws.Branch, err)
 		}
+		release = p.Held != ""
 	}
 	if why, err := c.pruneBranch(ctx, ws, release); err != nil {
 		return keep(true, "%v", err)
@@ -599,41 +614,41 @@ func (c *Core) ignored(ctx context.Context, dir string) (string, error) {
 	return porcelainPaths(ign.String()), nil
 }
 
-// heldByChange reports whether one of prs, handed off under a pr goal, holds sp's branch
-// tip among its commits and is merged (or, with closed, closed unmerged): the work is then
-// on the review host, whatever the branch was called there, and the local branch holds
-// nothing more. It catches a squash merge of a branch pushed under another name, which
-// merged's proofs miss.
-func (c *Core) heldByChange(ctx context.Context, sp logbook.Spawn, prs []string, closed bool) (bool, error) {
+// heldByChange is the URL of one of prs, handed off under a pr goal, that holds sp's
+// branch tip (as the VCS reads it) among its commits and is merged (or, with closed,
+// closed unmerged), else "": the work is then on the review host, whatever the branch was
+// called there, and the local branch holds nothing more. It catches a squash merge of a
+// branch pushed under another name, which merged's proofs miss.
+func (c *Core) heldByChange(ctx context.Context, sp logbook.Spawn, prs []string, closed bool) (string, error) {
 	ws := sp.Workspace
-	tip, err := c.git(ctx, ws.Repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+ws.Branch)
-	if err != nil {
-		return false, err
+	tip, ok, err := c.VCS.Branch(ctx, ws.Repo, ws.Branch)
+	if err != nil || !ok {
+		return "", err
 	}
 	k := c.look(sp, Handed{})
 	for _, u := range prs {
 		r, err := c.Review.Parse(u)
 		if err != nil {
-			return false, err
+			return "", err
 		}
 		v, err := k.view(ctx, r)
 		if err != nil {
-			return false, err
+			return "", err
 		}
 		done := v.State == "merged" || closed && v.State == "closed"
 		if done && (v.HeadCommit == tip || slices.Contains(v.Commits, tip)) {
-			return true, nil
+			return v.URL, nil
 		}
 	}
-	return false, nil
+	return "", nil
 }
 
 // pruneBranch deletes ws's local branch once it is proven merged into its base, whatever
 // the goal's prune rule (a verdict goal prunes at once, but its branch may hold commits),
-// or released: discarded, or held by a merged (or closed draft) change.
+// or released: discarded (the keeper's recorded word that the work is wanted nowhere),
+// proven by the prune rule's branch_merged, or held by a merged (or closed draft) change.
 // It returns why it kept the branch, or err when it couldn't check.
 func (c *Core) pruneBranch(ctx context.Context, ws logbook.Workspace, released bool) (string, error) {
-	// A discard is the keeper's recorded word that the work is wanted nowhere.
 	if !released {
 		switch ok, why, err := c.merged(ctx, ws); {
 		case err != nil:

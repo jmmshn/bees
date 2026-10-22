@@ -1,8 +1,8 @@
 // Package guards builds the deny list a worker starts with (ADR-0010 Config): shell globs
 // over a whole command line, harness-neutral, each harness rendering them (Claude Code:
 // permissions.deny). They default from the workspace; [guards] deny adds to the default,
-// replace = true replaces it, and allow_merge_into lifts the merge deny only while GitHub
-// protects the default branch. They are a speed bump: a shell finds other spellings, and
+// replace = true replaces it, and allow_merge_into lifts the merge deny only while the
+// review host protects the default branch. They are a speed bump: a shell finds other spellings, and
 // branch protection is the real guard.
 package guards
 
@@ -30,13 +30,13 @@ type In struct {
 	// may allow_merge_into lift the merge deny (bees-12.13, 12.20). The caller asks the
 	// host only when g.AllowMergeInto is set.
 	Protected bool
-	// MergeDeny is the review host's globs for landing or approving a change (gh pr merge
-	// on GitHub): a git_worktree worker is denied them unless allow_merge_into grants
-	// merges. None without a host.
-	MergeDeny []string
+	// MergeDeny and ApproveDeny are the review host's globs for landing and approving a
+	// change (gh pr merge, gh pr review --approve on GitHub): a git_worktree worker is
+	// denied both, and allow_merge_into lifts only MergeDeny. None without a host.
+	MergeDeny, ApproveDeny []string
 }
 
-// ErrUnprotected is allow_merge_into on a repo whose default branch GitHub doesn't
+// ErrUnprotected is allow_merge_into on a repo whose default branch the review host doesn't
 // confirm is protected (bees-12.20).
 var ErrUnprotected = errors.New("guards.allow_merge_into: the review host doesn't confirm the repo's default branch is protected, and with merges allowed only that protection keeps a worker's merge off it; protect it (on GitHub: Settings → Branches), or drop allow_merge_into")
 
@@ -54,7 +54,7 @@ func DefaultBranches(heads ...string) []string {
 
 // Check refuses a [guards] table bs could never build: an empty or multi-line glob, an
 // allow_merge_into glob that isn't one or matches a default branch, or a merge grant
-// GitHub doesn't back with protection. bs queen runs it at start, so a config every
+// the review host doesn't back with protection. bs queen runs it at start, so a config every
 // spawn would refuse fails there (bees-12.20).
 func Check(g config.Guards, in In) error {
 	var errs []error
@@ -96,9 +96,8 @@ func Build(g config.Guards, in In) ([]string, error) {
 		deny = append(pushes(in.DefaultBranches), force()...)
 		if len(g.AllowMergeInto) == 0 {
 			deny = append(deny, in.MergeDeny...)
-		} else { // the grant lifts the merge, never an approval
-			deny = append(deny, slices.DeleteFunc(slices.Clone(in.MergeDeny), func(g string) bool { return strings.Contains(g, "merge") })...)
 		}
+		deny = append(deny, in.ApproveDeny...) // no grant lifts an approval
 	case in.Git: // none and command in a git checkout (bees-12.21: no kind allows a force push)
 		deny = append(pushes(in.DefaultBranches), force()...)
 	}

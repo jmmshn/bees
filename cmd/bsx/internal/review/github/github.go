@@ -257,11 +257,14 @@ func (h Host) Landed(ctx context.Context, dir, branch string) ([]string, error) 
 	return heads, nil
 }
 
-// MergeDeny denies gh's merge, whatever the spelling (gh pr merge, gh -R o/r pr merge,
-// the API's merge endpoint), and an approving review, which on a repo that requires one
-// is the merge's other half.
-func (Host) MergeDeny() []string {
-	return []string{"gh pr merge*", "gh * pr merge*", "gh api *merge*", "gh pr review* --approve*", "gh pr review* -a *", "gh pr review* -a"}
+// MergeDeny denies gh's merge, whatever the spelling: gh pr merge, gh -R o/r pr merge,
+// and the API's merge endpoint.
+func (Host) MergeDeny() []string { return []string{"gh pr merge*", "gh * pr merge*", "gh api *merge*"} }
+
+// ApproveDeny denies an approving review: on a repo that requires one, the merge's other
+// half.
+func (Host) ApproveDeny() []string {
+	return []string{"gh pr review* --approve*", "gh pr review* -a *", "gh pr review* -a"}
 }
 
 // Fetch fetches refs/pull/<n>/head from the remote of c's repo, writing no ref.

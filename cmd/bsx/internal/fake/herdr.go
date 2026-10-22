@@ -38,6 +38,9 @@ type Herdr struct {
 	// InfoFails is how many next pane process-info calls fail as an unreachable server
 	// would: a start confirmation or heal that can't look.
 	InfoFails int
+	// RefuseNext makes the next call of this command ("workspace report-metadata") fail
+	// with herdr's error envelope, as a server-side failure would.
+	RefuseNext string
 
 	procFaults
 }
@@ -95,6 +98,10 @@ func (h *Herdr) Run(ctx context.Context, dir string, argv ...string) ([]byte, er
 		return nil, usage("usage: herdr <group> <command>")
 	}
 	s := h.server(session)
+	if cmd := args[0] + " " + args[1]; cmd == h.RefuseNext {
+		h.RefuseNext = ""
+		return nil, refusal(args[0]+":"+args[1], "internal_error", "fake herdr: %s refused", cmd)
+	}
 	f := map[string]func(*server, string, flags) ([]byte, error){
 		"workspace create":          h.workspaceCreate,
 		"workspace list":            h.workspaceList,

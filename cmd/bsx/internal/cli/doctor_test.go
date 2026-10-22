@@ -42,7 +42,11 @@ func newDoctorRig(t *testing.T) *doctorRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r.env = append(r.env, "PATH="+r.bin+":"+filepath.Dir(git))
+	// git alone, linked in: a dir like /usr/bin would bring a real gh or bd along.
+	if err := os.Symlink(git, filepath.Join(r.bin, "git")); err != nil {
+		t.Fatal(err)
+	}
+	r.env = append(r.env, "PATH="+r.bin)
 	return r
 }
 

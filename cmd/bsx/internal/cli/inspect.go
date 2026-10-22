@@ -240,8 +240,12 @@ func (r *run) doctor(fs *flag.FlagSet, args []string) error {
 	} else {
 		d.line("skip", "project", "gh and the GitHub remote, the config's argv, keys bsx doesn't read yet: they need the project (above)")
 	}
+	stray := 0
 	for _, kv := range r.env.Vars {
 		k, _, _ := strings.Cut(kv, "=")
+		if strings.HasPrefix(k, "BS_") {
+			stray++
+		}
 		switch {
 		case !strings.HasPrefix(k, "BS_"):
 		case !slices.Contains(envKeys, k):
@@ -251,6 +255,9 @@ func (r *run) doctor(fs *flag.FlagSet, args []string) error {
 		default:
 			d.line("WARN", "env", "%s is set in this shell and applies to every %s command run from it: unset it here unless you meant it", k, bsname.Cmd)
 		}
+	}
+	if stray == 0 {
+		d.line("ok", "env", "no BS_* variables set")
 	}
 	if d.failed > 0 {
 		return &core.Exit{Code: core.ExitFail, Msg: fmt.Sprintf("%d check(s) failed", d.failed)}

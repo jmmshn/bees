@@ -177,7 +177,7 @@ func (s *settings) findProject(ctx context.Context, cwd string, run port.Runner,
 		case err != nil: // "couldn't look" is never "no project" (Rule G)
 			return &core.Exit{Code: core.ExitCantCheck, Msg: bsname.Cmd + " can't tell which project " + cwd + " is in", Err: err}
 		default:
-			s.Project, s.ProjectFrom, s.Repo, s.RepoFrom = config.Normalise(filepath.Base(main)), "the git repo at "+main, main, "the git repo bs runs in"
+			s.Project, s.ProjectFrom, s.Repo, s.RepoFrom = config.Normalise(filepath.Base(main)), "the git repo at "+main, main, "the git repo "+bsname.Cmd+" runs in"
 		}
 	}
 	switch p := config.Normalise(pinned); {
@@ -203,7 +203,7 @@ func (s *settings) cwdRepo(ctx context.Context, cwd string, run port.Runner) err
 	case err != nil:
 		return &core.Exit{Code: core.ExitCantCheck, Msg: bsname.Cmd + " can't tell which project " + cwd + " is in", Err: err}
 	case config.Normalise(filepath.Base(main)) == s.Project:
-		s.Repo, s.RepoFrom = main, "the git repo bs runs in"
+		s.Repo, s.RepoFrom = main, "the git repo "+bsname.Cmd+" runs in"
 	}
 	return nil
 }

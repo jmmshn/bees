@@ -11,7 +11,7 @@ Two rules hold throughout:
 
 ## 1. Survey
 
-Run (`<bees>` is the bees clone, whose `go.mod` names the Go it needs):
+Run (`<bees>` is a clone of the bees repo, `git clone https://github.com/jmmshn/bees`, whose `go.mod` names the Go it needs):
 
 ```sh
 uname -s; go version; grep '^go ' <bees>/go.mod; git --version; jq --version; herdr --version; bd --version; bd where; gh --version | head -1; claude --version
@@ -64,13 +64,13 @@ PATH=~/.local/share/bees-<session>/bin:$PATH herdr --session <session>
 ```sh
 cd <project dir>
 HERDR_SESSION=<session> ~/.local/share/bees-<session>/bin/bsx config init --logbook-dir ~/.local/share/bees-<session>/logbooks
-# a project that needs a key of its own (worker.path, a model):
+# a project that needs a key of its own:
 HERDR_SESSION=<session> ~/.local/share/bees-<session>/bin/bsx config init --project
 ```
 
-If a worker's shell rc puts another `bsx` first on its PATH, set `worker.path` in the project file (`path = ["~/.local/share/bees-<session>/bin"]`): it puts the build first on every worker's Bash PATH.
+Keys `bsx config` marks `not read by bsx yet` (the models, `worker.path`) do nothing before the swap: leave them unset.
 
-`--logbook-dir` is required before the swap: bsx refuses the real logbooks' dir. A key with no flag is in the written file, commented out: uncomment it there.
+Your own shell may carry `BS_*` variables from another bees session; `bsx doctor` names each one. Run bsx from your shell with them unset (`env -u BS_PROJECT …`). A `HERDR_PANE_ID` or `HERDR_SOCKET_PATH` of the keeper's own herdr is harmless for the commands you run from your shell here (`config`, `config init`, `status`, `end`, `prune`): `HERDR_SESSION` picks the server. `--logbook-dir` is required before the swap: bsx refuses the real logbooks' dir. A key with no flag is in the written file, commented out: uncomment it there.
 
 **Check:** `HERDR_SESSION=<session> …/bsx config`, run inside each project's repo, exits 0 and shows `# project: <name>`, `# repo: <dir>`, `# workspace kind: …`, and each value with its source (`# global <file>`, `# project <file>` or `# default`).
 
@@ -88,11 +88,11 @@ Every herdr call names the session: `herdr --session <session> …`; a bare `her
 
 ```sh
 pane=$(herdr --session <session> workspace create --cwd <dir> --label "<project> · queen" --no-focus | jq -r .result.root_pane.pane_id)
-herdr --session <session> pane run "$pane" "{ command -v bsx; bsx doctor; } > <scratch>/doctor-<project>.out 2>&1"   # then read the file
+herdr --session <session> pane run "$pane" "{ command -v bsx; bsx doctor; echo \"exit \$?\"; } > <scratch>/doctor-<project>.out 2>&1"   # then read the file
 herdr --session <session> pane run "$pane" "bsx queen"
 ```
 
-`command -v bsx` must name `~/.local/share/bees-<session>/bin/bsx`; if the pane's shell rc put another first, run `export PATH=~/.local/share/bees-<session>/bin:$PATH` in the pane before the queen: her Claude, and every bsx call she makes, inherit the pane's PATH. `<scratch>` is any directory of yours. `bsx doctor` prints one line per check, `ok`, `WARN` or `FAIL`, and exits 1 on any FAIL, naming what to fix: the config, the project and its logbook dir, the harness and its ring sockets' modes, the herdr server (a `WARN … server … is older than client` means it still runs the binary it started from: the keeper restarts it when no session they need runs), bd, gh and the GitHub remote, and stray `BS_*` variables. Fix every FAIL before `bsx queen`.
+`command -v bsx` must name `~/.local/share/bees-<session>/bin/bsx`; if the pane's shell rc put another first, run `export PATH=~/.local/share/bees-<session>/bin:$PATH` in the pane before the queen: her Claude, and every bsx call she makes, inherit the pane's PATH. `<scratch>` is any directory of yours. `bsx doctor` prints one line per check, `ok`, `WARN` or `FAIL`, and exits 1 on any FAIL, naming what to fix: the config, the project and its logbook dir, the harness and its ring sockets' modes, the herdr server (a `WARN … server … is older than client` means it still runs the binary it started from: the keeper restarts it when no session they need runs), bd, gh and the GitHub remote, and stray `BS_*` variables. Fix every FAIL (the file ends with `exit 0`) before `bsx queen`.
 
 The queen is a Claude session, not a shell: type to her with `herdr --session <session> agent prompt "$pane" "<request>"`, then `herdr --session <session> agent wait "$pane" --until working --timeout 20000` and `herdr --session <session> agent wait "$pane" --timeout 600000`, and read her with `herdr --session <session> pane read "$pane" --source recent --lines 40`. bsx has no `bsx epic` or `bsx bead` yet (they come with the swap), so file the check's beads yourself, from any shell (the store is shared; `--force` because the store's own prefix differs):
 

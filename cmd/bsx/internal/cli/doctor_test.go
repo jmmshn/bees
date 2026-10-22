@@ -83,7 +83,7 @@ func TestDoctorPasses(t *testing.T) {
 		"ok   bd: "+filepath.Join(r.bin, "bd")+" 1.1.2, store /store/.beads",
 		"ok   gh: ",
 		// bees-12.42: no GitHub remote fails nothing until a pr goal, so it's said here.
-		"WARN remote: "+r.repo+" has no GitHub remote: bsx spawn refuses --goal pr")
+		"WARN remote: "+r.repo+" has no GitHub remote: bsx spawn refuses --goal pr", "ok   env: no BS_* variables set")
 	if err := exec.Command("git", "-C", r.repo, "remote", "add", "origin", "git@github.com:o/toy.git").Run(); err != nil {
 		t.Fatal(err)
 	}

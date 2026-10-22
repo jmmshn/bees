@@ -155,8 +155,9 @@ func TestConfigShowsEverySourceAndTheSessionDir(t *testing.T) {
 		`goal.cl.handoff = ["clean"]  # project `)
 }
 
-// bees-12.47: an exported BS_PROJECT never silently beats the repo bs runs in; inside a
-// herdr pane every BS_* is ignored, with a warning.
+// bees-12.47: an exported BS_PROJECT never silently beats the repo bs runs in, in a herdr
+// pane no entry recorded too (bees-13.14). Inside a recorded pane every BS_* is ignored,
+// with a warning: TestBSVariablesAreIgnoredInsideARecordedPane.
 func TestBSProject(t *testing.T) {
 	r := newRig(t)
 	code, _, stderr := r.run(r.repo, []string{"BS_PROJECT=bees"}, "config")
@@ -164,16 +165,14 @@ func TestBSProject(t *testing.T) {
 		t.Errorf("mismatch: exit %d", code)
 	}
 	wantIn(t, stderr, "BS_PROJECT=bees names another project than the repo you are in (mytoy)", "next: env -u BS_PROJECT")
-	code, out, stderr := r.run(r.repo, []string{"BS_PROJECT=bees", "BS_LOGBOOK_DIR=/elsewhere", "HERDR_PANE_ID=w1:p1"}, "config")
-	if code != 0 {
-		t.Errorf("in a pane: exit %d %s", code, stderr)
+	code, _, stderr = r.run(r.repo, []string{"BS_PROJECT=bees", "HERDR_PANE_ID=w1:p1"}, "config")
+	if code != 2 {
+		t.Errorf("in an unrecorded pane: exit %d %s", code, stderr)
 	}
-	wantIn(t, stderr, "ignoring BS_PROJECT inside a herdr pane", "ignoring BS_LOGBOOK_DIR inside a herdr pane")
-	wantIn(t, out, "# project: mytoy", `paths.logbook_dir = "`+r.logbook+`"`)
-	// Every BS_*, the old bs's pins too, is named in a pane; doctor words it by where it runs.
-	_, out, stderr = r.run(r.repo, []string{"BS_NAME=bees-3", "HERDR_PANE_ID=w1:p1"}, "doctor")
-	wantIn(t, stderr, "ignoring BS_NAME inside a herdr pane")
-	wantIn(t, out, "WARN env: BS_NAME is set, and ignored in this herdr pane")
+	wantIn(t, stderr, "BS_PROJECT=bees names another project than the repo you are in (mytoy)")
+	// An unrecorded pane is outside one (bees-13.14): doctor names the old bs's pins as unread.
+	_, out, _ := r.run(r.repo, []string{"BS_NAME=bees-3", "HERDR_PANE_ID=w1:p1"}, "doctor")
+	wantIn(t, out, "WARN env: BS_NAME is set; bsx doesn't read it")
 	_, out, _ = r.run(r.repo, []string{"BS_NAME=bees-3", "BS_LOGBOOK_DIR=" + r.logbook}, "doctor")
 	wantIn(t, out, "WARN env: BS_NAME is set; bsx doesn't read it", "WARN env: BS_LOGBOOK_DIR is set and overrides the config here")
 	code, out, _ = r.run("/", []string{"BS_PROJECT=other"}, "config")
@@ -181,8 +180,8 @@ func TestBSProject(t *testing.T) {
 		t.Errorf("outside any repo: exit %d", code)
 	}
 	wantIn(t, out, "# project: other (env BS_PROJECT)")
-	_, _, stderr = r.run("/", []string{"BS_PROJECT=other", "HERDR_PANE_ID=w1:p1"}, "status")
-	wantIn(t, stderr, "no project: bs isn't in a git repo and BS_PROJECT is ignored inside a herdr pane")
+	_, out, _ = r.run("/", []string{"BS_PROJECT=other", "HERDR_PANE_ID=w1:p1"}, "config")
+	wantIn(t, out, "# project: other (env BS_PROJECT)") // an unrecorded pane is outside one (bees-13.14)
 }
 
 // A key bsx doesn't act on yet says so in bsx config, and doctor warns when a file sets
@@ -192,7 +191,7 @@ func TestUnreadKeysAreMarked(t *testing.T) {
 	r.write("projects/mytoy.toml", "[guards]\ndeny = [\"git push*\"]\n")
 	_, out, _ := r.run(r.repo, nil, "config")
 	wantIn(t, out, `guards.deny = ["git push*"]  # project `, "; not read by bsx yet (bees-13.6)\n",
-		`worker.claude_code.model = ""  # default; not read by bsx yet (bees-13.4)`+"\n",
+		`worker.claude_code.model = ""  # default`+"\n",
 		"# [workspace.command] unset; not read by bsx yet (bees-13.11)\n", "# [goal.<name>] unset; ")
 	_, out, _ = r.run(r.repo, nil, "doctor")
 	wantIn(t, out, "WARN config: guards.deny set, but not read by bsx yet (bees-13.6): bsx ignores it")
@@ -256,7 +255,8 @@ func TestBrokenFileRefusesEveryCommand(t *testing.T) {
 	}
 }
 
-// Rule G: an unreadable file is "couldn't look" (exit 6), with the warnings found first.
+// Rule G: an unreadable file is "couldn't look" (exit 6). The only warning load gives
+// before it is a recorded pane's BS_* (TestBSVariablesAreIgnoredInsideARecordedPane).
 func TestAnUnreadableFileIsExit6(t *testing.T) {
 	r := newRig(t)
 	r.write("projects/mytoy.toml", "")
@@ -266,11 +266,11 @@ func TestAnUnreadableFileIsExit6(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root reads a mode-0 file")
 	}
-	code, _, stderr := r.run(r.repo, []string{"BS_REPOS=/x", "HERDR_PANE_ID=w1:p1"}, "config")
+	code, _, stderr := r.run(r.repo, nil, "config")
 	if code != 6 {
 		t.Errorf("exit %d, want 6: %s", code, stderr)
 	}
-	wantIn(t, stderr, "warning: ignoring BS_REPOS", "couldn't read its config")
+	wantIn(t, stderr, "couldn't read its config")
 }
 
 // The project is the repo's main checkout however git keeps it: a separate git dir too.

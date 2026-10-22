@@ -7,8 +7,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/jmmshn/bees/cmd/bsx/internal/cli"
+	"github.com/jmmshn/bees/cmd/bsx/internal/harness/claude"
 	"github.com/jmmshn/bees/cmd/bsx/internal/port"
 	"github.com/jmmshn/bees/cmd/bsx/internal/proc"
 )
@@ -19,13 +21,27 @@ func main() {
 		cache = os.TempDir()
 	}
 	ports := cli.Ports{
-		Run:      port.Exec{},
-		Proc:     proc.System{},
-		Beads:    port.BeadsCLI{R: port.Exec{}},
+		Run:   port.Exec{},
+		Proc:  proc.System{},
+		Beads: port.BeadsCLI{R: port.Exec{}},
+		NewHarness: func(name, model string) port.Harness {
+			if name == claude.Name {
+				return claude.Adapter{Model: model}
+			}
+			return nil
+		},
 		CacheDir: filepath.Join(cache, "bees", "bsx"),
-		// Harness: none until the claude_code adapter (bees-13.4); spawn refuses.
+		Exec:     execHarness,
 	}
 	dir, _ := os.Getwd() // "" when gone: bs then knows the project only from BS_PROJECT
 	env := cli.Env{Vars: os.Environ(), Dir: dir, Self: os.Getpid(), Stdin: os.Stdin}
 	os.Exit(cli.Run(context.Background(), env, ports, os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// execHarness replaces bsx with argv in dir: the queen keeps bsx's pid and start time.
+func execHarness(dir string, env, argv []string) error {
+	if err := os.Chdir(dir); err != nil {
+		return err
+	}
+	return syscall.Exec(argv[0], argv, env)
 }

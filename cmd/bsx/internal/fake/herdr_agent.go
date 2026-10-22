@@ -2,6 +2,7 @@ package fake
 
 import (
 	"bufio"
+	"errors"
 	"os"
 	"os/exec"
 	"slices"
@@ -145,6 +146,10 @@ func (h *Herdr) agentStart(s *server, session string, f flags) ([]byte, error) {
 // agent runs, the agent as the foreground process; else the idle shell.
 func (h *Herdr) processInfo(s *server, _ string, f flags) ([]byte, error) {
 	id, _ := f.get("--pane")
+	if h.infoFails > 0 {
+		h.infoFails--
+		return nil, errors.New("herdr: server not reachable")
+	}
 	_, p := s.pane(id)
 	if p == nil {
 		return nil, refusal("pane:process_info", "pane_not_found", "pane %s not found", id)

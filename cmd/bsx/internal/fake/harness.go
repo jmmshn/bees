@@ -62,12 +62,14 @@ func (Harness) Kind() string { return "claude" }
 // Dir is the state dir of session name.
 func (h Harness) Dir(name string) string { return filepath.Join(h.State, name) }
 
-// Prepare is pure: the argv names the session and its state dir.
+// Prepare is pure: the argv names the session and its state dir; Record keeps the state
+// dir and the PATH dirs it was given, for tests to read back from the spawned entry.
 func (h Harness) Prepare(st port.Start) (port.Launch, error) {
 	if st.Name == "" {
 		return port.Launch{}, errors.New("beesfake: no name")
 	}
-	return port.Launch{Args: []string{"--name", st.Name, "--state", h.Dir(st.Name)}, Record: map[string]string{"state": h.Dir(st.Name)}}, nil
+	return port.Launch{Args: []string{"--name", st.Name, "--state", h.Dir(st.Name)},
+		Record: map[string]string{"state": h.Dir(st.Name), "path": strings.Join(st.Path, ":")}}, nil
 }
 
 // Ring writes the doorbell to the session's 0600 ring socket; no listener is
@@ -159,11 +161,15 @@ type Call struct {
 	Cwd  string   `json:"cwd"`
 }
 
-// Reply is what the relayed call prints and exits with.
+// Reply is what the relayed call prints and exits with; with Exec, the caller then
+// execs it, in ExecDir with ExecEnv, as bs queen's last step does.
 type Reply struct {
-	Stdout string `json:"stdout"`
-	Stderr string `json:"stderr"`
-	Code   int    `json:"code"`
+	Stdout  string   `json:"stdout"`
+	Stderr  string   `json:"stderr"`
+	Code    int      `json:"code"`
+	Exec    []string `json:"exec,omitempty"`
+	ExecDir string   `json:"exec_dir,omitempty"`
+	ExecEnv []string `json:"exec_env,omitempty"`
 }
 
 // Relay serves beesfake calls at path with handle until the test ends; pane processes

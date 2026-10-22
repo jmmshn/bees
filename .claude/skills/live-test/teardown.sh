@@ -59,11 +59,12 @@ left=$(mine | tr '\n' ' ') || fail "bd query failed"
 [ -z "$left" ] || fail "beads left: $left"
 
 # 3. Files, last: the logbook goes only once everything it records is gone.
-# Delete only absolute paths whose name carries the toy id, never a bare $HOME-relative one:
+# Delete only absolute paths whose name starts with the toy id (or queen-<toy>-, a bsx
+# queen's per-start files), never a bare $HOME-relative one:
 # a review agent's rm of $HOME/.local/share/bees/bees.db deleted the real logbook (bees-8.12).
 del() {
 	for p in "$@"; do
-		case $p in /*/"$toy"*) ;; *) fail "refusing to delete $p: not an absolute path named after $toy" ;; esac
+		case $p in /*/"$toy"* | /*/queen-"$toy"-*) ;; *) fail "refusing to delete $p: not an absolute path named after $toy" ;; esac
 	done
 	rm -rf -- "$@"
 }
@@ -75,7 +76,8 @@ for t in "$projects/$enc"-*; do
 	[ ! -e "$dest" ] || dest=$dest.$(date +%s) # a rerun after the session wrote more
 	mkdir -p "$run/keeper/transcripts" && mv -- "$t" "$dest" || fail "couldn't move $t"
 done
-del "$store/$toy.db" "$store/$toy.db-wal" "$store/$toy.db-shm" "$run/logbooks" "$cache/$toy"-* "$config" || fail "couldn't remove $toy's logbooks, cache files or config dir"
+# bsx's per-start files (prompt, settings) are <session>-<key>-* in $cache/bsx (bees-13.4).
+del "$store/$toy.db" "$store/$toy.db-wal" "$store/$toy.db-shm" "$run/logbooks" "$cache/$toy"-* "$cache/bsx/$toy"-* "$cache/bsx/queen-$toy"-* "$config" || fail "couldn't remove $toy's logbooks, cache files or config dir"
 echo "removed the toy repo, its worktrees, logbooks, cache files and config dir; kept $run/keeper (with the transcripts)"
 
 # 4. Leaks: what the toy owns and teardown should have removed. Exit 2.
@@ -110,7 +112,7 @@ else
 	unchecked="stray processes (no /proc to look in)" # couldn't look is not "none" (Rule G)
 	echo "can't check for processes left in $run: no /proc"
 fi
-left=$(ls -d "$store/$toy".db* "$cache/$toy"-* "$repo" "$config" "$projects/$enc"-* 2>/dev/null | tr '\n' ' ')
+left=$(ls -d "$store/$toy".db* "$cache/$toy"-* "$cache/bsx/$toy"-* "$cache/bsx/queen-$toy"-* "$repo" "$config" "$projects/$enc"-* 2>/dev/null | tr '\n' ' ')
 [ -z "$left" ] || leak "files left: $left"
 
 # 5. Leftovers outside the toy: noted, never an exit code, and left for a later cleanup.

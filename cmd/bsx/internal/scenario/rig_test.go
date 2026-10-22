@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -76,16 +77,26 @@ worktrees = "`+filepath.Join(root, "toy-WT")+`"
 	base := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "XDG_CONFIG_HOME=" + cfg,
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t"}
 	x.env = append(base, "HERDR_SESSION="+x.session)
-	x.herdr = &fake.Herdr{Home: home, Programs: map[string]string{"claude": fake.Beesfake(t)}, Env: append(base, "BEESFAKE_RELAY="+relay)}
+	// beesfake, built as claude, is first on the panes' PATH: bs queen execs it.
+	pane := append(slices.Clone(base), "PATH="+filepath.Dir(fake.Beesfake(t))+":"+os.Getenv("PATH"), "BEESFAKE_RELAY="+relay)
+	x.herdr = &fake.Herdr{Home: home, Programs: map[string]string{"claude": fake.Beesfake(t)}, Env: pane}
 	t.Cleanup(x.herdr.Close)
 	x.ports = cli.Ports{Run: fake.Commands{Herdr: x.herdr, Real: port.Exec{}}, Harness: x.harness, Proc: x.herdr, Beads: x.beads,
 		CacheDir: filepath.Join(root, "cache"),
 		Timing:   core.Timing{Confirm: 10 * time.Second, Poll: 20 * time.Millisecond, SecondLook: 100 * time.Millisecond, Stop: time.Second}}
 	// A bs call a pane's beesfake makes runs here, as that process: its env, its pid.
+	// bs queen's exec is handed back for the caller to make: it keeps the pid recorded.
 	fake.Relay(t, relay, func(c fake.Call) fake.Reply {
 		var out, errb bytes.Buffer
-		code := cli.Run(context.Background(), cli.Env{Vars: c.Env, Dir: c.Cwd, Self: c.PID, Stdin: strings.NewReader("")}, x.ports, c.Argv, &out, &errb)
-		return fake.Reply{Stdout: out.String(), Stderr: errb.String(), Code: code}
+		var r fake.Reply
+		ports := x.ports
+		ports.Exec = func(dir string, env, argv []string) error {
+			r.Exec, r.ExecDir, r.ExecEnv = argv, dir, env
+			return nil
+		}
+		r.Code = cli.Run(context.Background(), cli.Env{Vars: c.Env, Dir: c.Cwd, Self: c.PID, Stdin: strings.NewReader("")}, ports, c.Argv, &out, &errb)
+		r.Stdout, r.Stderr = out.String(), errb.String()
+		return r
 	})
 	return x
 }
@@ -131,8 +142,15 @@ func (r result) String() string { return r.out + r.stderr }
 // command needs a session.
 func (x *toy) keeper(args ...string) result {
 	x.t.Helper()
+	return x.shellRun(x.repo, x.env, "", args...)
+}
+
+// shellRun runs bsx args from a keeper's shell outside any pane, in dir with env and
+// stdin.
+func (x *toy) shellRun(dir string, env []string, stdin string, args ...string) result {
+	x.t.Helper()
 	var out, errb bytes.Buffer
-	code := cli.Run(context.Background(), cli.Env{Vars: x.env, Dir: x.repo, Self: os.Getpid(), Stdin: strings.NewReader("")}, x.ports, args, &out, &errb)
+	code := cli.Run(context.Background(), cli.Env{Vars: env, Dir: dir, Self: os.Getpid(), Stdin: strings.NewReader(stdin)}, x.ports, args, &out, &errb)
 	return result{code, out.String(), errb.String()}
 }
 

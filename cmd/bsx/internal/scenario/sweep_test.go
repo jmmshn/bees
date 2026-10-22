@@ -23,10 +23,10 @@ func TestWorkersMailEachOtherAndAreRung(t *testing.T) {
 	x := newToy(t)
 	x.spawn("toy-1", "branch")
 	x.spawn("toy-2", "branch")
-	must(t, x.worker("toy-1", 1, "send", "toy-2", "rebase on mine"), 0, "sent to toy-2")
+	must(t, x.worker("toy-1", 1, "send", "toy-2", "rebase on mine"), 0, "to toy-2", "rung toy-2")
 	r := x.worker("toy-2", 1, "inbox")
 	must(t, r, 0, "from toy-1", "rebase on mine")
-	if rings := x.harness.Rings("toy-2"); len(rings) == 0 || !strings.Contains(rings[len(rings)-1], "1 unread (toy-1)") {
+	if rings := x.harness.Rings("toy-2"); len(rings) == 0 || !strings.Contains(rings[len(rings)-1], `2 unread (queen-toy, toy-1) — run: bsx inbox   (reply with: bsx send toy-1 "...")`) {
 		t.Fatalf("toy-2's rings: %q", rings)
 	}
 }
@@ -90,21 +90,6 @@ func TestRound11ADeliveryFragmentForACLFlow(t *testing.T) {
 	later(t, "bees-13.11", "command workspaces and custom goals")
 }
 func TestRound11StaticGuards(t *testing.T) { later(t, "bees-13.6", "the guards matrix") }
-func TestRound11WorkersRunTheBuildUnderTest(t *testing.T) {
-	later(t, "bees-13.4", "worker.path, wired with the claude_code adapter")
-}
-func TestRound11AMovedPaneStaysRunningAndIsRung(t *testing.T) {
-	later(t, "bees-13.4", "identity and rings of a moved pane")
-}
-func TestRound11EndRefusesAWorkspaceHoldingAnotherWorkersPane(t *testing.T) {
-	later(t, "bees-13.4", "teardown guests (bees-12.36)")
-}
-func TestRound11CrossProjectSendAndReply(t *testing.T) {
-	later(t, "bees-13.8", "cross-project mail (bees-12.38)")
-}
-func TestRound11EndForceOnAMovedWorker(t *testing.T) {
-	later(t, "bees-13.4", "stop() of a moved pane (bees-12.46)")
-}
 func TestRound11AFreshAgentSetsUpFromSetupAgentMD(t *testing.T) {
 	later(t, "bees-13.8", "SETUP-AGENT.md")
 }
@@ -202,9 +187,6 @@ func TestPilotBug1232ANonGitQueenNeedsNoBSProject(t *testing.T) {
 func TestPilotBug1241PruneAfterEndForce(t *testing.T) {
 	later(t, "bees-13.5", "prune of a forced end, and the branch's removal")
 }
-func TestPilotBug1243APaneActsOnItsOwnProject(t *testing.T) {
-	later(t, "bees-13.4", "the pane scan across logbooks")
-}
 func TestPilotBug1244DoctorAndConfigGaps(t *testing.T) {
 	later(t, "bees-13.8", "bs doctor warns of a PR goal with no remote and a stale herdr server; bs config lists guards")
 }
@@ -233,10 +215,6 @@ func TestTheGateSkipsDonesOwnPipeline(t *testing.T) {
 	x.harness.Step(t, "toy-1", "bs|", "done")
 	r := x.harness.Await(t, "toy-1", 1)
 	must(t, result{r.Code, r.Stdout, r.Stderr}, 0, "handed off")
-}
-
-func TestPilotBug1250AReplyWaitLoopInTheBackground(t *testing.T) {
-	later(t, "bees-13.4", "a reply-wait loop left running with & counts; say so in the prompts")
 }
 
 // bees-12.23 is TestConcurrentFirstOpensOfANewLogbookAllSucceed (logbook); bees-12.25 (a
@@ -271,10 +249,9 @@ func TestDoneStopsAtACheckThatCantRun(t *testing.T) {
 	must(t, x.worker("toy-1", 1, "done"), 6, "couldn't run")
 }
 
-// The worktree's .git gone, the worker's cwd is in no repo, so bs can't find its project.
-// It should still run the check and stop at exit 6 (bees-13.15).
+// The worktree's .git gone, the worker's cwd is in no repo; its pane still names its
+// project, so the check runs and stops at exit 6 (bees-13.15).
 func TestDoneWithTheWorktreesGitGone(t *testing.T) {
-	t.Skip("bees-13.15: bsx finds a pane's project only from its cwd")
 	x := newToy(t)
 	sp := x.spawn("toy-1", "branch")
 	if err := os.RemoveAll(filepath.Join(sp.Workspace.Dir, ".git")); err != nil {
@@ -484,6 +461,6 @@ func TestABadFlagIsRefused(t *testing.T) {
 func TestSendToABeadIDReachesItsWorker(t *testing.T) {
 	x := newToy(t)
 	x.spawn("toy-1.2", "verdict")
-	must(t, x.queen("send", "toy-1.2", "hi"), 0, "sent to toy-1-2")
+	must(t, x.queen("send", "toy-1.2", "hi"), 0, " to toy-1-2", "rung toy-1-2")
 	must(t, x.worker("toy-1-2", 1, "inbox"), 0, "from queen-toy", "hi")
 }

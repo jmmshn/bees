@@ -19,7 +19,7 @@ import (
 //   - toml: its key within its table;
 //   - scope: which file may set it: global, project or both;
 //   - default: its value when nothing sets it (absent means "");
-//   - env: the variable that overrides both files outside a herdr pane (optional);
+//   - env: the variable that overrides both files outside a recorded herdr pane (optional);
 //   - enum: its allowed values, separated by | ("" always passes where it is the default);
 //   - path: a path: "dir", or "{repo}" when it may begin with the {repo} placeholder;
 //   - unread: present when bsx doesn't act on the key yet; its value names the bead that
@@ -93,13 +93,13 @@ type Role struct {
 
 // Worker holds every worker's harness tables and bs spawn's own settings.
 type Worker struct {
-	Path       []string   `toml:"path" scope:"project" path:"dir" unread:"bees-13.4" doc:"dirs put first on every worker's PATH (a live test's build under test)"`
+	Path       []string   `toml:"path" scope:"project" path:"dir" doc:"dirs put first on every worker's PATH (a live test's build under test)"`
 	ClaudeCode ClaudeCode `toml:"claude_code"`
 }
 
 // ClaudeCode holds the settings bs passes to Claude Code.
 type ClaudeCode struct {
-	Model string `toml:"model" scope:"both" unread:"bees-13.4" doc:"the model Claude Code starts on (claude --model); empty: Claude Code's default"`
+	Model string `toml:"model" scope:"both" doc:"the model Claude Code starts on (claude --model); empty: Claude Code's default"`
 }
 
 // The workspace kinds.

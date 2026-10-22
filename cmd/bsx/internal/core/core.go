@@ -5,6 +5,7 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"strings"
@@ -19,16 +20,48 @@ import (
 type Core struct {
 	Logbook     *logbook.Logbook
 	Project     string
-	Run         port.Runner // herdr, git, gh
-	Harness     port.Harness
-	HarnessName string // the config name entries record: claude_code
+	Run         port.Runner                    // herdr, git, gh
+	Harness     port.Harness                   // the configured harness: what spawn and queen start
+	HarnessOf   func(name string) port.Harness // the adapter of another harness an entry recorded; nil when none
+	HarnessName string                         // the config name entries record: claude_code
 	Proc        port.Proc
 	Beads       port.Beads
-	Repo        string // paths.repo: the project's checkout
-	Worktrees   string // where git_worktree workspaces go: <Worktrees>/<name>
-	ConfigDir   string // the config dir the spawn ran under, recorded
-	CacheDir    string // per-start files
+	Repo        string   // paths.repo: the project's checkout
+	Worktrees   string   // where git_worktree workspaces go: <Worktrees>/<name>
+	ConfigDir   string   // the config dir the spawn ran under, recorded
+	CacheDir    string   // per-start files
+	WorkerPath  []string // worker.path: dirs first on a worker's PATH
 	Timing      Timing
+	Warn        func(msg string) // prints a fallback bs took (Rule G); nil drops it
+}
+
+// harnessOf is the adapter of harness name, as an entry recorded it: ringing, start
+// lookups and teardown use the recorded harness, not the configured one (ADR-0010). nil
+// when this machine has no adapter for it.
+func (c *Core) harnessOf(name string) port.Harness {
+	if name == "" || name == c.HarnessName {
+		return c.Harness
+	}
+	if c.HarnessOf != nil {
+		return c.HarnessOf(name)
+	}
+	return nil
+}
+
+// kindOf is the process name of sp's recorded harness.
+func (c *Core) kindOf(sp logbook.Spawn) (string, error) {
+	h := c.harnessOf(sp.Harness)
+	if h == nil {
+		return "", fmt.Errorf("%s was started on harness %s, which this bs has no adapter for", sp.Name, sp.Harness)
+	}
+	return h.Kind(), nil
+}
+
+// warn says a fallback bs took.
+func (c *Core) warn(format string, a ...any) {
+	if c.Warn != nil {
+		c.Warn(fmt.Sprintf(format, a...))
+	}
 }
 
 // Timing is how long the core waits. Tests shorten it.
@@ -36,17 +69,24 @@ type Timing struct {
 	Confirm    time.Duration // start confirmation: the harness process in its pane
 	Poll       time.Duration
 	SecondLook time.Duration // the gate's second look, dropping short-lived children
+	Gate       time.Duration // the whole gate check
+	AfterErr   time.Duration // after herdr's start erred: how long to look for the harness anyway (bees-12.49)
+	Busy       time.Duration // how long agent_pane_busy is retried (bees-12.33)
 	Stop       time.Duration // SIGTERM before SIGKILL
 }
 
-// DefaultTiming is ADR-0010's: confirmation within 20 s.
-var DefaultTiming = Timing{Confirm: 20 * time.Second, Poll: 200 * time.Millisecond, SecondLook: time.Second, Stop: 3 * time.Second}
+// DefaultTiming is ADR-0010's: confirmation polled every 250 ms within 20 s, 5 s after a
+// herdr error, agent_pane_busy retried for 8 s.
+var DefaultTiming = Timing{Confirm: 20 * time.Second, Poll: 250 * time.Millisecond, SecondLook: time.Second, Stop: 3 * time.Second,
+	Gate: 5 * time.Second, AfterErr: 5 * time.Second, Busy: 8 * time.Second}
 
 func (c *Core) timing() Timing {
-	t := c.Timing
+	t, d := c.Timing, DefaultTiming
 	if t.Confirm == 0 {
-		t = DefaultTiming
+		return d
 	}
+	t.Poll, t.SecondLook, t.Stop = cmp.Or(t.Poll, d.Poll), cmp.Or(t.SecondLook, d.SecondLook), cmp.Or(t.Stop, d.Stop)
+	t.Gate, t.AfterErr, t.Busy = cmp.Or(t.Gate, d.Gate), cmp.Or(t.AfterErr, d.AfterErr), cmp.Or(t.Busy, d.Busy)
 	return t
 }
 

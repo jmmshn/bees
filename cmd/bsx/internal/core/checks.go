@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 	"strconv"
 
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 	"github.com/jmmshn/bees/cmd/bsx/internal/goal"
 	"github.com/jmmshn/bees/cmd/bsx/internal/logbook"
 	"github.com/jmmshn/bees/cmd/bsx/internal/port"

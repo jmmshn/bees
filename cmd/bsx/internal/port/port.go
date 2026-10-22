@@ -107,7 +107,8 @@ type Proc interface {
 	Descendants(pid int) ([]proc.Process, error) // nearest first
 	Command(pid int) (string, error)
 	Exe(pid int) (string, error)
-	Signal(p proc.Process, sig syscall.Signal) error // only while p is still the process recorded
+	Signal(p proc.Process, sig syscall.Signal) error                  // only while p is still the process recorded
+	Listening(ctx context.Context, pids []int) (map[int][]int, error) // TCP ports each listens on
 }
 
 // Bead is one bead as bs reads it.

@@ -23,15 +23,20 @@ type Env struct {
 	Stdin io.Reader
 }
 
-// Ports are the world the core runs on. A nil Harness refuses every command that starts
-// one: the claude_code adapter arrives with bees-13.3.
+// Ports are the world the core runs on. Harness, when set (tests), is every role's;
+// else NewHarness builds the configured one for a role's model, and a harness it doesn't
+// know (nil) refuses every command that starts or rings one.
 type Ports struct {
-	Run      port.Runner
-	Harness  port.Harness
-	Proc     port.Proc
-	Beads    port.Beads
-	CacheDir string
-	Timing   core.Timing
+	Run        port.Runner
+	Harness    port.Harness
+	NewHarness func(name, model string) port.Harness
+	Proc       port.Proc
+	Beads      port.Beads
+	CacheDir   string
+	Timing     core.Timing
+	// Exec replaces bs with argv (argv[0] a path), run in dir with env: bs queen's last
+	// step. It returns only on failure.
+	Exec func(dir string, env, argv []string) error
 }
 
 const usage = `usage: bsx <command> [flags] [arguments]   (flags before arguments)
@@ -40,11 +45,12 @@ bsx is the ADR-0010 rebuild of bs; until the swap (bees-13.9) it runs only on a
 herdr --session server, on that session's config (~/.config/bees/sessions/<session>).
 
 commands:
+  queen                                                    record this pane's queen, then exec the harness
   spawn   --goal <goal>... [--label L] [--as Q] <bead>   start a worker
   done    [--pr URL]... [--answer yes|no --report TEXT|-] [--force] [--as W]   hand off
   end     [--force] [--incomplete] [--as Q] <worker>      complete and end a worker
   prune   [--as Q]                                         remove completed workspaces
-  send    [--as S] <to> <message>                          store a message, then ring
+  send    [--as S] [--project P] [--now] <to> <message|->  store a message, then ring
   inbox   [--as S]                                         print unread mail
   status                                                   list workers and their goals
   config                                                   every setting and where it came from
@@ -63,7 +69,7 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 		fmt.Fprintf(stderr, "bsx: unknown command %q\n\n%s", args[0], usage)
 		return core.ExitRefused
 	}
-	s, err := load(ctx, env, ports.Run)
+	s, err := load(ctx, env, ports)
 	if s != nil {
 		for _, w := range s.Warnings {
 			fmt.Fprintf(stderr, "bsx %s: warning: %s\n", args[0], w)
@@ -81,7 +87,7 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 		fmt.Fprintf(stderr, "bsx %s: refused: %v %s, so bsx won't guess a logbook; nothing was read or written\n", args[0], errNoConfigDir, s.Session)
 		return core.ExitRefused
 	}
-	r := &run{ctx: ctx, env: env, s: s, ports: ports, out: stdout, err: stderr}
+	r := &run{ctx: ctx, name: args[0], env: env, s: s, ports: ports, out: stdout, err: stderr}
 	if cmd.logbook {
 		if err := s.checkLogbook(env); err != nil {
 			return report(stderr, args[0], err)
@@ -91,10 +97,28 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 			return report(stderr, args[0], err)
 		}
 		defer lb.Close()
+		h := ports.Harness
+		if h == nil && ports.NewHarness != nil {
+			model := s.Worker.ClaudeCode.Model
+			if args[0] == "queen" {
+				model = s.Queen.ClaudeCode.Model
+			}
+			h = ports.NewHarness(s.Harness, model)
+		}
+		other := func(name string) port.Harness { // a harness some entry recorded, any model: it only rings and is looked for
+			if ports.Harness != nil {
+				return ports.Harness
+			}
+			if ports.NewHarness != nil {
+				return ports.NewHarness(name, "")
+			}
+			return nil
+		}
 		r.c = &core.Core{
-			Logbook: lb, Project: s.Project, Run: ports.Run, Harness: ports.Harness, HarnessName: s.Harness,
+			Logbook: lb, Project: s.Project, Run: ports.Run, Harness: h, HarnessOf: other, HarnessName: s.Harness,
 			Proc: ports.Proc, Beads: ports.Beads, Repo: s.Repo, Worktrees: s.Worktrees,
-			ConfigDir: s.Dir, CacheDir: ports.CacheDir, Timing: ports.Timing,
+			ConfigDir: s.Dir, CacheDir: ports.CacheDir, Timing: ports.Timing, WorkerPath: s.workerPath(),
+			Warn: func(msg string) { fmt.Fprintf(stderr, "bsx %s: warning: %s\n", args[0], msg) },
 		}
 	}
 	fs := flag.NewFlagSet("bsx "+args[0], flag.ContinueOnError)
@@ -136,6 +160,7 @@ func parse(fs *flag.FlagSet, args []string) error {
 
 type run struct {
 	ctx      context.Context
+	name     string // the command
 	env      Env
 	s        *settings
 	ports    Ports
@@ -149,21 +174,22 @@ type list []string
 func (l *list) String() string     { return strings.Join(*l, " ") }
 func (l *list) Set(v string) error { *l = append(*l, v); return nil }
 
-// who is the caller: its recorded pane inside one, else --as (ADR-0010 identity). load
-// has already ignored, with a warning, every BS_* variable inside a pane.
+// who is the caller: its recorded pane inside one, else --as (ADR-0010 identity), in an
+// unrecorded herdr pane too (bees-13.14). load has already ignored, with a warning, every
+// BS_* variable inside a recorded pane.
 func (r *run) who(as string) (core.Who, error) {
-	w, err := r.c.Identify(r.ctx, r.env.Vars, r.env.Self)
-	if err == nil {
+	if p := r.s.Pane; p != nil {
+		w, err := r.c.Identify(r.ctx, *p, r.env.Self)
+		if err != nil {
+			return core.Who{}, err
+		}
 		if as != "" && as != w.Name {
 			return core.Who{}, fmt.Errorf("%w: --as %s inside %s's recorded pane", errUsage, as, w.Name)
 		}
 		return w, nil
 	}
-	if !errors.Is(err, core.ErrOutsidePane) {
-		return core.Who{}, err
-	}
 	if as == "" {
-		return core.Who{}, fmt.Errorf("%w: not in a herdr pane: name the session with --as", errUsage)
+		return core.Who{}, fmt.Errorf("%w: %v: name the session with --as", errUsage, core.ErrOutsidePane)
 	}
 	sp, ok, err := r.c.Logbook.LatestSpawn(r.ctx, as)
 	if err != nil {
@@ -183,6 +209,7 @@ type command struct {
 }
 
 var commands = map[string]command{
+	"queen":  {(*run).queen, true},
 	"spawn":  {(*run).spawn, true},
 	"done":   {(*run).done, true},
 	"end":    {(*run).end, true},

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 	"github.com/jmmshn/bees/cmd/bsx/internal/config"
 	"github.com/jmmshn/bees/cmd/bsx/internal/core"
 	"github.com/jmmshn/bees/cmd/bsx/internal/herdr"
@@ -23,7 +24,7 @@ func (r *run) config(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("%w: bsx config takes no arguments", errUsage)
+		return fmt.Errorf("%w: "+bsname.Cmd+" config takes no arguments", errUsage)
 	}
 	s, w := r.s, r.out
 	missing := ""
@@ -39,7 +40,7 @@ func (r *run) config(fs *flag.FlagSet, args []string) error {
 		fmt.Fprintf(w, "# %s file: %s%s\n", f.Scope, f.Path, state)
 	}
 	if s.Project == "" {
-		fmt.Fprintln(w, "# project: none (run in its repo, or set BS_PROJECT outside a herdr pane): global file only")
+		fmt.Fprintln(w, "# project: none (run in its repo, or set BS_PROJECT outside a recorded herdr pane): global file only")
 	} else {
 		fmt.Fprintf(w, "# project: %s (%s)\n# logbook: %s (paths.logbook_dir, %s)\n", s.Project, s.ProjectFrom, s.Logbook, s.Sources["paths.logbook_dir"])
 	}

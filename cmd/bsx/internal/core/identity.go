@@ -1,16 +1,17 @@
 package core
 
 import (
-	"cmp"
 	"context"
 	"errors"
-	"fmt"
-	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
+	"github.com/jmmshn/bees/cmd/bsx/internal/herdr"
 	"github.com/jmmshn/bees/cmd/bsx/internal/logbook"
+	"github.com/jmmshn/bees/cmd/bsx/internal/port"
 	"github.com/jmmshn/bees/cmd/bsx/internal/proc"
 )
 
@@ -22,59 +23,189 @@ type Who struct {
 	Process proc.Process
 }
 
-// ErrOutsidePane is a caller with no HERDR_PANE_ID: tests, scripts, the keeper's shell,
-// where --as names the session.
-var ErrOutsidePane = errors.New("not in a herdr pane")
+// ErrOutsidePane is a caller in no recorded herdr pane: tests, scripts, the keeper's
+// shell (a herdr pane no entry recorded among them), where --as names the session
+// (bees-13.14).
+var ErrOutsidePane = errors.New("not in a recorded herdr pane")
 
-// Identify finds the session calling bs (ADR-0010): (HERDR_SESSION, or default when
-// unset; HERDR_PANE_ID) → the open entry that recorded that pane, accepted only while its
-// recorded process is alive and an ancestor of self, the calling bs. Any BS_* variable in
-// env is ignored here; inside a recorded pane the pane decides. A lookup that fails is an
-// error, never "nobody" (motif 7).
-func (c *Core) Identify(ctx context.Context, env []string, self int) (Who, error) {
-	pane, session := Getenv(env, "HERDR_PANE_ID"), cmp.Or(Getenv(env, "HERDR_SESSION"), logbook.DefaultSession)
-	if pane == "" {
-		return Who{}, ErrOutsidePane
+// Pane is a herdr pane as the scan found it: the open entry that recorded it, in its
+// project's logbook.
+type Pane struct {
+	Session, Pane string
+	Project       string // the logbook's file name without .db
+	Logbook       string
+	Who           Who
+	Repo          string // the recorded repo: a worker's workspace's, a queen's own
+	Unconfirmed   bool   // a worker with no start yet, whose harness runs above bs: Identify heals it
+}
+
+// ScanIn is what ScanPanes reads: the pane, the calling bs, and the ports to look with.
+type ScanIn struct {
+	Dir           string // paths.logbook_dir: every <project>.db in it is read, read-only
+	Session, Pane string // HERDR_SESSION (or default) and HERDR_PANE_ID
+	Self          int
+	Run           port.Runner
+	Proc          port.Proc
+	Program       func(harness string) string // a recorded harness's process name; nil skips the heal probe
+}
+
+// ScanPanes finds the open entry that recorded the calling pane (ADR-0010 identity),
+// scanning every logbook in in.Dir read-only: <project>.db only (a .db.pre-N copy is
+// skipped), an unreadable one an error naming it. An entry counts only while its
+// recorded process is alive and an ancestor of in.Self. A worker entry with no start
+// counts when its harness, with --name <worker> in its argv, runs in the pane above
+// in.Self: its start is healed when its logbook is opened. Two entries counting is an
+// error (motif 4); none is ok false, and the caller is outside a recorded pane. Any
+// lookup that fails is an error, never "nobody" (motif 7).
+func ScanPanes(ctx context.Context, in ScanIn) (Pane, bool, error) {
+	es, err := os.ReadDir(in.Dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return Pane{}, false, nil
+	} else if err != nil {
+		return Pane{}, false, exit(ExitCantCheck, bsname.Cmd+" doctor", err, bsname.Cmd+" can't read the logbook dir %s to find this pane's session", in.Dir)
 	}
-	recs, err := c.Logbook.InPane(ctx, session, pane)
+	up, err := ancestors(in.Proc, in.Self)
+	if err != nil {
+		return Pane{}, false, exit(ExitCantCheck, bsname.Cmd+" doctor", err, bsname.Cmd+" can't walk its own ancestors")
+	}
+	var found []Pane
+	var probe *herdr.PaneProcesses // the pane's processes, looked up once, for a heal
+	for _, e := range es {
+		project, ok := strings.CutSuffix(e.Name(), ".db")
+		if !ok || e.IsDir() {
+			continue
+		}
+		path := filepath.Join(in.Dir, e.Name())
+		recs, err := inPane(ctx, path, in.Session, in.Pane)
+		if err != nil {
+			return Pane{}, false, exit(ExitCantCheck, "check "+path+" (a logbook dir holds only <project>.db logbooks)", err, bsname.Cmd+" can't read logbook %s to find this pane's session", path)
+		}
+		for _, r := range recs {
+			p := Pane{Session: in.Session, Pane: in.Pane, Project: project, Logbook: path,
+				Who: Who{Name: r.Name, Queen: r.Queen, Spawn: r.Spawn, Process: r.Process}, Repo: r.Repo}
+			if !r.HasProcess {
+				if r.Queen || in.Program == nil {
+					continue
+				}
+				if probe == nil {
+					pi, err := (herdr.Client{Run: in.Run, Session: in.Session}).ProcessInfo(ctx, in.Pane)
+					if err != nil && !errors.Is(err, herdr.ErrPaneGone) {
+						return Pane{}, false, exit(ExitCantCheck, "herdr --session "+in.Session+" pane process-info --pane "+in.Pane, err, "pane %s holds %s, whose start was never confirmed, and "+bsname.Cmd+" can't look for its harness", in.Pane, r.Name)
+					}
+					probe = &pi
+				}
+				i := slices.IndexFunc(probe.Foreground, func(f herdr.PaneProcess) bool {
+					return isOwn(f, in.Program(r.Harness), r.Name) && slices.Contains(up, f.PID)
+				})
+				if i < 0 {
+					continue
+				}
+				p.Unconfirmed = true
+				found = append(found, p)
+				continue
+			}
+			alive, err := in.Proc.Alive(r.Process)
+			if err != nil {
+				return Pane{}, false, exit(ExitCantCheck, bsname.Cmd+" doctor", err, bsname.Cmd+" can't tell whether %s's process runs", r.Name)
+			}
+			if alive && slices.Contains(up, r.Process.PID) {
+				found = append(found, p)
+			}
+		}
+	}
+	switch len(found) {
+	case 0:
+		return Pane{}, false, nil
+	case 1:
+		return found[0], true, nil
+	}
+	var names []string
+	for _, p := range found {
+		names = append(names, p.Who.Name+" ("+p.Logbook+")")
+	}
+	return Pane{}, false, exit(ExitFail, bsname.Cmd+" status, then "+bsname.Cmd+" end the one that shouldn't be there", nil, "pane %s on herdr session %s is recorded by %d live sessions: %s", in.Pane, in.Session, len(found), strings.Join(names, ", "))
+}
+
+// recorded is a logbook.Recorded with its spawn's workspace repo.
+type recorded struct {
+	logbook.Recorded
+	Repo string
+}
+
+// inPane reads the entries of the logbook at path that recorded pane.
+func inPane(ctx context.Context, path, session, pane string) ([]recorded, error) {
+	lb, err := logbook.OpenReadOnly(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	defer lb.Close()
+	recs, err := lb.InPane(ctx, session, pane)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]recorded, len(recs))
+	for i, r := range recs {
+		out[i].Recorded = r
+		if r.Queen {
+			out[i].Repo = r.Repo
+			continue
+		}
+		sp, err := lb.Spawn(ctx, r.Spawn)
+		if err != nil {
+			return nil, err
+		}
+		out[i].Repo = sp.Workspace.Repo
+	}
+	return out, nil
+}
+
+// Identify confirms p, the pane ScanPanes found, against this core's logbook, healing an
+// unconfirmed worker's start (ADR-0010): the entry must still be open, and its process
+// alive and an ancestor of self.
+func (c *Core) Identify(ctx context.Context, p Pane, self int) (Who, error) {
+	recs, err := c.Logbook.InPane(ctx, p.Session, p.Pane)
 	if err != nil {
 		return Who{}, err
 	}
+	i := slices.IndexFunc(recs, func(r logbook.Recorded) bool { return r.Name == p.Who.Name })
+	if i < 0 {
+		return Who{}, exit(ExitRefused, bsname.Cmd+" status", nil, "%s's entry for pane %s closed while bs looked", p.Who.Name, p.Pane)
+	}
+	r := recs[i]
+	if !r.HasProcess {
+		sp, err := c.Logbook.Spawn(ctx, r.Spawn)
+		if err != nil {
+			return Who{}, err
+		}
+		st, ok, err := c.StartOf(ctx, sp)
+		switch {
+		case err != nil:
+			return Who{}, exit(ExitCantCheck, "herdr --session "+p.Session+" pane process-info --pane "+p.Pane, err, "pane %s holds %s, whose start was never confirmed", p.Pane, r.Name)
+		case !ok:
+			return Who{}, exit(ExitStart, bsname.Cmd+" end "+r.Name+" --incomplete", nil, "pane %s holds %s, whose start was never confirmed and whose harness "+bsname.Cmd+" can't find there", p.Pane, r.Name)
+		}
+		r.Process = st.Process
+	}
 	up, err := c.ancestors(self)
 	if err != nil {
-		return Who{}, exit(ExitCantCheck, "", err, bsname.Cmd+" can't walk its own ancestors")
+		return Who{}, exit(ExitCantCheck, bsname.Cmd+" doctor", err, bsname.Cmd+" can't walk its own ancestors")
 	}
-	var found []Who
-	var unconfirmed []string
-	for _, r := range recs {
-		if !r.HasProcess {
-			unconfirmed = append(unconfirmed, r.Name)
-			continue
-		}
-		alive, err := c.Proc.Alive(r.Process)
-		if err != nil {
-			return Who{}, exit(ExitCantCheck, "", err, bsname.Cmd+" can't tell whether %s's process runs", r.Name)
-		}
-		if alive && slices.Contains(up, r.Process.PID) {
-			found = append(found, Who{Name: r.Name, Queen: r.Queen, Spawn: r.Spawn, Process: r.Process})
-		}
+	switch alive, err := c.Proc.Alive(r.Process); {
+	case err != nil:
+		return Who{}, exit(ExitCantCheck, bsname.Cmd+" doctor", err, bsname.Cmd+" can't tell whether %s's process runs", r.Name)
+	case !alive || !slices.Contains(up, r.Process.PID):
+		return Who{}, exit(ExitRefused, bsname.Cmd+" status", nil, "%s's process (pid %d) is no longer this bs's ancestor", r.Name, r.Process.PID)
 	}
-	switch {
-	case len(found) == 1:
-		return found[0], nil
-	case len(found) > 1:
-		return Who{}, exit(ExitFail, "", nil, "pane %s on herdr session %s is recorded by %d live sessions", pane, session, len(found))
-	case len(unconfirmed) > 0:
-		return Who{}, exit(ExitStart, bsname.Cmd+" end "+unconfirmed[0]+" --incomplete", nil, "pane %s holds %s, whose start was never confirmed (the heal arrives with bees-13.4)", pane, strings.Join(unconfirmed, ", "))
-	}
-	return Who{}, exit(ExitRefused, "", nil, "no live session of project %s is recorded in pane %s on herdr session %s", c.Project, pane, session)
+	return Who{Name: r.Name, Queen: r.Queen, Spawn: r.Spawn, Process: r.Process}, nil
 }
 
 // ancestors is self and every process above it.
-func (c *Core) ancestors(self int) ([]int, error) {
+func (c *Core) ancestors(self int) ([]int, error) { return ancestors(c.Proc, self) }
+
+func ancestors(ps port.Proc, self int) ([]int, error) {
 	out := []int{self}
 	for pid := self; pid > 1; {
-		pp, err := c.Proc.Parent(pid)
+		pp, err := ps.Parent(pid)
 		if errors.Is(err, proc.ErrGone) {
 			break
 		} else if err != nil {
@@ -96,93 +227,4 @@ func Getenv(env []string, key string) string {
 		}
 	}
 	return ""
-}
-
-// ErrBackground is the gate's finding (exit 5): the harness runs a process its start
-// didn't see.
-var ErrBackground = errors.New("still runs background work")
-
-// ErrNoStart is a spawn with no started entry: unconfirmed, or from before starts were
-// recorded.
-var ErrNoStart = errors.New("no start recorded (unconfirmed, or started before " + bsname.Cmd + " recorded starts)")
-
-// ErrHarnessGone is a recorded harness process that has exited: there is nothing to walk.
-var ErrHarnessGone = errors.New("the recorded harness process has exited")
-
-// Background returns sp's background work (ADR-0010's no_background gate): each live
-// descendant of its newest start's process the baseline doesn't hold, that isn't self or
-// one of its ancestors or in self's process group (bs's own pipeline: bees-12.50, 12.52),
-// still there a second look later. Any failure to look is an error: the gate fails
-// closed. A process that detaches escapes it: a speed bump.
-func (c *Core) Background(ctx context.Context, sp logbook.Spawn, self int) ([]proc.Background, error) {
-	st, ok, err := c.Logbook.LatestStart(ctx, sp.ID)
-	switch {
-	case err != nil:
-		return nil, err
-	case !ok:
-		return nil, fmt.Errorf("%s: %w", sp.Name, ErrNoStart)
-	case st.BaselineErr != "":
-		return nil, fmt.Errorf("its start couldn't read the processes it began with: %s", st.BaselineErr)
-	}
-	switch alive, err := c.Proc.Alive(st.Process); {
-	case err != nil:
-		return nil, err
-	case !alive:
-		return nil, fmt.Errorf("pid %d: %w", st.PID, ErrHarnessGone)
-	}
-	skip, err := c.ancestors(self)
-	if err != nil {
-		return nil, err
-	}
-	mine, err := c.Proc.Group(self)
-	if err != nil {
-		return nil, err
-	}
-	fresh := func() ([]proc.Process, error) {
-		ds, err := c.Proc.Descendants(st.PID)
-		if err != nil {
-			return nil, err
-		}
-		var out []proc.Process
-		for _, p := range ds {
-			if slices.Contains(st.Baseline, p) || slices.Contains(skip, p.PID) {
-				continue
-			}
-			g, err := c.Proc.Group(p.PID)
-			if errors.Is(err, proc.ErrGone) || err == nil && g == mine {
-				continue
-			} else if err != nil {
-				return nil, err
-			}
-			out = append(out, p)
-		}
-		return out, nil
-	}
-	first, err := fresh()
-	if err != nil || len(first) == 0 {
-		return nil, err
-	}
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-time.After(c.timing().SecondLook):
-	}
-	second, err := fresh()
-	if err != nil {
-		return nil, err
-	}
-	var out []proc.Background
-	for _, p := range first {
-		if !slices.Contains(second, p) {
-			continue
-		}
-		cmd, err := c.Proc.Command(p.PID)
-		if errors.Is(err, proc.ErrGone) {
-			continue
-		} else if err != nil {
-			return nil, err
-		}
-		out = append(out, proc.Background{Process: p, Command: cmd})
-	}
-	return out, nil
 }

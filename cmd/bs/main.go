@@ -1,88 +1,46 @@
-// Command bs lets Claude Code sessions message each other through a shared logbook.
+// Command bs runs a fleet of agent sessions over a shared logbook (ADR-0010): a queen per
+// project hands beads to workers, each with a goal fixed at spawn.
 package main
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"io"
 	"os"
+	"path/filepath"
+	"syscall"
 
-	"github.com/jmmshn/bees/internal/project"
+	"github.com/jmmshn/bees/internal/cli"
+	"github.com/jmmshn/bees/internal/harness/claude"
+	"github.com/jmmshn/bees/internal/port"
+	"github.com/jmmshn/bees/internal/proc"
 )
 
-const usage = `usage: bs <command> [arguments]
-
-commands:
-  init      create the logbook file and table if missing
-  queen     start this project's queen session
-  spawn     start a worker for a bead in its own herdr workspace
-  end       remove a worker's workspace (--all: every live worker's); its branch is kept
-  prune     delete ended workers' local branches once their work is merged
-  epic      create the project's next epic (<project>-<n>)
-  bead      list the project's beads (ls) or add one under an epic (new)
-  send      store a message for a session, then ring it
-  inbox     print your unread messages and record receipts
-  status    list running sessions and unread counts (--json for scripts)
-  config    print every setting, its value and where it came from
-  version   print the commit bs was built from
-`
-
-// commands maps each implemented subcommand to its handler.
-var commands = map[string]func(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error{
-	"init":    cmdInit,
-	"send":    cmdSend,
-	"inbox":   cmdInbox,
-	"queen":   cmdQueen,
-	"spawn":   cmdSpawn,
-	"end":     cmdEnd,
-	"prune":   cmdPrune,
-	"epic":    cmdEpic,
-	"bead":    cmdBead,
-	"status":  cmdStatus,
-	"config":  cmdConfig,
-	"version": cmdVersion,
-}
-
-// exitCode is an error that only sets bs's exit status; the command has printed why.
-type exitCode int
-
-func (c exitCode) Error() string { return fmt.Sprintf("exit status %d", int(c)) }
-
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		cache = os.TempDir()
+	}
+	ports := cli.Ports{
+		Run:   port.Exec{},
+		Proc:  proc.System{},
+		Beads: port.BeadsCLI{R: port.Exec{}},
+		NewHarness: func(name, model string) port.Harness {
+			if name == claude.Name {
+				return claude.Adapter{Model: model}
+			}
+			return nil
+		},
+		CacheDir: filepath.Join(cache, "bees", "bs"),
+		Exec:     execHarness,
+	}
+	dir, _ := os.Getwd() // "" when gone: bs then knows the project only from BS_PROJECT
+	env := cli.Env{Vars: os.Environ(), Dir: dir, Self: os.Getpid(), Stdin: os.Stdin}
+	os.Exit(cli.Run(context.Background(), env, ports, os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		fmt.Fprint(stderr, usage)
-		return 2
+// execHarness replaces bs with argv in dir: the queen keeps bs's pid and start time.
+func execHarness(dir string, env, argv []string) error {
+	if err := os.Chdir(dir); err != nil {
+		return err
 	}
-	if cmd, ok := commands[args[0]]; ok {
-		warnIfStale(context.Background(), stderr)
-		var code exitCode
-		switch err := cmd(context.Background(), args[1:], stdin, stdout, stderr); {
-		case errors.As(err, &code): // the command already said why
-			return int(code)
-		case errors.Is(err, errHelp):
-			return 0
-		case errors.Is(err, errUsage):
-			return 2
-		case errors.Is(err, project.ErrNoSession), errors.Is(err, project.ErrNoProject), errors.Is(err, project.ErrWrongProject), errors.Is(err, errNoLogbook):
-			fmt.Fprintf(stderr, "bs %s: %v\n", args[0], err)
-			return 2
-		case err != nil:
-			fmt.Fprintf(stderr, "bs %s: %v\n", args[0], err)
-			return 1
-		}
-		return 0
-	}
-	switch args[0] {
-	case "-h", "--help", "help":
-		fmt.Fprint(stdout, usage)
-		return 0
-	default:
-		fmt.Fprintf(stderr, "bs: unknown command %q\n\n%s", args[0], usage)
-		return 2
-	}
+	return syscall.Exec(argv[0], argv, env)
 }

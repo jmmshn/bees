@@ -169,14 +169,13 @@ func TestBSProject(t *testing.T) {
 		t.Errorf("in a pane: exit %d %s", code, stderr)
 	}
 	wantIn(t, stderr, "ignoring BS_PROJECT inside a herdr pane", "ignoring BS_LOGBOOK_DIR inside a herdr pane")
+	wantIn(t, out, "# project: mytoy", `paths.logbook_dir = "`+r.logbook+`"`)
 	// Every BS_*, the old bs's pins too, is named in a pane; doctor words it by where it runs.
 	_, out, stderr = r.run(r.repo, []string{"BS_NAME=bees-3", "HERDR_PANE_ID=w1:p1"}, "doctor")
 	wantIn(t, stderr, "ignoring BS_NAME inside a herdr pane")
 	wantIn(t, out, "WARN env: BS_NAME is set, and ignored in this herdr pane")
 	_, out, _ = r.run(r.repo, []string{"BS_NAME=bees-3", "BS_LOGBOOK_DIR=" + r.logbook}, "doctor")
 	wantIn(t, out, "WARN env: BS_NAME is set; bsx doesn't read it", "WARN env: BS_LOGBOOK_DIR is set and overrides the config here")
-	_, out, _ = r.run(r.repo, []string{"BS_PROJECT=bees", "BS_LOGBOOK_DIR=/elsewhere", "HERDR_PANE_ID=w1:p1"}, "config")
-	wantIn(t, out, "# project: mytoy", `paths.logbook_dir = "`+r.logbook+`"`)
 	code, out, _ = r.run("/", []string{"BS_PROJECT=other"}, "config")
 	if code != 0 {
 		t.Errorf("outside any repo: exit %d", code)

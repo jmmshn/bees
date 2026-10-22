@@ -36,8 +36,12 @@ func cmdDone(ctx context.Context, args []string, stdin io.Reader, stdout, stderr
 	if err != nil {
 		return err
 	}
+	// One bare argument is the report: workers write bs done "<text>" (bees-12.51).
+	if len(pos) == 1 && *pr == "" && *report == "" {
+		*report, pos = pos[0], nil
+	}
 	if len(pos) > 0 || (*pr == "") == (*report == "") {
-		fmt.Fprintln(stderr, "usage: bs done (--pr <url> | --report <text | ->) [--force]")
+		fmt.Fprintln(stderr, "usage: bs done (--pr <url> | --report <text | -> | <text>) [--force]")
 		return errUsage
 	}
 	if *report == "-" {

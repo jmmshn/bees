@@ -37,7 +37,7 @@ func TestDoneReportsToTheQueen(t *testing.T) {
 	}
 	t.Setenv("BS_SESSION", "")
 	inWorkerPane(t, "test-1-1")
-	for _, args := range [][]string{{"done"}, {"done", "--pr", "u", "--report", "r"}} {
+	for _, args := range [][]string{{"done"}, {"done", "--pr", "u", "--report", "r"}, {"done", "--pr", "u", "text"}, {"done", "a", "b"}} {
 		if _, _, code := bs(t, args...); code != 2 {
 			t.Fatalf("%v: exit %d, want usage", args, code)
 		}
@@ -111,5 +111,18 @@ func TestDoneWithAnUncheckableStart(t *testing.T) {
 	t.Setenv("HERDR_PANE_ID", "")
 	if out, _, _ := bs(t, "inbox", "--as", "queen-test"); !strings.Contains(out, "(reported with bs done --force; bs can't check for background work") {
 		t.Fatalf("queen's inbox = %q", out)
+	}
+}
+
+// bees-12.51: workers write bs done "<text>", so one bare argument is the report.
+func TestDoneTakesABareReport(t *testing.T) {
+	useTempLogbook(t)
+	inWorkerPane(t, "test-1-1")
+	if out, stderr, code := bs(t, "done", "pushed branch test-1-1 at abc123"); code != 0 || !strings.Contains(out, "test-1-1 recorded for queen-test") {
+		t.Fatalf("bare report: exit %d, %q, %q", code, out, stderr)
+	}
+	t.Setenv("HERDR_PANE_ID", "")
+	if out, _, _ := bs(t, "inbox", "--as", "queen-test"); !strings.Contains(out, "pushed branch test-1-1 at abc123") {
+		t.Fatalf("queen's inbox = %q, want the report", out)
 	}
 }

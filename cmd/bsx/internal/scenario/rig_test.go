@@ -144,6 +144,22 @@ func (x *toy) bead(id, title string) {
 }
 
 // open opens the toy's logbook read-only, for assertions on entries.
+// dumpOnFailure logs sp's newest start and the process table if the test fails: the
+// evidence for a gate that read the table differently on another OS.
+func (x *toy) dumpOnFailure(sp logbook.Spawn) {
+	x.t.Cleanup(func() {
+		if !x.t.Failed() {
+			return
+		}
+		st, ok, err := x.open().LatestStart(context.Background(), sp.ID)
+		x.t.Logf("started: %+v %v %v", st, ok, err)
+		ds, err := x.herdr.Descendants(st.PID)
+		x.t.Logf("descendants of %d: %+v %v", st.PID, ds, err)
+		out, err := exec.Command("ps", "-A", "-o", "pid,ppid,pgid,stat,lstart,command").CombinedOutput()
+		x.t.Logf("ps: %v\n%s", err, out)
+	})
+}
+
 func (x *toy) open() *logbook.Logbook {
 	x.t.Helper()
 	lb, err := logbook.OpenReadOnly(context.Background(), x.logbook)

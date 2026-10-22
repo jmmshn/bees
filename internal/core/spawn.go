@@ -355,10 +355,10 @@ func (c *Core) unmake(ctx context.Context, session, workspace string, ws logbook
 }
 
 // workspace works out the spawn's workspace (Rule D): the project dir the top level of a
-// git checkout is git_worktree, on a branch of its own, or detached for a push goal. none and command arrive with bees-13.10 and 13.11.
-// workspace works out name's git_worktree workspace. When ended, its last spawn, recorded
-// this dir on its branch and both are still there, it is reused (reused true): the work
-// left there is the new spawn's to build on, never refused with no way on (motif 5).
+// git checkout is git_worktree, on a branch of its own, or detached for a push goal (none
+// and command arrive with bees-13.10 and 13.11). When ended, name's last spawn, left its
+// branch (its worktree kept, or gone with the branch kept), it is reused (reused true): the
+// work there is the new spawn's to build on, never refused with no way on (motif 5).
 func (c *Core) workspace(ctx context.Context, name string, detached bool, ended *logbook.Spawn) (ws logbook.Workspace, reused bool, err error) {
 	if c.Repo == "" {
 		return logbook.Workspace{}, false, exit(ExitRefused, "", nil, "project %s has no repo: run it in the repo, or set paths.repo", c.Project)

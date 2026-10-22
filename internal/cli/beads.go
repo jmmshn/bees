@@ -18,8 +18,8 @@ import (
 // bs epic and bs bead keep the queen and workers inside their project's beads (R32): the
 // bead store is shared by every project, and bd list and bd create see and write them all.
 
-const beadUsage = `bs bead ls [--all] [<bd query expression>]
-       bs bead new --parent <project>-N [--description <text>] [--type <type>] [--priority <0-4>] <title>`
+var beadUsage = strings.ReplaceAll(`{cmd} bead ls [--all] [<bd query expression>]
+       {cmd} bead new --parent <project>-N [--description <text>] [--type <type>] [--priority <0-4>] <title>`, "{cmd}", bsname.Cmd)
 
 // beadNumber is what follows the project in one of its bead ids: -N[.M…].
 var beadNumber = regexp.MustCompile(`^-\d+(\.\d+)*$`)

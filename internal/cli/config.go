@@ -17,10 +17,6 @@ import (
 	"github.com/jmmshn/bees/internal/port"
 )
 
-// ErrRealLogbook is a herdr --session toy whose logbook dir is the real logbooks' dir: a
-// toy runs on its own session's logbooks, never migrating or writing the fleet's.
-var ErrRealLogbook = errors.New("a herdr --session toy's paths.logbook_dir is the real logbooks' dir")
-
 // errNoConfigDir is a session whose config dir is missing (Rule G): every command that
 // opens a logbook refuses, since the defaults would name the real one; config and doctor
 // run on the defaults, warning.
@@ -312,7 +308,7 @@ func (s *settings) checkLogbook(env Env) error {
 	}
 	for _, real := range realLogbookDirs(env.Vars) {
 		if samePath(filepath.Dir(s.Logbook), real) {
-			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("%v, %s (%s); nothing was read or written", ErrRealLogbook, s.Paths.LogbookDir, s.Sources["paths.logbook_dir"]),
+			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("a herdr --session toy's paths.logbook_dir is the real logbooks' dir, %s (%s); nothing was read or written", s.Paths.LogbookDir, s.Sources["paths.logbook_dir"]),
 				Next: "set paths.logbook_dir in " + filepath.Join(s.Dir, "config.toml") + " to a dir of this session's own"}
 		}
 	}

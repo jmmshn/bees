@@ -187,7 +187,7 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 }
 
 // report prints err for command name and returns its exit code: an *Exit's own, 2 for
-// usage and a refused logbook dir, else 1.
+// usage, else 1.
 func report(stderr io.Writer, name string, err error) int {
 	if err == nil {
 		return 0
@@ -197,7 +197,7 @@ func report(stderr io.Writer, name string, err error) int {
 	switch {
 	case errors.As(err, &x):
 		return x.Code
-	case errors.Is(err, errUsage), errors.Is(err, ErrRealLogbook):
+	case errors.Is(err, errUsage):
 		return core.ExitRefused
 	}
 	return core.ExitFail

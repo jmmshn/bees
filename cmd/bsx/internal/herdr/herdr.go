@@ -156,8 +156,9 @@ func (c Client) CreateWorkspace(ctx context.Context, dir, label string) (Workspa
 // word (bees-12.17).
 const MaxToken = 80
 
-// TagWorkspace reports tokens as workspace's metadata. herdr refuses --source before
-// --token; a value over MaxToken is refused here rather than cut silently.
+// TagWorkspace reports tokens as workspace's metadata, --source last (herdr 0.9.5 takes
+// either order, probed in bees-13.2; an older one was seen refusing it first). A value over
+// MaxToken is refused here rather than cut silently.
 func (c Client) TagWorkspace(ctx context.Context, workspace string, tokens map[string]string) error {
 	args := []string{"workspace", "report-metadata", workspace}
 	for _, k := range slices.Sorted(maps.Keys(tokens)) {
@@ -283,6 +284,16 @@ func (c Client) ClosePane(ctx context.Context, pane string) error {
 // is closed.
 func (c Client) CloseWorkspace(ctx context.Context, workspace string) error {
 	return gone(c.call(ctx, nil, "workspace", "close", workspace), "workspace_not_found")
+}
+
+// RemoveWorktree removes a worktree workspace and its checkout. Without force herdr
+// refuses one with modified or untracked files (ErrDirty); one already gone is removed.
+func (c Client) RemoveWorktree(ctx context.Context, workspace string, force bool) error {
+	args := []string{"worktree", "remove", "--workspace", workspace}
+	if force {
+		args = append(args, "--force")
+	}
+	return gone(c.call(ctx, nil, args...), "workspace_not_found")
 }
 
 // gone is err, or nil when herdr refused with code (the thing is already gone).

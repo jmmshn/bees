@@ -39,6 +39,7 @@ type Config struct {
 	Review    Review              `toml:"review"`
 	Queen     Role                `toml:"queen"`
 	Worker    Worker              `toml:"worker"`
+	Prune     Prune               `toml:"prune"`
 }
 
 // Paths says where bs keeps its files and finds repos.
@@ -96,6 +97,11 @@ type Review struct {
 // Role holds the queen's harness tables.
 type Role struct {
 	ClaudeCode ClaudeCode `toml:"claude_code"`
+}
+
+// Prune is what bs prune lets go.
+type Prune struct {
+	Ignore []string `toml:"ignore" scope:"both" default:"bin/" doc:"ignored paths in a worktree that prune removes with it (build output): a path ending in / is a directory and all under it, any other a glob over the path; every other ignored file keeps the worktree, named (a report in an ignored scratch/)"`
 }
 
 // Worker holds every worker's harness tables and bs spawn's own settings.

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -612,19 +613,30 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 	return p
 }
 
-// ignored is the ignored files in dir, as porcelainPaths names them, or "".
+// ignored names the ignored files in dir that prune.ignore doesn't let go, or "".
 func (c *Core) ignored(ctx context.Context, dir string) (string, error) {
 	b, err := c.Run.Run(ctx, dir, "git", "-C", dir, "status", "--porcelain", "--ignored")
 	if err != nil {
 		return "", err
 	}
-	var ign strings.Builder
+	var kept []string
 	for line := range strings.Lines(string(b)) {
-		if strings.HasPrefix(line, "!! ") {
-			ign.WriteString(line)
+		if p, ok := strings.CutPrefix(strings.TrimRight(line, "\n"), "!! "); ok && !slices.ContainsFunc(c.PruneIgnore, func(pat string) bool { return ignoredBy(pat, p) }) {
+			kept = append(kept, p)
 		}
 	}
-	return porcelainPaths(ign.String()), nil
+	return firstTen(kept), nil
+}
+
+// ignoredBy reports whether prune.ignore's pat covers p, an ignored path git status
+// listed (a wholly ignored directory as one path ending in /): pat ending in / covers that
+// directory and all under it, any other pat is a glob over the whole path.
+func ignoredBy(pat, p string) bool {
+	if strings.HasSuffix(pat, "/") {
+		return strings.HasPrefix(p, pat)
+	}
+	ok, _ := path.Match(pat, p)
+	return ok
 }
 
 // heldByChange is the URL of one of prs, handed off under a pr goal, that holds sp's

@@ -81,6 +81,9 @@ func Template(scope string, set map[string]string) (string, error) {
 		val := Quote(f.tag.Get("default"))
 		if f.v.Kind() == reflect.Slice {
 			val = "[]"
+			if d := f.tag.Get("default"); d != "" {
+				val = render(reflect.ValueOf(strings.Split(d, ",")))
+			}
 		} else if f.v.Kind() == reflect.Bool {
 			val = "false"
 		}

@@ -172,6 +172,11 @@ func porcelainPaths(out string) string {
 			paths = append(paths, strings.TrimSpace(line[3:]))
 		}
 	}
+	return firstTen(paths)
+}
+
+// firstTen is paths, the first ten of them and how many more.
+func firstTen(paths []string) string {
 	if len(paths) > 10 {
 		return strings.Join(paths[:10], ", ") + fmt.Sprintf(" and %d more", len(paths)-10)
 	}

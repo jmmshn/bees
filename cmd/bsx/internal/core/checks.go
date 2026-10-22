@@ -20,13 +20,6 @@ type Handed struct {
 	Report   string
 }
 
-// errNotBuilt is a built-in check whose feature lands in a later bead: it can't run,
-// which is never a pass (Rule G).
-func errNotBuilt(bead string) error { return fmt.Errorf("not built yet (%s)", bead) }
-
-// notBuilt is each built-in check of a later bead.
-var notBuilt = map[string]string{goal.NoteChanged: "bees-13.7", goal.BeadCreated: "bees-13.7"}
-
 // check runs one built-in check of sp outside any goal part (prune's clean check).
 func (c *Core) check(ctx context.Context, sp logbook.Spawn, name string, h Handed) logbook.CheckResult {
 	return c.look(sp, h).check(ctx, goal.Part{}, name)
@@ -72,9 +65,6 @@ func (k *look) stage(ctx context.Context, e logbook.Effective, of func(goal.Part
 
 func (k *look) run(ctx context.Context, p goal.Part, name string) (bool, string, error) {
 	c, ws, h := k.c, k.sp.Workspace, k.h
-	if b, ok := notBuilt[name]; ok {
-		return false, "", errNotBuilt(b)
-	}
 	if isPRCheck(name) {
 		return k.prCheck(ctx, p, name)
 	}
@@ -87,6 +77,8 @@ func (k *look) run(ctx context.Context, p goal.Part, name string) (bool, string,
 			return false, "--report <text>|- is missing", nil
 		}
 		return true, "", nil
+	case goal.NoteChanged, goal.BeadCreated:
+		return k.beadCheck(ctx, name)
 	case goal.Clean:
 		// Not c.git: trimming would cut the first line's status column.
 		b, err := c.Run.Run(ctx, ws.Dir, "git", "-C", ws.Dir, "status", "--porcelain")
@@ -117,6 +109,33 @@ func (k *look) run(ctx context.Context, p goal.Part, name string) (bool, string,
 		return c.merged(ctx, ws)
 	}
 	return false, "", fmt.Errorf("no check %s", name)
+}
+
+// beadCheck runs note_changed or bead_created against the bead as spawn froze it.
+func (k *look) beadCheck(ctx context.Context, name string) (bool, string, error) {
+	c, sp := k.c, k.sp
+	if sp.At == nil {
+		return false, "", fmt.Errorf("%s was spawned before bs froze its bead", sp.Name)
+	}
+	if name == goal.NoteChanged {
+		b, err := c.Beads.Show(ctx, sp.Bead)
+		if err != nil {
+			return false, "", err
+		}
+		if noteHash(b) == sp.At.Note {
+			return false, fmt.Sprintf("%s's notes and design are as they were at spawn (a label or status change doesn't count): bd update %s --notes \"<text>\"", sp.Bead, sp.Bead), nil
+		}
+		return true, fmt.Sprintf("%s's notes or design changed: bd show %s", sp.Bead, sp.Bead), nil
+	}
+	kids, err := c.Beads.Children(ctx, sp.Bead)
+	if err != nil {
+		return false, "", err
+	}
+	kids = slices.DeleteFunc(kids, func(id string) bool { return slices.Contains(sp.At.Children, id) })
+	if len(kids) == 0 {
+		return false, fmt.Sprintf("no bead was created under %s since spawn", sp.Bead), nil
+	}
+	return true, "created under " + sp.Bead + ": " + strings.Join(kids, ", "), nil
 }
 
 // porcelainPaths is the paths git status --porcelain listed, the first ten of them.

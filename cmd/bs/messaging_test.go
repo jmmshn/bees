@@ -36,6 +36,7 @@ func useTempLogbook(t *testing.T) {
 	t.Setenv("BS_LOGBOOK", fleetLogbook(t)) // where bs spawn and bs queen insist it is
 	t.Setenv("BS_SESSION", "")
 	t.Setenv("BS_PROJECT", "test")
+	t.Chdir(t.TempDir()) // outside bees' own repo, which BS_PROJECT=test would be warned about
 	repos := t.TempDir()
 	t.Setenv("BS_REPOS", repos)
 	// The project's repo exists, as a spawn's guards read its default branch.
@@ -156,6 +157,7 @@ func TestSendNeedsRecipientAndBody(t *testing.T) {
 func TestCommandsRefuseAMissingLogbook(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("BS_PROJECT", "test")
+	t.Chdir(t.TempDir()) // outside bees' own repo
 	t.Setenv("BS_SESSION", "")
 	path := filepath.Join(t.TempDir(), "logbook.db")
 	t.Setenv("BS_LOGBOOK", path)
@@ -427,5 +429,26 @@ func TestAStrayBSProjectIsNamed(t *testing.T) {
 	}
 	if _, stderr, _ := bs(t, "spawn", "--project", "test", "--as", "queen-test", "--label", "probe", "test-1.3"); strings.Contains(stderr, "BS_PROJECT=") {
 		t.Errorf("with --project test, stderr blames BS_PROJECT: %q", stderr)
+	}
+}
+
+// bees-12.47: outside a recorded pane, a command that needs no repo (bead ls, send,
+// status) still acts on an inherited BS_PROJECT's project inside another project's repo,
+// but says so on stderr, with the --project that acts on the repo's project.
+func TestAStrayBSProjectIsWarnedAboutByRepoFreeCommands(t *testing.T) {
+	useTempLogbook(t) // BS_PROJECT=test, outside any pane
+	other := filepath.Join(t.TempDir(), "otherproj")
+	if out, err := exec.Command("git", "init", "-q", other).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	t.Chdir(other)
+	want := "warning: BS_PROJECT=test picks project test, though you are in project otherproj's repo; pass --project otherproj"
+	for _, args := range [][]string{{"status"}, {"send", "--as", "queen-test", "test-1-1", "hi"}} {
+		if _, stderr, code := bs(t, args...); code != 0 || !strings.Contains(stderr, want) {
+			t.Errorf("%v: exit %d, %q; want the warning", args, code, stderr)
+		}
+	}
+	if _, stderr, _ := bs(t, "status", "--project", "test"); strings.Contains(stderr, "BS_PROJECT=") {
+		t.Errorf("with --project test: %q, want no warning", stderr)
 	}
 }

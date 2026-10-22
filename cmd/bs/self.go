@@ -101,7 +101,17 @@ func warn(stderr io.Writer) io.Writer {
 // read-only commands, but inbox and done act only in the pane's own project.
 func (c caller) projectFor(cmd, flag string, stderr io.Writer) (string, error) {
 	if !c.inPane {
-		return project.Name(flag)
+		name, err := project.Name(flag)
+		// Outside a recorded pane an inherited BS_PROJECT beats the repo bs runs in: a
+		// worker a bs from before pane identity started carries one (bees-1.54 needs it
+		// in a --repo worktree), and so may a keeper's shell. Say so, rather than act on
+		// another project without a word (bees-12.47, motif 14).
+		if env := os.Getenv("BS_PROJECT"); err == nil && flag == "" && env != "" {
+			if git := project.InGit(); git != "" && git != name {
+				fmt.Fprintf(warn(stderr), "bs: warning: BS_PROJECT=%s picks project %s, though you are in project %s's repo; pass --project %s to act on that one, or unset BS_PROJECT\n", env, name, git, git)
+			}
+		}
+		return name, err
 	}
 	if env := os.Getenv("BS_PROJECT"); env != "" && project.Normalise(env) != c.Project {
 		fmt.Fprintf(warn(stderr), "bs: warning: ignoring BS_PROJECT=%s: this herdr pane is %s's, in project %s\n", env, c.Name, c.Project)

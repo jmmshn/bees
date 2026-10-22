@@ -165,7 +165,9 @@ func (h *Herdr) Close() {
 	var ps []*pane
 	for _, s := range h.servers {
 		for _, w := range s.workspaces {
-			ps = append(ps, w.panes...)
+			for _, p := range w.panes {
+				ps = append(ps, &pane{id: p.id, agent: p.agent}) // read under mu: agentStart writes agent
+			}
 		}
 	}
 	h.mu.Unlock()

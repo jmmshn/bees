@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jmmshn/bees/cmd/bsx/internal/herdr"
 	"github.com/jmmshn/bees/cmd/bsx/internal/port"
 )
 
@@ -34,8 +35,6 @@ type Herdr struct {
 	// "timeout" (herdr gave up waiting for ready, bees-12.49) or "lost" (the terminal went
 	// away mid-start; the code is not probed).
 	StartFails string
-	// Calls is every argv run, for assertions.
-	Calls [][]string
 
 	procFaults
 }
@@ -85,8 +84,7 @@ func (h *Herdr) Run(ctx context.Context, dir string, argv ...string) ([]byte, er
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.Calls = append(h.Calls, slices.Clone(argv))
-	args, session := argv[1:], "default"
+	args, session := argv[1:], herdr.Default
 	if len(args) >= 2 && args[0] == "--session" {
 		session, args = args[1], args[2:]
 	}

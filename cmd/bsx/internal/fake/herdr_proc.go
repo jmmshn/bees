@@ -11,8 +11,6 @@ import (
 type procFaults struct {
 	AliveErr error // Alive and Start can't tell
 	WalkErr  error // Descendants can't walk
-	// Signalled is every signal Signal sent, in order.
-	Signalled []syscall.Signal
 }
 
 // Alive is the real table's, unless AliveErr.
@@ -43,13 +41,8 @@ func (h *Herdr) Descendants(pid int) ([]proc.Process, error) {
 	return proc.Descendants(pid)
 }
 
-// Signal records sig and sends it with the real table's check.
-func (h *Herdr) Signal(p proc.Process, sig syscall.Signal) error {
-	h.mu.Lock()
-	h.Signalled = append(h.Signalled, sig)
-	h.mu.Unlock()
-	return proc.Signal(p, sig)
-}
+// Signal is the real table's: only while p is still the process recorded.
+func (h *Herdr) Signal(p proc.Process, sig syscall.Signal) error { return proc.Signal(p, sig) }
 
 func (h *Herdr) fault(of func(*procFaults) error) error {
 	h.mu.Lock()

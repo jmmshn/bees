@@ -10,7 +10,8 @@
 //	beesfake detach                 starts an idle child in a new session, prints its pid, exits
 //
 // A script line is a JSON array: ["bs", args...] runs a bs call as its own job (process
-// group), as a shell runs a command; ["child", tag] starts an idle child in its own group,
+// group), as a shell runs a command, and ["bs|", args...] one piped into a sibling in its
+// group (bs done | tail); ["child", tag] starts an idle child in its own group,
 // ["child-same-group", tag] one in beesfake's group, ["detach", tag] one that escapes the
 // tree; ["kill", tag] kills one; ["exit"] exits. Each step appends one JSON line to
 // results.log.
@@ -169,11 +170,21 @@ func run(step []string, kids map[string]int) Result {
 		tag = step[1]
 	}
 	switch step[0] {
-	case "bs":
+	case "bs", "bs|":
 		var out, errb bytes.Buffer
 		c := exec.Command(self(), append([]string{"call"}, step[1:]...)...)
 		c.Stdout, c.Stderr = &out, &errb
 		c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if step[0] == "bs|" { // bs ... | tail: a sibling in the call's process group, as a shell pipeline has
+			sib := exec.Command(self(), "idle")
+			sib.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			if err := sib.Start(); err != nil {
+				r.Code, r.Err = -1, err.Error()
+				break
+			}
+			defer func() { _ = sib.Process.Kill(); _ = sib.Wait() }()
+			c.SysProcAttr.Pgid = sib.Process.Pid
+		}
 		err := c.Run()
 		r.Stdout, r.Stderr = out.String(), errb.String()
 		if ee, ok := err.(*exec.ExitError); ok {

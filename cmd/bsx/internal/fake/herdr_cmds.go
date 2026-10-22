@@ -1,6 +1,7 @@
 package fake
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -161,8 +162,9 @@ func (h *Herdr) paneMove(s *server, _ string, f flags) ([]byte, error) {
 	switch id, ok := f.get("--workspace"); {
 	case f.has("--new-workspace"):
 		label, _ := f.get("--label")
-		to = s.open(label, p.cwd)
-		to.panes = nil
+		s.next++
+		to = &workspace{id: fmt.Sprintf("w%d", s.next), label: label, tokens: map[string]string{}}
+		s.workspaces = append(s.workspaces, to)
 	case f.has("--new-tab") && ok:
 		if to = s.find(id); to == nil {
 			return nil, refusal("pane:move", "workspace_not_found", "workspace %s not found", id)

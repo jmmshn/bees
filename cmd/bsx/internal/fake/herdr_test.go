@@ -205,6 +205,12 @@ func TestFakeHerdrPaneMoveRenumbersAndCloses(t *testing.T) {
 	if err := r.client("").ClosePane(ctx, b.ID+":p2"); err != nil {
 		t.Fatalf("closing a closed pane: %v", err)
 	}
+	// --new-workspace makes the next workspace number, the pane its p1 (probed: w2:p1 → w4:p1
+	// after w3).
+	out, err := r.h.Run(ctx, "", "herdr", "pane", "move", b.Pane, "--new-workspace", "--label", "moved", "--no-focus")
+	if err != nil || !strings.Contains(string(out), `"previous_pane_id":"`+b.Pane+`"`) || !strings.Contains(string(out), `"pane_id":"w3:p1"`) {
+		t.Fatalf("move to a new workspace: %s, %v", out, err)
+	}
 }
 
 // A ring reaches beesfake through its 0600 socket; no listener is ErrNotRunning.

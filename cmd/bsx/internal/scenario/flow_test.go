@@ -3,11 +3,13 @@ package scenario_test
 import (
 	"context"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/jmmshn/bees/cmd/bsx/internal/goal"
+	"github.com/jmmshn/bees/cmd/bsx/internal/proc"
 )
 
 // The whole flow on fakes, --goal branch: spawn, a worker's handoff from its pane, the
@@ -60,6 +62,10 @@ func TestTheGateRefusesBackgroundWork(t *testing.T) {
 	x.commit(sp.Workspace.Dir, "work.txt")
 	x.harness.Step(t, "toy-1", "child", "server")
 	kid := x.harness.Await(t, "toy-1", 1).PID
+	st, _, _ := x.open().LatestStart(context.Background(), sp.ID)
+	if ds, _ := x.herdr.Descendants(st.PID); !slices.ContainsFunc(ds, func(p proc.Process) bool { return p.PID == kid }) {
+		t.Fatalf("the child %d isn't running under the harness: %+v", kid, ds)
+	}
 	r := x.worker("toy-1", 2, "done")
 	must(t, r, 5, "background work")
 	if !strings.Contains(r.String(), "pid "+strconv.Itoa(kid)) {

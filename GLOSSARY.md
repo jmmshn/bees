@@ -9,8 +9,20 @@ The codebase a queen and its workers work on, named in one word (`pymatgen-analy
 _Avoid_: repo, rig, workspace
 
 **Workspace**:
-The directory a worker works in and the herdr workspace opened on it, picked by `[workspace] kind`: a git worktree by default, or under `none` the dir the `init` hook makes (a CitC client), else the main checkout.
+The directory a worker works in and the herdr workspace opened on it: its own git worktree, a directory the keeper's `create` command makes (`command`: a jj workspace, a CitC client), or a shared directory (`none`). bs works out which from the project (ADR-0010).
 _Avoid_: sandbox, clone. Not the project's own repo (see Project)
+
+**Goal**:
+What a worker owes the queen, fixed at spawn (`--goal pr`, `pr:draft`, `review=<url>`, `verdict`, …): what it hands off, and the state that completes it (ADR-0010).
+_Avoid_: contract, output type, out, deliverable, done kind
+
+**Handoff**:
+A worker's `bs done`: it names its PRs (or gives a verdict) and bs checks them against its goal.
+_Avoid_: done report, delivery
+
+**Complete**:
+A goal whose state has been reached, a merged PR by default; bs finds it and records it as `landed`. Only then may the bead close.
+_Avoid_: landed (as a verb the keeper types), finished, merged (for non-PR goals)
 
 **Bead**:
 One unit of work in the shared tracker, named `<project>-N[.M…]`.
@@ -23,7 +35,7 @@ _Avoid_: milestone, story
 ## People and sessions
 
 **Harness**:
-The program a session runs in (Claude Code, omp, agy). One per machine, picked by the global `harness` key; bs reaches it only through its harness adapter; herdr reports whether it runs (ADR-0009).
+The program a session runs in (Claude Code, omp, agy). One per machine, picked by the global `harness` key; bs reaches it only through its harness adapter; it is live while the process bs recorded at its start runs (ADR-0010).
 _Avoid_: agent, model, runtime
 
 **Keeper**:

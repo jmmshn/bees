@@ -25,6 +25,9 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, force bool
 	if who.Queen {
 		return logbook.Done{}, exit(ExitRefused, "", nil, bsname.Cmd+" done is a worker's handoff; %s is a queen", who.Name)
 	}
+	if who.Spawn == "" {
+		return logbook.Done{}, exit(ExitRefused, bsname.Cmd+" status", nil, bsname.Cmd+" done: no open spawn for %s", who.Name)
+	}
 	sp, err := c.Logbook.Spawn(ctx, who.Spawn)
 	if err != nil {
 		return logbook.Done{}, err

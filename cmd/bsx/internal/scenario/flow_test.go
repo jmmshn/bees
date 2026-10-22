@@ -101,6 +101,17 @@ func TestDoneForceWaivesOnlyTheGate(t *testing.T) {
 	must(t, x.worker("toy-1", 2, "done", "--force"), 7, goal.BranchAhead)
 }
 
+// bs done for a worker with no open spawn, unknown or ended, is a refusal that says
+// where to look, never a database error.
+func TestDoneForNoOpenSpawnIsRefused(t *testing.T) {
+	x := newToy(t)
+	must(t, x.keeper("done", "--as", "toy-7"), 2, "no open spawn for toy-7", "next: bsx status")
+	x.spawn("toy-1", "verdict")
+	must(t, x.worker("toy-1", 1, "done", "--answer", "yes", "--report", "ok"), 0)
+	must(t, x.queen("end", "toy-1"), 0)
+	must(t, x.keeper("done", "--as", "toy-1"), 2, "no open spawn for toy-1")
+}
+
 // A verdict goal completes at handoff: done lands it, and end needs no merge.
 func TestAVerdictCompletesAtHandoff(t *testing.T) {
 	x := newToy(t)

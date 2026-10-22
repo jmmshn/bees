@@ -32,7 +32,7 @@ func (r *run) spawn(fs *flag.FlagSet, args []string) error {
 	if err != nil {
 		return err
 	}
-	sp, err := r.c.Spawn(r.ctx, core.SpawnReq{By: w.Name, Session: cmp.Or(lookup(r.env.Vars, "HERDR_SESSION"), logbook.DefaultSession),
+	sp, err := r.c.Spawn(r.ctx, core.SpawnReq{By: w.Name, Session: cmp.Or(core.Getenv(r.env.Vars, "HERDR_SESSION"), logbook.DefaultSession),
 		Bead: fs.Arg(0), Label: *label, Goals: goals})
 	if err != nil {
 		return err
@@ -225,7 +225,16 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 		if !sp.Ended {
 			running = r.running(sp)
 		}
-		fmt.Fprintf(tw, "%s\t--goal %s\t%s\t%s\t%s\n", sp.Name, sp.Goal, state, running, sp.Workspace.Dir)
+		g := sp.Goal.String()
+		if e, err := r.c.Logbook.Goal(r.ctx, sp); err != nil { // the newest amend, not the spawn's goal
+			errs = append(errs, err)
+		} else {
+			g = e.String()
+			if e.Discarded {
+				g += " (discarded)"
+			}
+		}
+		fmt.Fprintf(tw, "%s\t--goal %s\t%s\t%s\t%s\n", sp.Name, g, state, running, sp.Workspace.Dir)
 	}
 	if err := tw.Flush(); err != nil {
 		return err

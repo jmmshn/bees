@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/jmmshn/bees/cmd/bsx/internal/core"
 )
 
 // Config is the skeleton's slice of ADR-0010's config, read from config.toml in the
@@ -30,15 +32,15 @@ var ErrDefaultConfig = errors.New("bsx refuses the default config dir until the 
 // configDir is the config dir of a caller with env: <config>/bees/sessions/<HERDR_SESSION>
 // (ADR-0010 live rig). The default session's dir, <config>/bees, is bs's own: refused.
 func configDir(env []string) (string, error) {
-	base := lookup(env, "XDG_CONFIG_HOME")
+	base := core.Getenv(env, "XDG_CONFIG_HOME")
 	if base == "" {
-		home := lookup(env, "HOME")
+		home := core.Getenv(env, "HOME")
 		if home == "" {
 			return "", errors.New("neither XDG_CONFIG_HOME nor HOME is set")
 		}
 		base = filepath.Join(home, ".config")
 	}
-	session := lookup(env, "HERDR_SESSION")
+	session := core.Getenv(env, "HERDR_SESSION")
 	if session == "" || session == "default" {
 		return "", fmt.Errorf("%w: run it on a herdr --session server, whose config lives in %s",
 			ErrDefaultConfig, filepath.Join(base, "bees", "sessions", "<session>"))
@@ -68,8 +70,10 @@ func loadConfig(env []string) (Config, error) {
 	if c.Paths.LogbookDir == "" {
 		return Config{}, fmt.Errorf("%s: paths.logbook_dir is required until the swap (bees-13.9)", filepath.Join(dir, "config.toml"))
 	}
-	if home := lookup(env, "HOME"); home != "" && filepath.Clean(c.Paths.LogbookDir) == filepath.Join(home, ".local", "share", "bees") {
-		return Config{}, fmt.Errorf("%w: paths.logbook_dir is the real logbooks' dir, %s", ErrDefaultConfig, c.Paths.LogbookDir)
+	for _, real := range realLogbookDirs(env) {
+		if samePath(c.Paths.LogbookDir, real) {
+			return Config{}, fmt.Errorf("%w: paths.logbook_dir is the real logbooks' dir, %s", ErrDefaultConfig, c.Paths.LogbookDir)
+		}
 	}
 	if c.Project == "" && c.Paths.Repo != "" {
 		c.Project = projectName(filepath.Base(c.Paths.Repo))
@@ -91,11 +95,25 @@ func projectName(repo string) string {
 	return strings.NewReplacer("-", "", "_", "").Replace(strings.ToLower(repo))
 }
 
-func lookup(env []string, key string) string {
-	for i := len(env) - 1; i >= 0; i-- {
-		if v, ok := strings.CutPrefix(env[i], key+"="); ok {
-			return v
-		}
+// realLogbookDirs are where the real logbooks may be: bs's default, ~/.local/share/bees
+// (internal/config), and $XDG_DATA_HOME/bees.
+func realLogbookDirs(env []string) []string {
+	var out []string
+	if h := core.Getenv(env, "HOME"); h != "" {
+		out = append(out, filepath.Join(h, ".local", "share", "bees"))
 	}
-	return ""
+	if d := core.Getenv(env, "XDG_DATA_HOME"); d != "" {
+		out = append(out, filepath.Join(d, "bees"))
+	}
+	return out
+}
+
+// samePath reports whether a and b name one directory, through symlinks.
+func samePath(a, b string) bool {
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	return errA == nil && errB == nil && ra == rb
 }

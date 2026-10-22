@@ -379,7 +379,7 @@ func TestAnUnconfirmedStartIsExit8AndEndClearsIt(t *testing.T) {
 	}
 	x.herdr.Programs["claude"] = fake.Beesfake(t)
 	x.ports.Timing.Confirm = 10 * time.Second
-	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 2, "already exists") // its worktree waits for prune
+	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 0, "on its kept worktree and branch toy-1") // never a dead end
 }
 
 // A spawn whose record fails takes back the worktree it made (motif 8): a read-only

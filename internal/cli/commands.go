@@ -335,12 +335,19 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 		// so the reply needs no project read back out of a name (motif 3). Only the
 		// recipient's logbook changes: the sender stays who it is in its own project.
 		path := filepath.Join(filepath.Dir(r.s.Logbook), p+".db")
+		// The other logbook gets the same old-session refusal, before Open migrates it.
+		if what, err := oldSessionsAt(r.ctx, path); err != nil {
+			return err
+		} else if what != "" {
+			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("%s send --project %s: %s; nothing stored", bsname.Cmd, p, what),
+				Next: "its queen or keeper ends them first: " + bsname.Cmd + " end --as " + core.Queen(p) + " <worker>, in " + p + "'s repo"}
+		}
 		lb, err := logbook.Open(r.ctx, path)
 		if errors.Is(err, logbook.ErrNoLogbook) {
 			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf(bsname.Cmd+" send --project %s: no logbook at %s; nothing stored", p, path),
-				Next: "check the project name: " + bsname.Cmd + " bead ls names it, and its queen starts its logbook"}
+				Next: "check the project name against the logbooks: ls " + filepath.Dir(path)}
 		} else if err != nil {
-			return err
+			return &core.Exit{Code: core.ExitCantCheck, Msg: fmt.Sprintf(bsname.Cmd+" send --project %s: can't read %s; nothing stored", p, path), Err: err, Next: bsname.Cmd + " doctor"}
 		}
 		defer lb.Close()
 		cc := *r.c

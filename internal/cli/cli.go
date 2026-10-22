@@ -215,28 +215,37 @@ func (r *run) openLogbook() (*logbook.Logbook, error) {
 // nor see it run (bees-13.9; ADR-0010: end them first). bs end, the way out, and bs
 // status only warn.
 func (r *run) oldSessions() error {
-	lb, err := logbook.OpenReadOnly(r.ctx, r.s.Logbook)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil // nothing recorded: openLogbook refuses it, or bs queen or spawn makes it
-	} else if err != nil {
+	what, err := oldSessionsAt(r.ctx, r.s.Logbook)
+	if err != nil || what == "" {
 		return err
 	}
-	names, err := lb.Unstarted(r.ctx)
-	lb.Close()
-	if err != nil || len(names) == 0 {
-		return err
-	}
-	n := "an open spawn"
-	if len(names) > 1 {
-		n = fmt.Sprintf("%d open spawns", len(names))
-	}
-	what := fmt.Sprintf("%s has %s the old bs started, which this bs can neither ring nor see run: %s", r.s.Logbook, n, strings.Join(names, ", "))
 	if r.name == "end" || r.name == "status" {
 		fmt.Fprintf(r.err, "%s %s: warning: %s\n  next: %s end <worker> for each\n", bsname.Cmd, r.name, what, bsname.Cmd)
 		return nil
 	}
 	return &core.Exit{Code: core.ExitRefused, Msg: what + "; nothing was read or written",
 		Next: fmt.Sprintf("%s end <worker> for each (it names the herdr workspace to close by hand), then run this again", bsname.Cmd)}
+}
+
+// oldSessionsAt names, read-only, the sessions the old bs started that are still open in
+// the logbook at path ("" when none, or when the file is missing).
+func oldSessionsAt(ctx context.Context, path string) (string, error) {
+	lb, err := logbook.OpenReadOnly(ctx, path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil // nothing recorded: openLogbook refuses it, or bs queen or spawn makes it
+	} else if err != nil {
+		return "", err
+	}
+	names, err := lb.Unstarted(ctx)
+	lb.Close()
+	if err != nil || len(names) == 0 {
+		return "", err
+	}
+	n := "an open spawn"
+	if len(names) > 1 {
+		n = fmt.Sprintf("%d open spawns", len(names))
+	}
+	return fmt.Sprintf("%s has %s the old bs started, which this bs can neither ring nor see run: %s", path, n, strings.Join(names, ", ")), nil
 }
 
 // parse parses args into fs: a bad flag is a usage refusal (exit 2), -h is help.

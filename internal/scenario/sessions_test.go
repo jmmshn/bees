@@ -555,3 +555,29 @@ INSERT INTO entries VALUES ('e1','2026-10-01T00:01:00.000Z','ended','queen-toy',
 	}
 	must(t, x.worker("toy-9", 1, "done"), 0, "branch_ahead: 1 commit ahead of main")
 }
+
+// Cross-project mail goes through the same old-session refusal as any command: a target
+// logbook where a session the old bs started is still open is refused and left unmigrated
+// (bees-13.9 review SPEC3).
+func TestSendAcrossProjectsRefusesALogbookWithOldSessions(t *testing.T) {
+	x := newToy(t)
+	x.start()
+	other := filepath.Join(filepath.Dir(x.logbook), "other.db")
+	db, err := sql.Open("sqlite", other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE entries (id TEXT PRIMARY KEY, ts TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('message','received','rang','spawned','ended')),
+  actor TEXT NOT NULL, subject TEXT, ref TEXT REFERENCES entries(id),
+  data TEXT CHECK (data IS NULL OR json_valid(data))) STRICT;
+INSERT INTO entries VALUES ('s1','2026-10-01T00:00:00.000Z','spawned','queen-other','other-1',NULL,'{"bead":"other-1","workspace":"w2","pane":"w2:p1","worktree":"/r/other-WT/other-1","branch":"other-1","repo":"/r/other"}');`)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	must(t, x.queen("send", "--project", "other", "queen-other", "hi"), 2, "other.db has an open spawn the old bs started", "other-1", "nothing stored")
+	if _, err := os.Stat(other + ".pre-2"); !os.IsNotExist(err) {
+		t.Fatalf("send migrated the other project's logbook: %v", err)
+	}
+}

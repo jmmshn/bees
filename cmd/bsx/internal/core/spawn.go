@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 	"github.com/jmmshn/bees/cmd/bsx/internal/goal"
 	"github.com/jmmshn/bees/cmd/bsx/internal/logbook"
 	"github.com/jmmshn/bees/cmd/bsx/internal/port"
@@ -33,21 +34,24 @@ type SpawnReq struct {
 func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 	g, err := goal.Parse(req.Goals)
 	if err != nil {
-		return logbook.Spawn{}, exit(ExitRefused, "", err, "bs spawn %s", req.Bead)
+		return logbook.Spawn{}, exit(ExitRefused, "", err, "%s", req.Bead)
 	}
 	for i, p := range g.Parts {
 		g.Parts[i].Fragment = prompt.Hash(p.Type)
 	}
 	bead, err := c.Beads.Show(ctx, req.Bead)
 	if err != nil {
-		return logbook.Spawn{}, refusedOrCant(err, "bs bead ls", "bs spawn: can't read bead %s", req.Bead)
+		if errors.Is(err, port.ErrNoBead) {
+			return logbook.Spawn{}, exit(ExitRefused, "bd show "+req.Bead, err, "no bead %s", req.Bead)
+		}
+		return logbook.Spawn{}, exit(ExitCantCheck, "", err, "can't read bead %s", req.Bead)
 	}
 	name := Name(bead.ID)
 	switch prev, ok, err := c.Logbook.LatestSpawn(ctx, name); {
 	case err != nil:
 		return logbook.Spawn{}, err
 	case ok && !prev.Ended:
-		return logbook.Spawn{}, exit(ExitRefused, "bs end "+name, nil, "bs spawn: %s is already spawned and not ended", name)
+		return logbook.Spawn{}, exit(ExitRefused, bsname.Cmd+" end "+name, nil, "%s is already spawned and not ended", name)
 	}
 	ws, err := c.workspace(ctx, name)
 	if err != nil {
@@ -59,20 +63,20 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 	// Prepare is pure, so it runs before anything is made: a refused launch leaves nothing.
 	launch, err := c.Harness.Prepare(port.Start{Role: port.Worker, Name: name, Dir: ws.Dir, PromptFile: "{{prompt.md}}", Doorbell: doorbell(name, bead.ID, req.By), Path: c.WorkerPath})
 	if err != nil {
-		return logbook.Spawn{}, exit(ExitRefused, "", err, "bs spawn %s: its harness refused the launch; nothing was made", name)
+		return logbook.Spawn{}, exit(ExitRefused, "", err, "%s: its harness refused the launch; nothing was made", name)
 	}
 	launch.Files = withPrompt(launch.Files, prompt.Text(prompt.Worker, c.Project, ws.Kind, g.Types()))
 	label := cmp.Or(req.Label, bead.Title)
 	session := cmp.Or(req.Session, logbook.DefaultSession)
 	hw, err := c.herdr(session).CreateWorktree(ctx, ws.Repo, ws.Base, ws.Branch, ws.Dir, c.Project+" · "+label)
 	if err != nil {
-		return logbook.Spawn{}, exit(ExitFail, "", err, "bs spawn %s: herdr couldn't make its worktree; nothing was recorded", name)
+		return logbook.Spawn{}, exit(ExitFail, "", err, "%s: herdr couldn't make its worktree; nothing was recorded", name)
 	}
 	ws.Dir = hw.Path // herdr makes it where asked; its answer is the record
 	// The worker= tag names whose workspace this is to anyone reading herdr's list.
 	if err := c.herdr(session).TagWorkspace(ctx, hw.ID, map[string]string{"worker": name}); err != nil {
 		err = errors.Join(err, c.unmake(context.WithoutCancel(ctx), session, hw.ID, ws))
-		return logbook.Spawn{}, exit(ExitFail, "", err, "bs spawn %s: herdr couldn't tag its workspace; nothing was recorded", name)
+		return logbook.Spawn{}, exit(ExitFail, "", err, "%s: herdr couldn't tag its workspace; nothing was recorded", name)
 	}
 	sp := logbook.Spawn{
 		Name: name, By: req.By, Bead: bead.ID, Label: label, Harness: c.HarnessName,
@@ -82,7 +86,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 	sp.Record = launch.Record
 	if sp.ID, err = c.Logbook.RecordSpawn(ctx, req.By, sp, brief(bead, g)); err != nil {
 		err = errors.Join(err, c.unmake(context.WithoutCancel(ctx), session, hw.ID, ws))
-		return logbook.Spawn{}, exit(ExitFail, "", err, "bs spawn %s: couldn't record the spawn", name)
+		return logbook.Spawn{}, exit(ExitFail, "", err, "%s: couldn't record the spawn", name)
 	}
 	if err := c.launch(ctx, sp, launch); err != nil {
 		return sp, err
@@ -98,9 +102,9 @@ func (c *Core) refuse(ctx context.Context, g goal.Goal, ws logbook.Workspace) er
 	for _, p := range g.Parts {
 		switch p.Type {
 		case "pr", "push", "review":
-			return exit(ExitRefused, "", nil, "bs spawn --goal %s: PR goals arrive with bees-13.6", p)
+			return exit(ExitRefused, "", nil, "--goal %s: PR goals arrive with bees-13.6", p)
 		case "note", "beads":
-			return exit(ExitRefused, "", nil, "bs spawn --goal %s: arrives with bees-13.7", p)
+			return exit(ExitRefused, "", nil, "--goal %s: arrives with bees-13.7", p)
 		}
 	}
 	return nil
@@ -128,41 +132,41 @@ func (c *Core) unmake(ctx context.Context, session, workspace string, ws logbook
 // git checkout is git_worktree. none and command arrive with bees-13.10 and 13.11.
 func (c *Core) workspace(ctx context.Context, name string) (logbook.Workspace, error) {
 	if c.Repo == "" {
-		return logbook.Workspace{}, exit(ExitRefused, "", nil, "bs spawn: project %s has no repo: run it in the repo, or set paths.repo", c.Project)
+		return logbook.Workspace{}, exit(ExitRefused, "", nil, "project %s has no repo: run it in the repo, or set paths.repo", c.Project)
 	}
 	top, err := c.git(ctx, c.Repo, "rev-parse", "--show-toplevel")
 	if err != nil {
-		return logbook.Workspace{}, refusedOrCant(err, "", "bs spawn: %s is not a git checkout (workspace none arrives with bees-13.10)", c.Repo)
+		return logbook.Workspace{}, refusedOrCant(err, "", "%s is not a git checkout (workspace none arrives with bees-13.10)", c.Repo)
 	}
 	real, err := filepath.EvalSymlinks(c.Repo)
 	if err != nil {
-		return logbook.Workspace{}, exit(ExitCantCheck, "", err, "bs spawn: can't resolve paths.repo")
+		return logbook.Workspace{}, exit(ExitCantCheck, "", err, "can't resolve paths.repo")
 	}
 	if top != c.Repo && top != real {
-		return logbook.Workspace{}, exit(ExitRefused, "", nil, "bs spawn: %s is inside the checkout %s, not its top level; set paths.repo to it", c.Repo, top)
+		return logbook.Workspace{}, exit(ExitRefused, "", nil, "%s is inside the checkout %s, not its top level; set paths.repo to it", c.Repo, top)
 	}
 	// The checks above say what to fix when the kind was worked out as none; this one
 	// names a kind set by hand.
 	if c.Kind != "" && c.Kind != "git_worktree" {
-		return logbook.Workspace{}, exit(ExitRefused, "bs config", nil, "bs spawn: workspace kind %s (%s) isn't built yet (none: bees-13.10, command: bees-13.11)", c.Kind, c.KindWhy)
+		return logbook.Workspace{}, exit(ExitRefused, bsname.Cmd+" config", nil, "workspace kind %s (%s) isn't built yet (none: bees-13.10, command: bees-13.11)", c.Kind, c.KindWhy)
 	}
 	base, err := c.git(ctx, c.Repo, "symbolic-ref", "--short", "HEAD")
 	if err != nil {
-		return logbook.Workspace{}, exit(ExitRefused, "git -C "+c.Repo+" switch main", err, "bs spawn: %s has no branch checked out to cut from", c.Repo)
+		return logbook.Workspace{}, exit(ExitRefused, "git -C "+c.Repo+" switch main", err, "%s has no branch checked out to cut from", c.Repo)
 	}
 	dir := filepath.Join(c.Worktrees, name)
 	if _, err := os.Stat(dir); err == nil {
-		return logbook.Workspace{}, exit(ExitRefused, "bs prune", nil, "bs spawn: %s already exists", dir)
+		return logbook.Workspace{}, exit(ExitRefused, bsname.Cmd+" prune", nil, "%s already exists", dir)
 	}
 	ws := logbook.Workspace{Kind: "git_worktree", Dir: dir, Repo: c.Repo, Branch: name, Base: base}
 	// The branch is the spawn's own, whatever its goal, so prune may delete it later: one
 	// left by an earlier spawn holds work bs would build on unseen (motif 12).
 	switch ok, err := c.hasBranch(ctx, ws); {
 	case err != nil:
-		return logbook.Workspace{}, exit(ExitCantCheck, "", err, "bs spawn: can't tell whether branch %s exists", name)
+		return logbook.Workspace{}, exit(ExitCantCheck, "", err, "can't tell whether branch %s exists", name)
 	case ok:
-		return logbook.Workspace{}, exit(ExitRefused, "bs prune (once its work is merged), or git -C "+c.Repo+" branch -D "+name, nil,
-			"bs spawn: branch %s already exists in %s", name, c.Repo)
+		return logbook.Workspace{}, exit(ExitRefused, bsname.Cmd+" prune (once its work is merged), or git -C "+c.Repo+" branch -D "+name, nil,
+			"branch %s already exists in %s", name, c.Repo)
 	}
 	return ws, nil
 }
@@ -202,12 +206,12 @@ func (c *Core) writeFiles(name string, l port.Launch) ([]string, error) {
 }
 
 func brief(b port.Bead, g goal.Goal) string {
-	return fmt.Sprintf("You own %s: %s\n\nYour goal: --goal %s. Hand it off with bs done when it holds.\n\n%s", b.ID, b.Title, g, b.Description)
+	return fmt.Sprintf("You own %s: %s\n\nYour goal: --goal %s. Hand it off with "+bsname.Cmd+" done when it holds.\n\n%s", b.ID, b.Title, g, b.Description)
 }
 
 // doorbell is a worker's first prompt: who it is, and where to read and reply.
 func doorbell(name, bead, queen string) string {
-	return fmt.Sprintf(`[bs] you are %s, working on %s — run: bs inbox   (reply with: bs send %s "...")`, name, bead, queen)
+	return fmt.Sprintf(`[%s] you are %s, working on %s — run: %s inbox   (reply with: %s send %s "...")`, bsname.Cmd, name, bead, bsname.Cmd, bsname.Cmd, queen)
 }
 
 // isExit reports whether err is a tool that ran and exited with code.

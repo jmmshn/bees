@@ -70,6 +70,11 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 		return core.ExitRefused
 	}
 	s, err := load(ctx, env, ports)
+	if s != nil {
+		for _, w := range s.Warnings {
+			fmt.Fprintf(stderr, "bsx %s: warning: %s\n", args[0], w)
+		}
+	}
 	if err != nil { // a bad file or a refused dir: refused before anything changed
 		fmt.Fprintf(stderr, "bsx %s: %v\n", args[0], err)
 		var x *core.Exit
@@ -78,11 +83,8 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 		}
 		return core.ExitRefused
 	}
-	for _, w := range s.Warnings {
-		fmt.Fprintf(stderr, "bsx %s: warning: %s\n", args[0], w)
-	}
-	if s.Missing && cmd.writes {
-		fmt.Fprintf(stderr, "bsx %s: refused: %v %s; nothing was written\n", args[0], errNoConfigDir, s.Session)
+	if s.Missing && cmd.logbook { // the defaults would name the real logbook (bees-12.26)
+		fmt.Fprintf(stderr, "bsx %s: refused: %v %s, so bsx won't guess a logbook; nothing was read or written\n", args[0], errNoConfigDir, s.Session)
 		return core.ExitRefused
 	}
 	r := &run{ctx: ctx, name: args[0], env: env, s: s, ports: ports, out: stdout, err: stderr}
@@ -103,9 +105,18 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 			}
 			h = ports.NewHarness(s.Harness, model)
 		}
+		other := func(name string) port.Harness { // a harness some entry recorded, any model: it only rings and is looked for
+			if ports.Harness != nil {
+				return ports.Harness
+			}
+			if ports.NewHarness != nil {
+				return ports.NewHarness(name, "")
+			}
+			return nil
+		}
 		kind, why := s.Kind(s.GitTop)
 		r.c = &core.Core{
-			Logbook: lb, Project: s.Project, Run: ports.Run, Harness: h, HarnessName: s.Harness,
+			Logbook: lb, Project: s.Project, Run: ports.Run, Harness: h, HarnessOf: other, HarnessName: s.Harness,
 			Proc: ports.Proc, Beads: ports.Beads, Repo: s.Repo, Worktrees: s.Worktrees, Kind: kind, KindWhy: why,
 			ConfigDir: s.Dir, CacheDir: ports.CacheDir, Timing: ports.Timing, WorkerPath: s.workerPath(),
 			Warn: func(msg string) { fmt.Fprintf(stderr, "bsx %s: warning: %s\n", args[0], msg) },
@@ -181,22 +192,22 @@ func (r *run) who(as string) (core.Who, error) {
 	return core.Who{Name: as, Queen: strings.HasPrefix(as, "queen-")}, nil
 }
 
-// command is one bsx command: whether it writes (refused with no config dir, Rule G) and
-// whether it opens the logbook.
+// command is one bsx command and whether it opens the logbook (refused with no config
+// dir, Rule G).
 type command struct {
-	run             func(r *run, fs *flag.FlagSet, args []string) error
-	writes, logbook bool
+	run     func(r *run, fs *flag.FlagSet, args []string) error
+	logbook bool
 }
 
 var commands = map[string]command{
-	"queen":  {(*run).queen, true, true},
-	"spawn":  {(*run).spawn, true, true},
-	"done":   {(*run).done, true, true},
-	"end":    {(*run).end, true, true},
-	"prune":  {(*run).prune, true, true},
-	"send":   {(*run).send, true, true},
-	"inbox":  {(*run).inbox, true, true}, // it writes receipts
-	"status": {(*run).status, false, true},
-	"config": {(*run).config, false, false},
-	"doctor": {(*run).doctor, false, false},
+	"queen":  {(*run).queen, true},
+	"spawn":  {(*run).spawn, true},
+	"done":   {(*run).done, true},
+	"end":    {(*run).end, true},
+	"prune":  {(*run).prune, true},
+	"send":   {(*run).send, true},
+	"inbox":  {(*run).inbox, true},
+	"status": {(*run).status, true},
+	"config": {(*run).config, false},
+	"doctor": {(*run).doctor, false},
 }

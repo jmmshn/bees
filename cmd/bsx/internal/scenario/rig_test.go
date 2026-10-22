@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -131,8 +132,15 @@ func (r result) String() string { return r.out + r.stderr }
 // command needs a session.
 func (x *toy) keeper(args ...string) result {
 	x.t.Helper()
+	return x.shellRun(x.repo, x.env, "", args...)
+}
+
+// shellRun runs bsx args from a keeper's shell outside any pane, in dir with env and
+// stdin.
+func (x *toy) shellRun(dir string, env []string, stdin string, args ...string) result {
+	x.t.Helper()
 	var out, errb bytes.Buffer
-	code := cli.Run(context.Background(), cli.Env{Vars: x.env, Dir: x.repo, Self: os.Getpid(), Stdin: strings.NewReader("")}, x.ports, args, &out, &errb)
+	code := cli.Run(context.Background(), cli.Env{Vars: env, Dir: dir, Self: os.Getpid(), Stdin: strings.NewReader(stdin)}, x.ports, args, &out, &errb)
 	return result{code, out.String(), errb.String()}
 }
 
@@ -197,6 +205,9 @@ func must(t *testing.T, r result, code int, want ...string) {
 	t.Helper()
 	if r.code != code {
 		t.Fatalf("exit %d, want %d:\n%s", r.code, code, r)
+	}
+	if regexp.MustCompile(`(^|[^\w-])bs (done|end|inbox|status|prune|spawn|send)\b`).MatchString(r.String()) {
+		t.Fatalf("output sends its reader to the shared bs (motif 14):\n%s", r)
 	}
 	for _, w := range want {
 		if !strings.Contains(r.String(), w) {

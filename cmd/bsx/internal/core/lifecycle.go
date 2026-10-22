@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 	"github.com/jmmshn/bees/cmd/bsx/internal/goal"
 	"github.com/jmmshn/bees/cmd/bsx/internal/herdr"
 	"github.com/jmmshn/bees/cmd/bsx/internal/logbook"
@@ -26,7 +27,10 @@ import (
 // force waives the gate and nothing else.
 func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, force bool) (logbook.Done, error) {
 	if who.Queen {
-		return logbook.Done{}, exit(ExitRefused, "", nil, "bs done is a worker's handoff; %s is a queen", who.Name)
+		return logbook.Done{}, exit(ExitRefused, "", nil, bsname.Cmd+" done is a worker's handoff; %s is a queen", who.Name)
+	}
+	if who.Spawn == "" {
+		return logbook.Done{}, exit(ExitRefused, bsname.Cmd+" status", nil, bsname.Cmd+" done: no open spawn for %s", who.Name)
 	}
 	sp, err := c.Logbook.Spawn(ctx, who.Spawn)
 	if err != nil {
@@ -54,22 +58,25 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, force bool
 		}
 		if name == goal.NoBackground {
 			bg, err := c.Background(ctx, sp, self)
+			r := logbook.CheckResult{Name: name, Pass: true}
 			switch {
 			case err != nil && force:
 				d.Unchecked = err.Error()
+				r = logbook.CheckResult{Name: name, Err: err.Error(), Waived: true}
 			case err != nil:
-				return d, exit(ExitCantCheck, "bs done --force", err, "bs done: can't check %s for background work", sp.Name)
+				return d, exit(ExitCantCheck, bsname.Cmd+" done --force", err, "can't check %s for background work", sp.Name)
 			case len(bg) > 0 && force:
 				d.Background = bg
+				r = logbook.CheckResult{Name: name, Detail: ErrBackground.Error(), Waived: true}
 			case len(bg) > 0:
-				return d, exit(ExitBackground, "stop it, then bs done again (or bs done --force)", nil, "%s", background(sp.Name, bg))
+				return d, exit(ExitBackground, "stop it, then "+bsname.Cmd+" done again (or "+bsname.Cmd+" done --force)", nil, "%s", background(sp.Name, bg))
 			}
-			d.Checks = append(d.Checks, logbook.CheckResult{Name: name, Pass: true})
+			d.Checks = append(d.Checks, r)
 			continue
 		}
 		r := c.check(ctx, sp, name, h)
 		if r.Err != "" {
-			return d, exit(ExitCantCheck, "", errors.New(r.Err), "bs done: check %s couldn't run", name)
+			return d, exit(ExitCantCheck, "", errors.New(r.Err), "check %s couldn't run", name)
 		}
 		if !r.Pass {
 			failed = append(failed, name+": "+r.Detail)
@@ -77,7 +84,7 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, force bool
 		d.Checks = append(d.Checks, r)
 	}
 	if len(failed) > 0 {
-		return d, exit(ExitHandoff, "fix it, then bs done again", nil, "bs done: %d handoff checks failed:\n  %s", len(failed), strings.Join(failed, "\n  "))
+		return d, exit(ExitHandoff, "fix it, then "+bsname.Cmd+" done again", nil, "%d handoff checks failed:\n  %s", len(failed), strings.Join(failed, "\n  "))
 	}
 	if d.ID, err = c.Logbook.RecordDone(ctx, d); err != nil {
 		return d, err
@@ -104,9 +111,9 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 	case err != nil:
 		return err
 	case !ok:
-		return exit(ExitRefused, "bs status", nil, "bs end: no worker %s", name)
+		return exit(ExitRefused, bsname.Cmd+" status", nil, "no worker %s", name)
 	case sp.Ended:
-		return exit(ExitRefused, "bs prune", nil, "bs end: %s has already ended", name)
+		return exit(ExitRefused, bsname.Cmd+" prune", nil, "%s has already ended", name)
 	}
 	e, err := c.Logbook.Goal(ctx, sp)
 	if err != nil {
@@ -115,7 +122,7 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 	done, passed, failed, err := c.complete(ctx, sp, e)
 	switch {
 	case err != nil && !o.Incomplete:
-		return exit(ExitCantCheck, "bs end "+name+" --incomplete", err, "bs end %s: can't tell whether its goal is complete", name)
+		return exit(ExitCantCheck, bsname.Cmd+" end "+name+" --incomplete", err, "%s: can't tell whether its goal is complete", name)
 	case err != nil:
 		// --incomplete is the way out while a check can't run (motif 5); prune completes it.
 		c.warn("can't tell whether %s's goal is complete (%v): ending it --incomplete", name, err)
@@ -127,7 +134,7 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 		for _, f := range failed {
 			why = append(why, f.Name+": "+f.Detail)
 		}
-		return exit(ExitIncomplete, "bs end "+name+" --incomplete", nil, "bs end %s: its goal (--goal %s) is not complete:\n  %s", name, e.Goal, strings.Join(why, "\n  "))
+		return exit(ExitIncomplete, bsname.Cmd+" end "+name+" --incomplete", nil, "%s: its goal (--goal %s) is not complete:\n  %s", name, e.Goal, strings.Join(why, "\n  "))
 	case !done:
 		_, handed, err := c.Logbook.LatestDone(ctx, sp.ID)
 		if err != nil {
@@ -140,7 +147,7 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 		// An unconfirmed spawn never ran a worker that could hand off: --incomplete is its
 		// abort (motif 5). Any other spawn needs something handed off first.
 		if !handed && started {
-			return exit(ExitRefused, "", nil, "bs end %s --incomplete: nothing was handed off; ending it would lose the work's trail", name)
+			return exit(ExitRefused, "", nil, "%s --incomplete: nothing was handed off; ending it would lose the work's trail", name)
 		}
 	}
 	if !o.Force {
@@ -148,33 +155,33 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 		case errors.Is(err, ErrHarnessGone): // its children were reparented away: nothing to walk
 		case errors.Is(err, ErrNoStart): // nothing recorded to walk: an unconfirmed spawn
 		case err != nil:
-			return exit(ExitCantCheck, "bs end "+name+" --force", err, "bs end %s: can't check for background work", name)
+			return exit(ExitCantCheck, bsname.Cmd+" end "+name+" --force", err, "%s: can't check for background work", name)
 		case len(bg) > 0:
-			return exit(ExitBackground, "bs end "+name+" --force", nil, "%s", background(name, bg))
+			return exit(ExitBackground, bsname.Cmd+" end "+name+" --force", nil, "%s", background(name, bg))
 		}
 	}
 	// A pane moved out of its workspace keeps running there: closing the workspace
 	// wouldn't stop it, so only --force ends it, by its recorded process (bees-12.46).
 	switch pid, err := c.moved(ctx, sp); {
 	case err != nil:
-		return exit(ExitCantCheck, "bs end "+name, err, "bs end %s: can't tell whether its pane is still in its workspace %s; nothing closed", name, sp.Herdr.Workspace)
+		return exit(ExitCantCheck, bsname.Cmd+" end "+name, err, "%s: can't tell whether its pane is still in its workspace %s; nothing closed", name, sp.Herdr.Workspace)
 	case pid != 0 && !o.Force:
-		return exit(ExitRefused, "bs end "+name+" --force (stops pid "+strconv.Itoa(pid)+" wherever it runs)", nil,
-			"bs end %s: its pane %s moved out of its workspace %s, and its process (pid %d) still runs there; nothing closed", name, sp.Herdr.Pane, sp.Herdr.Workspace, pid)
+		return exit(ExitRefused, bsname.Cmd+" end "+name+" --force (stops pid "+strconv.Itoa(pid)+" wherever it runs)", nil,
+			"%s: its pane %s moved out of its workspace %s, and its process (pid %d) still runs there; nothing closed", name, sp.Herdr.Pane, sp.Herdr.Workspace, pid)
 	}
 	switch g, err := c.guests(ctx, sp); {
 	case err != nil:
-		return exit(ExitCantCheck, "bs end "+name, err, "bs end %s: can't tell what else its workspace %s holds; nothing closed", name, sp.Herdr.Workspace)
+		return exit(ExitCantCheck, bsname.Cmd+" end "+name, err, "%s: can't tell what else its workspace %s holds; nothing closed", name, sp.Herdr.Workspace)
 	case len(g) > 0:
-		return exit(ExitRefused, "herdr --session "+sp.Herdr.Session+" pane move <pane> --new-workspace, then bs end "+name, nil,
-			"bs end %s: its workspace %s also holds %s, which closing it would end; nothing closed", name, sp.Herdr.Workspace, strings.Join(g, ", "))
+		return exit(ExitRefused, "herdr --session "+sp.Herdr.Session+" pane move <pane> --new-workspace, then "+bsname.Cmd+" end "+name, nil,
+			"%s: its workspace %s also holds %s, which closing it would end; nothing closed", name, sp.Herdr.Workspace, strings.Join(g, ", "))
 	}
 	h := c.herdr(sp.Herdr.Session)
 	if err := h.CloseWorkspace(ctx, sp.Herdr.Workspace); err != nil {
-		return exit(ExitKept, "bs end "+name, err, "bs end %s: herdr couldn't close its workspace; nothing was recorded", name)
+		return exit(ExitKept, bsname.Cmd+" end "+name, err, "%s: herdr couldn't close its workspace; nothing was recorded", name)
 	}
 	if err := c.stop(ctx, sp); err != nil {
-		return exit(ExitFail, "bs end "+name, err, "bs end %s: its workspace is closed but its process wouldn't stop; nothing was recorded", name)
+		return exit(ExitFail, bsname.Cmd+" end "+name, err, "%s: its workspace is closed but its process wouldn't stop; nothing was recorded", name)
 	}
 	if err := c.removeFiles(sp.Name); err != nil {
 		c.warn("couldn't remove %s's start files: %v", sp.Name, err)
@@ -194,6 +201,10 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 // process this logbook recorded is named by its session. Any lookup that fails is an
 // error, never "none" (motif 7).
 func (c *Core) guests(ctx context.Context, sp logbook.Spawn) ([]string, error) {
+	kind, err := c.kindOf(sp)
+	if err != nil {
+		return nil, err
+	}
 	h := c.herdr(sp.Herdr.Session)
 	panes, err := h.Panes(ctx, sp.Herdr.Workspace)
 	if err != nil {
@@ -211,7 +222,7 @@ func (c *Core) guests(ctx context.Context, sp logbook.Spawn) ([]string, error) {
 			return nil, err
 		}
 		for _, p := range pi.Foreground {
-			if p.Name != c.Harness.Kind() {
+			if p.Name != kind {
 				continue
 			}
 			who, err := c.recordedAs(ctx, p.PID)
@@ -407,7 +418,7 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 		if alive, err := c.Proc.Alive(st.Process); err != nil {
 			return keep(true, "can't tell whether its worker still runs: %v", err)
 		} else if alive {
-			return keep(false, "its ended worker still runs (pid %d): stop it, then bs prune again", st.PID)
+			return keep(false, "its ended worker still runs (pid %d): stop it, then %s prune again", st.PID, bsname.Cmd)
 		}
 	}
 	if dir {

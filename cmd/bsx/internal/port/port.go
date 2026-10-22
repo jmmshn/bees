@@ -118,6 +118,10 @@ type Bead struct {
 	Parent                 string
 }
 
+// ErrNoBead is the tracker saying a bead doesn't exist; any other failure is the tracker
+// not answering, never "no such bead" (Rule G).
+var ErrNoBead = errors.New("no such bead")
+
 // Beads is the bead tracker.
 type Beads interface {
 	Show(ctx context.Context, id string) (Bead, error)

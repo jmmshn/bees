@@ -118,7 +118,7 @@ func TestPruneLeavesTheRemoteBranchAndSaysSo(t *testing.T) {
 	must(t, x.worker("toy-1", 1, "done"), 0)
 	x.git(x.repo, "merge", "-q", "toy-1")
 	must(t, x.queen("end", "toy-1"), 0)
-	must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir+" and branch toy-1", "left origin/toy-1: bs never touches a remote branch")
+	must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir+" and branch toy-1", "left origin/toy-1: bsx never touches a remote branch")
 	if x.git(x.repo, "rev-parse", "--verify", "refs/remotes/origin/toy-1") == "" {
 		t.Fatal("prune touched origin/toy-1")
 	}
@@ -147,7 +147,7 @@ func TestSpawnRefusesABranchThatExists(t *testing.T) {
 	x := newToy(t)
 	x.bead("toy-1", "x")
 	x.git(x.repo, "branch", "toy-1")
-	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 2, "branch toy-1 already exists", "next: bs prune")
+	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 2, "branch toy-1 already exists", "next: bsx prune")
 	if _, ok, _ := x.open().LatestSpawn(context.Background(), "toy-1"); ok {
 		t.Fatal("a refused spawn was recorded")
 	}
@@ -180,12 +180,12 @@ func TestTheWorkerPromptHasItsWorkspaceAndGoal(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := string(b)
-	for _, want := range []string{"## Workspace", "its own git worktree", "Commit everything you hand off", "## Goal", "Your goal is your branch", "bs done"} {
+	for _, want := range []string{"## Workspace", "its own git worktree", "Commit everything you hand off", "## Goal", "Your goal is your branch", "bsx done"} {
 		if !strings.Contains(p, want) {
 			t.Fatalf("worker prompt lacks %q:\n%s", want, p)
 		}
 	}
-	for _, not := range []string{"## Goals", "merge it into its base", "bs prune` removes"} {
+	for _, not := range []string{"## Goals", "merge it into its base", "bsx prune` removes"} {
 		if strings.Contains(p, not) {
 			t.Fatalf("worker prompt has the queen's %q:\n%s", not, p)
 		}
@@ -200,7 +200,7 @@ func TestStatusSaysWhatIsStuck(t *testing.T) {
 	must(t, x.worker("toy-1", 1, "done"), 0)
 	must(t, x.queen("end", "--incomplete", "toy-1"), 0)
 	r := x.keeper("status")
-	must(t, r, 0, "stuck: toy-1: ended with its goal incomplete → bs prune completes it once --goal branch holds")
+	must(t, r, 0, "stuck: toy-1: ended with its goal incomplete → bsx prune completes it once --goal branch holds")
 	if cell(r.out, "toy-1", "STATE") != "ended --incomplete" {
 		t.Fatalf("status:\n%s", r)
 	}
@@ -215,7 +215,7 @@ func TestEndIncompleteIsTheWayOutWhileGitHubIsDown(t *testing.T) {
 	x.commit(sp.Workspace.Dir, "work.txt")
 	must(t, x.worker("toy-1", 1, "done"), 0)
 	x.gh.Offline = true
-	must(t, x.queen("end", "toy-1"), 6, "next: bs end toy-1 --incomplete")
+	must(t, x.queen("end", "toy-1"), 6, "next: bsx end toy-1 --incomplete")
 	must(t, x.queen("end", "--incomplete", "toy-1"), 0, "ending it --incomplete", "ended toy-1")
 }
 

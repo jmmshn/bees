@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jmmshn/bees/cmd/bsx/internal/config"
 	"github.com/jmmshn/bees/cmd/bsx/internal/herdr"
 	"github.com/jmmshn/bees/cmd/bsx/internal/logbook"
 	"github.com/jmmshn/bees/cmd/bsx/internal/port"
@@ -31,6 +32,9 @@ type Core struct {
 	ConfigDir   string   // the config dir the spawn ran under, recorded
 	CacheDir    string   // per-start files
 	WorkerPath  []string // worker.path: dirs first on a worker's PATH
+	Guards      config.Guards
+	Review      port.Review // review.host: where changes are reviewed and land
+	VCS         port.VCS    // the workspace's version control, as the goal checks read it
 	Timing      Timing
 	Warn        func(msg string) // prints a fallback bs took (Rule G); nil drops it
 }
@@ -77,17 +81,19 @@ func (c *Core) git(ctx context.Context, dir string, args ...string) (string, err
 	return strings.TrimSpace(string(out)), err
 }
 
-// Exit codes. Main's keep their meaning; 7, 8 and 9 are ADR-0010's.
+// Exit codes. Main's keep their meaning; 7, 8 and 9 are ADR-0010's, 10 the keeper's
+// (bees-13.6: a done with CI pending was read as ready).
 const (
-	ExitFail       = 1 // something failed; the message says what
-	ExitRefused    = 2 // refused before anything changed: usage, a bad goal, a missing record
-	ExitKept       = 3 // prune kept a workspace; end: herdr didn't answer
-	ExitUnknown    = 4 // prune couldn't check
-	ExitBackground = 5 // the gate found background work
-	ExitCantCheck  = 6 // a check couldn't run: never read as "no"
-	ExitHandoff    = 7 // a handoff check failed
-	ExitStart      = 8 // a start bs couldn't confirm
-	ExitIncomplete = 9 // bs end on an incomplete goal
+	ExitFail       = 1  // something failed; the message says what
+	ExitRefused    = 2  // refused before anything changed: usage, a bad goal, a missing record
+	ExitKept       = 3  // prune kept a workspace; end: herdr didn't answer
+	ExitUnknown    = 4  // prune couldn't check
+	ExitBackground = 5  // the gate found background work
+	ExitCantCheck  = 6  // a check couldn't run: never read as "no"
+	ExitHandoff    = 7  // a handoff check failed
+	ExitStart      = 8  // a start bs couldn't confirm
+	ExitIncomplete = 9  // bs end on an incomplete goal
+	ExitPending    = 10 // a handoff waits only on CI still running: re-run when it finishes
 )
 
 // Exit is a refusal or failure with its exit code and the next command to run.

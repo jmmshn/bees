@@ -13,6 +13,8 @@ import (
 	"github.com/jmmshn/bees/cmd/bsx/internal/core"
 	"github.com/jmmshn/bees/cmd/bsx/internal/logbook"
 	"github.com/jmmshn/bees/cmd/bsx/internal/port"
+	"github.com/jmmshn/bees/cmd/bsx/internal/review/github"
+	"github.com/jmmshn/bees/cmd/bsx/internal/vcs/git"
 )
 
 // Env is the calling process as bs sees it.
@@ -32,8 +34,11 @@ type Ports struct {
 	NewHarness func(name, model string) port.Harness
 	Proc       port.Proc
 	Beads      port.Beads
-	CacheDir   string
-	Timing     core.Timing
+	// Review and VCS, when set (tests), replace the configured review host and git.
+	Review   port.Review
+	VCS      port.VCS
+	CacheDir string
+	Timing   core.Timing
 	// Exec replaces bs with argv (argv[0] a path), run in dir with env: bs queen's last
 	// step. It returns only on failure.
 	Exec func(dir string, env, argv []string) error
@@ -47,7 +52,9 @@ herdr --session server, on that session's config (~/.config/bees/sessions/<sessi
 commands:
   queen                                                    record this pane's queen, then exec the harness
   spawn   --goal <goal>... [--label L] [--as Q] <bead>   start a worker
-  done    [--pr URL]... [--answer yes|no --report TEXT|-] [--force] [--as W]   hand off
+  done    [--pr URL]... [--replaces URL]... [--answer yes|no --report TEXT|-] [--force] [--as W]   hand off
+  check   <worker>                                         run its handoff checks now; writes nothing
+  goal    [--as Q] <worker> <goal>... | discard | --waive <check>   amend, waive or (keeper) discard
   end     [--force] [--incomplete] [--as Q] <worker>      complete and end a worker
   prune   [--as Q]                                         remove completed workspaces
   send    [--as S] [--project P] [--now] <to> <message|->  store a message, then ring
@@ -104,10 +111,17 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 			h = ports.NewHarness(s.Harness, model)
 		}
 		kind, _ := s.Kind(s.GitTop)
+		review, vcs := ports.Review, ports.VCS
+		if review == nil && s.Review.Host == github.Name {
+			review = github.Host{Run: ports.Run}
+		}
+		if vcs == nil {
+			vcs = git.VCS{Run: ports.Run}
+		}
 		r.c = &core.Core{
 			Logbook: lb, Project: s.Project, Run: ports.Run, Harness: h, HarnessName: s.Harness,
 			Proc: ports.Proc, Beads: ports.Beads, Repo: s.Repo, Worktrees: s.Worktrees, Kind: kind,
-			ConfigDir: s.Dir, CacheDir: ports.CacheDir, Timing: ports.Timing, WorkerPath: s.workerPath(),
+			ConfigDir: s.Dir, CacheDir: ports.CacheDir, Timing: ports.Timing, WorkerPath: s.workerPath(), Guards: s.Guards, Review: review, VCS: vcs,
 			Warn: func(msg string) { fmt.Fprintf(stderr, "bsx %s: warning: %s\n", args[0], msg) },
 		}
 	}
@@ -192,6 +206,8 @@ var commands = map[string]command{
 	"queen":  {(*run).queen, true, true},
 	"spawn":  {(*run).spawn, true, true},
 	"done":   {(*run).done, true, true},
+	"check":  {(*run).check, false, true},
+	"goal":   {(*run).goal, true, true},
 	"end":    {(*run).end, true, true},
 	"prune":  {(*run).prune, true, true},
 	"send":   {(*run).send, true, true},

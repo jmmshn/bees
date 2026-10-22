@@ -19,11 +19,12 @@ import (
 	"github.com/jmmshn/bees/cmd/bsx/internal/proc"
 )
 
-// Done is the handoff (bs done) of worker who, called by process self: the gate first,
-// then every handoff check of the frozen goal (waivers skipped). It stops at the first
-// check that can't run (exit 6), otherwise reports every failure at once (exit 7), and
-// records the done only when all pass, with landed when the goal completes at handoff.
-// force waives the gate and nothing else.
+// Done is the handoff (bs done) of worker who, called by process self: the PRs it names
+// are checked against its goal's repo and added to those handed off before (h.Replaces
+// dropped), then the gate, then every handoff check of the frozen goal (waivers skipped).
+// It stops at the first check that can't run (exit 6), otherwise reports every failure at
+// once (exit 7), and records the done only when all pass, with landed when the goal
+// completes at handoff. force waives the gate and nothing else.
 func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, force bool) (logbook.Done, error) {
 	if who.Queen {
 		return logbook.Done{}, exit(ExitRefused, "", nil, "bs done is a worker's handoff; %s is a queen", who.Name)
@@ -36,45 +37,43 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, force bool
 	if err != nil {
 		return logbook.Done{}, err
 	}
+	if e.Discarded {
+		return logbook.Done{}, exit(ExitRefused, "bs send "+sp.By+" \"...\"", nil, "bs done: the keeper discarded %s's goal; there is nothing to hand off", sp.Name)
+	}
 	d := logbook.Done{Spawn: sp.ID, Name: sp.Name, Queen: sp.By, Bead: sp.Bead, Answer: h.Answer, Report: h.Report}
 	if prev, ok, err := c.Logbook.LatestDone(ctx, sp.ID); err != nil {
 		return d, err
 	} else if ok {
 		d.PRs = prev.PRs // handed-off PRs accumulate across bs done calls
 	}
-	for _, pr := range h.PRs {
-		if !slices.Contains(d.PRs, pr) {
-			d.PRs = append(d.PRs, pr)
-		}
+	if d.PRs, err = c.handedPRs(e.Goal, d.PRs, h); err != nil {
+		return d, err
 	}
 	var failed []string
-	for _, name := range e.Handoff() {
-		if slices.Contains(e.Waived, name) {
-			continue
-		}
-		if name == goal.NoBackground {
-			bg, err := c.Background(ctx, sp, self)
-			switch {
-			case err != nil && force:
-				d.Unchecked = err.Error()
-			case err != nil:
-				return d, exit(ExitCantCheck, "bs done --force", err, "bs done: can't check %s for background work", sp.Name)
-			case len(bg) > 0 && force:
-				d.Background = bg
-			case len(bg) > 0:
-				return d, exit(ExitBackground, "stop it, then bs done again (or bs done --force)", nil, "%s", background(sp.Name, bg))
-			}
-			d.Checks = append(d.Checks, logbook.CheckResult{Name: name, Pass: true})
-			continue
-		}
-		r := c.check(ctx, sp, name, h)
-		if r.Err != "" {
-			return d, exit(ExitCantCheck, "", errors.New(r.Err), "bs done: check %s couldn't run", name)
-		}
+	// The gate first: no_background, implicit in every handoff.
+	switch bg, err := c.Background(ctx, sp, self); {
+	case err != nil && force:
+		d.Unchecked = err.Error()
+	case err != nil:
+		return d, exit(ExitCantCheck, "bs done --force", err, "bs done: can't check %s for background work", sp.Name)
+	case len(bg) > 0 && force:
+		d.Background = bg
+	case len(bg) > 0:
+		return d, exit(ExitBackground, "stop it, then bs done again (or bs done --force)", nil, "%s", background(sp.Name, bg))
+	}
+	d.Checks = append(d.Checks, logbook.CheckResult{Name: goal.NoBackground, Pass: true})
+	rs, cant := c.look(sp, Handed{PRs: d.PRs, Answer: h.Answer, Report: h.Report}).stage(ctx, e, func(p goal.Part) []string { return p.Handoff })
+	if cant != nil {
+		return d, exit(ExitCantCheck, "bs done again once it can run", errors.New(cant.Err), "bs done: check %s couldn't run", cant.Name)
+	}
+	for _, r := range rs {
 		if !r.Pass {
-			failed = append(failed, name+": "+r.Detail)
+			failed = append(failed, r.Name+": "+r.Detail)
 		}
-		d.Checks = append(d.Checks, r)
+	}
+	d.Checks = append(d.Checks, rs...)
+	if pendingOnly(rs) {
+		return d, exit(ExitPending, "bs done again once CI finishes", nil, "bs done: CI is still running, and nothing else failed:\n  %s", strings.Join(failed, "\n  "))
 	}
 	if len(failed) > 0 {
 		return d, exit(ExitHandoff, "fix it, then bs done again", nil, "bs done: %d handoff checks failed:\n  %s", len(failed), strings.Join(failed, "\n  "))
@@ -86,6 +85,65 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, force bool
 		err = c.Logbook.RecordLanded(ctx, sp.ID, sp.Name, sp.Name, logbook.Landed{By: "done"})
 	}
 	return d, err
+}
+
+// pendingOnly reports whether rs failed, and only on CI still running.
+func pendingOnly(rs []logbook.CheckResult) bool {
+	failed := slices.DeleteFunc(slices.Clone(rs), func(r logbook.CheckResult) bool { return r.Pass })
+	return len(failed) > 0 && !slices.ContainsFunc(failed, func(r logbook.CheckResult) bool { return !r.Pending })
+}
+
+// handedPRs is the PRs handed off once h is: prev, less h.Replaces, plus h.PRs, each in
+// the one spelling bs records. Only a goal with a pr part takes PRs; each must be a PR of
+// that part's repo; a replaced one must have been handed off; and a pr goal needs one
+// (Rule G: refused before any check runs).
+func (c *Core) handedPRs(g goal.Goal, prev []string, h Handed) ([]string, error) {
+	i := slices.IndexFunc(g.Parts, func(p goal.Part) bool { return p.Type == "pr" })
+	if i < 0 {
+		if len(h.PRs)+len(h.Replaces) > 0 {
+			return nil, exit(ExitRefused, "bs done", nil, "bs done: --goal %s takes no --pr or --replaces", g)
+		}
+		return prev, nil
+	}
+	repo := g.Parts[i].Repo
+	canon := func(u string) (string, error) {
+		if c.Review == nil {
+			return "", exit(ExitRefused, "bsx config", nil, "bs done: no review host is configured")
+		}
+		r, err := c.Review.Parse(u)
+		if err != nil {
+			return "", exit(ExitRefused, "", err, "bs done")
+		}
+		if !strings.EqualFold(r.Repo, repo) {
+			return "", exit(ExitRefused, "", nil, "bs done: %s is a change of %s, not of this spawn's repo %s", u, r.Repo, repo)
+		}
+		return r.URL, nil
+	}
+	out := slices.Clone(prev)
+	for _, u := range h.Replaces {
+		r, err := canon(u)
+		if err != nil {
+			return nil, err
+		}
+		j := slices.Index(out, r)
+		if j < 0 {
+			return nil, exit(ExitRefused, "", nil, "bs done --replaces %s: it was never handed off (handed off: %s)", r, cmp.Or(strings.Join(out, " "), "none"))
+		}
+		out = slices.Delete(out, j, j+1)
+	}
+	for _, u := range h.PRs {
+		r, err := canon(u)
+		if err != nil {
+			return nil, err
+		}
+		if !slices.Contains(out, r) {
+			out = append(out, r)
+		}
+	}
+	if len(out) == 0 {
+		return nil, exit(ExitRefused, "bs done --pr <url>", nil, "bs done: --goal %s hands off PRs, and none is handed off", g)
+	}
+	return out, nil
 }
 
 // EndOpts are bs end's flags.
@@ -122,6 +180,7 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 		done = false
 	}
 	switch {
+	case !done && e.Discarded: // the keeper's word that the work is wanted nowhere: nothing to wait for
 	case !done && !o.Incomplete:
 		var why []string
 		for _, f := range failed {
@@ -389,11 +448,15 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 				}
 			}
 		}
-		for _, name := range e.Prune() {
-			r := c.check(ctx, sp, name, Handed{})
-			if r.Err != "" {
-				return keep(true, "%s couldn't run: %s", name, r.Err)
-			}
+		d, _, err := c.Logbook.LatestDone(ctx, sp.ID)
+		if err != nil {
+			return keep(true, "%v", err)
+		}
+		rs, cant := c.look(sp, Handed{PRs: d.PRs}).stage(ctx, e, func(p goal.Part) []string { return p.Prune })
+		if cant != nil {
+			return keep(true, "%s couldn't run: %s", cant.Name, cant.Err)
+		}
+		for _, r := range rs {
 			if !r.Pass {
 				return keep(false, "%s", r.Detail)
 			}
@@ -431,7 +494,17 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 	if !branch {
 		return p
 	}
-	if why, err := c.pruneBranch(ctx, ws, e.Discarded); err != nil {
+	release := e.Discarded
+	if !release && slices.Contains(e.Prune(), goal.PRClosed) {
+		d, _, err := c.Logbook.LatestDone(ctx, sp.ID)
+		if err != nil {
+			return keep(true, "%v", err)
+		}
+		if release, err = c.closedAtTip(ctx, sp, d.PRs); err != nil {
+			return keep(true, "can't tell whether branch %s is a closed draft's head: %v", ws.Branch, err)
+		}
+	}
+	if why, err := c.pruneBranch(ctx, ws, release); err != nil {
 		return keep(true, "%v", err)
 	} else if why != "" {
 		return keep(false, "%s", why)
@@ -446,13 +519,39 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 	return p
 }
 
+// closedAtTip reports whether one of prs, handed off under a pr:draft goal, was closed
+// unmerged with sp's branch tip as its head: its work then stays on GitHub as that PR,
+// and the local branch holds nothing more.
+func (c *Core) closedAtTip(ctx context.Context, sp logbook.Spawn, prs []string) (bool, error) {
+	ws := sp.Workspace
+	tip, ok, err := c.VCS.Branch(ctx, ws.Repo, ws.Branch)
+	if err != nil || !ok {
+		return false, err
+	}
+	k := c.look(sp, Handed{})
+	for _, u := range prs {
+		r, err := c.Review.Parse(u)
+		if err != nil {
+			return false, err
+		}
+		v, err := k.view(ctx, r)
+		if err != nil {
+			return false, err
+		}
+		if v.State == "closed" && v.Head == ws.Branch && v.HeadCommit == tip {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // pruneBranch deletes ws's local branch once it is proven merged into its base, whatever
 // the goal's prune rule (a verdict goal prunes at once, but its branch may hold commits),
-// or discarded.
+// or released: discarded, or a closed draft's head.
 // It returns why it kept the branch, or err when it couldn't check.
-func (c *Core) pruneBranch(ctx context.Context, ws logbook.Workspace, discarded bool) (string, error) {
+func (c *Core) pruneBranch(ctx context.Context, ws logbook.Workspace, released bool) (string, error) {
 	// A discard is the keeper's recorded word that the work is wanted nowhere.
-	if !discarded {
+	if !released {
 		switch ok, why, err := c.merged(ctx, ws); {
 		case err != nil:
 			return "", fmt.Errorf("can't tell whether branch %s is merged: %w", ws.Branch, err)

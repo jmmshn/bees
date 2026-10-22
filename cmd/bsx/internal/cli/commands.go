@@ -40,6 +40,9 @@ func (r *run) queen(fs *flag.FlagSet, args []string) error {
 	if !ok {
 		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bsx queen: %s is not on PATH", r.c.Harness.Kind()), Next: "bsx doctor"}
 	}
+	if err := r.c.CheckGuards(r.ctx); err != nil { // bees-12.20: refused now, not at every spawn
+		return err
+	}
 	argv, err := r.c.Queen(r.ctx, core.QueenReq{Session: r.s.Session, Pane: core.Getenv(r.env.Vars, "HERDR_PANE_ID"), Self: r.env.Self, Exe: exe})
 	if err != nil {
 		return err
@@ -87,6 +90,8 @@ func (r *run) spawn(fs *flag.FlagSet, args []string) error {
 func (r *run) done(fs *flag.FlagSet, args []string) error {
 	var prs list
 	fs.Var(&prs, "pr", "a PR you hand off (repeatable)")
+	var replaces list
+	fs.Var(&replaces, "replaces", "a PR you handed off before that this handoff replaces (repeatable)")
 	answer := fs.String("answer", "", "a verdict goal's answer: yes or no")
 	report := fs.String("report", "", "a verdict goal's report, or - to read it from stdin")
 	force := fs.Bool("force", false, "hand off while background work runs (waives that gate only)")
@@ -108,12 +113,82 @@ func (r *run) done(fs *flag.FlagSet, args []string) error {
 	if err != nil {
 		return err
 	}
-	d, err := r.c.Done(r.ctx, w, r.env.Self, core.Handed{PRs: prs, Answer: *answer, Report: *report}, *force)
+	d, err := r.c.Done(r.ctx, w, r.env.Self, core.Handed{PRs: prs, Replaces: replaces, Answer: *answer, Report: *report}, *force)
 	if err != nil {
 		return err
 	}
 	fmt.Fprintf(r.out, "handed off to %s:\n%s\n", d.Queen, d.Text())
+	for _, c := range d.Checks {
+		if c.Detail != "" { // a vacuous CI pass among them: said, never silent (Rule G)
+			fmt.Fprintf(r.out, "  %s: %s\n", c.Name, c.Detail)
+		}
+	}
 	r.ring(r.c, d.Name, d.Queen, port.Next)
+	return nil
+}
+
+// check runs a worker's handoff checks now and prints each result; it writes nothing.
+func (r *run) check(fs *flag.FlagSet, args []string) error {
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return fmt.Errorf("%w: bsx check <worker>", errUsage)
+	}
+	name := core.Name(fs.Arg(0))
+	rs, err := r.c.Check(r.ctx, name, r.env.Self)
+	for _, c := range rs {
+		mark := "ok  "
+		switch {
+		case c.Err != "":
+			mark = "??  "
+		case !c.Pass:
+			mark = "FAIL"
+		}
+		line := mark + " " + c.Name
+		if d := c.Detail + c.Err; d != "" {
+			line += ": " + d
+		}
+		fmt.Fprintln(r.out, line)
+	}
+	return err
+}
+
+// goal amends, waives or discards a worker's goal.
+func (r *run) goal(fs *flag.FlagSet, args []string) error {
+	waive := fs.String("waive", "", "a check of its goal no longer run")
+	as := fs.String("as", "", "the queen, outside a herdr pane (default: the keeper)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() < 1 {
+		return fmt.Errorf("%w: bsx goal <worker> <goal>... | discard | --waive <check>", errUsage)
+	}
+	name := core.Name(fs.Arg(0))
+	// ADR-0010 spells it bs goal <name> --waive <check>: flags after the worker too.
+	if err := fs.Parse(fs.Args()[1:]); err != nil {
+		return err
+	}
+	by := cmp.Or(*as, "keeper")
+	if r.s.Pane != nil {
+		w, err := r.who(*as)
+		if err != nil {
+			return err
+		}
+		by = w.Name
+	}
+	e, err := r.c.Goal(r.ctx, core.GoalReq{By: by, Self: r.env.Self, Name: name, Values: fs.Args(), Waive: *waive})
+	if err != nil {
+		return err
+	}
+	g := "--goal " + e.String()
+	if e.Discarded {
+		g += " (discarded)"
+	}
+	if len(e.Waived) > 0 {
+		g += " (waived: " + strings.Join(e.Waived, ", ") + ")"
+	}
+	fmt.Fprintf(r.out, "%s: %s\n", name, g)
 	return nil
 }
 

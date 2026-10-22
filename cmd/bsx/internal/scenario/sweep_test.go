@@ -88,7 +88,6 @@ func TestRound11NoneOnANonGitDirectory(t *testing.T) {
 func TestRound11ADeliveryFragmentForACLFlow(t *testing.T) {
 	later(t, "bees-13.11", "command workspaces and custom goals")
 }
-func TestRound11StaticGuards(t *testing.T) { later(t, "bees-13.6", "the guards matrix") }
 func TestRound11WorkersRunTheBuildUnderTest(t *testing.T) {
 	later(t, "bees-13.3", "worker.path and the live rig")
 }
@@ -146,10 +145,6 @@ func TestPilotBugsOfSetupDocs(t *testing.T) { later(t, "bees-13.8", "SETUP-AGENT
 func TestPilotBug1251PromptFriction(t *testing.T) {
 	later(t, "bees-13.9", "the role prompts rewritten (12.51); positional bs done is TestDoneRefusesAPositionalReport")
 }
-func TestPilotBug1220MergeGrantOnAnUnprotectedRepo(t *testing.T) {
-	later(t, "bees-13.6", "allow_merge_into")
-}
-func TestPilotBug1221GuardGlobs(t *testing.T) { later(t, "bees-13.6", "guard globs") }
 func TestPilotBug1227AgyRefusals(t *testing.T) {
 	later(t, "bees-13.13", "the agy adapter's refusals")
 }
@@ -235,21 +230,7 @@ INSERT INTO entries VALUES ('s1','2026-10-01T00:00:00.000Z','spawned','queen-toy
 	}
 }
 
-func TestPRGoalHandoffChecks(t *testing.T) {
-	later(t, "bees-13.6", "pr, pr:ready, pr:draft handoff and completion")
-}
-func TestPRsAccumulateAndReplace(t *testing.T) {
-	later(t, "bees-13.6", "--pr accumulation and --replaces")
-}
-func TestAPRMustHoldAWorkspaceCommit(t *testing.T) {
-	later(t, "bees-13.6", "workspace commits from the reflog")
-}
-func TestPushAndReviewGoals(t *testing.T) { later(t, "bees-13.6", "push= and review=") }
-func TestBsGoalAmendWaiveDiscard(t *testing.T) {
-	later(t, "bees-13.6", "bs goal, and discard by the keeper only")
-}
-func TestBsCheckWritesNothing(t *testing.T) { later(t, "bees-13.6", "bs check") }
-func TestNoteAndBeadsGoals(t *testing.T)    { later(t, "bees-13.7", "note and beads goals") }
+func TestNoteAndBeadsGoals(t *testing.T) { later(t, "bees-13.7", "note and beads goals") }
 func TestCustomGoalsAreFrozenAtSpawn(t *testing.T) {
 	later(t, "bees-13.11", "[goal.<name>] and cmd: checks frozen in spawned")
 }
@@ -314,7 +295,6 @@ func TestASpawnThatCantBeRecordedLeavesNoWorktree(t *testing.T) {
 	}
 }
 
-func TestSpawnRefusesAPRGoalWithoutARemote(t *testing.T) { later(t, "bees-13.6", "remote refusals") }
 func TestSpawnRefusesACustomArgv0NotOnPath(t *testing.T) { later(t, "bees-13.11", "cmd: checks") }
 func TestSpawnRefusesACommandKindWithoutClean(t *testing.T) {
 	later(t, "bees-13.11", "[workspace.command]")

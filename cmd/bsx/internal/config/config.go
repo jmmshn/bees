@@ -34,6 +34,7 @@ type Config struct {
 	Goal      map[string]GoalType `toml:"goal" scope:"both" doc:"custom goal types, by name (wired by bees-13.11)"`
 	Checks    map[string]Check    `toml:"checks" scope:"both" doc:"argv a custom goal's cmd:<name> check runs (wired by bees-13.11)"`
 	Guards    Guards              `toml:"guards"`
+	Review    Review              `toml:"review"`
 	Queen     Role                `toml:"queen"`
 	Worker    Worker              `toml:"worker"`
 }
@@ -83,6 +84,11 @@ type Guards struct {
 	Deny           []string `toml:"deny" scope:"both" doc:"shell globs over a command line every worker is denied, added to the workspace's default"`
 	Replace        bool     `toml:"replace" scope:"both" doc:"deny replaces the default instead of adding to it"`
 	AllowMergeInto []string `toml:"allow_merge_into" scope:"both" doc:"base-branch globs a worker may merge its own PR into (refused unless the base is protected)"`
+}
+
+// Review says where a project's changes (pr, push and review goals) are reviewed and land.
+type Review struct {
+	Host string `toml:"host" scope:"both" default:"github" enum:"github" doc:"the review host pr, push and review goals check against: github (pull requests through gh, the repo's git remotes)"`
 }
 
 // Role holds the queen's harness tables.

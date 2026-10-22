@@ -113,6 +113,11 @@ func (r *run) prune(fs *flag.FlagSet, args []string) error {
 	code := 0
 	for _, p := range ps {
 		switch {
+		case p.Removed && p.Why != "":
+			fmt.Fprintf(r.out, "removed %s (%s); %s\n", p.Dir, p.Name, p.Why)
+			code = max(code, core.ExitKept)
+		case p.Removed && p.Branch != "":
+			fmt.Fprintf(r.out, "removed %s (%s) and its branch %s\n", p.Dir, p.Name, p.Branch)
 		case p.Removed:
 			fmt.Fprintf(r.out, "removed %s (%s)\n", p.Dir, p.Name)
 		case p.Unknown:

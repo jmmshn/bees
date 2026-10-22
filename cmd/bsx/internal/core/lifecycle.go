@@ -206,7 +206,8 @@ func (c *Core) stop(ctx context.Context, sp logbook.Spawn) error {
 type Pruned struct {
 	Name, Dir string
 	Removed   bool
-	Why       string // why it was kept
+	Branch    string // the merged branch it deleted with the workspace
+	Why       string // why it was kept, or why a removed workspace's branch stays
 	Unknown   bool   // it couldn't check
 }
 
@@ -271,5 +272,14 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn) Pruned {
 		return keep(true, "git worktree remove: %v", err)
 	}
 	p.Removed = true
+	// A branch proven merged goes with its workspace, or the bead's next spawn finds it.
+	// A discarded one stays: its commits are nobody's to delete.
+	if !e.Discarded && slices.Contains(e.Prune(), goal.BranchMerged) && sp.Workspace.Branch != "" {
+		if err := c.dropBranch(ctx, sp.Workspace.Repo, sp.Workspace.Branch); err != nil {
+			p.Why = fmt.Sprintf("its branch %s stays: %v", sp.Workspace.Branch, err)
+		} else {
+			p.Branch = sp.Workspace.Branch
+		}
+	}
 	return p
 }

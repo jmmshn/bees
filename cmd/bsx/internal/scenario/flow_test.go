@@ -47,10 +47,14 @@ func TestSpawnHandoffEndPruneOnABranchGoal(t *testing.T) {
 	if _, err := os.Stat(sp.Workspace.Dir); err != nil {
 		t.Fatalf("bs end removed the workspace: %v", err)
 	}
-	must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir)
+	must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir+" (toy-1) and its branch toy-1")
 	if _, err := os.Stat(sp.Workspace.Dir); !os.IsNotExist(err) {
 		t.Fatalf("prune kept %s", sp.Workspace.Dir)
 	}
+	if x.hasBranch("toy-1") {
+		t.Fatal("prune kept the merged branch toy-1")
+	}
+	x.spawn("toy-1", "branch") // the bead's next worker starts clean
 }
 
 // The background-work gate on real processes: a child the start didn't see refuses bs

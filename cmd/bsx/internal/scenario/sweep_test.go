@@ -353,6 +353,21 @@ func TestASpawnThatCantBeRecordedLeavesNoWorktree(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(filepath.Dir(x.repo), "toy-WT", "toy-1")); !os.IsNotExist(err) {
 		t.Fatalf("worktree left behind: %v", err)
 	}
+	if x.hasBranch("toy-1") {
+		t.Fatal("branch toy-1 left behind")
+	}
+}
+
+// A branch already named for the worker refuses the spawn before anything is made
+// (exit 2), naming how to clear it: herdr would fail on it after the checks.
+func TestSpawnRefusesABranchThatAlreadyExists(t *testing.T) {
+	x := newToy(t)
+	x.git(x.repo, "branch", "toy-1")
+	x.bead("toy-1", "x")
+	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 2, "already has a branch toy-1", "next: bsx prune", "branch -d toy-1")
+	if _, ok, err := x.open().LatestSpawn(context.Background(), "toy-1"); err != nil || ok {
+		t.Fatalf("a refused spawn was recorded: %v, %v", ok, err)
+	}
 }
 
 func TestSpawnRefusesAPRGoalWithoutARemote(t *testing.T) { later(t, "bees-13.6", "remote refusals") }

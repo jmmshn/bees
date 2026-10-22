@@ -218,6 +218,27 @@ ORDER BY s.subject`)
 	return out, rows.Err()
 }
 
+// Unstarted names the workers whose latest spawn is open, was written before goals and
+// has no start: sessions the old bs started, which this bs can neither ring nor see run.
+func (l *Logbook) Unstarted(ctx context.Context) ([]string, error) {
+	sps, err := l.LatestSpawns(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, s := range sps {
+		if s.Ended || !s.Legacy() {
+			continue
+		}
+		if _, ok, err := l.LatestStart(ctx, s.ID); err != nil {
+			return nil, err
+		} else if !ok {
+			out = append(out, s.Name)
+		}
+	}
+	return out, nil
+}
+
 // Recorded is a session whose open entry recorded a herdr pane: a worker's open spawn,
 // or a queen whose newest queen entry has it.
 type Recorded struct {

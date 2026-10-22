@@ -285,3 +285,24 @@ func TestASpawnWithoutAGoalIsRefused(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// The old bs's open spawns have no start, so this bs can neither ring them nor see them
+// run: Unstarted names them, on a file not yet migrated. The pilot's started one, and an
+// ended one are not among them.
+func TestUnstartedNamesTheOldBsOpenSpawns(t *testing.T) {
+	ctx := context.Background()
+	path := write(t, v0+`
+INSERT INTO entries VALUES ('s2', '2026-10-01T00:00:04.000Z', 'spawned', 'queen-bees', 'bees-9', NULL, '{"bead":"bees-9","workspace":"w3","pane":"w3:p1","worktree":"/r/bees-WT/bees-9","branch":"bees-9","repo":"/r/bees"}');
+INSERT INTO entries VALUES ('e2', '2026-10-01T00:00:05.000Z', 'ended', 'queen-bees', 'bees-9', 's2', NULL);`)
+	lb, err := logbook.OpenReadOnly(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lb.Close()
+	if got, err := lb.Unstarted(ctx); err != nil || !slices.Equal(got, []string{"bees-8"}) {
+		t.Fatalf("v0: %v, %v", got, err)
+	}
+	if got, err := open(t, write(t, v1)).Unstarted(ctx); err != nil || len(got) != 0 {
+		t.Fatalf("v1, started: %v, %v", got, err)
+	}
+}

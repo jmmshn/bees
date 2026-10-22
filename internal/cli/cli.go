@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/jmmshn/bees/internal/bsname"
@@ -108,6 +109,9 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 		if err := s.checkLogbook(env); err != nil {
 			return report(stderr, args[0], err)
 		}
+		if err := r.oldSessions(); err != nil {
+			return report(stderr, args[0], err)
+		}
 		lb, err := logbook.Open(ctx, s.Logbook)
 		if err != nil {
 			return report(stderr, args[0], err)
@@ -178,6 +182,36 @@ func report(stderr io.Writer, name string, err error) int {
 }
 
 var errUsage = errors.New("usage")
+
+// oldSessions refuses, before the logbook is opened (and so migrated), a command on a
+// logbook where a session the old bs started is still open: this bs can neither ring it
+// nor see it run (bees-13.9; ADR-0010: end them first). bs end, the way out, and bs
+// status only warn.
+func (r *run) oldSessions() error {
+	if _, err := os.Stat(r.s.Logbook); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	lb, err := logbook.OpenReadOnly(r.ctx, r.s.Logbook)
+	if err != nil {
+		return err
+	}
+	names, err := lb.Unstarted(r.ctx)
+	lb.Close()
+	if err != nil || len(names) == 0 {
+		return err
+	}
+	what := fmt.Sprintf("%s has %d open spawns the old bs started, which this bs can neither ring nor see run: %s",
+		r.s.Logbook, len(names), strings.Join(names, ", "))
+	if len(names) == 1 {
+		what = fmt.Sprintf("%s has an open spawn the old bs started, which this bs can neither ring nor see run: %s", r.s.Logbook, names[0])
+	}
+	if r.name == "end" || r.name == "status" {
+		fmt.Fprintf(r.err, "%s %s: warning: %s\n  next: %s end <worker> for each\n", bsname.Cmd, r.name, what, bsname.Cmd)
+		return nil
+	}
+	return &core.Exit{Code: core.ExitRefused, Msg: what + "; nothing was read or written",
+		Next: fmt.Sprintf("%s end <worker> for each (it closes the worker's herdr workspace), then run this again", bsname.Cmd)}
+}
 
 type run struct {
 	ctx      context.Context

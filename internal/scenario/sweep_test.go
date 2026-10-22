@@ -233,13 +233,45 @@ INSERT INTO entries VALUES ('s1','2026-10-01T00:00:00.000Z','spawned','queen-toy
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := x.keeper("status")
-	must(t, r, 0, "--goal legacy")
-	// It froze no bead: an amend to note has nothing to tell a change from, and says the way out.
-	must(t, x.keeper("goal", "toy-9", "note"), 2, "spawned before bs froze its bead", "bs goal toy-9 discard (the keeper), then bs end toy-9 and bs spawn --goal note toy-9")
+	// The old bs started it and recorded no start: status and end warn, all else refuses
+	// before the logbook is opened, so nothing is migrated (bees-13.9).
+	must(t, x.keeper("goal", "toy-9", "note"), 2, "has an open spawn the old bs started, which this bs can neither ring nor see run: toy-9", "nothing was read or written", "next: bs end <worker> for each")
+	if _, err := os.Stat(x.logbook + ".pre-2"); !os.IsNotExist(err) {
+		t.Fatalf("a refused command migrated the logbook: %v", err)
+	}
+	must(t, x.keeper("status"), 0, "--goal legacy", "warning: "+x.logbook+" has an open spawn the old bs started")
 	if _, err := os.Stat(x.logbook + ".pre-2"); err != nil {
 		t.Fatalf("no copy aside: %v", err)
 	}
+	must(t, x.keeper("end", "--as", "queen-toy", "toy-9"), 0, "ended toy-9")
+	if r := x.keeper("status"); r.code != 0 || strings.Contains(r.String(), "old bs") {
+		t.Fatalf("still warned once toy-9 ended:\n%s", r)
+	}
+}
+
+// A pilot (v1) spawn has its start recorded, so it runs on: it froze no bead, so an amend
+// to note has nothing to tell a change from, and says the way out.
+func TestAPilotSpawnFrozeNoBead(t *testing.T) {
+	x := newToy(t)
+	if err := os.MkdirAll(filepath.Dir(x.logbook), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", x.logbook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE entries (id TEXT PRIMARY KEY, ts TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('message','received','rang','spawned','ended','queen','started','done')),
+  actor TEXT NOT NULL, subject TEXT, ref TEXT REFERENCES entries(id),
+  data TEXT CHECK (data IS NULL OR json_valid(data))) STRICT;
+PRAGMA user_version = 1;
+INSERT INTO entries VALUES ('s1','2026-10-20T00:00:00.000Z','spawned','queen-toy','toy-9',NULL,'{"bead":"toy-9","workspace":"w2","pane":"w2:p1","worktree":"/r/toy-WT/toy-9","branch":"toy-9","repo":"/r/toy"}');
+INSERT INTO entries VALUES ('t1','2026-10-20T00:00:01.000Z','started','toy-9','toy-9','s1','{"pid":2147483000,"start":"1","baseline":[]}');`)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	must(t, x.keeper("goal", "toy-9", "note"), 2, "spawned before bs froze its bead", "bs goal toy-9 discard (the keeper), then bs end toy-9 and bs spawn --goal note toy-9")
 }
 
 // A legacy worktree prunes on proof 1 against the repo's default branch: its recorded

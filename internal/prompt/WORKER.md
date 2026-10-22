@@ -17,6 +17,3 @@ Leave `bd close` to the queen: it closes your bead once your goal is complete.
 ## Known pitfalls
 
 Each line: what you see → what it means → what to do. A tagged line goes when its bead closes.
-
-- You need the keeper (an approval, a permission, a decision) → asking only in your pane leaves nothing in the logbook (bs bug bees-4.1) → also `{{bs}} send queen-{{project}} "..."` before you stop. To the keeper, your pane is "this pane", never a workspace id.
-- A live check needs a throwaway bead or spawn → it pollutes the real project (bs bug bees-3.1) → `{{bs}} end` it, `bd close` the bead, and tell the queen both.

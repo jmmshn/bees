@@ -1,0 +1,128 @@
+// Package port is every boundary between bs's core and the world (ADR-0010): the harness
+// in a pane, the commands bs runs (herdr, git, gh, a keeper's argv), the process table and
+// the bead tracker. The core sees only these; tests put fakes behind them that encode what
+// the real tool refuses (motif 13).
+package port
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"syscall"
+
+	"github.com/jmmshn/bees/cmd/bsx/internal/proc"
+)
+
+// Runner runs one external command, argv only, never through a shell: argv[0] is the
+// program. A command that ran and exited non-zero is an *ExitError carrying its output;
+// any other error means it couldn't run.
+type Runner interface {
+	Run(ctx context.Context, dir string, argv ...string) (stdout []byte, err error)
+}
+
+// ExitError is a command that ran and exited non-zero.
+type ExitError struct {
+	Argv   []string
+	Code   int
+	Stdout []byte
+	Stderr []byte
+}
+
+func (e *ExitError) Error() string {
+	msg := strings.TrimSpace(string(e.Stderr))
+	if msg == "" {
+		msg = strings.TrimSpace(string(e.Stdout))
+	}
+	return fmt.Sprintf("%s: exit %d: %s", strings.Join(e.Argv, " "), e.Code, msg)
+}
+
+// Harness is one agent program bs can start and ring (ADR-0010, the pilot's three
+// methods kept).
+type Harness interface {
+	Kind() string                                 // herdr --kind and the process name in the pane: claude | omp | agy
+	Prepare(st Start) (Launch, error)             // pure: argv, per-start files, guards rendered, Record
+	Ring(t Target, text string, p Priority) error // ErrNotRunning | ErrNoRing | a write error
+}
+
+// ErrNotRunning means the session rung is not running: its recorded process is gone.
+var ErrNotRunning = errors.New("not running")
+
+// ErrNoRing means the harness has no way to ring a running session: the message waits for
+// the session's next bs inbox.
+var ErrNoRing = errors.New("its harness has no ring")
+
+// Priority is when the receiving session acts on a ring.
+type Priority string
+
+const (
+	Now  Priority = "now"  // interrupt the current turn
+	Next Priority = "next" // after the current turn
+)
+
+// Role is which prompt a session starts with.
+type Role string
+
+const (
+	Queen  Role = "queen"
+	Worker Role = "worker"
+)
+
+// Start is everything the core decides about one launch. Adapters render it; they never
+// choose a name, a directory or a prompt.
+type Start struct {
+	Role       Role
+	Name       string            // session name (ADR-0006)
+	Dir        string            // the workspace directory
+	PromptFile string            // the assembled role prompt
+	Doorbell   string            // first user message; "" for the queen
+	Continue   bool              // resume the recorded conversation
+	Record     map[string]string // the spawn's recorded Launch.Record, on a resume
+	Deny       []string          // the guard rules, harness-neutral, built by the core; none for the queen
+	Path       []string          // absolute dirs first on the PATH of the session's shell commands
+}
+
+// Launch is what Prepare returns. The core writes each of Files (0600, in the cache dir,
+// named <name>-<key>-*), fills the {{key}} it stands for in Args with that file's path,
+// and removes <name>-[a-z]*-* on bs end and before each start.
+type Launch struct {
+	Args   []string          // after `herdr agent start … --`
+	Files  map[string]string // key → content
+	Record map[string]string // facts known before the start that a later start needs (a conversation id bs chose)
+}
+
+// Target is a session as the core found it: alive with its recorded start time.
+type Target struct {
+	Name, Session, Pane string
+	PID                 int
+}
+
+// Proc is the process table: a recorded process is the one fact behind liveness, and
+// its descendants are what the background-work gate walks (ADR-0010).
+type Proc interface {
+	Alive(p proc.Process) (bool, error) // running with its recorded start time; a failed lookup is an error, never "gone"
+	Start(pid int) (string, error)      // proc.ErrGone for a process that doesn't run
+	Parent(pid int) (int, error)
+	Group(pid int) (int, error)
+	Descendants(pid int) ([]proc.Process, error) // nearest first
+	Command(pid int) (string, error)
+	Exe(pid int) (string, error)
+	Signal(p proc.Process, sig syscall.Signal) error // only while p is still the process recorded
+}
+
+// Bead is one bead as bs reads it.
+type Bead struct {
+	ID, Title, Description string
+	Notes, Design          string
+	Parent                 string
+}
+
+// ErrNoBead is the tracker saying a bead doesn't exist; any other failure is the tracker
+// not answering, never "no such bead" (Rule G).
+var ErrNoBead = errors.New("no such bead")
+
+// Beads is the bead tracker.
+type Beads interface {
+	Show(ctx context.Context, id string) (Bead, error)
+	Children(ctx context.Context, parent string) ([]string, error) // ids of beads directly under parent
+}

@@ -232,8 +232,7 @@ type EndOpts struct {
 }
 
 // End is the completion gate (bs end, ADR-0010): a complete goal lands, then the spawn
-// ends; an incomplete one is exit 9 unless o.Incomplete (refused when nothing was handed
-// off). It runs the gate, closes the herdr workspace, stops the process, and keeps the
+// ends; an incomplete one is exit 9 unless o.Incomplete. It runs the gate, closes the herdr workspace, stops the process, and keeps the
 // directory for prune.
 func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) error {
 	sp, ok, err := c.Logbook.LatestSpawn(ctx, name)
@@ -266,21 +265,9 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 			why = append(why, f.Name+": "+f.Detail)
 		}
 		return exit(ExitIncomplete, bsname.Cmd+" end "+name+" --incomplete", nil, "%s: its goal (--goal %s) is not complete:\n  %s", name, e.Goal, strings.Join(why, "\n  "))
-	case !done:
-		_, handed, err := c.Logbook.LatestDone(ctx, sp.ID)
-		if err != nil {
-			return err
-		}
-		_, started, err := c.StartOf(ctx, sp)
-		if err != nil {
-			return err
-		}
-		// An unconfirmed spawn never ran a worker that could hand off: --incomplete is its
-		// abort (motif 5). Any other spawn needs something handed off first.
-		if !handed && started {
-			return exit(ExitRefused, "", nil, "%s --incomplete: nothing was handed off; ending it would lose the work's trail", name)
-		}
 	}
+	// --incomplete is the abort, handed off or not (motif 5): it keeps the workspace, and
+	// prune, which removes only landed or discarded work, is the guard.
 	if !o.Force {
 		switch bg, err := c.Background(ctx, sp, self); {
 		case errors.Is(err, ErrHarnessGone): // its children were reparented away: nothing to walk

@@ -51,11 +51,14 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 		return logbook.Spawn{}, false, exit(ExitCantCheck, "", err, "can't read bead %s", req.Bead)
 	}
 	name := Name(bead.ID)
+	var ended *logbook.Spawn // the last spawn, ended: its kept worktree and branch are reused
 	switch prev, ok, err := c.Logbook.LatestSpawn(ctx, name); {
 	case err != nil:
 		return logbook.Spawn{}, false, err
 	case ok && !prev.Ended:
 		return prev, true, c.resume(ctx, prev, bead, req)
+	case ok:
+		ended = &prev
 	}
 	at, err := c.beadAt(ctx, bead)
 	if err != nil {
@@ -65,7 +68,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	if err != nil {
 		return logbook.Spawn{}, false, err
 	}
-	ws, err := c.workspace(ctx, name, target != nil && !target.branch)
+	ws, reused, err := c.workspace(ctx, name, target != nil && !target.branch, ended)
 	if err != nil {
 		return logbook.Spawn{}, false, err
 	}
@@ -88,13 +91,25 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	launch.Files = withPrompt(launch.Files, text)
 	label := cmp.Or(req.Label, bead.Title)
 	session := cmp.Or(req.Session, logbook.DefaultSession)
-	hw, err := c.makeWorkspace(ctx, session, &ws, target, c.Project+" · "+label)
-	if err != nil {
+	var hw herdr.Workspace
+	if reused {
+		if hw, err = c.herdr(session).CreateWorkspace(ctx, ws.Dir, c.Project+" · "+label); err != nil {
+			return logbook.Spawn{}, false, exit(ExitFail, "", err, "%s: herdr couldn't open a workspace on its kept worktree; nothing was recorded", name)
+		}
+		c.warn("%s: on its kept worktree and branch %s, with the work its last spawn left there", name, ws.Branch)
+	} else if hw, err = c.makeWorkspace(ctx, session, &ws, target, c.Project+" · "+label); err != nil {
 		return logbook.Spawn{}, false, err
+	}
+	// undo takes back what this spawn made: a reused worktree stays, only its herdr workspace goes.
+	undo := func() error {
+		if reused {
+			return c.herdr(session).CloseWorkspace(context.WithoutCancel(ctx), hw.ID)
+		}
+		return c.unmake(context.WithoutCancel(ctx), session, hw.ID, ws)
 	}
 	// The worker= tag names whose workspace this is to anyone reading herdr's list.
 	if err := c.herdr(session).TagWorkspace(ctx, hw.ID, map[string]string{"worker": name}); err != nil {
-		err = errors.Join(err, c.unmake(context.WithoutCancel(ctx), session, hw.ID, ws))
+		err = errors.Join(err, undo())
 		return logbook.Spawn{}, false, exit(ExitFail, "", err, "%s: herdr couldn't tag its workspace; nothing was recorded", name)
 	}
 	sp = logbook.Spawn{
@@ -104,7 +119,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	}
 	sp.Record = launch.Record
 	if sp.ID, err = c.Logbook.RecordSpawn(ctx, req.By, sp, brief(bead, g, target, c.Guards.AllowMergeInto)); err != nil {
-		err = errors.Join(err, c.unmake(context.WithoutCancel(ctx), session, hw.ID, ws))
+		err = errors.Join(err, undo())
 		return logbook.Spawn{}, false, exit(ExitFail, "", err, "%s: couldn't record the spawn", name)
 	}
 	return sp, false, c.launch(ctx, sp, launch, "")
@@ -165,6 +180,24 @@ func (c *Core) resume(ctx context.Context, sp logbook.Spawn, bead port.Bead, req
 		replaces = st.ID
 	}
 	return c.launch(ctx, sp, launch, replaces)
+}
+
+// kept reports whether ended, a worker's last spawn, left dir as its git_worktree, still
+// checked out on its recorded branch.
+func (c *Core) kept(ctx context.Context, ended *logbook.Spawn, dir string) (bool, error) {
+	if ended == nil || ended.Workspace.Kind != config.GitWorktree || ended.Workspace.Branch == "" || ended.Workspace.Dir != dir {
+		return false, nil
+	}
+	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	head, err := c.git(ctx, dir, "symbolic-ref", "--short", "HEAD")
+	if err != nil {
+		return false, nil // not a worktree on a branch any more: the plain refusals say what
+	}
+	return head == ended.Workspace.Branch, nil
 }
 
 // refuse runs the spawn-time refusals of goal g that need no network, in workspace ws,
@@ -283,48 +316,56 @@ func (c *Core) unmake(ctx context.Context, session, workspace string, ws logbook
 
 // workspace works out the spawn's workspace (Rule D): the project dir the top level of a
 // git checkout is git_worktree, on a branch of its own, or detached for a push goal. none and command arrive with bees-13.10 and 13.11.
-func (c *Core) workspace(ctx context.Context, name string, detached bool) (logbook.Workspace, error) {
+// workspace works out name's git_worktree workspace. When ended, its last spawn, recorded
+// this dir on its branch and both are still there, it is reused (reused true): the work
+// left there is the new spawn's to build on, never refused with no way on (motif 5).
+func (c *Core) workspace(ctx context.Context, name string, detached bool, ended *logbook.Spawn) (ws logbook.Workspace, reused bool, err error) {
 	if c.Repo == "" {
-		return logbook.Workspace{}, exit(ExitRefused, "", nil, "project %s has no repo: run it in the repo, or set paths.repo", c.Project)
+		return logbook.Workspace{}, false, exit(ExitRefused, "", nil, "project %s has no repo: run it in the repo, or set paths.repo", c.Project)
 	}
 	top, err := c.git(ctx, c.Repo, "rev-parse", "--show-toplevel")
 	if err != nil {
-		return logbook.Workspace{}, refusedOrCant(err, "", "%s is not a git checkout (workspace none arrives with bees-13.10)", c.Repo)
+		return logbook.Workspace{}, false, refusedOrCant(err, "", "%s is not a git checkout (workspace none arrives with bees-13.10)", c.Repo)
 	}
 	real, err := filepath.EvalSymlinks(c.Repo)
 	if err != nil {
-		return logbook.Workspace{}, exit(ExitCantCheck, "", err, "can't resolve paths.repo")
+		return logbook.Workspace{}, false, exit(ExitCantCheck, "", err, "can't resolve paths.repo")
 	}
 	if top != c.Repo && top != real {
-		return logbook.Workspace{}, exit(ExitRefused, "", nil, "%s is inside the checkout %s, not its top level; set paths.repo to it", c.Repo, top)
+		return logbook.Workspace{}, false, exit(ExitRefused, "", nil, "%s is inside the checkout %s, not its top level; set paths.repo to it", c.Repo, top)
 	}
 	// The checks above say what to fix when the kind was worked out as none; this one
 	// names a kind set by hand.
 	if c.Kind != "" && c.Kind != "git_worktree" {
-		return logbook.Workspace{}, exit(ExitRefused, bsname.Cmd+" config", nil, "workspace kind %s (%s) isn't built yet (none: bees-13.10, command: bees-13.11)", c.Kind, c.KindWhy)
+		return logbook.Workspace{}, false, exit(ExitRefused, bsname.Cmd+" config", nil, "workspace kind %s (%s) isn't built yet (none: bees-13.10, command: bees-13.11)", c.Kind, c.KindWhy)
 	}
 	base, err := c.git(ctx, c.Repo, "symbolic-ref", "--short", "HEAD")
 	if err != nil {
-		return logbook.Workspace{}, exit(ExitRefused, "git -C "+c.Repo+" switch main", err, "%s has no branch checked out to cut from", c.Repo)
+		return logbook.Workspace{}, false, exit(ExitRefused, "git -C "+c.Repo+" switch main", err, "%s has no branch checked out to cut from", c.Repo)
 	}
 	dir := filepath.Join(c.Worktrees, name)
+	if ok, err := c.kept(ctx, ended, dir); err != nil {
+		return logbook.Workspace{}, false, exit(ExitCantCheck, "", err, "can't tell whether %s is %s's kept worktree", dir, name)
+	} else if ok && !detached {
+		return ended.Workspace, true, nil
+	}
 	if _, err := os.Stat(dir); err == nil {
-		return logbook.Workspace{}, exit(ExitRefused, bsname.Cmd+" prune", nil, "%s already exists", dir)
+		return logbook.Workspace{}, false, exit(ExitRefused, bsname.Cmd+" prune", nil, "%s already exists", dir)
 	}
 	if detached { // a push goal: the target's head, never a branch of its own
-		return logbook.Workspace{Kind: config.GitWorktree, Dir: dir, Repo: c.Repo}, nil
+		return logbook.Workspace{Kind: config.GitWorktree, Dir: dir, Repo: c.Repo}, false, nil
 	}
-	ws := logbook.Workspace{Kind: "git_worktree", Dir: dir, Repo: c.Repo, Branch: name, Base: base}
+	ws = logbook.Workspace{Kind: "git_worktree", Dir: dir, Repo: c.Repo, Branch: name, Base: base}
 	// The branch is the spawn's own, whatever its goal, so prune may delete it later: one
 	// left by an earlier spawn holds work bs would build on unseen (motif 12).
 	switch ok, err := c.hasBranch(ctx, ws); {
 	case err != nil:
-		return logbook.Workspace{}, exit(ExitCantCheck, "", err, "can't tell whether branch %s exists", name)
+		return logbook.Workspace{}, false, exit(ExitCantCheck, "", err, "can't tell whether branch %s exists", name)
 	case ok:
-		return logbook.Workspace{}, exit(ExitRefused, bsname.Cmd+" prune (once its work is merged), or git -C "+c.Repo+" branch -D "+name, nil,
+		return logbook.Workspace{}, false, exit(ExitRefused, bsname.Cmd+" prune (once its work is merged), or git -C "+c.Repo+" branch -D "+name, nil,
 			"branch %s already exists in %s", name, c.Repo)
 	}
-	return ws, nil
+	return ws, false, nil
 }
 
 // writeFiles writes l.Files to the cache dir as <name>-<key>-* (0600), replacing each

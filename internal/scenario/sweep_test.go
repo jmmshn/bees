@@ -186,11 +186,18 @@ func TestSpawnRequiresAGoalAndNamesEveryBadOne(t *testing.T) {
 	}
 }
 
-// bs end --incomplete is refused when nothing was handed off.
-func TestEndIncompleteNeedsAHandoff(t *testing.T) {
+// bs end --incomplete is the queen's abort, handed off or not (the keeper cancelling a
+// worker, bakeoff S8): it ends the worker and keeps its workspace, and prune, which never
+// removes unlanded work, is the only guard (motif 5).
+func TestEndIncompleteAbortsAWorkerThatNeverHandedOff(t *testing.T) {
 	x := newToy(t)
-	x.spawn("toy-1", "branch")
-	must(t, x.queen("end", "--incomplete", "toy-1"), 2, "nothing was handed off")
+	sp := x.spawn("toy-1", "branch")
+	x.commit(sp.Workspace.Dir, "half.txt")
+	must(t, x.queen("end", "--incomplete", "toy-1"), 0, "ended toy-1")
+	must(t, x.queen("prune"), 3, "kept "+sp.Workspace.Dir, "toy-1 has work not on main")
+	if _, err := os.Stat(filepath.Join(sp.Workspace.Dir, "half.txt")); err != nil {
+		t.Fatalf("the aborted worker's work is gone: %v", err)
+	}
 }
 
 // A check that can't run stops bs done at exit 6, never a fail.

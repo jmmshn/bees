@@ -431,3 +431,28 @@ func TestSpawnResumesADeadWorker(t *testing.T) {
 	}
 	must(t, x.queen("spawn", "--goal", "branch", "toy-2"), 2, "pane "+sp2.Herdr.Pane+" is gone", "bs end toy-2 --incomplete")
 }
+
+// A bead whose last spawn ended incomplete, its worktree and branch kept, spawns again on
+// them, never "branch already exists" with no way on (motif 5): the work so far is kept
+// and counts. Every next: on the way is accepted: a lost pane's spawn says to end it
+// --incomplete and spawn again, and both run.
+func TestRespawnReusesAKeptWorkspace(t *testing.T) {
+	x := newToy(t)
+	sp := x.spawn("toy-1", "branch")
+	x.commit(sp.Workspace.Dir, "half.txt")
+	x.kill("toy-1")
+	if _, err := x.herdr.Run(context.Background(), "", "herdr", "--session", x.session, "workspace", "close", sp.Herdr.Workspace); err != nil {
+		t.Fatal(err)
+	}
+	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 2, "next: bs end toy-1 --incomplete, then bs spawn")
+	must(t, x.queen("end", "--incomplete", "toy-1"), 0, "ended toy-1")
+	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 0, "spawned toy-1", "on its kept worktree and branch toy-1")
+	sp2, _, err := x.open().LatestSpawn(context.Background(), "toy-1")
+	if err != nil || sp2.ID == sp.ID || sp2.Workspace.Dir != sp.Workspace.Dir || sp2.Workspace.Branch != "toy-1" || sp2.Workspace.Base != sp.Workspace.Base {
+		t.Fatalf("the second spawn: %+v (first %+v), %v", sp2, sp, err)
+	}
+	if _, err := os.Stat(filepath.Join(sp.Workspace.Dir, "half.txt")); err != nil {
+		t.Fatalf("the kept work is gone: %v", err)
+	}
+	must(t, x.worker("toy-1", 1, "done"), 0, "branch_ahead: 1 commit ahead of main")
+}

@@ -17,3 +17,10 @@ func FastGate(look time.Duration) func() {
 	secondLook = look
 	return func() { secondLook = sl }
 }
+
+// StopWait shortens how long a stop waits for a process to exit; it returns the undo.
+func StopWait(d time.Duration) func() {
+	sw := stopWait
+	stopWait = d
+	return func() { stopWait = sw }
+}

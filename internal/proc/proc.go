@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"syscall"
 )
 
 // Process is a process as bs records it: a pid is only that process while its start time
@@ -78,4 +79,17 @@ func Alive(pid int, start string) (bool, error) {
 		return false, err
 	}
 	return s == start, nil
+}
+
+// Signal sends sig to p only while p is still the process recorded: alive with its start
+// time, so a reused pid is never signalled (motif 12).
+func Signal(p Process, sig syscall.Signal) error {
+	alive, err := Alive(p.PID, p.Start)
+	if err != nil {
+		return err
+	}
+	if !alive {
+		return fmt.Errorf("pid %d: %w", p.PID, ErrGone)
+	}
+	return syscall.Kill(p.PID, sig)
 }

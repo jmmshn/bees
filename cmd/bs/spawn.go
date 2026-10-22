@@ -232,6 +232,9 @@ func cmdEnd(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 	if e.Exited {
 		fmt.Fprintf(stdout, noHarness+"\n", name)
 	}
+	if e.Stopped != "" {
+		fmt.Fprintf(stdout, "its worker still ran outside its workspace: %s\n", e.Stopped)
+	}
 	if e.Left != "" {
 		fmt.Fprintf(stdout, leftWorktree+"\n", e.Left)
 	}
@@ -306,6 +309,9 @@ func endAll(ctx context.Context, f worker.Fleet, o worker.EndOpts, stdout, stder
 			fmt.Fprintf(stdout, "ended %s: workspace %s was already gone\n", e.Name, e.Workspace)
 		default:
 			fmt.Fprintf(stdout, "ended %s: removed workspace %s\n", e.Name, e.Workspace)
+		}
+		if e.Err == nil && e.Stopped != "" {
+			fmt.Fprintf(stdout, "  its worker still ran outside its workspace: %s\n", e.Stopped)
 		}
 		if e.Err == nil && e.Left != "" {
 			fmt.Fprintf(stdout, "  "+leftWorktree+"\n", e.Left)

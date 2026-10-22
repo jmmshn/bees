@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/jmmshn/bees/internal/logbook"
@@ -86,6 +87,8 @@ func (h *fakeHive) RenameAgent(ctx context.Context, pane, name string) error { r
 func (h *fakeHive) Panes(ctx context.Context, workspace string) ([]string, error) { return nil, nil }
 
 func (h *fakeHive) ClosePane(ctx context.Context, pane string) error { return nil }
+
+func (h *fakeHive) Signal(p proc.Process, sig syscall.Signal) error { return proc.ErrGone }
 
 func (h *fakeHive) PanesUnder(ctx context.Context, dir string) ([]string, error) { return nil, nil }
 

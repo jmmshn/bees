@@ -120,8 +120,9 @@ type Herdr interface {
 	// RenameAgent names pane's agent in herdr: the sidebar's name, and a fence against a
 	// twin's launch (agent_name_taken). bs never reads it back.
 	RenameAgent(ctx context.Context, pane, name string) error
-	// Panes lists the panes now in workspace, any moved in from elsewhere included; a
-	// workspace that is gone has none. ErrHerdrDown when herdr didn't answer.
+	// Panes lists the panes now in workspace ("": every workspace), any moved in from
+	// elsewhere included; a workspace that is gone has none. ErrHerdrDown when herdr
+	// didn't answer.
 	Panes(ctx context.Context, workspace string) ([]string, error)
 	// ClosePane closes pane, ending what runs in it; already gone → nil.
 	ClosePane(ctx context.Context, pane string) error
@@ -847,6 +848,7 @@ type Ending struct {
 	Exited          bool   // no harness process ran for it (exited, or none in its pane): no background work to check
 	Forgot          bool   // the workspace is no longer the worker's: the end was recorded, the workspace left open
 	Left            string // the worktree left on disk (its workspace gone or left open): bs prune frees it
+	Stopped         string // how --force stopped a moved worker's process, if it ran
 	Err             error  // the worker was kept: still live in the logbook
 	Warn            error  // the worker was ended, but removing its per-start files failed
 }
@@ -944,6 +946,16 @@ func (f Fleet) end(ctx context.Context, sp logbook.Spawn, o EndOpts) Ending {
 			return e
 		}
 	case e.Gone:
+		// --force on a moved worker: stop the recorded process wherever it runs now, or
+		// record nothing (bees-12.46): an end over a live worker is a zombie (motif 7).
+		alive, _, st, err := SpawnAlive(ctx, f.LB, f.Procs, sp)
+		if err == nil && alive {
+			e.Stopped, err = f.stop(ctx, st.Process)
+		}
+		if err != nil {
+			e.Err = fmt.Errorf("%s: workspace %s is gone and its worker still runs (pid %d), but bs couldn't stop it; nothing recorded: %w", sp.Name, sp.Workspace, st.PID, err)
+			return e
+		}
 	case guest: // --forget: its own pane closed, the end recorded, the workspace left open for its guest
 		e.Forgot = true
 	case plain && wss[i].Worker != sp.Name:

@@ -233,8 +233,9 @@ func (HerdrCLI) ProcessInfo(ctx context.Context, pane string) (PaneProcesses, er
 			Info struct {
 				Shell      int `json:"shell_pid"`
 				Foreground []struct {
-					PID  int    `json:"pid"`
-					Name string `json:"name"`
+					PID  int      `json:"pid"`
+					Name string   `json:"name"`
+					Argv []string `json:"argv"`
 				} `json:"foreground_processes"`
 			} `json:"process_info"`
 		} `json:"result"`
@@ -248,7 +249,7 @@ func (HerdrCLI) ProcessInfo(ctx context.Context, pane string) (PaneProcesses, er
 	}
 	out := PaneProcesses{Shell: r.Result.Info.Shell}
 	for _, p := range r.Result.Info.Foreground {
-		out.Foreground = append(out.Foreground, PaneProcess{PID: p.PID, Name: p.Name})
+		out.Foreground = append(out.Foreground, PaneProcess{PID: p.PID, Name: p.Name, Argv: p.Argv})
 	}
 	return out, nil
 }

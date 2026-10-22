@@ -271,3 +271,12 @@ func samePath(a, b string) bool {
 func harnessProgram(name string) string {
 	return cmp.Or(map[string]string{"claude_code": "claude"}[name], name)
 }
+
+// workerPath is worker.path with ~ expanded.
+func (s *settings) workerPath() []string {
+	var out []string
+	for _, d := range s.Worker.Path {
+		out = append(out, s.Expand(d))
+	}
+	return out
+}

@@ -225,7 +225,7 @@ func TestAMisaddressedSendIsRefused(t *testing.T) {
 	if ms, _ := x.open().Unread(context.Background(), "queen-other"); len(ms) != 0 {
 		t.Fatalf("stored: %+v", ms)
 	}
-	must(t, x.worker("toy-1", 2, "send", "--project", "other", "queen-other", "hi"), 0, "queued; queen-other is not running")
+	must(t, x.worker("toy-1", 2, "send", "--project", "other", "queen-other", "hi"), 0, "queued (queen-other: not running): queen-other reads it at its next bs inbox")
 	ro, err := logbook.OpenReadOnly(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)

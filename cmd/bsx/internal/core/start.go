@@ -14,8 +14,9 @@ import (
 )
 
 // launch writes the start's files, starts the harness in the recorded pane, and confirms
-// the start (ADR-0010): a watch polls the pane from before herdr is asked, so the
-// baseline is taken at first sight, ahead of the doorbell's first tool calls. herdr's
+// the start (ADR-0010): a watch polls the pane from before herdr is asked and records the
+// start at first sight, with its baseline, ahead of the doorbell's first tool calls and
+// of the worker's first bs call, which would otherwise heal it as late. herdr's
 // agent_pane_busy (a new pane's shell not at its prompt) is retried, since herdr typed
 // nothing (bees-12.33); any other herdr error still looks for the harness for
 // Timing.AfterErr, since herdr can give up while it runs (bees-12.49, adopted).
@@ -47,26 +48,36 @@ func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch) erro
 	wctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	seen := make(chan sighting, 1)
-	go func() { seen <- c.watch(wctx, sp, time.Now().Add(t.Confirm)) }()
+	go func() {
+		got := c.watch(wctx, sp, time.Now().Add(t.Confirm))
+		if got.pid != 0 {
+			// A process with --name sp.Name in sp's pane is this start: herdr's answer can't undo it.
+			_, _, got.err = c.Logbook.RecordStartOnce(context.WithoutCancel(ctx), got.start(sp))
+		}
+		seen <- got
+	}()
 	startErr := c.startAgent(ctx, sp, args)
 	switch {
 	case errors.Is(startErr, herdr.ErrPaneBusy), errors.Is(startErr, herdr.ErrNameTaken):
 		cancel() // herdr typed nothing, or a live agent has the name: no start of ours to find
-		<-seen
+		if got := <-seen; got.pid != 0 {
+			return got.err // seen all the same: recorded
+		}
 		return exit(ExitStart, next, startErr, "bs spawn %s: herdr started nothing", sp.Name)
 	case startErr != nil:
 		timer := time.AfterFunc(t.AfterErr, cancel)
 		defer timer.Stop()
 	}
 	got := <-seen
-	if got.pid == 0 {
+	switch {
+	case got.pid == 0:
 		return exit(ExitStart, next, errors.Join(startErr, got.err), "bs spawn %s: start unconfirmed: no %s named %s in pane %s", sp.Name, c.Harness.Kind(), sp.Name, sp.Herdr.Pane)
-	}
-	if startErr != nil {
+	case got.err != nil:
+		return exit(ExitStart, next, got.err, "bs spawn %s: its start (pid %d) couldn't be recorded", sp.Name, got.pid)
+	case startErr != nil:
 		c.warn("herdr said %v, but %s started all the same (pid %d): adopted", startErr, sp.Name, got.pid)
 	}
-	_, _, err = c.Logbook.RecordStartOnce(ctx, got.start(sp))
-	return err
+	return nil
 }
 
 // startAgent is StartAgent, tried again while herdr finds the pane busy, within

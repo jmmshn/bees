@@ -54,7 +54,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 		return logbook.Spawn{}, err
 	}
 	// Prepare is pure, so it runs before anything is made: a refused launch leaves nothing.
-	launch, err := c.Harness.Prepare(port.Start{Role: port.Worker, Name: name, Dir: ws.Dir, PromptFile: "{{prompt.md}}", Doorbell: doorbell(name, bead.ID, req.By)})
+	launch, err := c.Harness.Prepare(port.Start{Role: port.Worker, Name: name, Dir: ws.Dir, PromptFile: "{{prompt.md}}", Doorbell: doorbell(name, bead.ID, req.By), Path: c.WorkerPath})
 	if err != nil {
 		return logbook.Spawn{}, exit(ExitRefused, "", err, "bs spawn %s: its harness refused the launch; nothing was made", name)
 	}

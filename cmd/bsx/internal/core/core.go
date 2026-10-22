@@ -25,10 +25,11 @@ type Core struct {
 	HarnessName string // the config name entries record: claude_code
 	Proc        port.Proc
 	Beads       port.Beads
-	Repo        string // paths.repo: the project's checkout
-	Worktrees   string // where git_worktree workspaces go: <Worktrees>/<name>
-	ConfigDir   string // the config dir the spawn ran under, recorded
-	CacheDir    string // per-start files
+	Repo        string   // paths.repo: the project's checkout
+	Worktrees   string   // where git_worktree workspaces go: <Worktrees>/<name>
+	ConfigDir   string   // the config dir the spawn ran under, recorded
+	CacheDir    string   // per-start files
+	WorkerPath  []string // worker.path: dirs first on a worker's PATH
 	Timing      Timing
 	Warn        func(msg string) // prints a fallback bs took (Rule G); nil drops it
 }

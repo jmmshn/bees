@@ -29,7 +29,7 @@ Where a project's changes (pull requests, CLs) are reviewed and land, set by `re
 _Avoid_: forge, remote, GitHub (for the general idea)
 
 **Workspace commit**:
-A commit made in a worker's workspace since it was first spawned there, as its VCS records it (git: the HEAD reflog's commit, rebase, cherry-pick, revert, am and merge-commit entries; never a checkout, reset or fast-forward). A handed-off change must hold one.
+A commit made in a worker's workspace since it was first spawned there: one the worker wrote there, as its VCS records it (git: the HEAD reflog's commit, amend, merge-commit and revert entries; never a pull, checkout, reset, fast-forward, cherry-pick or rebase), or a rebased copy of one, matched by patch-id (a pull --rebase, a rebase -i, the host's "Update branch"). Work pulled in is never one. A handed-off change must hold one.
 _Avoid_: own commit, worker commit
 
 **Pending**:

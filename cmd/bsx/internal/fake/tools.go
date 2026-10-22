@@ -69,8 +69,12 @@ type PR struct {
 	Next *[]Check
 }
 
-// Check is one CI check of a PR.
-type Check struct{ Name, State string } // State: SUCCESS, FAILURE, PENDING, SKIPPED, CANCELLED
+// Check is one CI check of a PR; an Optional one isn't required by branch protection, so
+// gh pr checks --required leaves it out.
+type Check struct {
+	Name, State string // State: SUCCESS, FAILURE, PENDING, SKIPPED, CANCELLED
+	Optional    bool
+}
 
 // bucket is gh pr checks' bucket for a check's state.
 func (c Check) bucket() string {
@@ -90,11 +94,13 @@ type GH struct {
 	mu      sync.Mutex
 	PRs     map[string]*PR
 	Offline bool
+	// Hang makes every call hang until its context ends, as gh does on a network that
+	// drops packets.
+	Hang bool
 	// Git is a bare repo standing for GitHub's copy of the repo; "" answers from the PRs'
 	// own fields. Each view writes refs/pull/<n>/head there, as GitHub keeps it.
-	Git        string
-	BaseChecks map[string]int  // check runs and statuses on a branch's tip
-	Protected  map[string]bool // branch protection, by branch
+	Git       string
+	Protected map[string]bool // branch protection, by branch
 }
 
 // Edit changes PR url under the lock gh's calls take: a test's change while a bs done
@@ -139,8 +145,13 @@ func (g *GH) refresh(pr *PR) error {
 	return nil
 }
 
-func (g *GH) Run(_ context.Context, _ string, argv ...string) ([]byte, error) {
+func (g *GH) Run(ctx context.Context, _ string, argv ...string) ([]byte, error) {
 	g.mu.Lock()
+	if g.Hang {
+		g.mu.Unlock()
+		<-ctx.Done()
+		return nil, fmt.Errorf("%s: %w", strings.Join(argv, " "), ctx.Err())
+	}
 	defer g.mu.Unlock()
 	if g.Offline {
 		return nil, ghFail(argv, "error connecting to api.github.com")
@@ -196,7 +207,14 @@ func (g *GH) Run(_ context.Context, _ string, argv ...string) ([]byte, error) {
 		}
 		return json.Marshal(out)
 	case "checks":
-		if len(pr.CI) == 0 {
+		cs := pr.CI
+		if slices.Contains(argv, "--required") {
+			cs = slices.DeleteFunc(slices.Clone(cs), func(c Check) bool { return c.Optional })
+			if len(cs) == 0 { // probed on gh 2.102
+				return nil, ghFail(argv, fmt.Sprintf("No required checks reported on the '%s' branch", pr.Head))
+			}
+		}
+		if len(cs) == 0 {
 			return nil, ghFail(argv, fmt.Sprintf("no checks reported on the '%s' branch", pr.Head))
 		}
 		var out []map[string]string
@@ -205,7 +223,7 @@ func (g *GH) Run(_ context.Context, _ string, argv ...string) ([]byte, error) {
 				pr.CI, pr.Next = *pr.Next, nil
 			}
 		}()
-		for _, c := range pr.CI {
+		for _, c := range cs {
 			row := map[string]string{}
 			for _, f := range strings.Split(want, ",") {
 				switch f {
@@ -227,8 +245,7 @@ func (g *GH) Run(_ context.Context, _ string, argv ...string) ([]byte, error) {
 }
 
 // api answers gh api repos/<o>/<r> (its default branch, main), and under it
-// compare/<base>...<head>, commits/<ref>/check-runs, commits/<ref>/status and
-// branches/<branch>; a ref or branch the bare repo doesn't have is a 404, as on GitHub.
+// compare/<base>...<head> and branches/<branch>; a ref or branch the bare repo doesn't have is a 404, as on GitHub.
 func (g *GH) api(argv []string) ([]byte, error) {
 	notFound := &port.ExitError{Argv: argv, Code: 1, Stderr: []byte("gh: Not Found (HTTP 404)\n")}
 	parts := strings.SplitN(argv[2], "/", 4)
@@ -266,16 +283,6 @@ func (g *GH) api(argv []string) ([]byte, error) {
 			return json.Marshal(map[string]int{"behind_by": n})
 		}
 		return nil, notFound
-	case strings.HasPrefix(rest, "commits/"):
-		ref, what, _ := strings.Cut(strings.TrimPrefix(rest, "commits/"), "/")
-		if !has("refs/heads/" + ref) {
-			return nil, &port.ExitError{Argv: argv, Code: 1, Stderr: []byte("gh: No commit found for SHA: " + ref + " (HTTP 422)\n")}
-		}
-		n := 0
-		if what == "check-runs" {
-			n = g.BaseChecks[ref]
-		}
-		return json.Marshal(map[string]int{"total_count": n})
 	case strings.HasPrefix(rest, "branches/"):
 		b := strings.TrimPrefix(rest, "branches/")
 		if !has("refs/heads/" + b) {
@@ -286,8 +293,9 @@ func (g *GH) api(argv []string) ([]byte, error) {
 	return nil, ghFail(argv, "fake gh: api "+argv[2])
 }
 
-// list is gh pr list --head <branch> --state <state> --json headRefOid: the PRs whose head
-// branch is branch, in state (open, merged, closed, all).
+// list is gh pr list [--repo OWNER/REPO] --head <branch> --state <state> --json headRefOid:
+// the PRs of that repo (by URL) whose head branch is branch, in state (open, merged,
+// closed, all).
 func (g *GH) list(argv []string) ([]byte, error) {
 	flag := func(name string) string {
 		if i := slices.Index(argv, name); i >= 0 && i+1 < len(argv) {
@@ -301,6 +309,9 @@ func (g *GH) list(argv []string) ([]byte, error) {
 	head, state := flag("--head"), strings.ToUpper(cmp.Or(flag("--state"), "open"))
 	out := []map[string]string{}
 	for _, url := range slices.Sorted(maps.Keys(g.PRs)) {
+		if repo := flag("--repo"); repo != "" && !strings.HasPrefix(url, "https://github.com/"+repo+"/pull/") {
+			continue
+		}
 		if pr := g.PRs[url]; pr.Head == head && (state == "ALL" || pr.State == state) {
 			out = append(out, map[string]string{"headRefOid": pr.HeadOID})
 		}

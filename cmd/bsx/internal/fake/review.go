@@ -20,18 +20,19 @@ import (
 // checks: CL-shaped changes (https://cl.test/<repo>/<n>) and a commit graph, all in
 // memory. A workspace's commits are what Commit made there; uploading a workspace points
 // a change at its head. It shows the goal checks need neither git nor GitHub (keeper,
-// bees-13.6). The workspace itself is still git_worktree's (command arrives with
-// bees-13.11): Detach makes a plain git worktree, and prune removes it with git.
+// bees-13.6). ponytail: the workspace itself is still git_worktree's: Detach makes a plain
+// git worktree, and prune removes it with git; the command workspace kind (bees-13.11)
+// replaces it.
 type CLHost struct {
 	mu       sync.Mutex
 	RepoName string // the repo every checkout belongs to; "" is none
 	Offline  bool
-	// BaseChecks are the CI checks on trunk's tip; Protected says trunk is protected.
-	BaseChecks     int
+	// TrunkProtected says trunk is protected.
 	TrunkProtected bool
 	changes        map[int]*clChange
 	parents        map[string][]string // commit → its parents
 	made           map[string]clMade   // commits Commit made: where and when
+	patch          map[string]string   // commit → its patch; a rebased copy keeps it, a merge has none
 	heads          map[string]string   // checkout dir → its head commit
 	trunk          string              // trunk's tip
 	n              int
@@ -39,9 +40,10 @@ type CLHost struct {
 
 type clChange struct {
 	port.Change
-	CI     []port.CICheck
-	next   *[]port.CICheck // replaces CI once CI has answered (CLHost.Next)
-	landed string          // the trunk commit it landed as
+	CI       []port.CICheck  // required ones: CI answers only these
+	Optional []port.CICheck  // checks no branch protection requires
+	next     *[]port.CICheck // replaces CI once CI has answered (CLHost.Next)
+	landed   string          // the trunk commit it landed as
 }
 
 type clMade struct {
@@ -56,7 +58,7 @@ var (
 
 func (h *CLHost) init() {
 	if h.parents == nil {
-		h.changes, h.parents, h.made, h.heads = map[int]*clChange{}, map[string][]string{}, map[string]clMade{}, map[string]string{}
+		h.changes, h.parents, h.made, h.heads, h.patch = map[int]*clChange{}, map[string][]string{}, map[string]clMade{}, map[string]string{}, map[string]string{}
 		h.trunk = "t0"
 		h.parents["t0"] = nil
 	}
@@ -84,8 +86,31 @@ func (h *CLHost) Commit(dir string) string {
 	h.init()
 	id := h.newCommit(h.head(dir))
 	h.made[id] = clMade{dir: dir, at: time.Now()}
+	h.patch[id] = "p" + id
 	h.heads[dir] = id
 	return id
+}
+
+// Rebase replays dir's commits that onto lacks on top of onto, as a pull --rebase does:
+// copies with the same patches, written by no one, and dir's head moves to the last.
+func (h *CLHost) Rebase(dir, onto string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.init()
+	have := h.ancestors(onto)
+	var todo []string
+	for c := h.head(dir); !slices.Contains(have, c); c = h.parents[c][0] {
+		if len(h.parents[c]) == 1 {
+			todo = append([]string{c}, todo...)
+		}
+	}
+	head := onto
+	for _, c := range todo {
+		id := h.newCommit(head)
+		h.patch[id] = h.patch[c]
+		head = id
+	}
+	h.heads[dir] = head
 }
 
 // Sync brings trunk into dir: a merge commit made there.
@@ -121,6 +146,7 @@ func (h *CLHost) Trunk() {
 	defer h.mu.Unlock()
 	h.init()
 	h.trunk = h.newCommit(h.trunk)
+	h.patch[h.trunk] = "p" + h.trunk
 }
 
 // Upload points change n (made open when new) at dir's head and returns its URL.
@@ -131,19 +157,26 @@ func (h *CLHost) Upload(dir string, n int, draft bool) string {
 	c := h.changes[n]
 	if c == nil {
 		c = &clChange{Change: port.Change{URL: fmt.Sprintf("https://cl.test/%s/%d", h.RepoName, n), Repo: h.RepoName, Number: n,
-			State: "open", Base: "trunk", Editable: true, Head: fmt.Sprintf("cl%d", n)}}
+			State: port.Open, Base: "trunk", Editable: true, Head: fmt.Sprintf("cl%d", n)}}
 		h.changes[n] = c
 	}
 	c.Draft, c.HeadCommit = draft, h.head(dir)
 	return c.URL
 }
 
-// Set changes change n: its state (open, merged, closed), CI, or notes.
+// Set changes change n: its state (open, merged, closed), required CI, or notes.
 func (h *CLHost) Set(n int, f func(c *port.Change, ci *[]port.CICheck)) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	c := h.changes[n]
 	f(&c.Change, &c.CI)
+}
+
+// SetOptional sets change n's checks that nothing requires: bs never reads them.
+func (h *CLHost) SetOptional(n int, ci []port.CICheck) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.changes[n].Optional = ci
 }
 
 // Land submits change n: its head lands on trunk.
@@ -152,7 +185,7 @@ func (h *CLHost) Land(n int) {
 	defer h.mu.Unlock()
 	c := h.changes[n]
 	h.trunk = h.newCommit(h.trunk, c.HeadCommit)
-	c.State, c.landed = "merged", h.trunk
+	c.State, c.landed = port.Merged, h.trunk
 }
 
 // ancestors is every commit reachable from c, c included.
@@ -246,12 +279,6 @@ func (h *CLHost) Next(n int, ci []port.CICheck) {
 	h.changes[n].next = &ci
 }
 
-func (h *CLHost) BaseCI(context.Context, string, port.Change) (int, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.BaseChecks, h.offline()
-}
-
 func (h *CLHost) Behind(_ context.Context, dir string, c port.Change) (int, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -275,19 +302,19 @@ func (h *CLHost) Protected(context.Context, string, string) (bool, error) {
 }
 
 // Landed is the head of each merged change whose head is branch.
-func (h *CLHost) Landed(_ context.Context, _ string, branch string) ([]string, error) {
+func (h *CLHost) Landed(_ context.Context, _ string, branch string) ([]string, string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if err := h.offline(); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	var out []string
 	for _, c := range h.changes {
-		if c.State == "merged" && c.Head == branch {
+		if c.State == port.Merged && c.Head == branch {
 			out = append(out, c.HeadCommit)
 		}
 	}
-	return out, nil
+	return out, "", nil
 }
 
 // MergeDeny denies the CL tool's submit.
@@ -322,20 +349,43 @@ func (h *CLHost) Commits(_ context.Context, dir string, since time.Time) ([]stri
 }
 
 // Branch is the head of the workspace named name: a worker's workspace is the only
-// "branch" a CL-shaped checkout has, and the change it uploads holds its commits.
+// "branch" a CL-shaped checkout has, and the change it uploads holds its commits. Two
+// workspaces of that name is an error, never the first one found.
 func (h *CLHost) Branch(_ context.Context, _ string, name string) (string, bool, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	for dir, head := range h.heads {
+	var dirs []string
+	for dir := range h.heads {
 		if filepath.Base(dir) == name {
-			return head, true, nil
+			dirs = append(dirs, dir)
 		}
 	}
-	return "", false, nil
+	switch len(dirs) {
+	case 0:
+		return "", false, nil
+	case 1:
+		return h.heads[dirs[0]], true, nil
+	}
+	slices.Sort(dirs)
+	return "", false, fmt.Errorf("cl: workspace %s is ambiguous: %s", name, strings.Join(dirs, ", "))
 }
 
 // Pushed: a CL host has no local branches to push.
 func (*CLHost) Pushed(context.Context, string, string) (string, bool, error) { return "", false, nil }
+
+// PatchIDs is each commit's patch; every commit is in memory, so none is missing.
+func (h *CLHost) PatchIDs(_ context.Context, _ string, commits []string) (map[string]string, []string, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.init()
+	ids := map[string]string{}
+	for _, c := range commits {
+		if p := h.patch[c]; p != "" {
+			ids[c] = p
+		}
+	}
+	return ids, nil, nil
+}
 
 func (h *CLHost) Has(_ context.Context, _ string, commit string) (bool, error) {
 	h.mu.Lock()

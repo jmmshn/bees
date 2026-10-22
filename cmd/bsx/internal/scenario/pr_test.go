@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jmmshn/bees/cmd/bsx/internal/fake"
 	"github.com/jmmshn/bees/cmd/bsx/internal/goal"
+	"github.com/jmmshn/bees/cmd/bsx/internal/logbook"
 	"github.com/jmmshn/bees/cmd/bsx/internal/port"
 )
 
@@ -78,18 +80,20 @@ type backend interface {
 	commit(x *toy, dir string)
 	open(x *toy, n int, dir, head string, draft bool) string // publish dir's head as change n
 	update(x *toy, n int, dir string)                        // push dir's head onto change n
-	ci(x *toy, n int, buckets ...string)                     // pass, fail or pending
+	ci(x *toy, n int, buckets ...string)                     // pass, fail or pending; a ? suffix: not required
 	ciLater(x *toy, n int, buckets ...string)                // CI as given once bs has seen it as it is
-	baseChecks(x *toy, k int)
-	behind(x *toy)           // trunk moves on elsewhere
-	sync(x *toy, dir string) // bring trunk into dir, with a commit
-	land(x *toy, n int)      // merge it
-	close(x *toy, n int)     // close it unmerged
+	behind(x *toy)                                           // trunk moves on elsewhere
+	sync(x *toy, dir string)                                 // bring trunk into dir, with a commit
+	land(x *toy, n int)                                      // merge it
+	close(x *toy, n int)                                     // close it unmerged
 	note(x *toy, n int, body string, at time.Time)
 	adopt(x *toy, dir string, n int) // point dir at change n's head, committing nothing
 	foreign(x *toy, n int)           // its head in a fork that takes no edits
 	offline(x *toy, off bool)
 	stack(x *toy, dir, name string) // start a stacked change on top of dir's head
+	// pullRebase brings other's head (pushed as branch name) under dir's commits, as
+	// git pull --rebase does.
+	pullRebase(x *toy, dir, other, name string)
 	url(n int) string
 	other() string // a change URL of another repo
 }
@@ -124,11 +128,13 @@ func (ghBackend) update(x *toy, n int, dir string) {
 	x.push(dir, x.gh.PRs[ghBackend{}.url(n)].Head)
 }
 func (ghBackend) ci(x *toy, n int, buckets ...string) {
-	var states []string
-	for _, b := range buckets {
-		states = append(states, map[string]string{"pass": "SUCCESS", "fail": "FAILURE", "pending": "PENDING"}[b])
+	pr := x.gh.PRs[ghBackend{}.url(n)]
+	pr.CI = nil
+	for i, b := range buckets {
+		opt := strings.HasSuffix(b, "?")
+		state := map[string]string{"pass": "SUCCESS", "fail": "FAILURE", "pending": "PENDING"}[strings.TrimSuffix(b, "?")]
+		pr.CI = append(pr.CI, fake.Check{Name: fmt.Sprintf("job%d", i+1), State: state, Optional: opt})
 	}
-	ci(states...)(x.gh.PRs[ghBackend{}.url(n)])
 }
 func (ghBackend) ciLater(x *toy, n int, buckets ...string) {
 	var states []string
@@ -139,7 +145,6 @@ func (ghBackend) ciLater(x *toy, n int, buckets ...string) {
 	ci(states...)(&next)
 	x.gh.Edit(ghBackend{}.url(n), func(pr *fake.PR) { pr.Next = &next.CI })
 }
-func (ghBackend) baseChecks(x *toy, k int) { x.gh.BaseChecks = map[string]int{"main": k} }
 func (ghBackend) behind(x *toy) {
 	x.commit(x.repo, fmt.Sprintf("main%d.txt", time.Now().UnixNano()))
 	x.git(x.repo, "push", "-q", "origin", "main")
@@ -164,8 +169,12 @@ func (ghBackend) foreign(x *toy, n int) {
 }
 func (ghBackend) offline(x *toy, off bool)       { x.gh.Offline = off }
 func (ghBackend) stack(x *toy, dir, name string) { x.git(dir, "checkout", "-q", "-b", name) }
-func (ghBackend) url(n int) string               { return fmt.Sprintf("%s/pull/%d", toyRepo, n) }
-func (ghBackend) other() string                  { return "https://github.com/someone/else/pull/1" }
+func (ghBackend) pullRebase(x *toy, dir, other, name string) {
+	x.push(other, name)
+	x.git(dir, "pull", "-q", "--rebase", "origin", name)
+}
+func (ghBackend) url(n int) string { return fmt.Sprintf("%s/pull/%d", toyRepo, n) }
+func (ghBackend) other() string    { return "https://github.com/someone/else/pull/1" }
 
 type clBackend struct{ h *fake.CLHost }
 
@@ -182,12 +191,17 @@ func (b *clBackend) open(_ *toy, n int, dir, _ string, draft bool) string {
 }
 func (b *clBackend) update(_ *toy, n int, dir string) { b.h.Upload(dir, n, false) }
 func (b *clBackend) ci(_ *toy, n int, buckets ...string) {
-	b.h.Set(n, func(_ *port.Change, ci *[]port.CICheck) {
-		*ci = nil
-		for i, s := range buckets {
-			*ci = append(*ci, port.CICheck{Name: fmt.Sprintf("job%d", i+1), Bucket: s})
+	var req, opt []port.CICheck
+	for i, s := range buckets {
+		c := port.CICheck{Name: fmt.Sprintf("job%d", i+1), Bucket: strings.TrimSuffix(s, "?")}
+		if strings.HasSuffix(s, "?") {
+			opt = append(opt, c)
+		} else {
+			req = append(req, c)
 		}
-	})
+	}
+	b.h.Set(n, func(_ *port.Change, ci *[]port.CICheck) { *ci = req })
+	b.h.SetOptional(n, opt)
 }
 func (b *clBackend) ciLater(_ *toy, n int, buckets ...string) {
 	var next []port.CICheck
@@ -196,10 +210,9 @@ func (b *clBackend) ciLater(_ *toy, n int, buckets ...string) {
 	}
 	b.h.Next(n, next)
 }
-func (b *clBackend) baseChecks(_ *toy, k int) { b.h.BaseChecks = k }
-func (b *clBackend) behind(*toy)              { b.h.Trunk() }
-func (b *clBackend) sync(_ *toy, dir string)  { b.h.Sync(dir) }
-func (b *clBackend) land(_ *toy, n int)       { b.h.Land(n) }
+func (b *clBackend) behind(*toy)             { b.h.Trunk() }
+func (b *clBackend) sync(_ *toy, dir string) { b.h.Sync(dir) }
+func (b *clBackend) land(_ *toy, n int)      { b.h.Land(n) }
 func (b *clBackend) close(_ *toy, n int) {
 	b.h.Set(n, func(c *port.Change, _ *[]port.CICheck) { c.State = "closed" })
 }
@@ -216,10 +229,11 @@ func (b *clBackend) foreign(_ *toy, n int) {
 		c.Foreign, c.ForeignRepo, c.Editable = true, "someone/toy", false
 	})
 }
-func (b *clBackend) offline(_ *toy, off bool)   { b.h.Offline = off }
-func (b *clBackend) stack(*toy, string, string) {} // a CL stacks on the workspace's head as it is
-func (b *clBackend) url(n int) string           { return fmt.Sprintf("https://cl.test/toy/%d", n) }
-func (b *clBackend) other() string              { return "https://cl.test/else/1" }
+func (b *clBackend) offline(_ *toy, off bool)                { b.h.Offline = off }
+func (b *clBackend) stack(*toy, string, string)              {} // a CL stacks on the workspace's head as it is
+func (b *clBackend) pullRebase(_ *toy, dir, other, _ string) { b.h.Rebase(dir, b.h.Head(other)) }
+func (b *clBackend) url(n int) string                        { return fmt.Sprintf("https://cl.test/toy/%d", n) }
+func (b *clBackend) other() string                           { return "https://cl.test/else/1" }
 
 // --goal pr: no PR is a refusal; each failing check is named at once (exit 7), CI red
 // naming its checks; CI pending, or none registered while trunk has checks, is exit 10
@@ -238,11 +252,8 @@ func TestPRGoalHandoffChecks(t *testing.T) {
 		must(t, x.worker("toy-1", 2, "done", "--pr", url), 7, "1 handoff checks failed", "ci_green", "failing: job2")
 		b.ci(x, 1, "pending")
 		must(t, x.worker("toy-1", 3, "done", "--pr", url), 10, "still pending", "pending: job1", "next: bsx done --wait")
-		b.ci(x, 1)
-		b.baseChecks(x, 2)
-		must(t, x.worker("toy-1", 4, "done", "--pr", url), 10, "no checks registered yet")
-		b.baseChecks(x, 0)
-		must(t, x.worker("toy-1", 5, "done", "--pr", url), 0, "handed off to queen-toy", url, "vacuous pass")
+		b.ci(x, 1, "fail?") // only required checks count (keeper, 2026-10-22)
+		must(t, x.worker("toy-1", 4, "done", "--pr", url), 0, "handed off to queen-toy", url, "vacuous pass: no required checks")
 		b.behind(x)
 		must(t, x.keeper("check", "toy-1"), 7, "FAIL pr_current", "1 commits behind")
 		must(t, x.queen("end", "toy-1"), 9, url+": open")
@@ -294,12 +305,11 @@ func TestPRReadyAndDraft(t *testing.T) {
 		sp = x.spawn("toy-2", "pr:draft")
 		b.commit(x, sp.Workspace.Dir)
 		url = b.open(x, 2, sp.Workspace.Dir, "toy-2", true)
-		b.ci(x, 2, "pending") // drafts need green CI too (keeper, 2026-10-22)
-		must(t, x.worker("toy-2", 1, "done", "--pr", url), 10, "pending: job1")
-		b.ci(x, 2, "fail")
-		must(t, x.worker("toy-2", 2, "done", "--pr", url), 7, "ci_green", "failing: job1")
-		b.ci(x, 2, "pass")
-		must(t, x.worker("toy-2", 3, "done", "--pr", url), 0)
+		b.ci(x, 2, "fail") // a draft gets no CI check at all (keeper, 2026-10-22)
+		must(t, x.worker("toy-2", 1, "done", "--pr", url), 0)
+		if d, _, _ := x.open().LatestDone(ctx, sp.ID); slices.ContainsFunc(d.Checks, func(r logbook.CheckResult) bool { return r.Name == goal.CIGreen }) {
+			t.Fatalf("a draft's handoff ran ci_green: %+v", d.Checks)
+		}
 		must(t, x.queen("end", "toy-2"), 0)
 		must(t, x.queen("prune"), 3, url+": open")
 		b.close(x, 2)
@@ -375,7 +385,7 @@ func TestPushAndReviewGoals(t *testing.T) {
 		must(t, x.worker("toy-1", 1, "inbox"), 0, "starts at "+target+"'s head")
 		must(t, x.worker("toy-1", 2, "done"), 7, "push_moved", "nothing was committed")
 		b.commit(x, dir)
-		must(t, x.worker("toy-1", 3, "done"), 7, "push_moved", "descends from no commit made in "+dir)
+		must(t, x.worker("toy-1", 3, "done"), 7, "push_moved", "holds no commit made in "+dir)
 		b.update(x, 5, dir)
 		must(t, x.worker("toy-1", 4, "done"), 0, "handed off")
 		must(t, x.queen("end", "toy-1"), 9, target+": open")
@@ -463,8 +473,21 @@ func TestDoneWaitsForCI(t *testing.T) {
 		b.ciLater(x, 1, "pass")
 		must(t, x.worker("toy-1", 5, "handoff", "--pr", url), 0, "handed off to queen-toy") // handoff is done --wait
 		b.ci(x, 1, "pending")
-		must(t, x.keeper("check", "toy-1"), 10, "FAIL ci_green", "pending: job1")
+		must(t, x.keeper("check", "toy-1"), 10, "WAIT ci_green", "pending: job1")
 	})
+}
+
+// A host that hangs is a check that couldn't run (exit 6), even under --wait: exit 11 is
+// only for pending that outlived the wait (eng-review of #108).
+func TestAHungHostIsCantCheckNotPending(t *testing.T) {
+	x := newToy(t)
+	b := ghBackend{}
+	b.setup(x, true)
+	sp := x.spawn("toy-1", "pr")
+	b.commit(x, sp.Workspace.Dir)
+	url := b.open(x, 1, sp.Workspace.Dir, "toy-1", false)
+	x.gh.Hang = true
+	must(t, x.worker("toy-1", 1, "done", "--wait", "--timeout", "1s", "--pr", url), 6, "couldn't run")
 }
 
 // A waiver holds at end and prune as at handoff; an amend re-runs the spawn refusals on
@@ -549,4 +572,63 @@ func TestAPushTheHostHasntSeenYetIsPending(t *testing.T) {
 	b.commit(x, other)
 	x.push(other, "toy-1")
 	must(t, x.worker("toy-1", 5, "done", "--wait", "--timeout", "1s", "--pr", url), 7, "has commits toy-1 lacks", "pull them, then push")
+}
+
+// While the host still shows the old head of a pushed branch, what it says of that head
+// (CI red, behind) is about a commit the worker has moved past: pr_current and ci_green are
+// pending too, so a fix pushed after red CI waits (exit 10), never fails at once on the
+// old run (eng-review of #108). A push= target the host lags on is pending the same way.
+func TestTheOldHeadsCIIsPendingWhileTheHostLags(t *testing.T) {
+	x := newToy(t)
+	b := ghBackend{}
+	b.setup(x, true)
+	sp := x.spawn("toy-1", "pr")
+	dir := sp.Workspace.Dir
+	b.commit(x, dir)
+	url := b.open(x, 1, dir, "toy-1", false)
+	b.ci(x, 1, "fail")
+	must(t, x.worker("toy-1", 1, "done", "--pr", url), 7, "failing: job1")
+	x.gh.Edit(url, func(pr *fake.PR) { pr.Stale = true })
+	b.behind(x)
+	b.commit(x, dir)
+	x.git(dir, "push", "-q", "-u", "origin", "toy-1")
+	must(t, x.worker("toy-1", 2, "done", "--pr", url), 10, "pending: toy-1 was pushed at", "ci_green", "pr_current")
+
+	other := filepath.Join(filepath.Dir(x.repo), "theirs")
+	x.git(x.repo, "worktree", "add", "-q", "-b", "feature", other)
+	b.commit(x, other)
+	target := b.open(x, 5, other, "feature", false)
+	b.ci(x, 5, "pass")
+	sp = x.spawn("toy-2", "push="+target)
+	dir = sp.Workspace.Dir
+	b.commit(x, dir)
+	x.gh.Edit(target, func(pr *fake.PR) { pr.Stale = true })
+	b.update(x, 5, dir)
+	must(t, x.worker("toy-2", 1, "done"), 10, "push_moved", "pending: feature was pushed at")
+	time.AfterFunc(300*time.Millisecond, func() { x.gh.Edit(target, func(pr *fake.PR) { pr.Stale = false }) })
+	must(t, x.worker("toy-2", 2, "done", "--wait"), 0)
+}
+
+// A pull brings in work other workers already landed, which must never count as this
+// worker's: a commit is made here when it was written here or is a rebased copy of one
+// (patch-id). After a pull --rebase the worker's PR passes on its rebased commit; a PR
+// holding only the pulled-in commit is refused (keeper, 2026-10-22).
+func TestAPulledCommitIsNeverTheWorkers(t *testing.T) {
+	both(t, func(t *testing.T, x *toy, b backend) {
+		sp := x.spawn("toy-1", "pr")
+		dir := sp.Workspace.Dir
+		b.commit(x, dir)
+		written := x.headOf(b, dir)
+		other := filepath.Join(filepath.Dir(x.repo), "theirs")
+		x.git(x.repo, "worktree", "add", "-q", "-b", "theirs", other)
+		b.commit(x, other)
+		b.pullRebase(x, dir, other, "theirs")
+		if x.headOf(b, dir) == written {
+			t.Fatal("the pull didn't rebase the worker's commit")
+		}
+		theirs := b.open(x, 2, other, "theirs", false)
+		must(t, x.worker("toy-1", 1, "done", "--pr", theirs), 7, "pr_workspace_commit", "none of its 1 commits was made")
+		url := b.open(x, 1, dir, "toy-1", false)
+		must(t, x.worker("toy-1", 2, "done", "--pr", url), 0, "handed off")
+	})
 }

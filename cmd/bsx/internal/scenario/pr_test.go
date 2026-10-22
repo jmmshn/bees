@@ -82,6 +82,7 @@ type backend interface {
 	update(x *toy, n int, dir string)                        // push dir's head onto change n
 	ci(x *toy, n int, buckets ...string)                     // pass, fail or pending; a ? suffix: not required
 	ciLater(x *toy, n int, buckets ...string)                // CI as given once bs has seen it as it is
+	requires(x *toy, names ...string)                        // the checks trunk's protection requires
 	behind(x *toy)                                           // trunk moves on elsewhere
 	sync(x *toy, dir string)                                 // bring trunk into dir, with a commit
 	land(x *toy, n int)                                      // merge it
@@ -144,6 +145,9 @@ func (ghBackend) ciLater(x *toy, n int, buckets ...string) {
 	var next fake.PR
 	ci(states...)(&next)
 	x.gh.Edit(ghBackend{}.url(n), func(pr *fake.PR) { pr.Next = &next.CI })
+}
+func (ghBackend) requires(x *toy, names ...string) {
+	x.gh.Requires = map[string][]string{"main": names}
 }
 func (ghBackend) behind(x *toy) {
 	x.commit(x.repo, fmt.Sprintf("main%d.txt", time.Now().UnixNano()))
@@ -210,9 +214,10 @@ func (b *clBackend) ciLater(_ *toy, n int, buckets ...string) {
 	}
 	b.h.Next(n, next)
 }
-func (b *clBackend) behind(*toy)             { b.h.Trunk() }
-func (b *clBackend) sync(_ *toy, dir string) { b.h.Sync(dir) }
-func (b *clBackend) land(_ *toy, n int)      { b.h.Land(n) }
+func (b *clBackend) requires(_ *toy, names ...string) { b.h.TrunkRequires = names }
+func (b *clBackend) behind(*toy)                      { b.h.Trunk() }
+func (b *clBackend) sync(_ *toy, dir string)          { b.h.Sync(dir) }
+func (b *clBackend) land(_ *toy, n int)               { b.h.Land(n) }
 func (b *clBackend) close(_ *toy, n int) {
 	b.h.Set(n, func(c *port.Change, _ *[]port.CICheck) { c.State = "closed" })
 }
@@ -253,7 +258,7 @@ func TestPRGoalHandoffChecks(t *testing.T) {
 		b.ci(x, 1, "pending")
 		must(t, x.worker("toy-1", 3, "done", "--pr", url), 10, "still pending", "pending: job1", "next: bsx done --wait")
 		b.ci(x, 1, "fail?") // only required checks count (keeper, 2026-10-22)
-		must(t, x.worker("toy-1", 4, "done", "--pr", url), 0, "handed off to queen-toy", url, "vacuous pass: no required checks")
+		must(t, x.worker("toy-1", 4, "done", "--pr", url), 0, "handed off to queen-toy", url, "vacuous pass:", "requires no checks")
 		b.behind(x)
 		must(t, x.keeper("check", "toy-1"), 7, "FAIL pr_current", "1 commits behind")
 		must(t, x.queen("end", "toy-1"), 9, url+": open")
@@ -630,5 +635,20 @@ func TestAPulledCommitIsNeverTheWorkers(t *testing.T) {
 		must(t, x.worker("toy-1", 1, "done", "--pr", theirs), 7, "pr_workspace_commit", "none of its 1 commits was made")
 		url := b.open(x, 1, dir, "toy-1", false)
 		must(t, x.worker("toy-1", 2, "done", "--pr", url), 0, "handed off")
+	})
+}
+
+// Right after a push the host lists no checks yet: a check the base's protection requires
+// that CI hasn't reported is pending, never "none required" (keeper, 2026-10-22).
+func TestARequiredCheckNotReportedYetIsPending(t *testing.T) {
+	both(t, func(t *testing.T, x *toy, b backend) {
+		sp := x.spawn("toy-1", "pr")
+		b.commit(x, sp.Workspace.Dir)
+		url := b.open(x, 1, sp.Workspace.Dir, "toy-1", false)
+		b.requires(x, "job1")
+		must(t, x.worker("toy-1", 1, "done", "--pr", url), 10, "pending: job1 (not reported yet)")
+		b.ci(x, 1, "pending")
+		b.ciLater(x, 1, "pass")
+		must(t, x.worker("toy-1", 2, "handoff", "--pr", url), 0, "handed off")
 	})
 }

@@ -71,6 +71,9 @@ type Review interface {
 	View(ctx context.Context, dir string, r Ref) (Change, error)
 	// CI is the change's required CI checks (keeper, 2026-10-22); none is an empty list.
 	CI(ctx context.Context, dir string, c Change) ([]CICheck, error)
+	// RequiredChecks is the names of the checks c's base requires, as the host's branch
+	// protection says: what CI must report before none reported reads as "none required".
+	RequiredChecks(ctx context.Context, dir string, c Change) ([]string, error)
 	// Behind is how many commits c's base has that its head lacks.
 	Behind(ctx context.Context, dir string, c Change) (int, error)
 	// Protected reports whether the host protects repo's default branch.

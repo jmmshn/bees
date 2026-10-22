@@ -117,6 +117,20 @@ func TestErrorsNameFileAndKey(t *testing.T) {
 		proj+": worker.path: an empty item")
 }
 
+// Every path key is absolute once ~ is expanded: a relative one, or ~ with HOME unset, is
+// refused, as main's internal/config does.
+func TestPathsMustBeAbsolute(t *testing.T) {
+	dir := t.TempDir()
+	global, proj := filepath.Join(dir, "config.toml"), filepath.Join(dir, "projects", "toy.toml")
+	write(t, global, "[paths]\nlogbook_dir = \"logs\"\n")
+	write(t, proj, "[paths]\nrepo = \"~/r\"\nworktrees = \"wt\"\n")
+	_, err := Load(Input{Dir: dir, Project: "toy"})
+	wantErr(t, err,
+		global+`: paths.logbook_dir = "logs": not an absolute path`,
+		proj+`: paths.repo = "~/r": can't expand ~: HOME is unset`,
+		proj+`: paths.worktrees = "wt": not an absolute path`)
+}
+
 func TestTables(t *testing.T) {
 	dir := t.TempDir()
 	write(t, filepath.Join(dir, "config.toml"), `
@@ -153,7 +167,7 @@ replace = true
 	if c := l.Workspace.Command; c == nil || c.Create[0] != "hg" || c.Timeout != "" {
 		t.Errorf("workspace.command = %+v", c)
 	}
-	if k, _ := l.Kind(true); k != CommandKind || l.Goal["cl"].Handoff[1] != "cmd:cl_submitted" || !l.Guards.Replace {
+	if k, _, chosen := l.Kind(true); k != CommandKind || !chosen || l.Goal["cl"].Handoff[1] != "cmd:cl_submitted" || !l.Guards.Replace {
 		t.Errorf("config = %+v", l.Config)
 	}
 	var keys []string
@@ -166,6 +180,37 @@ replace = true
 		if !strings.Contains(all, want) {
 			t.Errorf("fields lack %s:\n%s", want, all)
 		}
+	}
+}
+
+// A goal's fragment is checked as every path is: ~ expands, but not with HOME unset.
+func TestFragmentIsCheckedAsAPath(t *testing.T) {
+	for _, c := range []struct{ frag, home, want string }{
+		{"~", "/h", ""}, {"/abs/f.md", "", ""}, {"~/f.md", "", "can't expand ~: HOME is unset"}, {"rel.md", "/h", "not an absolute path"},
+	} {
+		dir := t.TempDir()
+		write(t, filepath.Join(dir, "config.toml"), "[goal.g]\nhandoff = [\"clean\"]\nfragment = \""+c.frag+"\"\n")
+		_, err := Load(Input{Dir: dir, Home: c.home})
+		if c.want == "" && err != nil || c.want != "" && (err == nil || !strings.Contains(err.Error(), "[goal.g] fragment = \""+c.frag+"\": "+c.want)) {
+			t.Errorf("fragment %q, HOME %q: %v", c.frag, c.home, err)
+		}
+	}
+}
+
+// An unset table is listed, so bsx config shows every key there is.
+func TestFieldsListUnsetTables(t *testing.T) {
+	l, err := Load(Input{Dir: t.TempDir(), Home: "/h"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var unset []string
+	for _, f := range l.Fields() {
+		if f.Unset {
+			unset = append(unset, f.Key)
+		}
+	}
+	if got := strings.Join(unset, " "); got != "workspace.command goal.<name> checks.<name>" {
+		t.Errorf("unset tables = %s", got)
 	}
 }
 
@@ -210,14 +255,14 @@ func TestCommandMissingLoads(t *testing.T) {
 
 func TestKind(t *testing.T) {
 	l := &Loaded{Sources: map[string]Source{}}
-	if k, _ := l.Kind(true); k != GitWorktree {
+	if k, _, chosen := l.Kind(true); k != GitWorktree || chosen {
 		t.Error("in a git checkout:", k)
 	}
-	if k, _ := l.Kind(false); k != NoWorkspace {
+	if k, _, _ := l.Kind(false); k != NoWorkspace {
 		t.Error("outside one:", k)
 	}
 	l.Workspace.Kind = NoWorkspace
-	if k, why := l.Kind(true); k != NoWorkspace || !strings.HasPrefix(why, "workspace.kind") {
+	if k, why, chosen := l.Kind(true); k != NoWorkspace || !chosen || !strings.HasPrefix(why, "workspace.kind") {
 		t.Error("override:", k, why)
 	}
 }

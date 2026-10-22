@@ -138,7 +138,7 @@ func (r *run) doctor(fs *flag.FlagSet, args []string) error {
 	// guard the keeper thinks is on.
 	unread := map[string][]string{}
 	for _, f := range s.Fields() {
-		if f.Unread != "" && f.Source.Kind != "default" {
+		if f.Unread != "" && !f.Unset && f.Source.Kind != "default" {
 			unread[f.Unread] = append(unread[f.Unread], f.Key)
 		}
 	}

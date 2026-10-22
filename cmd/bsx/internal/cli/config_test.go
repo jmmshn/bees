@@ -197,7 +197,7 @@ func TestUnreadKeysAreMarked(t *testing.T) {
 		"# [workspace.command] unset; not read by bsx yet (bees-13.11)\n", "# [goal.<name>] unset; ")
 	_, out, _ = r.run(r.repo, nil, "doctor")
 	wantIn(t, out, "WARN config: guards.deny set, but not read by bsx yet (bees-13.6): bsx ignores it")
-	if strings.Contains(out, "model set") {
+	if strings.Contains(out, "model set") || strings.Contains(out, "workspace.command") {
 		t.Errorf("doctor warns of a key nothing set:\n%s", out)
 	}
 }

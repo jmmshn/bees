@@ -115,7 +115,12 @@ func Load(in Input) (*Loaded, error) {
 		l.Sources[f.key] = Source{Kind: "env", Where: name}
 	}
 	for _, name := range slices.Sorted(maps.Keys(l.Goal)) {
-		if err := l.Goal[name].check(name, l.Checks); err != nil {
+		g := l.Goal[name]
+		err := g.check(name, l.Checks)
+		if g.Fragment != "" {
+			err = errors.Join(err, l.checkPath("fragment", g.Fragment, "dir"))
+		}
+		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: [goal.%s] %w", l.Sources["goal."+name].Where, name, err))
 		}
 	}
@@ -270,21 +275,26 @@ func (l *Loaded) check(f leaf, val string) error {
 			return fmt.Errorf("%s = %q: not a path pattern relative to the worktree (path.Match syntax, no leading /)", f.key, val)
 		}
 	}
-	kind := f.tag.Get("path")
-	if kind == "" {
-		return nil
+	if kind := f.tag.Get("path"); kind != "" {
+		return l.checkPath(f.key, val, kind)
 	}
+	return nil
+}
+
+// checkPath checks a path value of kind "dir", or "{repo}" when it may begin with the
+// {repo} placeholder: absolute once ~ is expanded.
+func (l *Loaded) checkPath(key, val, kind string) error {
 	rest := val
 	if after, ok := strings.CutPrefix(val, RepoPlaceholder); ok && kind == RepoPlaceholder {
 		rest = "/" + after // {repo} is a main checkout: always absolute
 	}
 	switch {
 	case strings.Contains(rest, RepoPlaceholder):
-		return fmt.Errorf("%s = %q: %s is only allowed at the start of paths.worktrees", f.key, val, RepoPlaceholder)
+		return fmt.Errorf("%s = %q: %s is only allowed at the start of paths.worktrees", key, val, RepoPlaceholder)
 	case strings.HasPrefix(rest, "~") && l.home == "":
-		return fmt.Errorf("%s = %q: can't expand ~: HOME is unset", f.key, val)
+		return fmt.Errorf("%s = %q: can't expand ~: HOME is unset", key, val)
 	case !filepath.IsAbs(l.Expand(rest)):
-		return fmt.Errorf("%s = %q: not an absolute path (only ~ is expanded)", f.key, val)
+		return fmt.Errorf("%s = %q: not an absolute path (only ~ is expanded)", key, val)
 	}
 	return nil
 }
@@ -304,6 +314,7 @@ type Field struct {
 	Key, Value, Scope string
 	Source            Source
 	Unread            string // "" when bs acts on the key, else why it doesn't yet
+	Unset             bool   // a table no file sets: Key is its name, as [goal.<name>] for a map
 }
 
 // Fields lists every setting in declaration order, map entries by name.
@@ -320,13 +331,18 @@ func (l *Loaded) Fields() []Field {
 		switch f.v.Kind() {
 		case reflect.Map:
 			keys := f.v.MapKeys()
+			if len(keys) == 0 {
+				out = append(out, Field{Key: f.key + ".<name>", Scope: scope, Unread: unread, Unset: true})
+			}
 			slices.SortFunc(keys, func(a, b reflect.Value) int { return strings.Compare(a.String(), b.String()) })
 			for _, k := range keys {
 				key := f.key + "." + k.String()
 				out = append(out, tableFields(key, f.v.MapIndex(k), scope, unread, l.Sources[key])...)
 			}
 		case reflect.Pointer:
-			if !f.v.IsNil() {
+			if f.v.IsNil() {
+				out = append(out, Field{Key: f.key, Scope: scope, Unread: unread, Unset: true})
+			} else {
 				out = append(out, tableFields(f.key, f.v.Elem(), scope, unread, l.Sources[f.key])...)
 			}
 		default:

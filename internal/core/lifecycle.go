@@ -47,7 +47,7 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 		return logbook.Done{}, exit(ExitRefused, "", nil, bsname.Cmd+" done is a worker's handoff; %s is a queen", who.Name)
 	}
 	if who.Spawn == "" {
-		return logbook.Done{}, exit(ExitRefused, bsname.Cmd+" status", nil, bsname.Cmd+" done: no open spawn for %s", who.Name)
+		return logbook.Done{}, exit(ExitRefused, bsname.Cmd+" status", nil, "no open spawn for %s", who.Name)
 	}
 	sp, err := c.Logbook.Spawn(ctx, who.Spawn)
 	if err != nil {
@@ -142,12 +142,11 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 	if len(failed) > 0 {
 		return d, exit(ExitHandoff, "fix it, then "+bsname.Cmd+" done again", nil, "%d handoff checks failed:\n  %s", len(failed), strings.Join(failed, "\n  "))
 	}
-	if d.ID, err = c.Logbook.RecordDone(ctx, d); err != nil {
-		return d, err
-	}
+	var landed *logbook.Landed
 	if !slices.ContainsFunc(e.Parts, func(p goal.Part) bool { return !p.AtHandoff }) {
-		err = c.Logbook.RecordLanded(ctx, sp.ID, sp.Name, sp.Name, logbook.Landed{By: "done"})
+		landed = &logbook.Landed{By: "done"}
 	}
+	d.ID, err = c.Logbook.RecordDone(ctx, d, landed)
 	return d, err
 }
 

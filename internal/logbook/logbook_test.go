@@ -2,6 +2,7 @@ package logbook_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -122,15 +123,30 @@ func TestGoalEntriesAmendWaiveAndDiscard(t *testing.T) {
 	}
 }
 
+// RecordSpawn refuses a twin under its own write lock: a worker whose spawn hasn't ended
+// can't be recorded again until it ends.
+func TestRecordSpawnRefusesAnOpenTwin(t *testing.T) {
+	ctx := context.Background()
+	lb := open(t, filepath.Join(t.TempDir(), "bees.db"))
+	s := spawn(t, lb, "toy-1", "toy", "w1:p1", "verdict")
+	if _, err := lb.RecordSpawn(ctx, "queen-toy", s, ""); !errors.Is(err, logbook.ErrAlreadySpawned) {
+		t.Fatalf("twin: err = %v, want ErrAlreadySpawned", err)
+	}
+	if err := lb.RecordEnd(ctx, "queen-toy", s.ID, logbook.Ended{}); err != nil {
+		t.Fatal(err)
+	}
+	spawn(t, lb, "toy-1", "toy", "w2:p1", "verdict")
+}
+
 // A done is the queen's unread mail, still after its worker ended; the newest wins.
-// landed and ended are written once per spawn.
+// landed (with the done, in its transaction) and ended are written once per spawn.
 func TestDoneLandedAndEnded(t *testing.T) {
 	ctx := context.Background()
 	lb := open(t, filepath.Join(t.TempDir(), "bees.db"))
 	s := spawn(t, lb, "toy-1", "toy", "w1:p1", "verdict")
 	d := logbook.Done{Spawn: s.ID, Name: s.Name, Queen: "queen-toy", Bead: s.Bead, Answer: "yes", Report: "it holds",
 		Checks: []logbook.CheckResult{{Name: goal.NoBackground, Pass: true}, {Name: goal.VerdictGiven, Pass: true}}}
-	if _, err := lb.RecordDone(ctx, d); err != nil {
+	if _, err := lb.RecordDone(ctx, d, &logbook.Landed{By: "done"}); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {

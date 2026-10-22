@@ -129,6 +129,9 @@ func (s *Spawn) decode(data string) error {
 // (bs:<spawn id>) names an id that exists only once the spawn is recorded.
 const SpawnID = "{{spawn}}"
 
+// ErrAlreadySpawned is a spawn of a worker whose last spawn hasn't ended.
+var ErrAlreadySpawned = errors.New("already spawned and not ended")
+
 // RecordSpawn records that by spawned s.Name and, in the same transaction, sends it
 // brief (if any), so a crash can't leave a recorded worker without its brief. The brief
 // refers to the spawn: once the spawn has ended, an unread brief is no longer unread.
@@ -138,6 +141,16 @@ func (l *Logbook) RecordSpawn(ctx context.Context, by string, s Spawn, brief str
 	}
 	var id ID
 	err := l.write(ctx, func(tx *sql.Tx) error {
+		// Checked again here, under the write lock: a second spawn racing the caller's
+		// check must not record a twin (motif 7).
+		var open bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM entries s WHERE s.kind = 'spawned' AND s.subject = ?
+  AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = s.id))`, s.Name).Scan(&open); err != nil {
+			return err
+		}
+		if open {
+			return fmt.Errorf("%w: %s", ErrAlreadySpawned, s.Name)
+		}
 		var err error
 		if id, err = insert(ctx, tx, entry{kind: "spawned", actor: by, subject: s.Name, data: s}); err != nil {
 			return err

@@ -14,7 +14,7 @@ func (r *run) config(fs *flag.FlagSet, args []string) error {
 	if len(args) > 0 && args[0] == "init" {
 		return r.configInit(fs, args[1:])
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parse(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
@@ -41,9 +41,13 @@ func (r *run) config(fs *flag.FlagSet, args []string) error {
 	if s.Repo == "" {
 		fmt.Fprintln(w, "# repo: unknown (run in it, or set paths.repo)")
 	} else {
-		fmt.Fprintf(w, "# repo: %s (%s)\n# worktrees: %s\n", s.Repo, s.RepoFrom, s.Worktrees)
+		missing := ""
+		if s.RepoMissing {
+			missing = "; missing"
+		}
+		fmt.Fprintf(w, "# repo: %s (%s%s)\n# worktrees: %s\n", s.Repo, s.RepoFrom, missing, s.Worktrees)
 	}
-	kind, why := s.Kind(s.GitTop)
+	kind, why, _ := s.Kind(s.GitTop)
 	fmt.Fprintf(w, "# workspace kind: %s (%s)\n", kind, why)
 	fmt.Fprintf(w, "# cache: %s\n", r.ports.CacheDir)
 	for _, f := range s.Fields() {
@@ -53,6 +57,10 @@ func (r *run) config(fs *flag.FlagSet, args []string) error {
 		}
 		if f.Unread != "" {
 			note += "; " + f.Unread
+		}
+		if f.Unset { // a table: commented out, so the output stays valid TOML
+			fmt.Fprintf(w, "# [%s] unset%s\n", f.Key, note)
+			continue
 		}
 		fmt.Fprintf(w, "%s = %s  # %s%s\n", f.Key, f.Value, f.Source, note)
 	}

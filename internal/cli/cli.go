@@ -142,7 +142,7 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 			}
 			return nil
 		}
-		kind, why := s.Kind(s.GitTop)
+		kind, why, _ := s.Kind(s.GitTop)
 		review, vcs := ports.Review, ports.VCS
 		if review == nil { // review.host's enum has github only (config)
 			review = github.Host{Run: ports.Run}
@@ -237,6 +237,16 @@ func (r *run) oldSessions() error {
 	}
 	return &core.Exit{Code: core.ExitRefused, Msg: what + "; nothing was read or written",
 		Next: fmt.Sprintf("%s end <worker> for each (it names the herdr workspace to close by hand), then run this again", bsname.Cmd)}
+}
+
+// parse parses args into fs: a bad flag is a usage refusal (exit 2), -h is help.
+func parse(fs *flag.FlagSet, args []string) error {
+	if err := fs.Parse(args); err != nil && !errors.Is(err, flag.ErrHelp) {
+		return fmt.Errorf("%w: %v", errUsage, err)
+	} else if err != nil {
+		return err
+	}
+	return nil
 }
 
 type run struct {

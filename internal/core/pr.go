@@ -334,16 +334,27 @@ func (k *look) unpushed(ctx context.Context, v port.Change, tip string) (outcome
 }
 
 // ciGreen is every required CI check passing (skipped ones count; keeper, 2026-10-22).
-// None required is a vacuous pass, and says so.
+// A check the base's protection requires that CI hasn't reported yet is pending, never
+// read as "none required" (Rule G: right after a push the host lists none); a pass is
+// vacuous only when the protection requires none, and says so.
 func (k *look) ciGreen(ctx context.Context, v port.Change) (outcome, string, error) {
 	cs, err := k.c.Review.CI(ctx, k.at(), v)
 	if err != nil {
 		return failed, "", err
 	}
-	if len(cs) == 0 {
-		return passed, "vacuous pass: no required checks", nil
+	req, err := k.c.Review.RequiredChecks(ctx, k.at(), v)
+	if err != nil {
+		return failed, "", fmt.Errorf("reading %s's required checks: %w", v.Base, err)
+	}
+	if len(cs) == 0 && len(req) == 0 {
+		return passed, "vacuous pass: " + v.Base + " requires no checks", nil
 	}
 	var fail, wait []string
+	for _, name := range req {
+		if !slices.ContainsFunc(cs, func(c port.CICheck) bool { return c.Name == name }) {
+			wait = append(wait, name+" (not reported yet)")
+		}
+	}
 	for _, c := range cs {
 		switch c.Bucket {
 		case port.CIPass, port.CISkipping:

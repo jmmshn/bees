@@ -18,7 +18,7 @@ func TestTemplateLoads(t *testing.T) {
 		holds []string
 	}{
 		{"global", map[string]string{"paths.logbook_dir": "/tmp/lb", "harness": "claude_code"},
-			map[string]string{"paths.logbook_dir": "/tmp/lb", "harness": "claude_code"}, []string{"# repos = \"\"", "[guards]", "# [workspace.command]", "# [checks.cl_sent]", "(not read by bs yet: bees-13.11)", "the model Claude Code starts on (claude --model); empty: Claude Code's default\n", "logbook_dir = \"/tmp/lb\"", "# ignore = [\"bin/\"]"}},
+			map[string]string{"paths.logbook_dir": "/tmp/lb", "harness": "claude_code"}, []string{"# repos = \"\"", "[guards]", "# [workspace.command]", "# [checks.cl_sent]", "(not read by bs yet: bees-13.11)", "logbook_dir = \"/tmp/lb\"", "# ignore = [\"bin/\"]"}},
 		{"project", map[string]string{"paths.repo": "/tmp/notes", "workspace.kind": "none"},
 			map[string]string{"paths.repo": "/tmp/notes", "workspace.kind": "none"}, []string{"# path = []", "[worker]"}},
 	} {
@@ -47,6 +47,9 @@ func TestTemplateLoads(t *testing.T) {
 			t.Fatalf("%s file doesn't load: %v\n%s", tc.scope, err, text)
 		}
 		for _, f := range l.Fields() {
+			if f.Unset { // a table the template only shows commented out
+				continue
+			}
 			src := l.Sources[f.Key]
 			if v, ok := tc.want[f.Key]; ok != (src.Kind != "default") || ok && f.Value != Quote(v) {
 				t.Errorf("%s: %s = %s from %s", tc.scope, f.Key, f.Value, src)

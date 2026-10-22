@@ -49,8 +49,13 @@ xdg=()
 for k in XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_STATE_HOME XDG_RUNTIME_DIR; do
 	[ -z "${!k:-}" ] || xdg+=("$k=${!k}")
 done
-env -i PATH="$bin:$PATH" HOME="$HOME" TERM="${TERM:-xterm-256color}" LANG="${LANG:-C.UTF-8}" SHELL="${SHELL:-/bin/sh}" "${xdg[@]}" \
-	setsid herdr --session "$toy" server </dev/null >"$run/keeper/herdr-server.log" 2>&1 &
+# setsid keeps the server out of this shell's session; stock macOS has none, and nohup
+# at least keeps it past this shell's hangup. ${a[@]+...}: bash 3.2 calls an empty array
+# unset under set -u.
+detach=setsid
+command -v setsid >/dev/null || detach=nohup
+env -i PATH="$bin:$PATH" HOME="$HOME" TERM="${TERM:-xterm-256color}" LANG="${LANG:-C.UTF-8}" SHELL="${SHELL:-/bin/sh}" ${xdg[@]+"${xdg[@]}"} \
+	"$detach" herdr --session "$toy" server </dev/null >"$run/keeper/herdr-server.log" 2>&1 &
 for _ in $(seq 50); do h workspace list >/dev/null 2>&1 && break; sleep 0.2; done
 h workspace list >/dev/null || { echo "setup: herdr --session $toy never answered; see $run/keeper/herdr-server.log" >&2; exit 1; }
 ws=$(h workspace create --cwd "$repo" --label "live $toy" --no-focus)

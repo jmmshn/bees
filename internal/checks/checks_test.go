@@ -16,7 +16,7 @@ import (
 
 func TestFillTakesOnlyWholeArgumentPlaceholders(t *testing.T) {
 	vals := map[string]checks.Value{"dir": {S: "/w/x"}, "branch": {S: "bees-1", Ref: true}}
-	got, err := checks.Fill([]string{"jj", "workspace", "add", "{dir}", "--name", "{branch}"}, vals)
+	got, err := checks.Fill(context.Background(), []string{"jj", "workspace", "add", "{dir}", "--name", "{branch}"}, vals)
 	if err != nil || strings.Join(got, " ") != "jj workspace add /w/x --name bees-1" {
 		t.Fatalf("Fill = %q, %v", got, err)
 	}
@@ -27,12 +27,12 @@ func TestFillTakesOnlyWholeArgumentPlaceholders(t *testing.T) {
 		{},                      // empty
 		{"git", "x}"},           // a stray brace
 	} {
-		if _, err := checks.Fill(argv, vals); !errors.Is(err, checks.ErrBadArgv) {
+		if _, err := checks.Fill(context.Background(), argv, vals); !errors.Is(err, checks.ErrBadArgv) {
 			t.Errorf("Fill(%q) = %v, want ErrBadArgv", argv, err)
 		}
 	}
 	for _, v := range []checks.Value{{S: "-rf"}, {S: "--upload-pack=x"}, {S: ""}, {S: "a..b", Ref: true}, {S: "x y", Ref: true}} {
-		if _, err := checks.Fill([]string{"git", "{v}"}, map[string]checks.Value{"v": v}); !errors.Is(err, checks.ErrBadArgv) {
+		if _, err := checks.Fill(context.Background(), []string{"git", "{v}"}, map[string]checks.Value{"v": v}); !errors.Is(err, checks.ErrBadArgv) {
 			t.Errorf("value %+v accepted: %v", v, err)
 		}
 	}
@@ -90,6 +90,30 @@ func TestRunKillsTheProcessGroupAtItsTimeout(t *testing.T) {
 	}
 }
 
+func TestRunKillsWhatTheCommandLeftBehind(t *testing.T) {
+	pidfile := filepath.Join(t.TempDir(), "pid")
+	start := time.Now()
+	res, err := checks.Run(context.Background(), checks.Cmd{
+		Argv: []string{"sh", "-c", "sleep 31 & echo $! > " + pidfile + "; echo hi"},
+	}, t.TempDir(), nil)
+	if err != nil || res.Code != 0 || strings.TrimSpace(string(res.Output)) != "hi" {
+		t.Fatalf("res = %+v, err = %v; want exit 0 and its output", res, err)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("took %s: it waited on the grandchild holding the pipe", d)
+	}
+	b, _ := os.ReadFile(pidfile)
+	var pid int
+	if _, err := fmt.Sscan(strings.TrimSpace(string(b)), &pid); err != nil {
+		t.Fatalf("pid file: %q", b)
+	}
+	for deadline := time.Now().Add(2 * time.Second); alive(pid); time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("grandchild %d outlived its command", pid)
+		}
+	}
+}
+
 func TestRunOfAMissingProgramCantRun(t *testing.T) {
 	if _, err := checks.Run(context.Background(), checks.Cmd{Argv: []string{"bs-no-such-program"}}, t.TempDir(), nil); !errors.Is(err, checks.ErrCantRun) {
 		t.Fatalf("err = %v", err)
@@ -108,7 +132,7 @@ func alive(pid int) bool {
 // A ref git can't check is "couldn't run", never "bad ref" (Rule G).
 func TestFillOfARefWithNoGitCantRun(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	_, err := checks.Fill([]string{"git", "{branch}"}, map[string]checks.Value{"branch": {S: "toy-1", Ref: true}})
+	_, err := checks.Fill(context.Background(), []string{"git", "{branch}"}, map[string]checks.Value{"branch": {S: "toy-1", Ref: true}})
 	if !errors.Is(err, checks.ErrCantRun) || errors.Is(err, checks.ErrBadArgv) {
 		t.Fatalf("Fill = %v; want ErrCantRun", err)
 	}

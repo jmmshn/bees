@@ -6,6 +6,10 @@
 #
 # Before: setup.sh. Detach any other client of buzz: herdr may size panes to the smallest.
 set -euo pipefail
+# demo2 drives the old bs (bs status --project … --json, bs end --project); the new bs
+# reads a herdr --session's own config, which setup.sh doesn't write yet (bees-13.33).
+echo "take.sh: demo2 isn't ported to the new bs yet (bees-13.33); nothing was done" >&2
+exit 1
 here=$(cd "$(dirname "$0")" && pwd)
 out=${1:?usage: take.sh <out dir>}
 mkdir -p "$out" && out=$(cd "$out" && pwd)

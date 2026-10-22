@@ -103,11 +103,11 @@ Prove the doorbell works end to end. Inside the queen session (`bs queen`, in he
 ```sh
 bs epic "setup check"                                    # → <project>-N
 bs bead new --parent <project>-N "say hello and stop"    # → <project>-N.1
-bs spawn --label "setup check" <project>-N.1
+bs spawn --goal verdict --label "setup check" <project>-N.1
 ```
 
 The worker starts in a new herdr workspace, reads its brief, and should reply; `bs send <worker> "reply to me with bs send: pong"` prompts it if it does not. The queen is woken by a `[bs] 1 unread` doorbell with nobody typing; `bs inbox` shows the reply. Then clean up: `bs end <worker>`, `bd close <project>-N.1 <project>-N`.
 
-In the bees repo itself, `scripts/e2e.sh <throwaway bead>` runs the same check and measures the wake time; it needs `jq`.
+In the bees repo itself, the `live-test` skill runs the same check in a throwaway project and tears it down.
 
 **Check:** the queen received the worker's reply via a doorbell, `herdr workspace list` no longer shows the worker's workspace, and both throwaway beads are closed. Tell the user setup is done and point them at the **Run a queen and workers** section of `docs/SETUP.md`.

@@ -2,7 +2,7 @@
 
 `bs` lets coding-agent sessions (Claude Code today; [ADR-0009](adr/0009-core-and-adapters.md)) in herdr panes send each other messages through a shared logbook, and wakes an idle session when it has mail. Vocabulary is in [GLOSSARY.md](../GLOSSARY.md); the reasons behind the shape are in [docs/adr/](adr/); every decision is indexed in [DECISIONS.md](DECISIONS.md).
 
-This spec covers **v0**, the walking skeleton, plus **spawn**, which v0 grows into for dogfooding. [v1](#v1-outline) is outlined at the end and gets its own spec pass.
+This spec covers **v0**, the walking skeleton, plus **spawn**, which v0 grows into for dogfooding. [v1](#v1-outline) is outlined at the end and gets its own spec pass. Since the swap (R53), bs is the rebuilt core of [ADR-0010](adr/0010-core-rebuild.md): where this spec and that ADR differ (goals, `bs done`, `bs end` as the completion gate, the layout below), the ADR holds.
 
 ## Scope
 
@@ -10,7 +10,7 @@ v0 proves the core loop: the queen sends a message, an idle worker wakes, reads 
 
 | In v0 + spawn | Deferred to v1 |
 |---|---|
-| `bs init`, `send`, `inbox`, `status`, `queen`, `spawn`, `end` | `bs hook` |
+| `send`, `inbox`, `status`, `queen`, `spawn`, `end` (and `bs init`, gone with the swap, R53) | `bs hook` |
 | `entries` table; writes `message`, `received`, `spawned`, `ended` | `rang` entries |
 | Claude adapter: find, ring; herdr and bd adapters | reconciler |
 | Ring every unread message on every send | `Plan` reconciler, coalescing, re-ring, flag the queen, watchdog |
@@ -28,11 +28,17 @@ Platform: Linux and macOS (R47).
 ## Layout
 
 ```text
-cmd/bs/                   subcommands, flags, output
-internal/logbook/          the entries table
-internal/project/          which project, logbook and repo; which session am I
-internal/worker/           Fleet.Spawn / Fleet.End; Herdr and Beads ports with CLI adapters
-internal/harness/claude/   registry lookup, auth token, NDJSON ring
+cmd/bs/                    main: the machine's ports
+internal/cli/              subcommands, flags, output; config and project resolution
+internal/core/             spawn, start, identity, the gate, done, end, prune, mail
+internal/logbook/          the entries table (schema 2) and its migration
+internal/goal/, checks/    goals and their handoff, complete and prune checks
+internal/port/             the Harness, Review, VCS, Beads and Runner ports
+internal/harness/claude/   the claude_code adapter: launch, settings, ring
+internal/herdr/, proc/     herdr's CLI; process parents and start times
+internal/review/github/, vcs/git/   the GitHub review host and git
+internal/guards/, prompt/  a worker's deny list; the role prompts and fragments
+internal/fake/, scenario/  stateful fakes and the scenario suite (ADR-0010 Tests)
 ```
 
 ## Logbook
@@ -63,19 +69,22 @@ Rules:
 - Entries are only inserted, never updated or deleted.
 - Each write is one `BEGIN IMMEDIATE` transaction; concurrent writers wait on the busy timeout instead of failing.
 - A receipt id is deterministic and written with `INSERT OR IGNORE`, so a duplicate is a no-op.
-- `Open` creates the file, table and indexes if missing. Only `bs init`, `queen` and `spawn` call it on a missing file, and say so on stderr; every other command refuses one (exit 2), so a deleted logbook is never silently recreated empty (R48).
+- `Open` opens an existing file and refuses a missing one (`ErrNoLogbook`); `Create`, which makes the file, table and indexes, is called only by `bs queen` and `bs spawn`, which say so on stderr. Every other command refuses a missing logbook (exit 2), so a deleted logbook is never silently recreated empty (R48).
 - Unread is always this query, in insertion order (`rowid`). Never use a cursor or a time window.
 
 ```sql
 SELECT m.id, m.actor, m.ts, m.data FROM entries m
-WHERE m.kind = 'message' AND m.subject = ?
+WHERE m.kind IN ('message', 'done') AND m.subject = ?1
   AND NOT EXISTS (SELECT 1 FROM entries r
-                  WHERE r.kind = 'received' AND r.ref = m.id AND r.actor = ?)
-  AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = m.ref)
+                  WHERE r.kind = 'received' AND r.ref = m.id AND r.actor = ?1)
+  AND (NOT EXISTS (SELECT 1 FROM entries x WHERE x.kind = 'spawned' AND x.subject = m.subject)
+       OR EXISTS (SELECT 1 FROM entries s WHERE s.kind = 'spawned' AND s.subject = m.subject AND s.rowid < m.rowid
+                  AND s.rowid = (SELECT MAX(x.rowid) FROM entries x WHERE x.kind = 'spawned' AND x.subject = m.subject)
+                  AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = s.id)))
 ORDER BY m.rowid;
 ```
 
-The last clause retires a brief whose spawn has ended, so a worker spawned again for the bead gets only its own brief (R39).
+The last clause scopes mail to the recipient's open spawn (ADR-0010 Amendment 3): a name ever spawned reads only what was stored after its latest spawn, while that spawn is open, so a worker spawned again gets only its own brief and the mail sent since, never mail meant for an earlier spawn (R39, amended). A name never spawned (a queen) reads all of its own.
 
 ```go
 package logbook
@@ -232,7 +241,6 @@ func (f Fleet) Prune(ctx context.Context, dry bool) ([]Pruned, error)           
 ## Commands
 
 ```text
-bs init                       create the logbook file and table if missing; bs queen and spawn do too, any other command refuses a missing logbook (exit 2)
 bs queen                      start the queen: claude --name queen-<project> --append-system-prompt-file <project>-queen.md in the repo (no BS_* set)
 bs spawn [--repo P] --label L <bead> [--label L <bead> …]  start a worker per bead (SpawnAll), each in its own herdr workspace labelled by the --label before it (--label only on a first spawn; --repo before the first bead, for all); exit 2 if refused (nothing started), 1 if any start failed
 bs end [--force] <worker|bead>  remove the worker's recorded workspace; keep its branch
@@ -300,6 +308,8 @@ Manual worker (no herdr): `claude --name worker-a --settings '{"crossSessionInbo
 
 ## Tests
 
+The old bs's tests, kept as the record of what v0 checked; the rebuilt core's are the scenario suite over stateful fakes (`internal/scenario`, ADR-0010 Tests), and its packages' own tests.
+
 | Test | Checks |
 |---|---|
 | `logbook` tests | each test opens a fresh logbook file in `t.TempDir()` |
@@ -315,7 +325,7 @@ Manual worker (no herdr): `claude --name worker-a --settings '{"crossSessionInbo
 | `cmd/bs` status tests | running with 0 and N unread, not running with N unread, stopped with none left out; `--json`; status records no receipts |
 | `cmd/bs` ring tests | doorbell text and `--now`; not running → stored, "queued", exit 0; failed ring → warning, exit 0 |
 | `TestKilledWriterLosesNoCommittedMessage` | "Done when" 4: a separate process SIGKILLed mid-way through sends; every acknowledged send survives and the logbook still writes |
-| `scripts/e2e.sh <bead>` | "Done when" 1–3 with a real queen and worker in herdr: wake time from the worker's transcript, round trip, mail queued while stopped |
+| the `live-test` skill | "Done when" 1–3 with a real queen and worker on a toy's own `herdr --session` (the old bs's `scripts/e2e.sh` until the swap, R53) |
 
 ## v1 outline
 

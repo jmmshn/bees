@@ -3,23 +3,9 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"reflect"
-	"slices"
 	"strings"
 	"testing"
 )
-
-// setup points XDG_CONFIG_HOME at a temp dir, clears the env overrides and returns the
-// config dir.
-func setup(t *testing.T) string {
-	t.Helper()
-	xdg := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", xdg)
-	for _, k := range []string{"BS_LOGBOOK_DIR", "BS_REPOS"} {
-		t.Setenv(k, "")
-	}
-	return filepath.Join(xdg, "bees")
-}
 
 func write(t *testing.T, path, body string) {
 	t.Helper()
@@ -44,244 +30,278 @@ func wantErr(t *testing.T, err error, parts ...string) {
 	}
 }
 
-func TestNoFilesGiveDefaults(t *testing.T) {
-	dir := setup(t)
-	l, err := Load("bees")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if l.Paths.LogbookDir != "~/.local/share/bees" || l.Paths.Worktrees != "{repo}-WT" || l.Worker.ClaudeCode.Model != "" {
-		t.Errorf("defaults = %+v", l.Config)
-	}
-	for _, f := range l.Fields() {
-		if s := l.Sources[f.Key]; s.String() != "default" {
-			t.Errorf("%s from %s, want default", f.Key, s)
+func getenv(env []string, key string) string {
+	for i := len(env) - 1; i >= 0; i-- {
+		if v, ok := strings.CutPrefix(env[i], key+"="); ok {
+			return v
 		}
 	}
-	want := []File{
-		{Scope: "global", Path: filepath.Join(dir, "config.toml")},
-		{Scope: "project", Path: filepath.Join(dir, "projects", "bees.toml")},
-	}
-	if !reflect.DeepEqual(l.Files, want) {
-		t.Errorf("files = %+v, want %+v", l.Files, want)
+	return ""
+}
+
+func TestDirPerSession(t *testing.T) {
+	for _, c := range []struct {
+		env          []string
+		dir, session string
+		err          string
+	}{
+		{env: []string{"HOME=/h"}, dir: "/h/.config/bees", session: "default"},
+		{env: []string{"HOME=/h", "HERDR_SESSION=default"}, dir: "/h/.config/bees", session: "default"},
+		{env: []string{"HOME=/h", "HERDR_SESSION=lt1"}, dir: "/h/.config/bees/sessions/lt1", session: "lt1"},
+		{env: []string{"HOME=/h", "XDG_CONFIG_HOME=/x", "HERDR_SESSION=lt1"}, dir: "/x/bees/sessions/lt1", session: "lt1"},
+		{env: []string{"HOME=/h", "XDG_CONFIG_HOME=x"}, err: "not an absolute path"},
+		{env: []string{"HOME=/h", "HERDR_SESSION=../x"}, err: "can't name a config dir"},
+		{env: nil, err: "neither"},
+	} {
+		dir, session, err := Dir(func(k string) string { return getenv(c.env, k) })
+		if c.err != "" {
+			wantErr(t, err, c.err)
+			continue
+		}
+		if err != nil || dir != c.dir || session != c.session {
+			t.Errorf("Dir(%q) = %q, %q, %v; want %q, %q", c.env, dir, session, err, c.dir, c.session)
+		}
 	}
 }
 
-func TestPrecedenceDefaultGlobalProjectEnv(t *testing.T) {
-	dir := setup(t)
-	global, proj := filepath.Join(dir, "config.toml"), filepath.Join(dir, "projects", "bees.toml")
-	write(t, global, "[paths]\nlogbook_dir = \"/g/logs\"\nrepos = \"/g/repos\"\n[worker.claude_code]\nmodel = \"opus\"\n")
-	write(t, proj, "[paths]\nlogbook_dir = \"/p/logs\"\nrepo = \"/p/bees\"\n[worker.claude_code]\nmodel = \"sonnet\"\n")
-	t.Setenv("BS_REPOS", "/e/repos")
-	l, err := Load("bees")
+func TestDefaultsAndSources(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "config.toml"), "[paths]\nlogbook_dir = \"~/lb\"\n[worker.claude_code]\nmodel = \"opus\"\n")
+	write(t, filepath.Join(dir, "projects", "toy.toml"), "[paths]\nrepo = \"/r/toy\"\n[worker.claude_code]\nmodel = \"sonnet\"\n")
+	l, err := Load(Input{Dir: dir, Project: "toy", Home: "/h"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for key, want := range map[string]struct{ val, src string }{
-		"paths.logbook_dir":        {"/p/logs", "project " + proj},
-		"paths.repos":              {"/e/repos", "env BS_REPOS"},
-		"paths.repo":               {"/p/bees", "project " + proj},
-		"paths.worktrees":          {"{repo}-WT", "default"},
-		"worker.claude_code.model": {"sonnet", "project " + proj},
-		"queen.claude_code.model":  {"", "default"},
+	if l.Harness != "claude_code" || l.Paths.Worktrees != "{repo}-WT" || l.Worker.ClaudeCode.Model != "sonnet" || l.Expand(l.Paths.LogbookDir) != "/h/lb" {
+		t.Errorf("config = %+v", l.Config)
+	}
+	for key, want := range map[string]string{
+		"harness": "default", "paths.logbook_dir": "global " + filepath.Join(dir, "config.toml"),
+		"worker.claude_code.model": "project " + filepath.Join(dir, "projects", "toy.toml"),
 	} {
-		i := slices.IndexFunc(l.Fields(), func(f Field) bool { return f.Key == key })
-		if i < 0 {
-			t.Errorf("no setting %s", key)
-			continue
-		}
-		if got := l.Fields()[i].Value; got != want.val || l.Sources[key].String() != want.src {
-			t.Errorf("%s = %q (%s), want %q (%s)", key, got, l.Sources[key], want.val, want.src)
+		if got := l.Sources[key].String(); got != want {
+			t.Errorf("%s from %q, want %q", key, got, want)
 		}
 	}
 	if !l.Files[0].Exists || !l.Files[1].Exists {
-		t.Errorf("files = %+v, want both existing", l.Files)
+		t.Errorf("files = %+v", l.Files)
 	}
 }
 
-func TestNoProjectReadsGlobalOnly(t *testing.T) {
-	dir := setup(t)
-	write(t, filepath.Join(dir, "projects", "bees.toml"), "[paths]\nrepo = \"/p\"\n")
-	l, err := Load("")
-	if err != nil {
-		t.Fatal(err)
+func TestEnvOverridesFiles(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "config.toml"), "[paths]\nlogbook_dir = \"/a\"\n")
+	l, err := Load(Input{Dir: dir, Home: "/h", Env: map[string]string{"BS_LOGBOOK_DIR": "/b"}})
+	if err != nil || l.Paths.LogbookDir != "/b" || l.Sources["paths.logbook_dir"].String() != "env BS_LOGBOOK_DIR" {
+		t.Fatalf("%+v %v", l, err)
 	}
-	if l.Paths.Repo != "" || len(l.Files) != 1 {
-		t.Errorf("repo = %q, files = %+v; want no project file read", l.Paths.Repo, l.Files)
-	}
+	_, err = Load(Input{Dir: dir, Home: "/h", Env: map[string]string{"BS_LOGBOOK_DIR": "rel"}})
+	wantErr(t, err, "env BS_LOGBOOK_DIR", "not an absolute path")
 }
 
-func TestUnknownKeyNamesFileAndKeyPath(t *testing.T) {
-	dir := setup(t)
-	global := filepath.Join(dir, "config.toml")
-	write(t, global, "[worker.claude_code]\nmdoel = \"opus\"\n[worker.oh_my_pi]\nmodel = \"x\"\n")
-	_, err := Load("bees")
-	wantErr(t, err, global+": unknown key worker.claude_code.mdoel", global+": unknown key worker.oh_my_pi")
-	if strings.Contains(err.Error(), "oh_my_pi.model") {
-		t.Errorf("error %q names each key of an unknown table, not just the table", err)
-	}
-}
-
-func TestWrongScopeKey(t *testing.T) {
-	dir := setup(t)
-	global, proj := filepath.Join(dir, "config.toml"), filepath.Join(dir, "projects", "bees.toml")
-	write(t, global, "[paths]\nrepo = \"/r\"\n")
-	write(t, proj, "[paths]\nrepos = \"/rs\"\n")
-	_, err := Load("bees")
+// Every error in both files is reported at once, each naming its file and key.
+func TestErrorsNameFileAndKey(t *testing.T) {
+	dir := t.TempDir()
+	global, proj := filepath.Join(dir, "config.toml"), filepath.Join(dir, "projects", "toy.toml")
+	write(t, global, "harness = \"agy\"\nbogus = 1\n[paths]\nrepo = \"/r\"\n[workspace]\nkind = \"nfs\"\n")
+	write(t, proj, "harness = \"claude_code\"\n[paths]\nlogbook_dir = \"/x\"\nworktrees = \"/a/{repo}\"\n[worker]\npath = [\"\"]\n")
+	_, err := Load(Input{Dir: dir, Project: "toy", Home: "/h"})
 	wantErr(t, err,
+		global+`: harness = "agy": must be one of claude_code`,
+		global+": unknown key bogus",
 		global+": paths.repo belongs in the project file, not the global one",
-		proj+": paths.repos belongs in the global file, not the project one")
+		global+`: workspace.kind = "nfs"`,
+		proj+": harness belongs in the global file",
+		proj+": paths.logbook_dir belongs in the global file",
+		proj+`: paths.worktrees = "/a/{repo}"`,
+		proj+": worker.path: an empty item")
 }
 
-func TestMisnamedProjectFileNamesTheRightOne(t *testing.T) {
-	dir := setup(t)
-	write(t, filepath.Join(dir, "projects", "jobflow-ray.toml"), "")
-	write(t, filepath.Join(dir, "projects", "other.toml"), "") // another project's: not ours to judge
-	_, err := Load("jobflowray")
-	wantErr(t, err, "jobflow-ray.toml: bs never reads it; rename it to "+filepath.Join(dir, "projects", "jobflowray.toml"))
-	if strings.Contains(err.Error(), "other.toml") {
-		t.Errorf("error %q blames another project's file", err)
-	}
+// Every path key is absolute once ~ is expanded: a relative one, or ~ with HOME unset, is
+// refused, as main's internal/config does.
+func TestPathsMustBeAbsolute(t *testing.T) {
+	dir := t.TempDir()
+	global, proj := filepath.Join(dir, "config.toml"), filepath.Join(dir, "projects", "toy.toml")
+	write(t, global, "[paths]\nlogbook_dir = \"logs\"\n")
+	write(t, proj, "[paths]\nrepo = \"~/r\"\nworktrees = \"wt\"\n")
+	_, err := Load(Input{Dir: dir, Project: "toy"})
+	wantErr(t, err,
+		global+`: paths.logbook_dir = "logs": not an absolute path`,
+		proj+`: paths.repo = "~/r": can't expand ~: HOME is unset`,
+		proj+`: paths.worktrees = "wt": not an absolute path`)
 }
 
-func TestSyntaxErrorNamesFileAndLine(t *testing.T) {
-	dir := setup(t)
-	global := filepath.Join(dir, "config.toml")
-	write(t, global, "[paths]\nrepos = \n")
-	_, err := Load("")
-	wantErr(t, err, global+": ", "line 2")
-}
+func TestTables(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "config.toml"), `
+[workspace.command]
+create = ["jj", "workspace", "add", "{dir}"]
+remove = ["jj", "workspace", "forget", "{name}"]
+clean = ["sh", "-c", "true"]
+dir = "{repo}-WS/{name}"
+timeout = "60s"
 
-func TestWrongTypeNamesFileAndKey(t *testing.T) {
-	dir := setup(t)
-	global := filepath.Join(dir, "config.toml")
-	write(t, global, "[paths]\nrepos = 3\n")
-	_, err := Load("")
-	wantErr(t, err, global+": ", "paths.repos")
-}
+[checks.cl_submitted]
+run = ["cl", "status", "{cl}"]
 
-func TestUnreadableFileIsAnError(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root reads anything")
-	}
-	dir := setup(t)
-	global := filepath.Join(dir, "config.toml")
-	write(t, global, "")
-	if err := os.Chmod(global, 0); err != nil {
-		t.Fatal(err)
-	}
-	_, err := Load("")
-	wantErr(t, err, global)
-}
+[goal.cl]
+handoff = ["clean", "cmd:cl_submitted"]
+complete = ["cmd:cl_submitted"]
+`)
+	write(t, filepath.Join(dir, "projects", "toy.toml"), `
+[workspace.command]
+create = ["hg", "share", "{dir}"]
+remove = ["rm", "-r", "{dir}"]
+clean = ["hg", "status"]
+dir = "/w/{name}"
 
-func TestDirFallsBackToHomeAndRefusesRelativeXDG(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("XDG_CONFIG_HOME", "")
-	if d, err := Dir(); err != nil || d != filepath.Join(home, ".config", "bees") {
-		t.Errorf("Dir() = %q, %v", d, err)
-	}
-	t.Setenv("XDG_CONFIG_HOME", "rel")
-	if _, err := Load(""); err == nil {
-		t.Error("a relative XDG_CONFIG_HOME loaded")
-	}
-}
-
-// Every setting declares its key and a known scope: a typo'd tag would make a key
-// nobody can set.
-func TestEverySettingIsTagged(t *testing.T) {
-	var c Config
-	for _, f := range leaves(reflect.ValueOf(&c).Elem(), "") {
-		switch f.tag.Get("scope") {
-		case "global", "project", "both":
-		default:
-			t.Errorf("%s: scope %q", f.key, f.tag.Get("scope"))
-		}
-		if strings.Contains(f.key, "..") || strings.HasPrefix(f.key, ".") || strings.HasSuffix(f.key, ".") {
-			t.Errorf("%s: a field has no toml tag", f.key)
-		}
-	}
-}
-
-// enumConfig exercises the enum tag, which no v1 setting uses yet.
-type enumConfig struct {
-	Worker struct {
-		Mode string `toml:"mode" scope:"both" env:"BS_TEST_MODE" default:"auto" enum:"auto|accept_edits"`
-	} `toml:"worker"`
-}
-
-func TestEnumIsChecked(t *testing.T) {
-	dir := setup(t)
-	global := filepath.Join(dir, "config.toml")
-	write(t, global, "[worker]\nmode = \"yolo\"\n")
-	var c enumConfig
-	err := load(&c, map[string]Source{}, map[string][]string{}, &[]File{}, dir, "")
-	wantErr(t, err, global+`: worker.mode = "yolo": must be one of auto, accept_edits`)
-
-	write(t, global, "[worker]\nmode = \"accept_edits\"\n")
-	t.Setenv("BS_TEST_MODE", "nope")
-	err = load(&c, map[string]Source{}, map[string][]string{}, &[]File{}, dir, "")
-	wantErr(t, err, `env BS_TEST_MODE: worker.mode = "nope"`)
-}
-
-func TestPathsExpandTildeOnlyAndMustBeAbsolute(t *testing.T) {
-	dir := setup(t)
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	global := filepath.Join(dir, "config.toml")
-	write(t, global, "[paths]\nlogbook_dir = \"~/logs\"\nrepos = \"~\"\nworktrees = \"{repo}-trees\"\n")
-	l, err := Load("")
+[guards]
+deny = ["git push *"]
+replace = true
+`)
+	l, err := Load(Input{Dir: dir, Project: "toy", Home: "/h"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for got, want := range map[string]string{Expand(l.Paths.LogbookDir): home + "/logs", Expand(l.Paths.Repos): home} {
-		if got != want {
-			t.Errorf("expanded %q, want %q", got, want)
+	// The nearest file sets a table whole: no create from one file, remove from another.
+	if c := l.Workspace.Command; c == nil || c.Create[0] != "hg" || c.Timeout != "" {
+		t.Errorf("workspace.command = %+v", c)
+	}
+	if k, _, chosen := l.Kind(true); k != CommandKind || !chosen || l.Goal["cl"].Handoff[1] != "cmd:cl_submitted" || !l.Guards.Replace {
+		t.Errorf("config = %+v", l.Config)
+	}
+	var keys []string
+	for _, f := range l.Fields() {
+		keys = append(keys, f.Key+"="+f.Value)
+	}
+	all := strings.Join(keys, "\n")
+	for _, want := range []string{`goal.cl.handoff=["clean", "cmd:cl_submitted"]`, `checks.cl_submitted.run=["cl", "status", "{cl}"]`,
+		`workspace.command.dir="/w/{name}"`, "guards.replace=true"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("fields lack %s:\n%s", want, all)
 		}
 	}
-	for body, why := range map[string]string{
-		`logbook_dir = "logs"`:       `paths.logbook_dir = "logs": not an absolute path`,
-		`logbook_dir = "$HOME/logs"`: `paths.logbook_dir = "$HOME/logs": not an absolute path`,
-		`logbook_dir = "~bob/logs"`:  `paths.logbook_dir = "~bob/logs": not an absolute path`,
-		`logbook_dir = ""`:           `paths.logbook_dir = "": not an absolute path`,
-		`logbook_dir = "/x/{repo}"`:  `paths.logbook_dir = "/x/{repo}": {repo} is only allowed at the start of a worktrees path`,
-		`worktrees = "/wt/{repo}"`:   `paths.worktrees = "/wt/{repo}": {repo} is only allowed at its start`,
-		`worktrees = "wt"`:           `paths.worktrees = "wt": not an absolute path`,
+}
+
+// A goal's fragment is checked as every path is: ~ expands, but not with HOME unset.
+func TestFragmentIsCheckedAsAPath(t *testing.T) {
+	for _, c := range []struct{ frag, home, want string }{
+		{"~", "/h", ""}, {"/abs/f.md", "", ""}, {"~/f.md", "", "can't expand ~: HOME is unset"}, {"rel.md", "/h", "not an absolute path"},
 	} {
-		write(t, global, "[paths]\n"+body+"\n")
-		_, err := Load("")
-		wantErr(t, err, global+": "+why)
+		dir := t.TempDir()
+		write(t, filepath.Join(dir, "config.toml"), "[goal.g]\nhandoff = [\"clean\"]\nfragment = \""+c.frag+"\"\n")
+		_, err := Load(Input{Dir: dir, Home: c.home})
+		if c.want == "" && err != nil || c.want != "" && (err == nil || !strings.Contains(err.Error(), "[goal.g] fragment = \""+c.frag+"\": "+c.want)) {
+			t.Errorf("fragment %q, HOME %q: %v", c.frag, c.home, err)
+		}
 	}
-	write(t, global, "")
-	t.Setenv("BS_REPOS", "rel/repos")
-	_, err = Load("")
-	wantErr(t, err, `env BS_REPOS: paths.repos = "rel/repos": not an absolute path`)
 }
 
-// Shadowed lists the values a setting held before the one that won, so bs can tell a moved
-// logbook_dir from a new one.
-func TestShadowedListsTheLowerValues(t *testing.T) {
-	dir := setup(t)
-	write(t, filepath.Join(dir, "config.toml"), "[paths]\nlogbook_dir = \"/g\"\n")
-	write(t, filepath.Join(dir, "projects", "bees.toml"), "[paths]\nlogbook_dir = \"/p\"\n")
-	t.Setenv("BS_LOGBOOK_DIR", "/e")
-	l, err := Load("bees")
+// An unset table is listed, so bs config shows every key there is.
+func TestFieldsListUnsetTables(t *testing.T) {
+	l, err := Load(Input{Dir: t.TempDir(), Home: "/h"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := l.Shadowed["paths.logbook_dir"], []string{"~/.local/share/bees", "/g", "/p"}; !slices.Equal(got, want) {
-		t.Errorf("shadowed = %q, want %q", got, want)
+	var unset []string
+	for _, f := range l.Fields() {
+		if f.Unset {
+			unset = append(unset, f.Key)
+		}
+	}
+	if got := strings.Join(unset, " "); got != "workspace.command goal.<name> checks.<name>" {
+		t.Errorf("unset tables = %s", got)
 	}
 }
 
-// Env skips both files: the fixed list of commands reads only the environment once
-// BS_LOGBOOK_DIR is set, so a broken file can't silence a running fleet.
-func TestEnvSkipsTheFiles(t *testing.T) {
-	dir := setup(t)
-	write(t, filepath.Join(dir, "config.toml"), "broken = [\n")
-	t.Setenv("BS_LOGBOOK_DIR", "/e")
-	l, err := Env()
-	if err != nil || l.Paths.LogbookDir != "/e" || len(l.Files) != 0 {
-		t.Fatalf("Env() = %+v, %v", l, err)
+func TestTableErrors(t *testing.T) {
+	dir := t.TempDir()
+	global := filepath.Join(dir, "config.toml")
+	write(t, global, `
+[workspace.command]
+create = ["jj"]
+remove = ["jj"]
+dir = "x"
+timeout = "soon"
+
+[checks.empty]
+run = []
+
+[goal.pr]
+handoff = ["clean"]
+
+[goal.cl]
+handoff = ["cmd:nope", "made_up"]
+`)
+	_, err := Load(Input{Dir: dir, Home: "/h"})
+	wantErr(t, err, `[workspace.command] timeout = "soon"`,
+		"[checks.empty] run: an argv is required", "[goal.pr] pr is a built-in goal type",
+		`[goal.cl] handoff: "cmd:nope" names no [checks.nope]`, `"made_up" is no built-in check`)
+}
+
+// A [workspace.command] missing a key loads, so bs config and doctor can show it; spawn
+// refuses it.
+func TestCommandMissingLoads(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "config.toml"), "[workspace.command]\ncreate = [\"jj\"]\n")
+	l, err := Load(Input{Dir: dir, Home: "/h"})
+	if err != nil {
+		t.Fatal(err)
 	}
+	if got := strings.Join(l.Workspace.Command.Missing(), " "); got != "remove clean dir" {
+		t.Errorf("missing = %q", got)
+	}
+}
+
+func TestKind(t *testing.T) {
+	l := &Loaded{Sources: map[string]Source{}}
+	if k, _, chosen := l.Kind(true); k != GitWorktree || chosen {
+		t.Error("in a git checkout:", k)
+	}
+	if k, _, _ := l.Kind(false); k != NoWorkspace {
+		t.Error("outside one:", k)
+	}
+	l.Workspace.Kind = NoWorkspace
+	if k, why, chosen := l.Kind(true); k != NoWorkspace || !chosen || !strings.HasPrefix(why, "workspace.kind") {
+		t.Error("override:", k, why)
+	}
+}
+
+// A project file spelled another way is refused: bs would never read it (ADR-0008).
+func TestMisnamedProjectFile(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "projects", "jobflow-ray.toml"), "")
+	_, err := Load(Input{Dir: dir, Project: "jobflowray", Home: "/h"})
+	wantErr(t, err, "jobflow-ray.toml: bs never reads it; rename it to "+filepath.Join(dir, "projects", "jobflowray.toml"))
+}
+
+func TestQuote(t *testing.T) {
+	if got := Quote("a\"b\\c\n"); got != `"a\"b\\c\u000A"` {
+		t.Error(got)
+	}
+}
+
+// prune.ignore defaults to one item, a project file overrides the global one whole, an
+// empty list clears the default, and a pattern path.Match can't read, or one anchored
+// with a leading /, is refused naming its file.
+func TestPruneIgnore(t *testing.T) {
+	dir := t.TempDir()
+	global, proj := filepath.Join(dir, "config.toml"), filepath.Join(dir, "projects", "toy.toml")
+	l, err := Load(Input{Dir: dir, Project: "toy", Home: "/h"})
+	if err != nil || strings.Join(l.Prune.Ignore, ",") != "bin/" || l.Sources["prune.ignore"].String() != "default" {
+		t.Fatalf("default: %q from %s, %v", l.Prune.Ignore, l.Sources["prune.ignore"], err)
+	}
+	write(t, global, "[prune]\nignore = [\"bin/\", \"*.o\"]\n")
+	write(t, proj, "[prune]\nignore = [\"build/\"]\n")
+	if l, err = Load(Input{Dir: dir, Project: "toy", Home: "/h"}); err != nil || strings.Join(l.Prune.Ignore, ",") != "build/" ||
+		l.Sources["prune.ignore"].String() != "project "+proj {
+		t.Fatalf("project: %q from %s, %v", l.Prune.Ignore, l.Sources["prune.ignore"], err)
+	}
+	write(t, proj, "[prune]\nignore = []\n")
+	if l, err = Load(Input{Dir: dir, Project: "toy", Home: "/h"}); err != nil || len(l.Prune.Ignore) != 0 {
+		t.Fatalf("cleared: %q, %v", l.Prune.Ignore, err)
+	}
+	write(t, proj, "[prune]\nignore = [\"[bin\", \"/bin/\", \"a//b\"]\n")
+	_, err = Load(Input{Dir: dir, Project: "toy", Home: "/h"})
+	wantErr(t, err, proj+`: prune.ignore = "[bin": not a path pattern`, `prune.ignore = "/bin/"`, `prune.ignore = "a//b"`)
 }

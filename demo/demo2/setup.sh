@@ -6,6 +6,10 @@
 # Everything it makes is named in teardown.sh, which removes exactly that. It refuses to run
 # over leftovers of an earlier run: run teardown.sh first.
 set -euo pipefail
+# demo2 drives the old bs (bs status --project … --json, bs end --project); the new bs
+# reads a herdr --session's own config, which setup.sh doesn't write yet (bees-13.33).
+echo "setup.sh: demo2 isn't ported to the new bs yet (bees-13.33); nothing was done" >&2
+exit 1
 unset BS_LOGBOOK BS_PROJECT # the toy's sessions find their logbook and project from its repo
 here=$(cd "$(dirname "$0")" && pwd)
 session=buzz

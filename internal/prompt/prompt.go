@@ -1,18 +1,22 @@
-// Package prompt holds the role prompts bs appends to the sessions it launches:
-// QUEEN.md for the queen, WORKER.md for workers, each followed by PITFALLS.md (the
-// Known pitfalls lines both roles hit, continuing the role's list) and BEADS.md (the
-// bead rules both share). The text is tracked in the repo (R32, R40).
+// Package prompt is the prompt bs appends to the sessions it starts (ADR-0010): the role
+// prompt (QUEEN.md or WORKER.md), PITFALLS.md and BEADS.md, then the workspace fragment
+// of the workspace kind (workspace/<kind>.md) and a goal fragment per goal type
+// (goal/<type>.md). The role prompts name no VCS: what to commit and how work lands lives
+// only in the fragments, so a worker gets git wording only from a git workspace or a git
+// goal (bees-12.29).
 package prompt
 
 import (
-	_ "embed"
+	"crypto/sha256"
+	"embed"
 	"fmt"
-	"os"
-	"path/filepath"
+	"slices"
 	"strings"
+
+	"github.com/jmmshn/bees/internal/bsname"
 )
 
-// Role picks a role prompt; its value names the cache file.
+// Role picks a role prompt.
 type Role string
 
 const (
@@ -29,101 +33,98 @@ var (
 	pitfalls string
 	//go:embed BEADS.md
 	beads string
+	//go:embed workspace/*.md goal/*.md host/*.md
+	fragments embed.FS
 )
 
-// Text is r's prompt followed by PITFALLS.md and BEADS.md, with {{project}} filled in.
-func Text(r Role, project string) string {
-	role := worker
+// Hash is the sha256 of goal type typ's fragment, hex, or "" when it has none: a spawn
+// freezes it with its goal (ADR-0010).
+func Hash(typ string) string {
+	b, err := fragments.ReadFile("goal/" + typ + ".md")
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(b))
+}
+
+// Text is r's prompt for project: the role prompt, PITFALLS.md and BEADS.md, then r's part
+// of the workspace fragment of kind under "## Workspace" and of each goal type's fragment
+// under "## Goal" (a worker: its own goal's types) or "## Goals" (the queen), with
+// {{project}} and {{bs}} (the command, bsname.Cmd) filled in. A goal type with no fragment yet gets a line saying bs done
+// checks it. A kind with no fragment yet (none, command: bees-13.10, 13.11) gets no
+// workspace section; "" is no workspace known.
+func Text(r Role, project, kind string, goals []string) string {
+	role, heading := worker, "## Goal"
 	if r == Queen {
-		role = queen
+		role, heading = queen, "## Goals"
 	}
-	return strings.ReplaceAll(role+pitfalls+"\n"+beads, "{{project}}", project)
+	var b strings.Builder
+	b.WriteString(role + pitfalls + "\n" + beads)
+	if ws, err := fragments.ReadFile("workspace/" + kind + ".md"); kind != "" && err == nil {
+		b.WriteString("\n## Workspace\n\n" + part(r, string(ws)))
+	}
+	b.WriteString(goalSection(r, heading, goals))
+	return fill(b.String(), project)
 }
 
-// File writes Text(r, project) to <user cache dir>/bees/<project>-<role>.md and returns
-// its path, for claude --append-system-prompt-file. Queen and workers both launch with a
-// file, because herdr refuses agent arguments containing newlines (worker.CheckAgentArgs).
-// It is rewritten at every launch, through a rename so a concurrent launch never reads
-// half a file, and Claude reads it only at startup.
-func File(r Role, project string) (string, error) {
-	return Cache(project+"-"+string(r)+".md", Text(r, project))
+// fill puts the project and the command's name into a prompt's placeholders.
+func fill(s, project string) string {
+	return strings.NewReplacer("{{project}}", project, "{{bs}}", bsname.Cmd).Replace(s)
 }
 
-// Dir is <cache dir>/bees, where bs keeps the files it launches Claude with. The cache
-// dir is XDG_CACHE_HOME on every OS (os.UserCacheDir ignores it on macOS), else
-// os.UserCacheDir(); a relative XDG_CACHE_HOME is an error (ADR-0008).
-func Dir() (string, error) {
-	cache := os.Getenv("XDG_CACHE_HOME")
-	if cache != "" && !filepath.IsAbs(cache) {
-		return "", fmt.Errorf("XDG_CACHE_HOME=%s is not an absolute path", cache)
+// Goal is r's part of each goal type's fragment under "## Goal": what bs goal sends a
+// worker whose goal it amended, so the fragments it works to are the ones recorded.
+func Goal(r Role, goals []string) string { return fill(goalSection(r, "## Goal", goals), "") }
+
+func goalSection(r Role, heading string, goals []string) string {
+	var b strings.Builder
+	if len(goals) > 0 {
+		b.WriteString("\n" + heading + "\n")
 	}
-	if cache == "" {
-		var err error
-		if cache, err = os.UserCacheDir(); err != nil {
-			return "", err
+	var seen []string
+	for _, g := range goals {
+		if slices.Contains(seen, g) {
+			continue
+		}
+		seen = append(seen, g)
+		f, err := fragments.ReadFile("goal/" + g + ".md")
+		if err != nil {
+			fmt.Fprintf(&b, "\n`--goal %s`: `{{bs}} done` checks it and says what is missing.\n", g)
+			continue
+		}
+		b.WriteString("\n" + part(r, string(f)))
+	}
+	return b.String()
+}
+
+// part is r's share of a fragment: the shared lead, then r's own sections. A line
+// "<!-- queen -->" or "<!-- worker -->" starts a part only that role reads, up to the
+// next such line.
+func part(r Role, fragment string) string {
+	var b strings.Builder
+	mine := true
+	for line := range strings.SplitAfterSeq(fragment, "\n") {
+		switch strings.TrimSpace(line) {
+		case "<!-- queen -->":
+			mine = r == Queen
+		case "<!-- worker -->":
+			mine = r == Worker
+		default:
+			if mine {
+				b.WriteString(line)
+			}
 		}
 	}
-	dir := filepath.Join(cache, "bees")
-	return dir, os.MkdirAll(dir, 0o700) // private, like the logbook
+	return b.String()
 }
 
-// Private writes body to a new file in Dir named by pattern (its * a random number) and
-// returns its path. The file is created exclusively and readable only by the user, so no
-// other process can have it first or swap it in under a name bs would reuse.
-func Private(pattern, body string) (string, error) {
-	dir, err := Dir()
+// Host is r's part of the review host's fragment (host/<host>.md: how a change is
+// uploaded, reviewed and merged there) under "## Review host", or "" for a host with
+// none. The goal fragments name no host: a CL host brings its own commands here.
+func Host(r Role, host string) string {
+	f, err := fragments.ReadFile("host/" + host + ".md")
 	if err != nil {
-		return "", err
+		return ""
 	}
-	f, err := os.CreateTemp(dir, pattern)
-	if err != nil {
-		return "", err
-	}
-	if _, err := f.WriteString(body); err != nil {
-		f.Close()
-		os.Remove(f.Name())
-		return "", err
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(f.Name())
-		return "", err
-	}
-	return f.Name(), nil
-}
-
-// Remove deletes the files in Dir matching pattern (filepath.Match syntax).
-func Remove(pattern string) error {
-	dir, err := Dir()
-	if err != nil {
-		return err
-	}
-	paths, err := filepath.Glob(filepath.Join(dir, pattern))
-	for _, path := range paths {
-		if rerr := os.Remove(path); rerr != nil && !os.IsNotExist(rerr) {
-			err = rerr
-		}
-	}
-	return err
-}
-
-// Cache writes body to <user cache dir>/bees/<name> through a rename, and returns its path.
-func Cache(name, body string) (string, error) {
-	dir, err := Dir()
-	if err != nil {
-		return "", err
-	}
-	tmp, err := os.CreateTemp(dir, name+"-*")
-	if err != nil {
-		return "", err
-	}
-	defer os.Remove(tmp.Name()) // a no-op once renamed
-	if _, err := tmp.WriteString(body); err != nil {
-		tmp.Close()
-		return "", err
-	}
-	if err := tmp.Close(); err != nil {
-		return "", err
-	}
-	path := filepath.Join(dir, name)
-	return path, os.Rename(tmp.Name(), path)
+	return fill("\n## Review host\n\n"+part(r, string(f)), "")
 }

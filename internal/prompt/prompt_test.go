@@ -1,101 +1,124 @@
 package prompt_test
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/jmmshn/bees/internal/goal"
 	"github.com/jmmshn/bees/internal/prompt"
 )
 
-func TestEachRoleNamesTheProjectAndItsJob(t *testing.T) {
-	shared := []string{"## Known pitfalls", "auto-mode permission denial", "control characters", "bs bead ls", "bs epic", "bs bead new --parent web2-N"}
-	for role, want := range map[prompt.Role][]string{
-		prompt.Queen:  {"queen-web2", "bs spawn --label", "--repo", "bs status", "bs end", "only after its PR is merged", "capture-pitfall", "never write \"keeper approved\"", "a push to another branch", "never edit, commit", "answer them yourself", "end your turn", "Never sleep-loop", "LABEL column of `bs status`", "never by a workspace id"},
-		prompt.Worker: {"bd show <bead>", "run: bs inbox", "bs send queen-web2", "done: <bead> PR #N", "Leave `bd close` to the queen", "Your branch is yours", "never force-push", "Never install anything onto PATH from your branch", "\"this pane\", never a workspace id"},
+// git wording, as a whole word: what a non-git worker must never read (bees-12.29).
+var gitWords = regexp.MustCompile(`(?i)\b(git|branch(es)?|commits?|worktrees?|merged?|push(ed)?|PRs?|pull request)\b`)
+
+// The role prompts and the shared parts name no VCS: a worker in a none or command
+// workspace with a goal that isn't git's reads no git wording (bees-12.29).
+// The queen's side, every goal type under none, is bees-13.19.
+func TestANonGitWorkerReadsNoGitWording(t *testing.T) {
+	got := prompt.Text(prompt.Worker, "web2", "none", []string{"verdict", "note", "beads"})
+	if m := gitWords.FindAllString(got, -1); m != nil {
+		t.Errorf("worker prompt under none with --goal verdict, note, beads says %q:\n%s", m, got)
+	}
+}
+
+// Each role reads the shared lead and its own part of each fragment, never the other's.
+func TestFragmentsSplitPerRole(t *testing.T) {
+	w := prompt.Text(prompt.Worker, "web2", "git_worktree", []string{"branch"})
+	q := prompt.Text(prompt.Queen, "web2", "git_worktree", goal.BuiltinTypes())
+	for _, c := range []struct {
+		text string
+		has  []string
+		not  []string
+	}{
+		{w, []string{"bs send queen-web2", "## Workspace", "its own git worktree", "Commit everything you hand off", "## Goal\n", "`--goal branch`", "Your goal is your branch"},
+			[]string{"## Goals", "bs prune` removes", "merge it into its base"}},
+		{q, []string{"queen-web2", "When the keeper says \"merge it\"", "3. `bs prune`", "bs spawn --goal", "## Workspace", "its own git worktree", "bs prune` removes", "## Goals", "merge it into its base", "`--goal pr`:", "`--goal verdict`:"},
+			[]string{"Commit everything you hand off", "Your goal is your branch"}},
 	} {
-		got := prompt.Text(role, "web2")
-		for _, w := range append(shared, want...) {
-			if !strings.Contains(got, w) {
-				t.Errorf("%s prompt lacks %q:\n%s", role, w, got)
+		for _, h := range c.has {
+			if !strings.Contains(c.text, h) {
+				t.Errorf("lacks %q:\n%s", h, c.text)
 			}
 		}
-		if strings.Contains(got, "{{") {
-			t.Errorf("%s: unfilled placeholder:\n%s", role, got)
+		for _, n := range c.not {
+			if strings.Contains(c.text, n) {
+				t.Errorf("has the other role's %q:\n%s", n, c.text)
+			}
+		}
+		if strings.Contains(c.text, "{{") || strings.Contains(c.text, "<!--") {
+			t.Errorf("unfilled placeholder or a role marker left:\n%s", c.text)
 		}
 	}
 }
 
-// The shared bead rules must not let a worker close its own bead.
-func TestNoPromptSaysBdCloseIsFineForEveryone(t *testing.T) {
-	for _, role := range []prompt.Role{prompt.Queen, prompt.Worker} {
-		if got := prompt.Text(role, "web2"); strings.Contains(got, "`bd close` on this project's beads are fine") {
-			t.Errorf("%s prompt still blesses bd close for everyone", role)
+// A goal type with no fragment yet still names how to hand it off; each type appears once.
+func TestAGoalWithNoFragmentStillSaysBsDone(t *testing.T) {
+	got := prompt.Text(prompt.Worker, "web2", "git_worktree", []string{"cl", "branch", "branch"})
+	if !strings.Contains(got, "`--goal cl`: `bs done` checks it") || strings.Count(got, "`--goal branch`:") != 1 {
+		t.Fatalf("prompt:\n%s", got)
+	}
+}
+
+// A verdict or note worker is told where its report goes, never a file (bees-13.7: five
+// reports left in scratch/ were lost). A beads worker writes no report: its beads are it.
+func TestNonPRGoalsSayWhereTheReportGoes(t *testing.T) {
+	for g, want := range map[string]string{
+		"verdict": "bs done --answer yes|no --report",
+		"note":    "bd update <bead> --append-notes",
+		"beads":   "bs bead new --parent <bead>",
+	} {
+		got := prompt.Text(prompt.Worker, "web2", "none", []string{g})
+		if !strings.Contains(got, want) || (g != "beads" && !strings.Contains(got, "never leave") && !strings.Contains(got, "Never leave")) {
+			t.Errorf("--goal %s worker prompt lacks %q or the scratch warning:\n%s", g, want, got)
 		}
 	}
 }
 
-func TestFileHoldsTheRolePromptInBsCache(t *testing.T) {
-	cache := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", cache) // on every OS, macOS too (TestDirFollowsXDGCacheHome)
-	t.Setenv("HOME", t.TempDir())
-	for _, role := range []prompt.Role{prompt.Queen, prompt.Worker} {
-		for range 2 { // rewritten, not appended, at every launch
-			path, err := prompt.File(role, "web2")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if want := filepath.Join(cache, "bees", "web2-"+string(role)+".md"); path != want {
-				t.Fatalf("path = %q, want %q", path, want)
-			}
-			if b, err := os.ReadFile(path); err != nil || string(b) != prompt.Text(role, "web2") {
-				t.Fatalf("%s holds %q, %v; want Text(%s, web2)", path, b, err, role)
-			}
+// The goal fragments name no review host's commands; the host fragment does, by role.
+func TestGoalFragmentsLeaveCommandsToTheHost(t *testing.T) {
+	w := prompt.Text(prompt.Worker, "web2", "git_worktree", []string{"pr", "push", "review"})
+	for _, host := range []string{"gh pr", "github"} {
+		if strings.Contains(strings.ToLower(w), host) {
+			t.Errorf("a goal fragment names %q:\n%s", host, w)
 		}
 	}
-	if fi, err := os.Stat(filepath.Join(cache, "bees")); err != nil || fi.Mode().Perm() != 0o700 {
-		t.Fatalf("cache dir: %v, %v; want 0700, private to the user", fi.Mode(), err)
+	hw, hq := prompt.Host(prompt.Worker, "github"), prompt.Host(prompt.Queen, "github")
+	if !strings.Contains(hw, "gh pr create") || strings.Contains(hw, "gh pr merge") || !strings.Contains(hq, "gh pr merge") {
+		t.Errorf("github's host fragment by role:\nworker %s\nqueen %s", hw, hq)
+	}
+	if prompt.Host(prompt.Worker, "fakecl") != "" {
+		t.Error("a host with no fragment got one")
 	}
 }
 
-// A relayed answer from the queen is a plain answer; the worker prompt must not
-// tell workers to refuse it (bees-1.40).
-func TestWorkerDoesNotRefuseRelayedAnswers(t *testing.T) {
-	if got := prompt.Text(prompt.Worker, "web2"); strings.Contains(got, "keeper approved") {
-		t.Errorf("worker prompt still tells workers to refuse relayed approvals:\n%s", got)
-	}
-}
-
-// The prompts ship to every project: a bees bead id must read as a bs bug, and the
-// bees repo's own paths belong in its AGENTS.md (bees-1.32).
-func TestPromptsHoldNoBeesRepoSpecifics(t *testing.T) {
-	bareID := regexp.MustCompile(`bees-\d`)
-	for _, role := range []prompt.Role{prompt.Queen, prompt.Worker} {
-		got := prompt.Text(role, "web2")
-		for _, line := range strings.Split(got, "\n") {
-			if bareID.MatchString(strings.ReplaceAll(line, "bs bug bees-", "")) {
-				t.Errorf("%s prompt cites a bees id not marked as a bs bug: %s", role, line)
+// Every shipped prompt names the command as {{bs}}, never a bare bs, so a rename reaches
+// every line (bees-13.9); and a beads goal's worker files through bs bead new, which keeps
+// it in the project, never bd create.
+func TestPromptsNameTheCommandThroughBs(t *testing.T) {
+	bare := regexp.MustCompile("(^|[`(\\s])bs (bead|epic|send|inbox|done|status|spawn|end|prune|goal|check)\\b")
+	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || filepath.Ext(path) != ".md" {
+			return err
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for i, line := range strings.Split(string(b), "\n") {
+			if bare.MatchString(line) {
+				t.Errorf("%s:%d names bs bare: %s", path, i+1, line)
 			}
 		}
-		if strings.Contains(got, "internal/prompt") {
-			t.Errorf("%s prompt names the bees repo's internal/prompt", role)
-		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-// The cache dir follows XDG_CACHE_HOME on every OS, macOS too (Go ignores it there), and a
-// relative one is an error (ADR-0008).
-func TestDirFollowsXDGCacheHome(t *testing.T) {
-	xdg := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", xdg)
-	t.Setenv("HOME", t.TempDir())
-	if d, err := prompt.Dir(); err != nil || d != filepath.Join(xdg, "bees") {
-		t.Errorf("Dir() = %q, %v; want %s", d, err, filepath.Join(xdg, "bees"))
-	}
-	t.Setenv("XDG_CACHE_HOME", "rel")
-	if _, err := prompt.Dir(); err == nil {
-		t.Error("a relative XDG_CACHE_HOME was used")
+	if b, _ := os.ReadFile("goal/beads.md"); !strings.Contains(string(b), "{{bs}} bead new --parent <bead>") || strings.Contains(string(b), "bd create") {
+		t.Errorf("goal/beads.md:\n%s", b)
 	}
 }

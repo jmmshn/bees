@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
-# setup.sh [--no-queen] [<dir holding a bs or bsx build>]: a throwaway project for a live
-# test, on its own herdr --session server, with its session config dir written and (unless
-# --no-queen, or the build has no bs) its queen running that build. Prints the run's live.json.
+# setup.sh [--no-queen] [<dir holding a bs build>]: a throwaway project for a live test, on
+# its own herdr --session server, with its session config dir written and (unless
+# --no-queen) its queen running that build. Prints the run's live.json.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 queen=1
 [ "${1:-}" = --no-queen ] && { queen=0; shift; }
 bin=$(cd "${1:-$here/../../../bin}" 2>/dev/null && pwd) || bin=
-[ -n "$bin" ] && { [ -x "$bin/bs" ] || [ -x "$bin/bsx" ]; } || { echo "no bs or bsx build in ${1:-bin/}: run go build -o bin/bsx ./cmd/bsx (or bin/bs ./cmd/bs) in the checkout under test" >&2; exit 1; }
-[ -x "$bin/bs" ] || queen=0 # bsx has no queen yet (bees-13.4)
+[ -n "$bin" ] && [ -x "$bin/bs" ] || { echo "no bs build in ${1:-bin/}: run go build -o bin/bs ./cmd/bs in the checkout under test" >&2; exit 1; }
 [[ $HOME == /* ]] || { echo "HOME=$HOME is not absolute" >&2; exit 1; }
 # The project name is the toy's id everywhere: its herdr session, config dir, beads (<toy>-N),
 # logbook (<toy>.db), cache files (<toy>-*) and sessions (queen-<toy>, <toy>-N).
@@ -19,7 +18,7 @@ root=${BEES_LIVE:-$HOME/.cache/bees-live}
 # pwd -P: herdr reports pane cwds with symlinks resolved, and teardown.sh matches on them.
 mkdir -p "$root" && root=$(cd "$root" && pwd -P)
 run=$root/$toy repo=$root/$toy/$toy
-# bsx reads a pane's config from here when its HERDR_SESSION isn't default (ADR-0010).
+# bs reads a pane's config from here when its HERDR_SESSION isn't default (ADR-0010).
 config=${XDG_CONFIG_HOME:-$HOME/.config}/bees/sessions/$toy
 mkdir "$run" && mkdir "$run/keeper" "$run/logbooks" # mkdir fails on a clash
 h() { herdr --session "$toy" "$@"; }
@@ -27,7 +26,7 @@ h() { herdr --session "$toy" "$@"; }
 keeper_ws=$(herdr workspace list 2>/dev/null | jq -c '[.result.workspaces[].workspace_id]' || echo null)
 # live.json is written first and grows with each step, so teardown.sh can undo a half-built setup.
 jq -n --arg toy "$toy" --arg run "$run" --arg repo "$repo" --arg bin "$bin" --arg config "$config" --arg t0 "$(date -u +%FT%TZ)" \
-	--arg build "$({ "$bin/bsx" version || "$bin/bs" version; } 2>/dev/null || echo "$(git -C "$bin" rev-parse --short HEAD 2>/dev/null || echo unknown) (bsx: no version command yet)")" \
+	--arg build "$("$bin/bs" version 2>/dev/null || echo unknown)" \
 	--arg shared "$(cd / && bs version 2>/dev/null || echo none)" --argjson keeper "$keeper_ws" \
 	'{toy:$toy,session:$toy,run:$run,repo:$repo,bin:$bin,config:$config,created:$t0,build:$build,shared_bs:$shared,keeper_workspaces:$keeper}' >"$run/live.json"
 record() { jq --arg k "$1" --arg v "$2" '.[$k] = $v' "$run/live.json" >"$run/live.json.new" && mv "$run/live.json.new" "$run/live.json"; }
@@ -63,12 +62,11 @@ ws=$(h workspace create --cwd "$repo" --label "live $toy" --no-focus)
 record workspace "$(jq -r .result.workspace.workspace_id <<<"$ws")"
 pane=$(jq -r .result.root_pane.pane_id <<<"$ws")
 record pane "$pane"
-# Which bs and bsx the pane's shell runs: its rc may put dirs ahead of the build (motif 14).
-h pane run "$pane" "{ command -v bsx || echo none; command -v bs || echo none; } >$(printf %q "$run/keeper/pane-which")" >/dev/null
+# Which bs the pane's shell runs: its rc may put dirs ahead of the build (motif 14).
+h pane run "$pane" "{ command -v bs || echo none; } >$(printf %q "$run/keeper/pane-which")" >/dev/null
 for _ in $(seq 50); do [ -s "$run/keeper/pane-which" ] && break; sleep 0.2; done
 # "unknown", never "": the pane's shell didn't answer in 10 s (motif 11).
-record pane_bsx "$(sed -n 1p "$run/keeper/pane-which" 2>/dev/null | grep . || echo unknown)"
-record pane_bs "$(sed -n 2p "$run/keeper/pane-which" 2>/dev/null | grep . || echo unknown)"
+record pane_bs "$(sed -n 1p "$run/keeper/pane-which" 2>/dev/null | grep . || echo unknown)"
 if [ $queen = 0 ]; then
 	cat "$run/live.json"
 	exit 0

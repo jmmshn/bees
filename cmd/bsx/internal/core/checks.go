@@ -78,7 +78,10 @@ func (c *Core) run(ctx context.Context, sp logbook.Spawn, name string, h Handed)
 		if n == 0 {
 			return false, fmt.Sprintf("%s has no commit that %s lacks", ws.Branch, ws.Base), nil
 		}
-		return true, fmt.Sprintf("%d commit%s ahead of %s", n, map[bool]string{true: "s"}[n != 1], ws.Base), nil
+		if n == 1 {
+			return true, "1 commit ahead of " + ws.Base, nil
+		}
+		return true, fmt.Sprintf("%d commits ahead of %s", n, ws.Base), nil
 	case goal.BranchMerged:
 		return c.merged(ctx, ws)
 	}

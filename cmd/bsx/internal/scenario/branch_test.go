@@ -2,6 +2,7 @@ package scenario_test
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/jmmshn/bees/cmd/bsx/internal/fake"
 	"github.com/jmmshn/bees/cmd/bsx/internal/goal"
+	"github.com/jmmshn/bees/cmd/bsx/internal/logbook"
+	"github.com/jmmshn/bees/cmd/bsx/internal/prompt"
 )
 
 // bees-13.5's live script on fakes: a refused handoff names the uncommitted file; the
@@ -47,9 +50,6 @@ func TestASquashMergedBranchLandsAndPrunes(t *testing.T) {
 		t.Fatalf("prune kept the branch: %q", out)
 	}
 	must(t, x.queen("prune"), 0) // nothing left: says nothing, exits 0
-	if r := x.keeper("status"); !strings.HasSuffix(cell(r.out, "toy-1", "WORKSPACE"), " (removed)") {
-		t.Fatalf("status after prune:\n%s", r)
-	}
 }
 
 // bees-12.41: a worker ended with --force (its gate waived) still has its worktree and
@@ -153,11 +153,14 @@ func TestTheWorkspaceIsTaggedWithItsWorker(t *testing.T) {
 	}
 }
 
-// The worker's prompt carries the git_worktree and branch fragments' worker parts, and no
+// The spawn freezes its goal fragment's hash, and the worker's prompt carries the git_worktree and branch fragments' worker parts, and no
 // queen part.
 func TestTheWorkerPromptHasItsWorkspaceAndGoal(t *testing.T) {
 	x := newToy(t)
-	x.spawn("toy-1", "branch")
+	sp := x.spawn("toy-1", "branch")
+	if h := sp.Goal.Parts[0].Fragment; h == "" || h != prompt.Hash("branch") {
+		t.Fatalf("spawned froze fragment hash %q, want %q", h, prompt.Hash("branch"))
+	}
 	fs, _ := filepath.Glob(filepath.Join(x.ports.CacheDir, "toy-1-prompt-*.md"))
 	if len(fs) != 1 {
 		t.Fatalf("prompt files: %v", fs)
@@ -187,8 +190,84 @@ func TestStatusSaysWhatIsStuck(t *testing.T) {
 	must(t, x.worker("toy-1", 1, "done"), 0)
 	must(t, x.queen("end", "--incomplete", "toy-1"), 0)
 	r := x.keeper("status")
-	must(t, r, 0, "stuck: toy-1: ended with its goal incomplete → bsx prune completes it once --goal branch holds")
+	must(t, r, 0, "stuck: toy-1: ended with its goal incomplete → bs prune completes it once --goal branch holds")
 	if cell(r.out, "toy-1", "STATE") != "ended --incomplete" {
 		t.Fatalf("status:\n%s", r)
 	}
+}
+
+// While a completion check can't run (gh offline), --incomplete still ends the worker,
+// with a warning: never a dead end (motif 5).
+func TestEndIncompleteIsTheWayOutWhileGitHubIsDown(t *testing.T) {
+	x := newToy(t)
+	x.git(x.repo, "remote", "add", "origin", "https://github.com/x/toy.git")
+	sp := x.spawn("toy-1", "branch")
+	x.commit(sp.Workspace.Dir, "work.txt")
+	must(t, x.worker("toy-1", 1, "done"), 0)
+	x.gh.Offline = true
+	must(t, x.queen("end", "toy-1"), 6, "next: bs end toy-1 --incomplete")
+	must(t, x.queen("end", "--incomplete", "toy-1"), 0, "ending it --incomplete", "ended toy-1")
+}
+
+// A goal whose prune rule passes at once (verdict) still never loses a branch's commits:
+// prune removes the clean worktree and keeps the unmerged branch, saying why.
+func TestPruneKeepsAnUnmergedBranchOfAVerdictGoal(t *testing.T) {
+	x := newToy(t)
+	sp := x.spawn("toy-1", "verdict")
+	x.commit(sp.Workspace.Dir, "work.txt")
+	must(t, x.worker("toy-1", 1, "done", "--answer", "yes", "--report", "fine"), 0)
+	must(t, x.queen("end", "toy-1"), 0)
+	must(t, x.queen("prune"), 3, "removed "+sp.Workspace.Dir+" (toy-1)", "kept branch toy-1 (toy-1): branch toy-1: toy-1 has work not on main")
+	if x.git(x.repo, "branch", "--list", "toy-1") == "" {
+		t.Fatal("prune deleted an unmerged branch")
+	}
+}
+
+// A discard is the keeper's recorded word: prune removes the workspace and deletes the
+// unmerged branch.
+func TestPruneDeletesADiscardedBranch(t *testing.T) {
+	x := newToy(t)
+	ctx := context.Background()
+	sp := x.spawn("toy-1", "branch")
+	x.commit(sp.Workspace.Dir, "work.txt")
+	must(t, x.worker("toy-1", 1, "done"), 0)
+	must(t, x.queen("end", "--incomplete", "toy-1"), 0)
+	lb, err := logbook.Open(ctx, x.logbook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lb.RecordGoal(ctx, sp.ID, sp.Name, logbook.GoalChange{By: "keeper", Discard: true}); err != nil {
+		t.Fatal(err)
+	}
+	lb.Close()
+	must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir+" and branch toy-1")
+}
+
+// A spawn from before goals recorded the repo's path as its base (the pilot's v1): its
+// branch is proven merged against the default branch, so prune removes it rather than
+// keeping it as "couldn't check" forever (bees-12.41's class).
+func TestALegacySpawnPrunesAgainstTheDefaultBranch(t *testing.T) {
+	x := newToy(t)
+	dir := filepath.Join(filepath.Dir(x.repo), "toy-WT", "toy-9")
+	x.git(x.repo, "worktree", "add", "-q", "-b", "toy-9", dir)
+	x.commit(dir, "old.txt")
+	x.git(x.repo, "merge", "-q", "toy-9")
+	if err := os.MkdirAll(filepath.Dir(x.logbook), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", x.logbook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE entries (id TEXT PRIMARY KEY, ts TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('message','received','rang','spawned','ended')),
+  actor TEXT NOT NULL, subject TEXT, ref TEXT REFERENCES entries(id),
+  data TEXT CHECK (data IS NULL OR json_valid(data))) STRICT;
+INSERT INTO entries VALUES ('s1','2026-10-01T00:00:00.000Z','spawned','queen-toy','toy-9',NULL,json_object('bead','toy-9','workspace','w9','pane','w9:p1','worktree',?1,'branch','toy-9','repo',?2,'base',?2));
+INSERT INTO entries VALUES ('e1','2026-10-01T00:01:00.000Z','ended','queen-toy','toy-9','s1',NULL);`, dir, x.repo)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	must(t, x.queen("prune"), 0, "removed "+dir+" and branch toy-9")
 }

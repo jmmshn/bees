@@ -114,8 +114,14 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 	}
 	done, passed, failed, err := c.complete(ctx, sp, e)
 	switch {
+	case err != nil && !o.Incomplete:
+		return exit(ExitCantCheck, "bs end "+name+" --incomplete", err, "bs end %s: can't tell whether its goal is complete", name)
 	case err != nil:
-		return exit(ExitCantCheck, "", err, "bs end %s: can't tell whether its goal is complete", name)
+		// --incomplete is the way out while a check can't run (motif 5); prune completes it.
+		c.warn("can't tell whether %s's goal is complete (%v): ending it --incomplete", name, err)
+		done = false
+	}
+	switch {
 	case !done && !o.Incomplete:
 		var why []string
 		for _, f := range failed {
@@ -306,6 +312,7 @@ func (c *Core) stop(ctx context.Context, sp logbook.Spawn) error {
 type Pruned struct {
 	Name, Dir string
 	Removed   bool   // its directory was removed
+	Gone      bool   // its directory was gone already
 	Branch    string // its branch, when it had one
 	Deleted   bool   // its local branch was deleted
 	Remote    string // the remote branch of the same name, left alone: remote branches are the keeper's (bees-1.34)
@@ -332,6 +339,10 @@ func (c *Core) Prune(ctx context.Context, by string) ([]Pruned, error) {
 		}
 		_, err := os.Stat(ws.Dir)
 		dir := err == nil
+		if err != nil && !os.IsNotExist(err) {
+			out = append(out, Pruned{Name: sp.Name, Dir: ws.Dir, Branch: ws.Branch, Unknown: true, Why: "can't tell whether its directory exists: " + err.Error()})
+			continue
+		}
 		branch, err := c.hasBranch(ctx, ws)
 		switch {
 		case err != nil:
@@ -358,7 +369,7 @@ func (c *Core) hasBranch(ctx context.Context, ws logbook.Workspace) (bool, error
 
 func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, branch bool) Pruned {
 	ws := sp.Workspace
-	p := Pruned{Name: sp.Name, Dir: ws.Dir, Branch: ws.Branch}
+	p := Pruned{Name: sp.Name, Dir: ws.Dir, Branch: ws.Branch, Gone: !dir}
 	keep := func(unknown bool, format string, a ...any) Pruned {
 		p.Why, p.Unknown = fmt.Sprintf(format, a...), unknown
 		return p
@@ -400,6 +411,13 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 		}
 	}
 	if dir {
+		// Only a directory that is still a worktree of its repo: one taken over or remade
+		// by hand is not this spawn's to remove (the pilot's samePath guard, bees-8.4).
+		if mine, err := c.isWorktree(ctx, ws); err != nil {
+			return keep(true, "can't list %s's worktrees: %v", ws.Repo, err)
+		} else if !mine {
+			return keep(false, "it is no longer a worktree of %s", ws.Repo)
+		}
 		if r := c.check(ctx, sp, goal.Clean, Handed{}); r.Err != "" {
 			return keep(true, "can't check for uncommitted files: %s", r.Err)
 		} else if !r.Pass {
@@ -413,23 +431,10 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 	if !branch {
 		return p
 	}
-	if e.Discarded {
-		return keep(false, "discarded: its branch %s stays; delete it with git -C %s branch -D %s", ws.Branch, ws.Repo, ws.Branch)
-	}
-	switch at, prunable, err := c.checkedOut(ctx, ws.Repo, ws.Branch); {
-	case err != nil:
-		return keep(true, "can't tell whether a worktree has branch %s in use: %v", ws.Branch, err)
-	case at != "" && !prunable:
-		return keep(false, "branch %s is in use by the worktree %s", ws.Branch, at)
-	case at != "":
-		// Its directory is gone: git still counts the branch as checked out there.
-		if _, err := c.git(ctx, ws.Repo, "worktree", "prune"); err != nil {
-			return keep(true, "git worktree prune: %v", err)
-		}
-	}
-	// -D: a squash or rebase merge leaves the branch unmerged to git; the prune rule proved it.
-	if _, err := c.git(ctx, ws.Repo, "branch", "-D", ws.Branch); err != nil {
-		return keep(true, "git branch -D %s: %v", ws.Branch, err)
+	if why, err := c.pruneBranch(ctx, ws, e.Discarded); err != nil {
+		return keep(true, "%v", err)
+	} else if why != "" {
+		return keep(false, "%s", why)
 	}
 	p.Deleted = true
 	switch _, err := c.git(ctx, ws.Repo, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+ws.Branch); {
@@ -439,4 +444,61 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 		c.warn("can't tell whether origin/%s exists: %v", ws.Branch, err)
 	}
 	return p
+}
+
+// pruneBranch deletes ws's local branch once it is proven merged into its base, whatever
+// the goal's prune rule (a verdict goal prunes at once, but its branch may hold commits),
+// or discarded.
+// It returns why it kept the branch, or err when it couldn't check.
+func (c *Core) pruneBranch(ctx context.Context, ws logbook.Workspace, discarded bool) (string, error) {
+	// A discard is the keeper's recorded word that the work is wanted nowhere.
+	if !discarded {
+		switch ok, why, err := c.merged(ctx, ws); {
+		case err != nil:
+			return "", fmt.Errorf("can't tell whether branch %s is merged: %w", ws.Branch, err)
+		case !ok:
+			return fmt.Sprintf("branch %s: %s; delete it by hand once that work is wanted nowhere", ws.Branch, why), nil
+		}
+	}
+	switch at, prunable, err := c.checkedOut(ctx, ws.Repo, ws.Branch); {
+	case err != nil:
+		return "", fmt.Errorf("can't tell whether a worktree has branch %s in use: %w", ws.Branch, err)
+	case at != "" && (!prunable || !samePath(at, ws.Dir)):
+		return fmt.Sprintf("branch %s is in use by the worktree %s", ws.Branch, at), nil
+	case at != "":
+		// Its own directory is gone, and git still counts the branch as checked out there:
+		// drop that one entry, never the repo's other stale ones (motif 12).
+		if _, err := c.git(ctx, ws.Repo, "worktree", "remove", at); err != nil {
+			return "", fmt.Errorf("git worktree remove %s: %w", at, err)
+		}
+	}
+	// -D: a squash or rebase merge leaves the branch unmerged to git; merged proved it.
+	if _, err := c.git(ctx, ws.Repo, "branch", "-D", ws.Branch); err != nil {
+		return "", fmt.Errorf("git branch -D %s: %w", ws.Branch, err)
+	}
+	return "", nil
+}
+
+// isWorktree reports whether ws.Dir is a worktree git lists for ws.Repo.
+func (c *Core) isWorktree(ctx context.Context, ws logbook.Workspace) (bool, error) {
+	out, err := c.git(ctx, ws.Repo, "worktree", "list", "--porcelain", "-z")
+	if err != nil {
+		return false, err
+	}
+	for f := range strings.SplitSeq(out, "\x00") {
+		if at, ok := strings.CutPrefix(f, "worktree "); ok && samePath(at, ws.Dir) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// samePath reports whether a and b name the same directory, symlinks resolved (motif 3).
+func samePath(a, b string) bool {
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	if errA != nil || errB != nil {
+		return filepath.Clean(a) == filepath.Clean(b)
+	}
+	return ra == rb
 }

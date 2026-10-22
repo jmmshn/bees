@@ -27,21 +27,18 @@ func (c *Core) merged(ctx context.Context, ws logbook.Workspace) (bool, string, 
 	case err != nil:
 		return false, "", err
 	}
-	bases := []string{ws.Base}
-	// An upstream the queen pulled a hosted merge into counts too; none is "".
-	if up, err := c.git(ctx, ws.Repo, "for-each-ref", "--format=%(upstream:short)", "refs/heads/"+ws.Base); err != nil {
+	bases, err := c.bases(ctx, ws)
+	if err != nil {
 		return false, "", err
-	} else if up != "" {
-		bases = append(bases, up)
 	}
 	for _, b := range bases {
-		switch in, err := c.ancestor(ctx, ws.Repo, ws.Branch, b); {
+		switch in, err := c.ancestor(ctx, ws.Repo, "refs/heads/"+ws.Branch, b); {
 		case err != nil:
 			return false, "", err
 		case in:
 			return true, "its commits are on " + b, nil
 		}
-		switch same, err := c.sameContent(ctx, ws.Repo, b, ws.Branch); {
+		switch same, err := c.sameContent(ctx, ws.Repo, b, "refs/heads/"+ws.Branch); {
 		case err != nil:
 			return false, "", fmt.Errorf("comparing with %s: %w", b, err)
 		case same:
@@ -55,6 +52,41 @@ func (c *Core) merged(ctx context.Context, ws logbook.Workspace) (bool, string, 
 		return true, "a merged pull request has its tip as head", nil
 	}
 	return false, fmt.Sprintf("%s has work not on %s", ws.Branch, strings.Join(bases, " or ")), nil
+}
+
+// bases is where ws's branch lands: its recorded base and, when it has one, the base's
+// upstream (where a hosted merge is pulled). A spawn from before goals recorded no base
+// ref (main's v0) or the repo's path in its place (the pilot's v1): its bases are the
+// pilot's default branches, origin's default branch and the local one of the same name,
+// or main.
+func (c *Core) bases(ctx context.Context, ws logbook.Workspace) ([]string, error) {
+	if ws.Base != "" && !filepath.IsAbs(ws.Base) {
+		up, err := c.git(ctx, ws.Repo, "for-each-ref", "--format=%(upstream:short)", "refs/heads/"+ws.Base)
+		if err != nil || up == "" {
+			return []string{ws.Base}, err
+		}
+		return []string{ws.Base, up}, nil
+	}
+	cands := []string{"main"}
+	switch head, err := c.git(ctx, ws.Repo, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"); {
+	case err == nil && head != "":
+		cands = []string{head, strings.TrimPrefix(head, "origin/")}
+	case err != nil && !isExit(err, 1):
+		return nil, err
+	}
+	var out []string
+	for _, b := range cands {
+		switch _, err := c.git(ctx, ws.Repo, "rev-parse", "--verify", "--quiet", b+"^{commit}"); {
+		case err == nil:
+			out = append(out, b)
+		case !isExit(err, 1):
+			return nil, err
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no base recorded and no default branch (tried %s)", strings.Join(cands, ", "))
+	}
+	return out, nil
 }
 
 // ancestor reports whether commit a is an ancestor of b.
@@ -141,6 +173,9 @@ func (c *Core) checkedOut(ctx context.Context, repo, branch string) (path string
 			}
 		}
 		if !mine && !gone {
+			if _, err := os.Stat(wt); os.IsNotExist(err) {
+				continue // a locked worktree whose directory is gone: nothing runs a rebase there
+			}
 			gitDir, err := c.git(ctx, wt, "rev-parse", "--absolute-git-dir")
 			if err != nil {
 				return "", false, err

@@ -168,7 +168,7 @@ func (r *run) prune(fs *flag.FlagSet, args []string) error {
 			fmt.Fprintf(r.out, "  left %s: bs never touches a remote branch; it is the keeper's\n", p.Remote)
 		}
 		what := p.Dir
-		if p.Removed {
+		if p.Removed || p.Gone {
 			what = "branch " + p.Branch
 		}
 		switch {
@@ -334,10 +334,10 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 			handoff = "done " + d.TS.Local().Format("01-02 15:04")
 		}
 		complete := "no"
-		ld, landed, err := r.c.Logbook.LandedOf(r.ctx, sp.ID)
+		ld, landed, lerr := r.c.Logbook.LandedOf(r.ctx, sp.ID)
 		switch {
-		case err != nil:
-			errs = append(errs, err)
+		case lerr != nil:
+			errs = append(errs, lerr)
 			complete = "unknown"
 		case landed:
 			complete = "yes (" + ld.By + ")"
@@ -348,31 +348,29 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 		if !sp.Ended {
 			running = r.running(sp)
 		}
-		g := sp.Goal.String()
+		g, discarded := sp.Goal.String(), false
 		if e, err := r.c.Logbook.Goal(r.ctx, sp); err != nil { // the newest amend, not the spawn's goal
 			errs = append(errs, err)
 		} else {
-			g = e.String()
+			g, discarded = e.String(), e.Discarded
 			if e.Discarded {
 				g += " (discarded)"
 			}
 		}
 		dir := sp.Workspace.Dir
-		if _, err := os.Stat(dir); dir != "" && os.IsNotExist(err) {
-			dir += " (removed)"
-		}
 		fmt.Fprintf(tw, "%s\t--goal %s\t%s\t%s\t%s\t%s\t%s\n", sp.Name, g, state, handoff, complete, running, dir)
 		switch {
+		case lerr != nil: // couldn't read whether it landed: never read as "no" (Rule G)
 		case running == "unconfirmed":
-			stuck = append(stuck, fmt.Sprintf("%s: its start was never confirmed → bsx end %s --incomplete", sp.Name, sp.Name))
+			stuck = append(stuck, fmt.Sprintf("%s: its start was never confirmed → bs end %s --incomplete", sp.Name, sp.Name))
 		case strings.HasPrefix(running, "no"):
-			next := "bsx end " + sp.Name
+			next := "bs end " + sp.Name
 			if !landed {
 				next += " (--incomplete if its goal isn't complete)"
 			}
 			stuck = append(stuck, fmt.Sprintf("%s: its process is gone but it isn't ended → %s", sp.Name, next))
-		case sp.Ended && !landed && !sp.Legacy():
-			stuck = append(stuck, fmt.Sprintf("%s: ended with its goal incomplete → bsx prune completes it once --goal %s holds", sp.Name, g))
+		case sp.Ended && !landed && !sp.Legacy() && !discarded:
+			stuck = append(stuck, fmt.Sprintf("%s: ended with its goal incomplete → bs prune completes it once --goal %s holds", sp.Name, g))
 		}
 	}
 	if err := tw.Flush(); err != nil {

@@ -3,6 +3,7 @@ package scenario_test
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jmmshn/bees/cmd/bsx/internal/port"
@@ -73,4 +74,21 @@ func TestAnAmendToNoteChecksAgainstTheSpawn(t *testing.T) {
 	x.beads.Add(port.Bead{ID: "toy-1", Title: "work on toy-1", Notes: "written before the amend"})
 	must(t, x.keeper("goal", "toy-1", "note"), 0)
 	must(t, x.worker("toy-1", 1, "done"), 0, "notes or design changed")
+}
+
+// A goal change is about one spawn: once it has ended, a later spawn of the same name
+// never reads it (live test of bees-13.7: a respawned worker read the old discard and
+// stopped).
+func TestAGoalMessageStaysWithItsSpawn(t *testing.T) {
+	x := newToy(t)
+	x.spawn("toy-1", "verdict")
+	must(t, x.keeper("goal", "toy-1", "discard"), 0)
+	must(t, x.queen("end", "toy-1"), 0)
+	must(t, x.queen("prune"), 0)
+	x.spawn("toy-1", "verdict")
+	r := x.worker("toy-1", 1, "inbox")
+	must(t, r, 0, "You own toy-1")
+	if strings.Contains(r.String(), "discarded") {
+		t.Fatalf("the new spawn reads the old spawn's discard:\n%s", r)
+	}
 }

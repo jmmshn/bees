@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 	"time"
@@ -32,7 +31,7 @@ var ErrOutsidePane = errors.New("not in a herdr pane")
 // env is ignored here; inside a recorded pane the pane decides. A lookup that fails is an
 // error, never "nobody" (motif 7).
 func (c *Core) Identify(ctx context.Context, env []string, self int) (Who, error) {
-	pane, session := lookup(env, "HERDR_PANE_ID"), cmp.Or(lookup(env, "HERDR_SESSION"), logbook.DefaultSession)
+	pane, session := Getenv(env, "HERDR_PANE_ID"), cmp.Or(Getenv(env, "HERDR_SESSION"), logbook.DefaultSession)
 	if pane == "" {
 		return Who{}, ErrOutsidePane
 	}
@@ -88,7 +87,8 @@ func (c *Core) ancestors(self int) ([]int, error) {
 	return out, nil
 }
 
-func lookup(env []string, key string) string {
+// Getenv is key's value in env, the last one set winning, as the process would see it.
+func Getenv(env []string, key string) string {
 	for i := len(env) - 1; i >= 0; i-- {
 		if v, ok := strings.CutPrefix(env[i], key+"="); ok {
 			return v
@@ -96,9 +96,6 @@ func lookup(env []string, key string) string {
 	}
 	return ""
 }
-
-// Self is the calling bs's pid in production.
-func Self() int { return os.Getpid() }
 
 // ErrBackground is the gate's finding (exit 5): the harness runs a process its start
 // didn't see.

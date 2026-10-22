@@ -127,25 +127,28 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 		}
 		return exit(ExitIncomplete, "bs end "+name+" --incomplete", nil, "bs end %s: its goal (--goal %s) is not complete:\n  %s", name, e.Goal, strings.Join(why, "\n  "))
 	case !done:
-		if _, handed, err := c.Logbook.LatestDone(ctx, sp.ID); err != nil {
+		_, handed, err := c.Logbook.LatestDone(ctx, sp.ID)
+		if err != nil {
 			return err
-		} else if !handed {
+		}
+		_, started, err := c.Logbook.LatestStart(ctx, sp.ID)
+		if err != nil {
+			return err
+		}
+		// An unconfirmed spawn never ran a worker that could hand off: --incomplete is its
+		// abort (motif 5). Any other spawn needs something handed off first.
+		if !handed && started {
 			return exit(ExitRefused, "", nil, "bs end %s --incomplete: nothing was handed off; ending it would lose the work's trail", name)
 		}
 	}
 	if !o.Force {
 		switch bg, err := c.Background(ctx, sp, self); {
 		case errors.Is(err, ErrHarnessGone): // its children were reparented away: nothing to walk
-		case errors.Is(err, ErrNoStart): // nothing recorded to walk: bs end clears an unconfirmed spawn
+		case errors.Is(err, ErrNoStart): // nothing recorded to walk: an unconfirmed spawn
 		case err != nil:
 			return exit(ExitCantCheck, "bs end "+name+" --force", err, "bs end %s: can't check for background work", name)
 		case len(bg) > 0:
 			return exit(ExitBackground, "bs end "+name+" --force", nil, "%s %s:\n  %s", name, ErrBackground, lines(bg))
-		}
-	}
-	if done {
-		if err := c.Logbook.RecordLanded(ctx, sp.ID, sp.Name, by, logbook.Landed{By: "end", Checks: passed}); err != nil {
-			return err
 		}
 	}
 	h := c.herdr(sp.Herdr.Session)
@@ -153,7 +156,13 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 		return exit(ExitKept, "bs end "+name, err, "bs end %s: herdr couldn't close its workspace; nothing was recorded", name)
 	}
 	if err := c.stop(ctx, sp); err != nil {
-		return exit(ExitFail, "bs end "+name, err, "bs end %s: its process wouldn't stop", name)
+		return exit(ExitFail, "bs end "+name, err, "bs end %s: its workspace is closed but its process wouldn't stop; nothing was recorded", name)
+	}
+	// landed only for a goal bs checked: a legacy goal has no completion (ADR-0010).
+	if done && !e.IsLegacy() {
+		if err := c.Logbook.RecordLanded(ctx, sp.ID, sp.Name, by, logbook.Landed{By: "end", Checks: passed}); err != nil {
+			return err
+		}
 	}
 	return c.Logbook.RecordEnd(ctx, by, sp.ID, logbook.Ended{Force: o.Force, Incomplete: !done})
 }
@@ -174,8 +183,11 @@ func (c *Core) stop(ctx context.Context, sp logbook.Spawn) error {
 		} else if err != nil {
 			return err
 		}
-		for deadline := time.Now().Add(c.timing().Stop); time.Now().Before(deadline); time.Sleep(c.timing().Poll) {
+		for deadline := time.Now().Add(c.timing().Stop); time.Now().Before(deadline); {
 			if alive, err := c.Proc.Alive(st.Process); err != nil || !alive {
+				return err
+			}
+			if err := sleep(ctx, c.timing().Poll); err != nil {
 				return err
 			}
 		}

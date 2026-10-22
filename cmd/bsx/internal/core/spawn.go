@@ -38,7 +38,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 	}
 	bead, err := c.Beads.Show(ctx, req.Bead)
 	if err != nil {
-		return logbook.Spawn{}, exit(ExitRefused, "bs bead ls", err, "bs spawn: no bead %s", req.Bead)
+		return logbook.Spawn{}, refusedOrCant(err, "bs bead ls", "bs spawn: can't read bead %s", req.Bead)
 	}
 	name := Name(bead.ID)
 	switch prev, ok, err := c.Logbook.LatestSpawn(ctx, name); {
@@ -73,7 +73,12 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 	}
 	sp.Record = launch.Record
 	if sp.ID, err = c.Logbook.RecordSpawn(ctx, req.By, sp, brief(bead, g)); err != nil {
-		return logbook.Spawn{}, err
+		// No record: take back the worktree this spawn made, or a second spawn would find
+		// it with nothing to prune it (motif 8).
+		if rerr := c.herdr(session).RemoveWorktree(context.WithoutCancel(ctx), hw.ID, true); rerr != nil {
+			err = errors.Join(err, fmt.Errorf("and its worktree %s stays: %w", ws.Dir, rerr))
+		}
+		return logbook.Spawn{}, exit(ExitFail, "", err, "bs spawn %s: couldn't record the spawn", name)
 	}
 	if err := c.launch(ctx, sp, launch); err != nil {
 		return sp, err
@@ -100,9 +105,12 @@ func (c *Core) refuse(ctx context.Context, g goal.Goal) error {
 func (c *Core) workspace(ctx context.Context, name string) (logbook.Workspace, error) {
 	top, err := c.git(ctx, c.Repo, "rev-parse", "--show-toplevel")
 	if err != nil {
-		return logbook.Workspace{}, exit(ExitRefused, "", err, "bs spawn: %s is not a git checkout; workspace none arrives with bees-13.10", c.Repo)
+		return logbook.Workspace{}, refusedOrCant(err, "", "bs spawn: %s is not a git checkout (workspace none arrives with bees-13.10)", c.Repo)
 	}
-	real, _ := filepath.EvalSymlinks(c.Repo)
+	real, err := filepath.EvalSymlinks(c.Repo)
+	if err != nil {
+		return logbook.Workspace{}, exit(ExitCantCheck, "", err, "bs spawn: can't resolve paths.repo")
+	}
 	if top != c.Repo && top != real {
 		return logbook.Workspace{}, exit(ExitRefused, "", nil, "bs spawn: %s is inside the checkout %s, not its top level; set paths.repo to it", c.Repo, top)
 	}
@@ -124,24 +132,26 @@ func (c *Core) workspace(ctx context.Context, name string) (logbook.Workspace, e
 func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch) error {
 	args, err := c.writeFiles(sp.Name, l)
 	if err != nil {
-		return exit(ExitStart, "bs end "+sp.Name, err, "bs spawn %s: couldn't write its start files", sp.Name)
+		return exit(ExitStart, "bs end "+sp.Name+" --incomplete", err, "bs spawn %s: couldn't write its start files", sp.Name)
 	}
 	h := c.herdr(sp.Herdr.Session)
 	if err := herdr.CheckAgentArgs(args); err != nil {
-		return exit(ExitStart, "bs end "+sp.Name, err, "bs spawn %s: the launch can't be typed into a pane", sp.Name)
+		return exit(ExitStart, "bs end "+sp.Name+" --incomplete", err, "bs spawn %s: the launch can't be typed into a pane", sp.Name)
 	}
 	var startErr error
 	for try := 0; try < 4; try++ {
 		if startErr = h.StartAgent(ctx, sp.Herdr.Pane, sp.Name, c.Harness.Kind(), args...); !errors.Is(startErr, herdr.ErrPaneBusy) {
 			break
 		}
-		time.Sleep(time.Duration(try+1) * 250 * time.Millisecond)
+		if err := sleep(ctx, time.Duration(try+1)*250*time.Millisecond); err != nil {
+			return exit(ExitStart, "bs end "+sp.Name+" --incomplete", err, "bs spawn %s: interrupted", sp.Name)
+		}
 	}
 	if errors.Is(startErr, herdr.ErrPaneBusy) || errors.Is(startErr, herdr.ErrNameTaken) {
-		return exit(ExitStart, "bs end "+sp.Name, startErr, "bs spawn %s: herdr started nothing", sp.Name)
+		return exit(ExitStart, "bs end "+sp.Name+" --incomplete", startErr, "bs spawn %s: herdr started nothing", sp.Name)
 	}
 	if err := c.confirm(ctx, sp); err != nil {
-		return exit(ExitStart, "bs end "+sp.Name, errors.Join(startErr, err), "bs spawn %s: start unconfirmed", sp.Name)
+		return exit(ExitStart, "bs end "+sp.Name+" --incomplete", errors.Join(startErr, err), "bs spawn %s: start unconfirmed", sp.Name)
 	}
 	return nil
 }
@@ -153,9 +163,14 @@ func (c *Core) writeFiles(name string, l port.Launch) ([]string, error) {
 	if len(l.Files) == 0 {
 		return args, nil
 	}
-	old, _ := filepath.Glob(filepath.Join(c.CacheDir, name+"-[a-z]*-*"))
+	old, err := filepath.Glob(filepath.Join(c.CacheDir, name+"-[a-z]*-*"))
+	if err != nil {
+		return nil, err
+	}
 	for _, f := range old {
-		os.Remove(f)
+		if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
 	}
 	if err := os.MkdirAll(c.CacheDir, 0o700); err != nil {
 		return nil, err
@@ -188,7 +203,10 @@ func (c *Core) confirm(ctx context.Context, sp logbook.Spawn) error {
 	t := c.timing()
 	h := c.herdr(sp.Herdr.Session)
 	var last error
-	for deadline := time.Now().Add(t.Confirm); time.Now().Before(deadline); time.Sleep(t.Poll) {
+	for deadline := time.Now().Add(t.Confirm); time.Now().Before(deadline); _ = sleep(ctx, t.Poll) {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		pi, err := h.ProcessInfo(ctx, sp.Herdr.Pane)
 		if err != nil {
 			last = err
@@ -230,4 +248,14 @@ func brief(b port.Bead, g goal.Goal) string {
 
 func doorbell(name, project string) string {
 	return fmt.Sprintf("[bs] you are %s in %s — run: bs inbox", name, project)
+}
+
+// refusedOrCant is a refusal (exit 2) when the tool ran and said no, and "can't check"
+// (exit 6) when it couldn't run: a tool that is down is never read as "no" (Rule G).
+func refusedOrCant(err error, next, format string, a ...any) *Exit {
+	var ee *port.ExitError
+	if errors.As(err, &ee) {
+		return exit(ExitRefused, next, err, format, a...)
+	}
+	return exit(ExitCantCheck, "", err, format, a...)
 }

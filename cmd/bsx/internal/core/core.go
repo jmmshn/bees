@@ -99,3 +99,13 @@ func exit(code int, next string, err error, format string, a ...any) *Exit {
 
 // Name is a bead's worker session name (ADR-0006): its id with . → -.
 func Name(bead string) string { return strings.ReplaceAll(bead, ".", "-") }
+
+// sleep waits d, or until ctx is done.
+func sleep(ctx context.Context, d time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(d):
+		return nil
+	}
+}

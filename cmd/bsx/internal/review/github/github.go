@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -198,6 +199,51 @@ func (h Host) api(ctx context.Context, dir, path string, v any) error {
 		return fmt.Errorf("gh api %s: %w", path, err)
 	}
 	return nil
+}
+
+// RequiredChecks is the required status checks of c's base: its classic branch protection
+// (gh api repos/R/branches/B, which needs no admin, unlike …/protection) and its rulesets'
+// (repos/R/rules/branches/B); a repo protects with either (probed: jmmshn/bees requires
+// lint and test by a ruleset, its classic protection empty).
+func (h Host) RequiredChecks(ctx context.Context, dir string, c port.Change) ([]string, error) {
+	var b struct {
+		Protection struct {
+			Required struct {
+				Contexts []string `json:"contexts"`
+				Checks   []struct {
+					Context string `json:"context"`
+				} `json:"checks"`
+			} `json:"required_status_checks"`
+		} `json:"protection"`
+	}
+	base := url.PathEscape(c.Base)
+	if err := h.api(ctx, dir, "repos/"+c.Repo+"/branches/"+base, &b); err != nil {
+		return nil, err
+	}
+	var rules []struct {
+		Type       string `json:"type"`
+		Parameters struct {
+			Required []struct {
+				Context string `json:"context"`
+			} `json:"required_status_checks"`
+		} `json:"parameters"`
+	}
+	if err := h.api(ctx, dir, "repos/"+c.Repo+"/rules/branches/"+base, &rules); err != nil {
+		return nil, err
+	}
+	names := slices.Clone(b.Protection.Required.Contexts)
+	for _, ch := range b.Protection.Required.Checks {
+		names = append(names, ch.Context)
+	}
+	for _, r := range rules {
+		if r.Type == "required_status_checks" {
+			for _, ch := range r.Parameters.Required {
+				names = append(names, ch.Context)
+			}
+		}
+	}
+	slices.Sort(names)
+	return slices.Compact(names), nil
 }
 
 func (h Host) Behind(ctx context.Context, dir string, c port.Change) (int, error) {

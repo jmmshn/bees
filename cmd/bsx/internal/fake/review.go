@@ -27,8 +27,9 @@ type CLHost struct {
 	mu       sync.Mutex
 	RepoName string // the repo every checkout belongs to; "" is none
 	Offline  bool
-	// TrunkProtected says trunk is protected.
+	// TrunkProtected says trunk is protected; TrunkRequires names the checks it requires.
 	TrunkProtected bool
+	TrunkRequires  []string
 	changes        map[int]*clChange
 	parents        map[string][]string // commit → its parents
 	made           map[string]clMade   // commits Commit made: where and when
@@ -277,6 +278,12 @@ func (h *CLHost) Next(n int, ci []port.CICheck) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.changes[n].next = &ci
+}
+
+func (h *CLHost) RequiredChecks(_ context.Context, dir string, _ port.Change) ([]string, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.TrunkRequires), h.offlineIn(dir)
 }
 
 func (h *CLHost) Behind(_ context.Context, dir string, c port.Change) (int, error) {

@@ -101,6 +101,10 @@ type GH struct {
 	// own fields. Each view writes refs/pull/<n>/head there, as GitHub keeps it.
 	Git       string
 	Protected map[string]bool // branch protection, by branch
+	// Requires is the checks a ruleset requires on a branch, by branch: answered under
+	// rules/branches/<b>, with branches/<b>'s classic list empty (jmmshn/bees's shape,
+	// probed).
+	Requires map[string][]string
 }
 
 // Edit changes PR url under the lock gh's calls take: a test's change while a bs done
@@ -245,7 +249,8 @@ func (g *GH) Run(ctx context.Context, _ string, argv ...string) ([]byte, error) 
 }
 
 // api answers gh api repos/<o>/<r> (its default branch, main), and under it
-// compare/<base>...<head> and branches/<branch>; a ref or branch the bare repo doesn't have is a 404, as on GitHub.
+// compare/<base>...<head>, branches/<branch> and rules/branches/<branch>; a ref or branch
+// the bare repo doesn't have is a 404, as on GitHub.
 func (g *GH) api(argv []string) ([]byte, error) {
 	notFound := &port.ExitError{Argv: argv, Code: 1, Stderr: []byte("gh: Not Found (HTTP 404)\n")}
 	parts := strings.SplitN(argv[2], "/", 4)
@@ -288,7 +293,17 @@ func (g *GH) api(argv []string) ([]byte, error) {
 		if !has("refs/heads/" + b) {
 			return nil, notFound
 		}
-		return json.Marshal(map[string]bool{"protected": g.Protected[b]})
+		return json.Marshal(map[string]any{"protected": g.Protected[b], "protection": map[string]any{
+			"enabled": false, "required_status_checks": map[string]any{"contexts": []string{}, "checks": []any{}}}})
+	case strings.HasPrefix(rest, "rules/branches/"):
+		var checks []map[string]string
+		for _, c := range g.Requires[strings.TrimPrefix(rest, "rules/branches/")] {
+			checks = append(checks, map[string]string{"context": c})
+		}
+		if checks == nil {
+			return []byte("[]"), nil
+		}
+		return json.Marshal([]any{map[string]any{"type": "required_status_checks", "parameters": map[string]any{"required_status_checks": checks}}})
 	}
 	return nil, ghFail(argv, "fake gh: api "+argv[2])
 }

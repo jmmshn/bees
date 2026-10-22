@@ -28,6 +28,7 @@ type Core struct {
 	Repo        string   // paths.repo: the project's checkout
 	Worktrees   string   // where git_worktree workspaces go: <Worktrees>/<name>
 	Kind        string   // the workspace kind, worked out or set (config.Kind)
+	KindWhy     string   // how config came to it
 	ConfigDir   string   // the config dir the spawn ran under, recorded
 	CacheDir    string   // per-start files
 	WorkerPath  []string // worker.path: dirs first on a worker's PATH

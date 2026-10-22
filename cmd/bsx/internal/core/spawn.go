@@ -91,15 +91,12 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 }
 
 // refuse runs the spawn-time refusals bs can make now (Rule G) for goal g in workspace
-// ws. The network ones (a PR goal's remote, a push or review target) arrive with
-// bees-13.6.
+// ws. A branch goal needs a workspace with a branch: every workspace has one until kind
+// none (bees-13.10). The network ones (a PR goal's remote, a push or review target)
+// arrive with bees-13.6.
 func (c *Core) refuse(ctx context.Context, g goal.Goal, ws logbook.Workspace) error {
 	for _, p := range g.Parts {
 		switch p.Type {
-		case "branch":
-			if ws.Branch == "" {
-				return exit(ExitRefused, "", nil, "bs spawn --goal %s: a %s workspace has no branch to hand off", p, ws.Kind)
-			}
 		case "pr", "push", "review":
 			return exit(ExitRefused, "", nil, "bs spawn --goal %s: PR goals arrive with bees-13.6", p)
 		case "note", "beads":
@@ -133,9 +130,6 @@ func (c *Core) workspace(ctx context.Context, name string) (logbook.Workspace, e
 	if c.Repo == "" {
 		return logbook.Workspace{}, exit(ExitRefused, "", nil, "bs spawn: project %s has no repo: run it in the repo, or set paths.repo", c.Project)
 	}
-	if c.Kind != "" && c.Kind != "git_worktree" {
-		return logbook.Workspace{}, exit(ExitRefused, "bsx config", nil, "bs spawn: workspace kind %s isn't built yet (none: bees-13.10, command: bees-13.11)", c.Kind)
-	}
 	top, err := c.git(ctx, c.Repo, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return logbook.Workspace{}, refusedOrCant(err, "", "bs spawn: %s is not a git checkout (workspace none arrives with bees-13.10)", c.Repo)
@@ -146,6 +140,11 @@ func (c *Core) workspace(ctx context.Context, name string) (logbook.Workspace, e
 	}
 	if top != c.Repo && top != real {
 		return logbook.Workspace{}, exit(ExitRefused, "", nil, "bs spawn: %s is inside the checkout %s, not its top level; set paths.repo to it", c.Repo, top)
+	}
+	// The checks above say what to fix when the kind was worked out as none; this one
+	// names a kind set by hand.
+	if c.Kind != "" && c.Kind != "git_worktree" {
+		return logbook.Workspace{}, exit(ExitRefused, "bs config", nil, "bs spawn: workspace kind %s (%s) isn't built yet (none: bees-13.10, command: bees-13.11)", c.Kind, c.KindWhy)
 	}
 	base, err := c.git(ctx, c.Repo, "symbolic-ref", "--short", "HEAD")
 	if err != nil {

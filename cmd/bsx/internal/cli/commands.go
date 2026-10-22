@@ -361,8 +361,7 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 				g += " (discarded)"
 			}
 		}
-		dir := sp.Workspace.Dir
-		fmt.Fprintf(tw, "%s\t--goal %s\t%s\t%s\t%s\t%s\t%s\n", sp.Name, g, state, handoff, complete, running, dir)
+		fmt.Fprintf(tw, "%s\t--goal %s\t%s\t%s\t%s\t%s\t%s\n", sp.Name, g, state, handoff, complete, running, sp.Workspace.Dir)
 		switch {
 		case lerr != nil: // couldn't read whether it landed: never read as "no" (Rule G)
 		case running == "unconfirmed":

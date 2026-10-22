@@ -90,7 +90,7 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, force bool
 
 // EndOpts are bs end's flags.
 type EndOpts struct {
-	Force      bool // waive the gate, and nothing else
+	Force      bool // waive the gate and the moved-pane refusal (stopping it where it runs), and nothing else
 	Incomplete bool // end an incomplete goal anyway; prune completes it later
 }
 
@@ -320,9 +320,9 @@ type Pruned struct {
 	Unknown   bool   // it couldn't check
 }
 
-// Prune removes each ended spawn's workspace, then its local branch, once its frozen prune
-// rule passes (or it is discarded: the branch then stays) and the workspace holds no
-// uncommitted or untracked files, completing a goal ended --incomplete on the way. A
+// Prune removes each ended spawn's workspace once its frozen prune rule passes (or it is
+// discarded) and it holds no uncommitted or untracked files, then its local branch once
+// that is proven merged (or discarded), completing a goal ended --incomplete on the way. A
 // workspace whose directory is already gone still has its branch pruned, so nothing is
 // kept forever (bees-12.41). It never touches a remote branch, and names what it kept and
 // why.
@@ -431,7 +431,9 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 	if !branch {
 		return p
 	}
-	if why, err := c.pruneBranch(ctx, ws, e.Discarded); err != nil {
+	// The prune rule's branch_merged, when it ran and passed, is the proof: one gh call, not two.
+	proven := e.Discarded || slices.Contains(e.Prune(), goal.BranchMerged)
+	if why, err := c.pruneBranch(ctx, ws, proven); err != nil {
 		return keep(true, "%v", err)
 	} else if why != "" {
 		return keep(false, "%s", why)
@@ -448,11 +450,11 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 
 // pruneBranch deletes ws's local branch once it is proven merged into its base, whatever
 // the goal's prune rule (a verdict goal prunes at once, but its branch may hold commits),
-// or discarded.
+// or discarded: the keeper's recorded word that the work is wanted nowhere. proven skips
+// the proof when the caller already has it.
 // It returns why it kept the branch, or err when it couldn't check.
-func (c *Core) pruneBranch(ctx context.Context, ws logbook.Workspace, discarded bool) (string, error) {
-	// A discard is the keeper's recorded word that the work is wanted nowhere.
-	if !discarded {
+func (c *Core) pruneBranch(ctx context.Context, ws logbook.Workspace, proven bool) (string, error) {
+	if !proven {
 		switch ok, why, err := c.merged(ctx, ws); {
 		case err != nil:
 			return "", fmt.Errorf("can't tell whether branch %s is merged: %w", ws.Branch, err)

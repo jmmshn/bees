@@ -35,16 +35,6 @@ var (
 	fragments embed.FS
 )
 
-// Goals is every goal type with a fragment, in order: the queen reads each one's part.
-func Goals() []string {
-	ents, _ := fragments.ReadDir("goal") // embedded at build: it can't fail
-	var out []string
-	for _, e := range ents {
-		out = append(out, strings.TrimSuffix(e.Name(), ".md"))
-	}
-	return out
-}
-
 // Hash is the sha256 of goal type typ's fragment, hex, or "" when it has none: a spawn
 // freezes it with its goal (ADR-0010).
 func Hash(typ string) string {

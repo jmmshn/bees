@@ -73,10 +73,19 @@ func TestPilotBug1241PruneAfterEndForce(t *testing.T) {
 	if err := os.RemoveAll(sp2.Workspace.Dir); err != nil {
 		t.Fatal(err)
 	}
+	// Someone else's stale worktree entry: prune drops only its own (motif 12).
+	stale := filepath.Join(filepath.Dir(x.repo), "stale")
+	x.git(x.repo, "worktree", "add", "-q", "-b", "other", stale)
+	if err := os.RemoveAll(stale); err != nil {
+		t.Fatal(err)
+	}
 	r := x.queen("prune")
 	must(t, r, 0, "removed "+sp1.Workspace.Dir+" and branch toy-1", "removed branch toy-2 (toy-2)")
 	if out := x.git(x.repo, "branch", "--list", "toy-*"); out != "" {
 		t.Fatalf("branches left: %q", out)
+	}
+	if !strings.Contains(x.git(x.repo, "worktree", "list"), "stale") {
+		t.Fatal("prune dropped another worktree's stale entry")
 	}
 }
 
@@ -176,7 +185,7 @@ func TestTheWorkerPromptHasItsWorkspaceAndGoal(t *testing.T) {
 			t.Fatalf("worker prompt lacks %q:\n%s", want, p)
 		}
 	}
-	for _, not := range []string{"## Goals", "merge it into its base", "bs prune removes"} {
+	for _, not := range []string{"## Goals", "merge it into its base", "bs prune` removes"} {
 		if strings.Contains(p, not) {
 			t.Fatalf("worker prompt has the queen's %q:\n%s", not, p)
 		}
@@ -271,4 +280,85 @@ INSERT INTO entries VALUES ('e1','2026-10-01T00:01:00.000Z','ended','queen-toy',
 		t.Fatal(err)
 	}
 	must(t, x.queen("prune"), 0, "removed "+dir+" and branch toy-9")
+}
+
+// A changed path with a leading space: git's -z name list is read raw, never trimmed, so
+// the path compared is the branch's own and the branch is not "proven merged".
+func TestAPathWithALeadingSpaceIsNotProvenMerged(t *testing.T) {
+	x := newToy(t)
+	sp := x.spawn("toy-1", "branch")
+	x.commit(sp.Workspace.Dir, " lead")
+	must(t, x.worker("toy-1", 1, "done"), 0)
+	must(t, x.queen("end", "toy-1"), 9, "toy-1 has work not on main")
+}
+
+// A stacked base merged and deleted: the branch's work is proven on the default branch,
+// never "can't check" forever (motif 5).
+func TestADeletedBaseFallsBackToTheDefaultBranch(t *testing.T) {
+	x := newToy(t)
+	x.git(x.repo, "switch", "-q", "-c", "stack")
+	sp := x.spawn("toy-1", "branch")
+	if sp.Workspace.Base != "stack" {
+		t.Fatalf("base = %q", sp.Workspace.Base)
+	}
+	x.commit(sp.Workspace.Dir, "work.txt")
+	must(t, x.worker("toy-1", 1, "done"), 0)
+	x.git(x.repo, "switch", "-q", "main")
+	x.git(x.repo, "merge", "-q", "toy-1")
+	x.git(x.repo, "branch", "-q", "-D", "stack")
+	must(t, x.queen("end", "toy-1"), 0, "ended toy-1")
+	must(t, x.queen("prune"), 0, "and branch toy-1")
+}
+
+// A failed tag takes back the worktree and the branch herdr made: a second spawn starts
+// clean (motif 8).
+func TestAFailedTagLeavesNoWorktreeOrBranch(t *testing.T) {
+	x := newToy(t)
+	x.bead("toy-1", "x")
+	x.herdr.RefuseNext = "workspace report-metadata"
+	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 1, "couldn't tag its workspace; nothing was recorded")
+	if out := x.git(x.repo, "branch", "--list", "toy-1"); out != "" {
+		t.Fatalf("branch left: %q", out)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(x.repo), "toy-WT", "toy-1")); !os.IsNotExist(err) {
+		t.Fatalf("worktree left: %v", err)
+	}
+	x.spawn("toy-1", "branch")
+}
+
+// A workspace kind set to one not built yet is refused, saying where it was set.
+func TestSpawnRefusesAKindNotBuiltYet(t *testing.T) {
+	x := newToy(t)
+	x.bead("toy-1", "x")
+	b, err := os.ReadFile(filepath.Join(x.config, "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	x.write(filepath.Join(x.config, "config.toml"), string(b)+"[workspace]\nkind = \"none\"\n")
+	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 2, "workspace kind none (workspace.kind", "bees-13.10")
+}
+
+// Prune removes only a directory that is still a worktree of its repo: one remade by
+// hand is kept, named; a directory it can't stat is "couldn't check" (exit 4).
+func TestPruneKeepsADirThatIsNoLongerAWorktree(t *testing.T) {
+	x := newToy(t)
+	sp := x.spawn("toy-1", "branch")
+	x.commit(sp.Workspace.Dir, "work.txt")
+	must(t, x.worker("toy-1", 1, "done"), 0)
+	x.git(x.repo, "merge", "-q", "toy-1")
+	must(t, x.queen("end", "toy-1"), 0)
+	parent := filepath.Dir(sp.Workspace.Dir)
+	if err := os.Chmod(parent, 0); err != nil {
+		t.Fatal(err)
+	}
+	r := x.queen("prune")
+	if err := os.Chmod(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	must(t, r, 4, "can't tell whether its directory exists")
+	x.git(x.repo, "worktree", "remove", sp.Workspace.Dir)
+	if err := os.MkdirAll(sp.Workspace.Dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	must(t, x.queen("prune"), 3, "it is no longer a worktree of "+x.repo)
 }

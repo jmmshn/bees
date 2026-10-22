@@ -9,6 +9,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/jmmshn/bees/cmd/bsx/internal/config"
 	"github.com/jmmshn/bees/cmd/bsx/internal/core"
 	"github.com/jmmshn/bees/cmd/bsx/internal/logbook"
 	"github.com/jmmshn/bees/cmd/bsx/internal/port"
@@ -26,7 +27,12 @@ func (r *run) spawn(fs *flag.FlagSet, args []string) error {
 		return fmt.Errorf("%w: bsx spawn --goal <goal> <bead>", errUsage)
 	}
 	if r.c.Harness == nil {
-		return &core.Exit{Code: core.ExitRefused, Msg: "bsx spawn: no harness adapter yet (claude_code arrives with bees-13.3)"}
+		return &core.Exit{Code: core.ExitRefused, Msg: "no harness adapter yet (claude_code arrives with bees-13.4)"}
+	}
+	// A kind the config chose and spawn can't make yet is refused, never made a worktree;
+	// a worked-out none is left to Spawn, which names why the repo isn't a checkout.
+	if kind, why := r.s.Kind(r.s.GitTop); kind != config.GitWorktree && (r.s.Workspace.Kind != "" || r.s.Workspace.Command != nil) {
+		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("workspace kind %s (%s): bsx makes only git_worktree workspaces yet (none arrives with bees-13.10, command with bees-13.11)", kind, why)}
 	}
 	w, err := r.who(*as)
 	if err != nil {

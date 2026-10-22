@@ -102,6 +102,9 @@ if [ -d /proc ]; then
 		done
 	)
 	[ -z "$stray" ] || leak "processes still running in $run: $stray"
+else
+	unchecked="stray processes (no /proc to look in)" # couldn't look is not "none" (Rule G)
+	echo "can't check for processes left in $run: no /proc"
 fi
 left=$(ls -d "$store/$toy".db* "$cache/$toy"-* "$repo" "$config" "$projects/$enc"-* 2>/dev/null | tr '\n' ' ')
 [ -z "$left" ] || leak "files left: $left"
@@ -125,11 +128,12 @@ for db in "$store"/*.db; do
 	[ "$n" = 0 ] || note "$n rows written by $toy's sessions in $db"
 done
 # The keeper's own workspaces, as setup.sh listed them: teardown never touches one, so a
-# missing one was closed by someone else. Noted, never a leak.
+# missing one was closed by someone else. Reported, never a leak: this shows the keeper's
+# server is still answering for them, not a check teardown can fail.
 before=$(jq -c '.keeper_workspaces // empty' "$run/live.json" 2>/dev/null)
 if [ -n "$before" ] && [ "$before" != null ] && after=$(herdr workspace list | jq -c '[.result.workspaces[].workspace_id]'); then
 	gone=$(jq -nr --argjson b "$before" --argjson a "$after" '$b - $a | join(" ")')
 	if [ -n "$gone" ]; then note "the keeper's workspaces $gone closed since setup (not by teardown)"; else echo "the keeper's $(jq length <<<"$before") workspaces from setup are all still open"; fi
 fi
 [ $leaks = 0 ] || exit 2
-echo "no leaks"
+echo "no leaks${unchecked:+ found; not checked: $unchecked}"

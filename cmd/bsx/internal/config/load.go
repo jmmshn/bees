@@ -125,7 +125,9 @@ func Defaults(home string) *Loaded {
 	l := &Loaded{Sources: map[string]Source{}, home: home}
 	for _, f := range leaves(reflect.ValueOf(&l.Config).Elem(), "") {
 		f.v.SetZero()
-		if d := f.tag.Get("default"); d != "" {
+		if d := f.tag.Get("default"); d != "" && f.v.Kind() == reflect.Slice {
+			f.v.Set(reflect.ValueOf(strings.Split(d, ","))) // a list's default: comma separated
+		} else if d != "" {
 			f.v.SetString(d)
 		}
 		if !f.table() {
@@ -403,8 +405,8 @@ func leaves(v reflect.Value, prefix string) []leaf {
 			}
 			out = append(out, leaf{key, sf.Tag, v.Field(i)})
 		case reflect.Slice:
-			if sf.Type.Elem().Kind() != reflect.String || sf.Tag.Get("env") != "" || sf.Tag.Get("default") != "" {
-				panic("config: " + key + ": a list holds strings, with no env or default")
+			if sf.Type.Elem().Kind() != reflect.String || sf.Tag.Get("env") != "" {
+				panic("config: " + key + ": a list holds strings, with no env (a default is comma separated)")
 			}
 			out = append(out, leaf{key, sf.Tag, v.Field(i)})
 		default:

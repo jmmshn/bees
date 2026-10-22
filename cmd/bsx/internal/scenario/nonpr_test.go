@@ -104,19 +104,31 @@ func TestAGoalMessageStaysWithItsSpawn(t *testing.T) {
 
 // A report in an ignored scratch/ is hidden from git status: prune still keeps its
 // worktree and names it, so nobody loses it unseen (five pilot reports were, bees-13.7).
-func TestPruneKeepsIgnoredFiles(t *testing.T) {
+// Ignored build output under prune.ignore (default bin/) goes with the worktree.
+func TestPruneKeepsIgnoredFilesButBuildOutput(t *testing.T) {
 	x := newToy(t)
-	x.write(filepath.Join(x.repo, ".git", "info", "exclude"), "/scratch/\n")
-	sp := x.spawn("toy-1", "verdict")
-	if err := os.MkdirAll(filepath.Join(sp.Workspace.Dir, "scratch"), 0o755); err != nil {
+	x.write(filepath.Join(x.repo, ".git", "info", "exclude"), "/scratch/\n/bin/\n")
+	for _, n := range []string{"toy-1", "toy-2"} {
+		sp := x.spawn(n, "verdict")
+		if err := os.MkdirAll(filepath.Join(sp.Workspace.Dir, "bin"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		x.write(filepath.Join(sp.Workspace.Dir, "bin", "bs"), "a build")
+		must(t, x.worker(n, 1, "done", "--answer", "yes", "--report", "see scratch/report.md"), 0)
+		must(t, x.queen("end", n), 0)
+	}
+	kept, _, _ := x.open().LatestSpawn(context.Background(), "toy-2")
+	if err := os.MkdirAll(filepath.Join(kept.Workspace.Dir, "scratch"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	x.write(filepath.Join(sp.Workspace.Dir, "scratch", "report.md"), "the findings")
-	must(t, x.worker("toy-1", 1, "done", "--answer", "yes", "--report", "see scratch/report.md"), 0)
-	must(t, x.queen("end", "toy-1"), 0)
-	must(t, x.queen("prune"), 3, "kept", "ignored files", "scratch/")
-	if err := os.RemoveAll(filepath.Join(sp.Workspace.Dir, "scratch")); err != nil {
+	x.write(filepath.Join(kept.Workspace.Dir, "scratch", "report.md"), "the findings")
+	r := x.queen("prune")
+	must(t, r, 3, "removed "+filepath.Join(x.repo+"-WT", "toy-1"), "kept", "ignored files", "scratch/")
+	if strings.Contains(r.String(), "bin/") {
+		t.Fatalf("prune named the build output prune.ignore lets go:\n%s", r)
+	}
+	if err := os.RemoveAll(filepath.Join(kept.Workspace.Dir, "scratch")); err != nil {
 		t.Fatal(err)
 	}
-	must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir)
+	must(t, x.queen("prune"), 0, "removed "+kept.Workspace.Dir)
 }

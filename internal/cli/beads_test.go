@@ -61,7 +61,8 @@ func TestBeadStaysInTheProject(t *testing.T) {
 	if got := bd.calls[0]; got[3] != `id="mytoy-*" AND status!=closed AND (priority<=1)` {
 		t.Fatalf("ls query %q", got[3])
 	}
-	if code, out, stderr := r.runWith(Ports{Run: bd}, nil, "bead", "new", "--parent", "mytoy-1", "--priority", "1", "Fix", "it"); code != 0 || out != "mytoy-1.3\n" {
+	// Flags may follow the title, as the old bs took them (a live bakeoff queen typed them so).
+	if code, out, stderr := r.runWith(Ports{Run: bd}, nil, "bead", "new", "--parent", "mytoy-1", "Fix", "it", "--priority", "1"); code != 0 || out != "mytoy-1.3\n" {
 		t.Fatalf("new: exit %d %q %q", code, out, stderr)
 	}
 	if got := strings.Join(bd.calls[1], " "); got != "create --silent --force --parent mytoy-1 --title Fix it --priority 1" {

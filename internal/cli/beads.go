@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -22,6 +23,26 @@ const beadUsage = `bs bead ls [--all] [<bd query expression>]
 
 // beadNumber is what follows the project in one of its bead ids: -N[.M…].
 var beadNumber = regexp.MustCompile(`^-\d+(\.\d+)*$`)
+
+// interleaved parses fs's flags wherever they sit among args, as the old bs's bead and
+// epic did: a title typed before --description would otherwise swallow it as words. Every
+// argument after a "--" is positional. It returns the positional arguments in order.
+func interleaved(fs *flag.FlagSet, args []string) ([]string, error) {
+	var tail []string
+	if i := slices.Index(args, "--"); i >= 0 {
+		args, tail = args[:i], args[i+1:]
+	}
+	var pos []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		if args = fs.Args(); len(args) == 0 {
+			return append(pos, tail...), nil
+		}
+		pos, args = append(pos, args[0]), args[1:]
+	}
+}
 
 // project is the caller's project, refused when bs can't tell it.
 func (r *run) project() (string, error) {
@@ -47,10 +68,11 @@ func (r *run) bd(args ...string) ([]byte, error) {
 // epic creates the project's next epic, <project>-<n>, n one past the highest number any
 // of its beads uses, open or closed.
 func (r *run) epic(fs *flag.FlagSet, args []string) error {
-	if err := fs.Parse(args); err != nil {
+	title, err := interleaved(fs, args)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() == 0 {
+	if len(title) == 0 {
 		return fmt.Errorf("%w: %s epic <title>", errUsage, bsname.Cmd)
 	}
 	p, err := r.project()
@@ -77,7 +99,7 @@ func (r *run) epic(fs *flag.FlagSet, args []string) error {
 	}
 	id := fmt.Sprintf("%s-%d", p, top+1)
 	// --force: a project's ids don't use the store's own prefix.
-	if _, err := r.bd("create", "--silent", "--force", "--type", "epic", "--id", id, "--title", strings.Join(fs.Args(), " ")); err != nil {
+	if _, err := r.bd("create", "--silent", "--force", "--type", "epic", "--id", id, "--title", strings.Join(title, " ")); err != nil {
 		return err
 	}
 	fmt.Fprintln(r.out, id)
@@ -97,7 +119,8 @@ func (r *run) bead(fs *flag.FlagSet, args []string) error {
 	switch args[0] {
 	case "ls":
 		all := fs.Bool("all", false, "include closed beads")
-		if err := fs.Parse(args[1:]); err != nil {
+		query, err := interleaved(fs, args[1:])
+		if err != nil {
 			return err
 		}
 		// Project names are only letters and digits, so the wildcard can't match another
@@ -106,8 +129,8 @@ func (r *run) bead(fs *flag.FlagSet, args []string) error {
 		if !*all {
 			expr += " AND status!=closed"
 		}
-		if fs.NArg() > 0 {
-			expr += " AND (" + strings.Join(fs.Args(), " ") + ")"
+		if len(query) > 0 {
+			expr += " AND (" + strings.Join(query, " ") + ")"
 		}
 		out, err := r.bd("query", "--limit", "0", expr)
 		if err != nil {
@@ -120,10 +143,11 @@ func (r *run) bead(fs *flag.FlagSet, args []string) error {
 		desc := fs.String("description", "", "description")
 		typ := fs.String("type", "", "bd issue type (default: bd's, task)")
 		prio := fs.String("priority", "", "priority 0-4 (default: bd's, 2)")
-		if err := fs.Parse(args[1:]); err != nil {
+		title, err := interleaved(fs, args[1:])
+		if err != nil {
 			return err
 		}
-		if fs.NArg() == 0 {
+		if len(title) == 0 {
 			return fmt.Errorf("%w: %s", errUsage, beadUsage)
 		}
 		if *parent == "" {
@@ -133,7 +157,7 @@ func (r *run) bead(fs *flag.FlagSet, args []string) error {
 		if rest, ok := strings.CutPrefix(*parent, p); !ok || !beadNumber.MatchString(rest) {
 			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("%s is not a %s bead (want %s-N[.M…]); nothing was filed", *parent, p, p)}
 		}
-		bdArgs := []string{"create", "--silent", "--force", "--parent", *parent, "--title", strings.Join(fs.Args(), " ")}
+		bdArgs := []string{"create", "--silent", "--force", "--parent", *parent, "--title", strings.Join(title, " ")}
 		for _, f := range [][2]string{{"--description", *desc}, {"--type", *typ}, {"--priority", *prio}} {
 			if f[1] != "" {
 				bdArgs = append(bdArgs, f[0], f[1])

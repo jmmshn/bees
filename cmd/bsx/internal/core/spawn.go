@@ -131,8 +131,9 @@ func (c *Core) workspace(ctx context.Context, name string) (logbook.Workspace, e
 
 // launch writes the start's files, starts the harness in the recorded pane, and confirms
 // the start. herdr's agent_pane_busy (a new pane's shell not at its prompt) is retried
-// (bees-12.33); any other start error still looks for the process, since herdr can give
-// up while it runs (bees-12.49, adopted).
+// (bees-12.33). A pane still busy after the retries, or a name herdr says is taken, means
+// herdr started nothing; any other start error still looks for the process, since herdr
+// can give up while it runs (bees-12.49, adopted).
 func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch) error {
 	args, err := c.writeFiles(sp.Name, l)
 	if err != nil {

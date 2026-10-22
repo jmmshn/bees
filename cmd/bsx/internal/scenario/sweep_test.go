@@ -179,6 +179,9 @@ func TestPilotBug1241PruneAfterEndForce(t *testing.T) {
 func TestPilotBug1243APaneActsOnItsOwnProject(t *testing.T) {
 	later(t, "bees-13.4", "the pane scan across logbooks")
 }
+func TestPilotBug1244DoctorAndConfigGaps(t *testing.T) {
+	later(t, "bees-13.8", "bs doctor warns of a PR goal with no remote and a stale herdr server; bs config lists guards")
+}
 func TestPilotBug1245DoctorNamesAStrayBSProject(t *testing.T) { later(t, "bees-13.8", "bs doctor") }
 
 // bees-12.50, 12.52: bs done's own pipeline (bs done | tail) is the call, not background

@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/jmmshn/bees/cmd/bsx/internal/fake"
 )
 
 // The pilot's round-11 sweep (docs/pilot-bees-12.md on origin/pilot/bees-12), one test
@@ -117,6 +119,9 @@ func TestABusyPaneIsRetried(t *testing.T) {
 	x := newToy(t)
 	x.herdr.Busy = 2
 	x.spawn("toy-1", "branch")
+	if x.herdr.Busy != 0 {
+		t.Fatalf("%d busy refusals left: the spawn didn't retry through them", x.herdr.Busy)
+	}
 }
 
 // bees-12.49: herdr gave up waiting (timeout) while the worker started: the start is
@@ -139,8 +144,16 @@ func TestBSVariablesAreIgnoredInsideARecordedPane(t *testing.T) {
 	must(t, x.worker("toy-1", 1, "inbox"), 0, "ignoring BS_PROJECT", "You own toy-1")
 }
 
-func TestPilotBug1217TokensCutAt80(t *testing.T) {
-	t.Log("encoded in the fake (TestFakeHerdrCutsTokensAt80); herdr.Client refuses a token herdr would cut")
+// bees-12.17 (tokens cut at 80) is TestFakeHerdrCutsTokensAt80: the fake cuts, the client
+// refuses a token herdr would cut.
+
+// The live-test and docs bugs belong to the rig and setup beads.
+func TestPilotBugsOfTheLiveRig(t *testing.T) {
+	later(t, "bees-13.3", "the rig: 12.19, 12.22, 12.24, 12.26, 12.30, 12.34, 12.35, 12.40")
+}
+func TestPilotBugsOfSetupDocs(t *testing.T) { later(t, "bees-13.8", "SETUP-AGENT.md: 12.42, 12.48") }
+func TestPilotBug1251PromptFriction(t *testing.T) {
+	later(t, "bees-13.9", "the role prompts rewritten (12.51); positional bs done is TestDoneRefusesAPositionalReport")
 }
 func TestPilotBug1220MergeGrantOnAnUnprotectedRepo(t *testing.T) {
 	later(t, "bees-13.6", "allow_merge_into")
@@ -166,8 +179,21 @@ func TestPilotBug1243APaneActsOnItsOwnProject(t *testing.T) {
 	later(t, "bees-13.4", "the pane scan across logbooks")
 }
 func TestPilotBug1245DoctorNamesAStrayBSProject(t *testing.T) { later(t, "bees-13.8", "bs doctor") }
-func TestPilotBug1250TheGateSkipsDonesOwnPipeline(t *testing.T) {
-	later(t, "bees-13.4", "the gate with a piped bs done (| tail) and a reply-wait loop")
+
+// bees-12.50, 12.52: bs done's own pipeline (bs done | tail) is the call, not background
+// work: the gate skips the caller's process group. A reply-wait loop running bs is one of
+// its ancestors (beesfake itself here), skipped too.
+func TestTheGateSkipsDonesOwnPipeline(t *testing.T) {
+	x := newToy(t)
+	sp := x.spawn("toy-1", "branch")
+	x.commit(sp.Workspace.Dir, "work.txt")
+	x.harness.Step(t, "toy-1", "bs|", "done")
+	r := x.harness.Await(t, "toy-1", 1)
+	must(t, result{r.Code, r.Stdout, r.Stderr}, 0, "handed off")
+}
+
+func TestPilotBug1250AReplyWaitLoopInTheBackground(t *testing.T) {
+	later(t, "bees-13.4", "a reply-wait loop left running with & counts; say so in the prompts")
 }
 
 // bees-12.23 is TestConcurrentFirstOpensOfANewLogbookAllSucceed (logbook); bees-12.25 (a
@@ -265,9 +291,31 @@ func TestAnUnconfirmedStartIsExit8AndEndClearsIt(t *testing.T) {
 	x.herdr.Programs["claude"] = "/bin/true"
 	x.ports.Timing.Confirm = 300 * time.Millisecond
 	x.bead("toy-1", "x")
-	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 8, "start unconfirmed", "next: bs end toy-1")
-	must(t, x.queen("end", "--incomplete", "toy-1"), 2, "nothing was handed off")
-	must(t, x.queen("end", "toy-1"), 9) // a verdict never handed off is incomplete
+	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 8, "start unconfirmed", "next: bs end toy-1 --incomplete")
+	must(t, x.queen("end", "toy-1"), 9)                                // a verdict never handed off is incomplete
+	must(t, x.queen("end", "--incomplete", "toy-1"), 0, "ended toy-1") // the abort of a spawn that never ran (motif 5)
+	sp, _, _ := x.open().LatestSpawn(context.Background(), "toy-1")
+	if e, ok, _ := x.open().EndOf(context.Background(), sp.ID); !ok || !e.Incomplete {
+		t.Fatalf("ended = %+v, %v", e, ok)
+	}
+	x.herdr.Programs["claude"] = fake.Beesfake(t)
+	x.ports.Timing.Confirm = 10 * time.Second
+	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 2, "already exists") // its worktree waits for prune
+}
+
+// A spawn whose record fails takes back the worktree it made (motif 8): a read-only
+// logbook makes the record fail after herdr made the worktree.
+func TestASpawnThatCantBeRecordedLeavesNoWorktree(t *testing.T) {
+	x := newToy(t)
+	must(t, x.keeper("status"), 0) // creates the logbook
+	if err := os.Chmod(x.logbook, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	x.bead("toy-1", "x")
+	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 1, "couldn't record the spawn")
+	if _, err := os.Stat(filepath.Join(filepath.Dir(x.repo), "toy-WT", "toy-1")); !os.IsNotExist(err) {
+		t.Fatalf("worktree left behind: %v", err)
+	}
 }
 
 func TestSpawnRefusesAPRGoalWithoutARemote(t *testing.T) { later(t, "bees-13.6", "remote refusals") }

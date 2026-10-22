@@ -38,7 +38,7 @@ When the keeper cancels a worker's work ("scrap that"): `{{bs}} end --incomplete
 
 ## Rough edges
 
-When bs fails, misleads, or needs a manual workaround, record the exact output, file a bead with `bs bead new` describing it, and hand it to a worker to fix bs. The workaround is evidence, not the fix.
+When bs fails, misleads, or needs a manual workaround, record the exact output, file a bead with `{{bs}} bead new` describing it, and hand it to a worker to fix bs. The workaround is evidence, not the fix.
 
 When a pitfall will bite again before its fix lands, add a line under Known pitfalls with the `capture-pitfall` skill, if this repo has it.
 

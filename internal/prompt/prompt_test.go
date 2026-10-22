@@ -1,6 +1,9 @@
 package prompt_test
 
 import (
+	"io/fs"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -66,7 +69,7 @@ func TestNonPRGoalsSayWhereTheReportGoes(t *testing.T) {
 	for g, want := range map[string]string{
 		"verdict": "bs done --answer yes|no --report",
 		"note":    "bd update <bead> --append-notes",
-		"beads":   "bd create --force --parent <bead>",
+		"beads":   "bs bead new --parent <bead>",
 	} {
 		got := prompt.Text(prompt.Worker, "web2", "none", []string{g})
 		if !strings.Contains(got, want) || (g != "beads" && !strings.Contains(got, "never leave") && !strings.Contains(got, "Never leave")) {
@@ -89,5 +92,33 @@ func TestGoalFragmentsLeaveCommandsToTheHost(t *testing.T) {
 	}
 	if prompt.Host(prompt.Worker, "fakecl") != "" {
 		t.Error("a host with no fragment got one")
+	}
+}
+
+// Every shipped prompt names the command as {{bs}}, never a bare bs, so a rename reaches
+// every line (bees-13.9); and a beads goal's worker files through bs bead new, which keeps
+// it in the project, never bd create.
+func TestPromptsNameTheCommandThroughBs(t *testing.T) {
+	bare := regexp.MustCompile("(^|[`(\\s])bs (bead|epic|send|inbox|done|status|spawn|end|prune|goal|check)\\b")
+	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || filepath.Ext(path) != ".md" {
+			return err
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for i, line := range strings.Split(string(b), "\n") {
+			if bare.MatchString(line) {
+				t.Errorf("%s:%d names bs bare: %s", path, i+1, line)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile("goal/beads.md"); !strings.Contains(string(b), "{{bs}} bead new --parent <bead>") || strings.Contains(string(b), "bd create") {
+		t.Errorf("goal/beads.md:\n%s", b)
 	}
 }

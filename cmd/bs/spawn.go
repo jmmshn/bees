@@ -158,6 +158,8 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 		}
 		took := r.Took.Round(100 * time.Millisecond).Seconds()
 		switch {
+		case st.Adopted:
+			fmt.Fprintf(stdout, "adopted %s (%s) in workspace %s: it already ran, started by an earlier spawn that didn't record it; recorded now (%.1f s)\n", st.Name, st.Label, st.Workspace, took)
 		case st.Continued:
 			fmt.Fprintf(stdout, "resumed %s (%s) in workspace %s (%.1f s)\n", st.Name, st.Label, st.Workspace, took)
 		case st.Resumed:
@@ -172,7 +174,7 @@ func cmdSpawn(ctx context.Context, args []string, stdin io.Reader, stdout, stder
 			untrusted = append(untrusted, st.Name)
 		}
 		if st.Warn != nil {
-			fmt.Fprintf(stderr, "bs spawn: warning: %s started, but herdr didn't take its name (the sidebar shows another): %v\n", st.Name, st.Warn)
+			fmt.Fprintf(stderr, "bs spawn: warning: %s started, but: %v\n", st.Name, st.Warn)
 		}
 	}
 	if len(untrusted) > 0 {

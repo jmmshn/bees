@@ -29,6 +29,7 @@ var (
 type PaneProcess struct {
 	PID  int
 	Name string
+	Argv []string
 }
 
 // PaneProcesses is herdr's process-info for a pane.
@@ -154,11 +155,13 @@ func watch(ctx context.Context, h Herdr, ps Procs, pane, kind string, wait time.
 	out := make(chan found, 1)
 	go func() {
 		deadline := time.Now().Add(wait)
+		var lastErr error // a lookup can fail for a moment (a process exiting mid-read): look again
 		for {
 			p, ok, err := harnessIn(ctx, h, ps, pane, kind)
 			if err != nil && !errors.Is(err, ErrPaneGone) {
-				out <- found{err: err}
-				return
+				lastErr, ok = err, false
+			} else if err == nil {
+				lastErr = nil
 			}
 			if ok {
 				f := found{p: p}
@@ -168,7 +171,7 @@ func watch(ctx context.Context, h Herdr, ps Procs, pane, kind string, wait time.
 				return
 			}
 			if time.Now().After(deadline) {
-				out <- found{} // none: the start is unconfirmed
+				out <- found{err: lastErr} // none: the start is unconfirmed, or the lookup kept failing
 				return
 			}
 			select {

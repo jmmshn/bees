@@ -24,3 +24,11 @@ func StopWait(d time.Duration) func() {
 	stopWait = d
 	return func() { stopWait = sw }
 }
+
+// HardErrWait shortens how long a failed launch waits for the harness anyway; it returns
+// the undo.
+func HardErrWait(d time.Duration) func() {
+	hw := hardErrWait
+	hardErrWait = d
+	return func() { hardErrWait = hw }
+}

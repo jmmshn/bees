@@ -21,6 +21,7 @@ import (
 	"github.com/jmmshn/bees/internal/guards"
 	"github.com/jmmshn/bees/internal/harness"
 	"github.com/jmmshn/bees/internal/logbook"
+	"github.com/jmmshn/bees/internal/proc"
 	"github.com/jmmshn/bees/internal/project"
 	"github.com/jmmshn/bees/internal/prompt"
 )
@@ -240,7 +241,8 @@ type Started struct {
 	Resumed                bool  // restarted in its recorded workspace
 	Continued              bool  // resumed with its last conversation (claude --continue)
 	Waiting                bool  // Claude is waiting at a prompt (e.g. folder trust) in its pane
-	Warn                   error // started, but naming it in herdr failed
+	Warn                   error // started, but naming it in herdr failed, or herdr erred while it started
+	Adopted                bool  // it already ran, started by an earlier spawn whose start went unrecorded
 }
 
 // Spawn starts a worker for bead with label as its herdr workspace label, or restarts it
@@ -676,6 +678,15 @@ func (f Fleet) on(sp logbook.Spawn) (Fleet, error) {
 // earlier start of this worker that was never confirmed, or a spawn from before bs
 // recorded starts; starting another beside it would make a twin (motif 7).
 func (f Fleet) launch(ctx context.Context, sp logbook.Spawn, st *Started, args []string) error {
+	// This worker's own harness, started by an earlier spawn whose start went unrecorded
+	// (herdr erred, or the confirm lookup failed): adopt it, recording its start, rather
+	// than refuse a worker that runs (bees-12.49, motif 8). herdr's argv names it.
+	if p, ok, err := f.own(ctx, sp); err != nil {
+		return fmt.Errorf("%s: can't tell whether pane %s already runs %s: %w", sp.Name, sp.Pane, f.Harness.Kind(), err)
+	} else if ok {
+		st.Adopted = true
+		return f.recordStart(ctx, sp, st, found{p: p})
+	}
 	switch p, ok, err := harnessIn(ctx, f.H, f.Procs, sp.Pane, f.Harness.Kind()); {
 	case err != nil:
 		return fmt.Errorf("%s: can't tell whether pane %s already runs %s: %w", sp.Name, sp.Pane, f.Harness.Kind(), err)
@@ -691,10 +702,22 @@ func (f Fleet) launch(ctx context.Context, sp logbook.Spawn, st *Started, args [
 	switch {
 	case errors.Is(err, ErrWaiting):
 		st.Waiting = true
-	case err != nil && !errors.Is(err, ErrUnconfirmed):
-		cancel()
-		<-seen // the watch is done before launch returns: no goroutine outlives the start
+	case errors.Is(err, ErrUnsafeArg), errors.Is(err, ErrPaneBusy), errors.Is(err, ErrRunning):
+		cancel() // herdr typed nothing, or a live agent has the name: no start of ours to find
+		<-seen   // the watch is done before launch returns: no goroutine outlives the start
 		return err
+	case err != nil && !errors.Is(err, ErrUnconfirmed):
+		// herdr erred, but it may have typed the launch: a harness that shows up within
+		// hardErrWait started all the same, and is recorded, not reported as a failure
+		// that a second spawn would twin (bees-12.49, motif 11).
+		timer := time.AfterFunc(hardErrWait, cancel)
+		got := <-seen
+		timer.Stop()
+		if got.p.PID == 0 {
+			return err
+		}
+		st.Warn = fmt.Errorf("herdr reported %v, but %s started all the same (pid %d)", err, f.Harness.Kind(), got.p.PID)
+		return f.recordStart(ctx, sp, st, got)
 	}
 	got := <-seen
 	switch {
@@ -703,6 +726,19 @@ func (f Fleet) launch(ctx context.Context, sp logbook.Spawn, st *Started, args [
 	case got.p.PID == 0:
 		return fmt.Errorf("%w: no %s process appeared in pane %s within %s; read it (herdr pane read %s), then spawn again", ErrUnconfirmed, f.Harness.Kind(), sp.Pane, confirmWait, sp.Pane)
 	}
+	return f.recordStart(ctx, sp, st, got)
+}
+
+// hardErrWait bounds how long a start that herdr failed waits for the harness anyway.
+var hardErrWait = 5 * time.Second
+
+// recordStart records the harness process got found for sp, then names the agent in
+// herdr; a rename failure, or an earlier warning, is st.Warn.
+func (f Fleet) recordStart(ctx context.Context, sp logbook.Spawn, st *Started, got found) error {
+	if got.exe == "" && got.baseline == nil && got.baselineErr == nil { // adopted: read them now
+		got.exe, _ = f.Procs.Exe(got.p.PID)
+		got.baseline, got.baselineErr = f.Procs.Descendants(got.p.PID)
+	}
 	rec := logbook.Start{Spawn: sp.ID, Name: sp.Name, Process: got.p, Harness: sp.Harness, Exe: got.exe, Baseline: got.baseline}
 	if got.baselineErr != nil {
 		rec.BaselineErr = got.baselineErr.Error()
@@ -710,8 +746,37 @@ func (f Fleet) launch(ctx context.Context, sp logbook.Spawn, st *Started, args [
 	if _, err := f.LB.RecordStart(ctx, rec); err != nil {
 		return err
 	}
-	st.Warn = f.H.RenameAgent(ctx, sp.Pane, sp.Name)
+	if err := f.H.RenameAgent(ctx, sp.Pane, sp.Name); err != nil {
+		st.Warn = errors.Join(st.Warn, err)
+	}
 	return nil
+}
+
+// own finds sp's own harness in its pane: a foreground process of the harness's kind
+// whose command line carries --name sp.Name, as every launch of it does.
+func (f Fleet) own(ctx context.Context, sp logbook.Spawn) (proc.Process, bool, error) {
+	pi, err := f.H.ProcessInfo(ctx, sp.Pane)
+	if errors.Is(err, ErrPaneGone) {
+		return proc.Process{}, false, nil
+	}
+	if err != nil {
+		return proc.Process{}, false, err
+	}
+	for _, p := range pi.Foreground {
+		if p.Name != f.Harness.Kind() {
+			continue
+		}
+		for i := range len(p.Argv) - 1 {
+			if p.Argv[i] == "--name" && p.Argv[i+1] == sp.Name {
+				start, err := f.Procs.Start(p.PID)
+				if errors.Is(err, proc.ErrGone) {
+					return proc.Process{}, false, nil
+				}
+				return proc.Process{PID: p.PID, Start: start}, err == nil, err
+			}
+		}
+	}
+	return proc.Process{}, false, nil
 }
 
 // startOf is the harness.Start of worker sp, with a doorbell as its first prompt so it

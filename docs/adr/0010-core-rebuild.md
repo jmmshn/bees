@@ -77,7 +77,7 @@ Grammar `<type>[:<state>][=<target>]`; the target is everything after the first 
 |---|---|---|---|---|
 | `pr` | `--pr <url>` (repeatable), `--replaces <url>` | each PR open, not a draft, holds a workspace commit, pushed, current with its own base, CI green | every handed-off PR merged | merged |
 | `pr:ready` | same | same | at handoff | every PR merged |
-| `pr:draft` | same | each PR exists, holds a workspace commit, pushed | at handoff | every PR merged or closed |
+| `pr:draft` | same | each PR exists, holds a workspace commit, pushed, CI green (keeper, 2026-10-22) | at handoff | every PR merged or closed |
 | `push=<url>` | — | the target's head moved to a commit descending from a workspace commit; current; CI | target merged | as `pr` |
 | `review=<url>` | — | a comment on the target since spawn carrying `bs:<spawn id>` | at handoff | at once |
 | `verdict` | `--answer yes\|no --report <text>\|-` | both present | at handoff | at once |
@@ -145,5 +145,5 @@ Both files live under the config dir, `~/.config/bees`; no repo ships config bs 
 ## Amendment 1 (bees-13.6, keeper, 2026-10-22)
 
 - **Review host and VCS ports.** The pr, push and review checks see a change only through `port.Review` (parse, view, CI, behind, the default branch's protection, fetch, the heads of merged changes, its merge-deny guard globs) and a workspace's commits only through `port.VCS` (commits since, branch tip, ancestry, a detached checkout). `review.host = "github"` (global or project, the only value yet) picks GitHub through gh and git, the default; a CL-shaped host plugs in there without touching the goal code. The scenario suite runs every PR-goal scenario on GitHub (fake gh over real git) and on `fake.CLHost`, whose checks use neither; its workspaces are still git worktrees until `command` (bees-13.11).
-- **CI is bs's word.** The handoff of `pr`, `pr:ready`, `push=` and `push:ready=` needs every CI check on the change's current head to pass (`ci_green`; `pr:draft` and `push:draft=` keep the table's handoff, no CI). Checks still running, or none registered while the base's tip has some, with nothing else failing, is exit 10, pointing at `bs done --wait`; a failed check is exit 7, naming it. A vacuous pass is printed. #104–#107 each sent a done with CI pending, and sat red unnoticed.
+- **CI is bs's word.** Every PR goal's handoff (`pr`, `pr:ready`, `pr:draft`, and `push=` in each state) needs every CI check on the change's current head to pass (`ci_green`); drafts too, the keeper ruled on 2026-10-22. Checks still running, or none registered while the base's tip has some, with nothing else failing, is exit 10, pointing at `bs done --wait`; a failed check is exit 7, naming it. A vacuous pass is printed. #104–#107 each sent a done with CI pending, and sat red unnoticed.
 - **`bs done --wait`** (alias `bs handoff`): on CI still running, bs asks the review host again every 20 s, in the worker's own foreground call (no background job of the harness's), for up to `--timeout` (8 min, under a harness shell call's 10), then hands off or names what failed; still running then is exit 11. The gate runs again after a wait.

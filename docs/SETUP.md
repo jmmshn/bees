@@ -4,6 +4,22 @@ Linux or macOS. Needs Go, [Claude Code](https://code.claude.com) with cross-sess
 
 For a guided setup, run the [`setup-bees`](../.claude/skills/setup-bees/SKILL.md) skill in Claude Code from this repo (`/setup-bees`): it checks and installs each piece, then runs a queen → worker round trip.
 
+## bsx, before the swap
+
+`cmd/bsx` is the rebuilt bs ([ADR-0010](adr/0010-core-rebuild.md)); it replaces `bs` at the swap (bees-13.9). Until then it runs only on a `herdr --session <session>` server, reads its config from `~/.config/bees/sessions/<session>/` (`config.toml`, `projects/<project>.toml`), and refuses the default session and the real logbooks. [`SETUP-AGENT.md`](SETUP-AGENT.md) sets one up step by step; the commands that set up and show it, each run from a project's repo with `HERDR_SESSION=<session>` set (a pane of that server has it already):
+
+```sh
+go build -o <dir>/bsx ./cmd/bsx     # a dir the session's server puts first on PATH
+bsx config init --logbook-dir <dir>   # the session's commented global file; --project for a project's
+bsx config                          # every value and where it came from
+bsx doctor                          # ok / WARN / FAIL per check: config, project, logbook dir, harness and ring-socket modes,
+                                    # herdr server vs client, herdr socket, bd store, gh and a GitHub remote, cmd argv, stray BS_*
+bsx status                          # one line per spawn (GOAL STATE HANDOFF COMPLETE RUNNING), then stuck/kept/waived/discarded/late
+bsx send --project <other> queen-<other> "..."   # cross-project mail; the reply hint carries --project back
+```
+
+`bsx doctor` runs even when the config or the project can't be worked out: that is its first FAIL, the checks that need no project still run, and it prints a `skip` line for each it couldn't make. Only `git_worktree` workspaces work before bees-13.10 and 13.11: doctor fails any other kind and `config init` won't write one. `bsx status` reads the logbook, the process table and the disk, and asks herdr only to heal an unconfirmed start, so with herdr down that start reads `unknown` and the rest still prints.
+
 ## Install
 
 ```sh

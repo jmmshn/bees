@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -170,8 +171,16 @@ func TestBSProject(t *testing.T) {
 		t.Errorf("in an unrecorded pane: exit %d %s", code, stderr)
 	}
 	wantIn(t, stderr, "BS_PROJECT=bees names another project than the repo you are in (mytoy)")
+	// bees-12.45: doctor names the variable and the way out, never "no repo".
+	code, out, _ := r.run(r.repo, []string{"BS_PROJECT=bees"}, "doctor")
+	if code != 1 {
+		t.Errorf("doctor: exit %d", code)
+	}
+	wantIn(t, out, "FAIL project: BS_PROJECT=bees names another project than the repo you are in (mytoy)", "the checks below run on the global file alone", "next: env -u BS_PROJECT", "WARN env: BS_PROJECT is set and overrides the config here (outside a herdr pane), for every bsx command run from this shell")
+	_, out, _ = r.run(r.repo, []string{"BS_LOGBOOK=/x"}, "doctor")
+	wantIn(t, out, "WARN env: BS_LOGBOOK is set; bsx doesn't read it (the shared bs may)")
 	// An unrecorded pane is outside one (bees-13.14): doctor names the old bs's pins as unread.
-	_, out, _ := r.run(r.repo, []string{"BS_NAME=bees-3", "HERDR_PANE_ID=w1:p1"}, "doctor")
+	_, out, _ = r.run(r.repo, []string{"BS_NAME=bees-3", "HERDR_PANE_ID=w1:p1"}, "doctor")
 	wantIn(t, out, "WARN env: BS_NAME is set; bsx doesn't read it")
 	_, out, _ = r.run(r.repo, []string{"BS_NAME=bees-3", "BS_LOGBOOK_DIR=" + r.logbook}, "doctor")
 	wantIn(t, out, "WARN env: BS_NAME is set; bsx doesn't read it", "WARN env: BS_LOGBOOK_DIR is set and overrides the config here")
@@ -215,7 +224,7 @@ func TestSpawnRefusesAKindItCantMake(t *testing.T) {
 		if code != 2 {
 			t.Errorf("%q: exit %d %s", body, code, errb.String())
 		}
-		wantIn(t, errb.String(), "bsx makes only git_worktree workspaces yet")
+		wantIn(t, errb.String(), "bsx spawn makes only git_worktree workspaces until bees-13.1")
 	}
 }
 
@@ -247,15 +256,22 @@ func TestAMissingPathsRepo(t *testing.T) {
 	wantIn(t, e.String(), "the repo "+gone, "doesn't exist", "next: set paths.repo")
 }
 
+// A broken file refuses every command but doctor, which names it as a FAIL and runs the
+// checks that need no config.
 func TestBrokenFileRefusesEveryCommand(t *testing.T) {
 	r := newRig(t)
 	r.write("config.toml", "[paths]\nlogbook_dir = \""+r.logbook+"\"\nrepo = \"/x\"\n")
-	for _, cmd := range []string{"config", "status", "doctor"} {
+	for _, cmd := range []string{"config", "status", "inbox"} {
 		code, _, stderr := r.run(r.repo, nil, cmd)
 		if code != 2 || !strings.Contains(stderr, "paths.repo belongs in the project file") {
 			t.Errorf("%s: exit %d %s", cmd, code, stderr)
 		}
 	}
+	code, out, _ := r.run(r.repo, nil, "doctor")
+	if code != 1 {
+		t.Errorf("doctor: exit %d", code)
+	}
+	wantIn(t, out, "FAIL config: "+filepath.Join(r.session, "config.toml")+": paths.repo belongs in the project file", "the checks below run on the defaults", "herdr")
 }
 
 // Rule G: an unreadable file is "couldn't look" (exit 6). The only warning load gives
@@ -325,5 +341,88 @@ func TestAFailingGitIsNotNoProject(t *testing.T) {
 	// Outside any repo is an answer: config runs on the global file.
 	if code, out, stderr := r.run(t.TempDir(), nil, "config"); code != 0 || !strings.Contains(out, "# project: none") {
 		t.Errorf("outside a repo: exit %d %s %s", code, out, stderr)
+	}
+}
+
+// bsx config init writes the session's global file, then a project's, each loading as
+// written; it refuses what bs would refuse of the file, and never overwrites one.
+func TestConfigInit(t *testing.T) {
+	r := newRig(t)
+	if err := os.RemoveAll(r.session); err != nil {
+		t.Fatal(err)
+	}
+	global := filepath.Join(r.session, "config.toml")
+	code, _, stderr := r.run(r.repo, nil, "config", "init")
+	if code != 2 {
+		t.Errorf("on the real logbook dir: exit %d", code)
+	}
+	wantIn(t, stderr, "paths.logbook_dir would be the real logbooks' dir", "next: bsx config init --logbook-dir")
+	if _, err := os.Stat(global); !os.IsNotExist(err) {
+		t.Fatalf("a refused init wrote %s: %v", global, err)
+	}
+	code, out, stderr := r.run(r.repo, nil, "config", "init", "--logbook-dir", r.logbook, "--harness", "claude_code")
+	if code != 0 {
+		t.Fatalf("exit %d %s", code, stderr)
+	}
+	wantIn(t, out, "wrote "+global)
+	code, out, _ = r.run(r.repo, nil, "config")
+	if code != 0 {
+		t.Fatalf("config: exit %d", code)
+	}
+	wantIn(t, out, `paths.logbook_dir = "`+r.logbook+`"  # global `+global, `harness = "claude_code"  # global `+global, `review.host = "github"  # default`)
+	if code, _, stderr = r.run(r.repo, nil, "config", "init", "--logbook-dir", r.logbook); code != 2 || !strings.Contains(stderr, global+" already exists; nothing was written") {
+		t.Errorf("a second init: exit %d %s", code, stderr)
+	}
+	for _, args := range [][]string{{"--project", "--harness", "claude_code"}, {"--project", "--repo", "/nonexistent/notes"}, {"--project", "--workspace", "jj"}} {
+		code, _, stderr := r.run(r.repo, nil, append([]string{"config", "init"}, args...)...)
+		if code != 2 {
+			t.Errorf("%v: exit %d %s", args, code, stderr)
+		}
+	}
+	// A kind spawn won't make yet is never written (bees-13.10, 13.11).
+	for _, kind := range []string{"none", "command"} {
+		if code, _, stderr := r.run(r.repo, nil, "config", "init", "--project", "--workspace", kind); code != 2 || !strings.Contains(stderr, "until bees-13.1") {
+			t.Errorf("--workspace %s: exit %d %s", kind, code, stderr)
+		}
+	}
+	code, out, stderr = r.run(r.repo, nil, "config", "init", "--project", "--workspace", "git_worktree", "--repo", r.repo)
+	if code != 0 {
+		t.Fatalf("--project: exit %d %s", code, stderr)
+	}
+	project := filepath.Join(r.session, "projects", "mytoy.toml")
+	wantIn(t, out, "wrote "+project)
+	_, out, _ = r.run(r.repo, nil, "config")
+	wantIn(t, out, `workspace.kind = "git_worktree"  # project `+project, "# workspace kind: git_worktree (workspace.kind, project "+project+")")
+	b, _ := os.ReadFile(project)
+	wantIn(t, string(b), "# path = []", `repo = "`+r.repo+`"`)
+}
+
+// Rule G: config init that can't look (the global file it reads over, --repo) refuses
+// with exit 6 and writes nothing, never reading "can't look" as "absent".
+func TestConfigInitCantLook(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root reads a mode-0 file")
+	}
+	r := newRig(t)
+	locked := filepath.Join(t.TempDir(), "locked")
+	if err := os.MkdirAll(filepath.Join(locked, "notes"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	code, _, stderr := r.run(r.repo, nil, "config", "init", "--project", "--repo", filepath.Join(locked, "notes"))
+	if code != 6 || !strings.Contains(stderr, "can't look at --repo") {
+		t.Errorf("--repo under a dir it can't search: exit %d %s", code, stderr)
+	}
+	// load reads the global file first, so initRefusals is called directly.
+	global := filepath.Join(r.session, "config.toml")
+	if err := os.Chmod(global, 0); err != nil {
+		t.Fatal(err)
+	}
+	run := &run{ctx: context.Background(), env: Env{Vars: r.env}, s: &settings{Dir: r.session, Project: "mytoy"}}
+	if err := run.initRefusals("project", nil, ""); !errors.Is(err, os.ErrPermission) {
+		t.Errorf("an unreadable global file: %v, want permission denied", err)
 	}
 }

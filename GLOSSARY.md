@@ -36,6 +36,10 @@ _Avoid_: own commit, worker commit
 A handoff check not failed but not passed yet: CI still running, or the review host not yet showing a push. Only pending left is exit 10, and `bs done --wait` waits it out.
 _Avoid_: waiting, in progress
 
+**Stuck, kept, waived, discarded, late**:
+The labels of `bs status`'s lines under its table, each naming the next command. Stuck: a worker that can't move on its own (its process gone, its start unconfirmed, or ended with its goal incomplete). Kept: complete or discarded, its workspace still on disk. Waived: a check its goal no longer runs. Discarded: the keeper's word that the work is wanted nowhere. Late: a start recorded after confirmation missed it.
+_Avoid_: blocked (a worker messages the queen for that), dead, orphaned
+
 **Bead**:
 One unit of work in the shared tracker, named `<project>-N[.M…]`.
 _Avoid_: issue, ticket, task

@@ -184,17 +184,17 @@ func TestPilotBug1244DoctorAndConfigGaps(t *testing.T) {
 }
 
 // bees-12.45: doctor names a BS_PROJECT that leaked into a worker's pane, and says it is
-// ignored there; outside a pane, one naming another project is refused and named.
+// ignored there; outside a pane, one naming another project is doctor's FAIL, named.
 func TestPilotBug1245DoctorNamesAStrayBSProject(t *testing.T) {
 	x := newToy(t)
 	x.herdr.Env = append(x.herdr.Env, "BS_PROJECT=elsewhere")
 	x.spawn("toy-1", "verdict")
 	r := x.worker("toy-1", 1, "doctor")
-	if !strings.Contains(r.String(), "WARN env: BS_PROJECT is set, and ignored in this herdr pane") {
+	if !strings.Contains(r.String(), "WARN env: BS_PROJECT is set in toy-1's pane, where bsx ignores it") {
 		t.Fatalf("doctor in the pane:\n%s", r)
 	}
 	x.env = append(x.env, "BS_PROJECT=elsewhere")
-	must(t, x.keeper("doctor"), 2, "BS_PROJECT=elsewhere names another project", "next: env -u BS_PROJECT")
+	must(t, x.keeper("doctor"), 1, "FAIL project: BS_PROJECT=elsewhere names another project", "next: env -u BS_PROJECT")
 }
 
 // bees-12.50, 12.52: bs done's own pipeline (bs done | tail) is the call, not background

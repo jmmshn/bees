@@ -46,14 +46,14 @@ type Config struct {
 type Paths struct {
 	LogbookDir string `toml:"logbook_dir" scope:"global" env:"BS_LOGBOOK_DIR" default:"~/.local/share/bees" path:"dir" doc:"where each project's logbook, <project>.db, lives"`
 	Repos      string `toml:"repos" scope:"global" env:"BS_REPOS" path:"dir" doc:"a directory of repos, where a project's repo is found by its normalised name"`
-	Repo       string `toml:"repo" scope:"project" path:"dir" doc:"the project's directory, when bs isn't run inside it"`
+	Repo       string `toml:"repo" scope:"project" path:"dir" doc:"the project's directory, for commands run outside it"`
 	Worktrees  string `toml:"worktrees" scope:"both" default:"{repo}-WT" path:"{repo}" doc:"where git_worktree workspaces go, as <worktrees>/<worker>; {repo} is the main checkout"`
 }
 
 // Workspace says what a worker's workspace is. The kind is worked out (Kind); the key
 // only overrides it.
 type Workspace struct {
-	Kind    string   `toml:"kind" scope:"both" enum:"git_worktree|none|command" doc:"overrides the worked-out kind: command when [workspace.command] is set, else git_worktree in a git checkout's top level, else none"`
+	Kind    string   `toml:"kind" scope:"both" enum:"git_worktree|none|command" doc:"overrides the worked-out kind: command when [workspace.command] is set, else git_worktree in a git checkout's top level, else none; spawn makes only git_worktree until bees-13.10 (none) and bees-13.11 (command)"`
 	Command *Command `toml:"command" scope:"both" unread:"bees-13.11" doc:"argv that make and remove a command workspace (cwd: paths.repo)"`
 }
 

@@ -14,6 +14,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 )
 
 // DefaultSession is the herdr session a pane without HERDR_SESSION is on.
@@ -85,19 +87,8 @@ type Loaded struct {
 // in a file fails the whole load, naming the file and key; every error found is returned
 // at once.
 func Load(in Input) (*Loaded, error) {
-	l := &Loaded{Sources: map[string]Source{}, home: in.Home}
+	l := Defaults(in.Home)
 	root := reflect.ValueOf(&l.Config).Elem()
-	for _, f := range leaves(root, "") {
-		f.v.SetZero()
-		if d := f.tag.Get("default"); d != "" && f.v.Kind() == reflect.Slice {
-			f.v.Set(reflect.ValueOf([]string{d})) // a list's default is one item
-		} else if d != "" {
-			f.v.SetString(d)
-		}
-		if !f.table() {
-			l.Sources[f.key] = Source{Kind: "default"}
-		}
-	}
 	files := []File{{Scope: "global", Path: filepath.Join(in.Dir, "config.toml")}}
 	var errs []error
 	if in.Project != "" {
@@ -134,6 +125,24 @@ func Load(in Input) (*Loaded, error) {
 		}
 	}
 	return l, errors.Join(errs...)
+}
+
+// Defaults is the config no file sets: what bs doctor checks against when the files
+// can't be read.
+func Defaults(home string) *Loaded {
+	l := &Loaded{Sources: map[string]Source{}, home: home}
+	for _, f := range leaves(reflect.ValueOf(&l.Config).Elem(), "") {
+		f.v.SetZero()
+		if d := f.tag.Get("default"); d != "" && f.v.Kind() == reflect.Slice {
+			f.v.Set(reflect.ValueOf([]string{d})) // a list's default is one item
+		} else if d != "" {
+			f.v.SetString(d)
+		}
+		if !f.table() {
+			l.Sources[f.key] = Source{Kind: "default"}
+		}
+	}
+	return l
 }
 
 // misnamed refuses a file in dir that names project in another spelling
@@ -314,7 +323,7 @@ func (l *Loaded) Fields() []Field {
 	for _, f := range leaves(reflect.ValueOf(&l.Config).Elem(), "") {
 		scope, unread := f.tag.Get("scope"), ""
 		if bead, ok := f.tag.Lookup("unread"); ok {
-			unread = "not read by bsx yet"
+			unread = "not read by " + bsname.Cmd + " yet"
 			if bead != "" {
 				unread += " (" + bead + ")"
 			}

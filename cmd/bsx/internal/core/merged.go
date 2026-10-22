@@ -45,9 +45,6 @@ func (c *Core) merged(ctx context.Context, ws logbook.Workspace) (bool, string, 
 			return true, "the files it changed are identical on " + b + " (a squash or rebase merge)", nil
 		}
 	}
-	if c.Review == nil {
-		return false, fmt.Sprintf("%s has work not on %s", ws.Branch, strings.Join(bases, " or ")), nil
-	}
 	switch heads, err := c.Review.Landed(ctx, ws.Repo, ws.Branch); {
 	case err != nil:
 		return false, "", fmt.Errorf("not merged locally, and %s couldn't be asked: %w", c.Review.Name(), err)

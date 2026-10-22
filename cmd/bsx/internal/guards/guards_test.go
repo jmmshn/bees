@@ -27,7 +27,7 @@ func denied(deny []string, cmd string) bool {
 }
 
 // worktree is a git_worktree worker of a GitHub repo whose default branch is develop.
-var worktree = guards.In{Kind: config.GitWorktree, Git: true, DefaultBranches: guards.DefaultBranches("develop"), MergeDeny: github.Host{}.MergeDeny()}
+var worktree = guards.In{Kind: config.GitWorktree, Git: true, DefaultBranches: guards.DefaultBranches("develop"), MergeDeny: github.Host{}.MergeDeny(), ApproveDeny: github.Host{}.ApproveDeny()}
 
 func build(t *testing.T, g config.Guards, in guards.In) []string {
 	t.Helper()
@@ -68,7 +68,7 @@ func TestTheDefaultMatrix(t *testing.T) {
 	// none and command in a git checkout: no push to a default branch, no force push, and
 	// nothing else.
 	for _, kind := range []string{config.NoWorkspace, config.CommandKind} {
-		deny := build(t, config.Guards{}, guards.In{Kind: kind, Git: true, DefaultBranches: guards.DefaultBranches(), MergeDeny: github.Host{}.MergeDeny()})
+		deny := build(t, config.Guards{}, guards.In{Kind: kind, Git: true, DefaultBranches: guards.DefaultBranches(), MergeDeny: github.Host{}.MergeDeny(), ApproveDeny: github.Host{}.ApproveDeny()})
 		for _, cmd := range []string{"git push origin main", "git push origin x:master", "git push --force origin x"} {
 			if !denied(deny, cmd) {
 				t.Errorf("%s lets through %q", kind, cmd)

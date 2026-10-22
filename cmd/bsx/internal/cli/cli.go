@@ -53,7 +53,7 @@ commands:
   queen                                                    record this pane's queen, then exec the harness
   spawn   --goal <goal>... [--label L] [--as Q] <bead>   start a worker
   done    [--pr URL]... [--replaces URL]... [--answer yes|no --report TEXT|-] [--wait [--timeout D]] [--force] [--as W]   hand off
-  handoff                                                  the same as done
+  handoff                                                  done --wait
   check   <worker>                                         run its handoff checks now; writes nothing
   goal    [--as Q] <worker> <goal>... | discard | --waive <check>   amend, waive or (keeper) discard
   end     [--force] [--incomplete] [--as Q] <worker>      complete and end a worker
@@ -113,7 +113,7 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 		}
 		kind, _ := s.Kind(s.GitTop)
 		review, vcs := ports.Review, ports.VCS
-		if review == nil && s.Review.Host == github.Name {
+		if review == nil { // review.host's enum has github only (config)
 			review = github.Host{Run: ports.Run}
 		}
 		if vcs == nil {
@@ -207,7 +207,7 @@ var commands = map[string]command{
 	"queen":   {(*run).queen, true, true},
 	"spawn":   {(*run).spawn, true, true},
 	"done":    {(*run).done, true, true},
-	"handoff": {(*run).done, true, true}, // the glossary's word for it
+	"handoff": {(*run).done, true, true}, // the glossary's word for it: done, waiting by default
 	"check":   {(*run).check, false, true},
 	"goal":    {(*run).goal, true, true},
 	"end":     {(*run).end, true, true},

@@ -138,6 +138,14 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 		if _, err := c.resolveReview(ctx, &g, what); err != nil {
 			return logbook.Effective{}, err
 		}
+		// A push goal's workspace starts at its target's head: one made for another goal
+		// can't be re-cut there, so an amend never adds a push target.
+		for _, p := range g.Parts {
+			if p.Type == "push" && !slices.ContainsFunc(e.Parts, func(o goal.Part) bool { return o.Type == "push" && o.Target == p.Target }) {
+				return logbook.Effective{}, exit(ExitRefused, "bs end "+req.Name+", then bs spawn --goal "+p.String(), nil,
+					"%s --goal %s: a push goal's workspace starts at its target's head, and %s's was made for --goal %s", what, p, req.Name, e.Goal)
+			}
+		}
 		if err := c.refuse(g, sp.Workspace, what); err != nil {
 			return logbook.Effective{}, err
 		}
@@ -150,7 +158,16 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 	if err != nil || sp.Ended {
 		return e, err
 	}
-	body := fmt.Sprintf("%s changed your goal: it is now --goal %s", req.By, e.Goal)
+	body := fmt.Sprintf("%s changed your goal: it is now --goal %s. Hand it off with bs done when it holds.\n", req.By, e.Goal)
+	for _, p := range e.Parts {
+		if p.Type == "review" {
+			body += fmt.Sprintf("Your review comment on %s must carry the marker bs:%s: bs done looks for it.\n", p.Target, sp.ID)
+		}
+	}
+	body += prompt.Goal(prompt.Worker, e.Types()) // the fragments its hash records
+	if slices.ContainsFunc(e.Parts, goal.Part.Reviewed) {
+		body += prompt.Host(prompt.Worker, c.Review.Name())
+	}
 	switch {
 	case change.Discard:
 		body = req.By + " discarded your goal: stop, and hand nothing off"

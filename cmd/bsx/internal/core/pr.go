@@ -169,14 +169,7 @@ func (k *look) one(ctx context.Context, name string, r port.Ref) (bool, string, 
 		case err != nil:
 			return false, "", err
 		case ok && tip != v.HeadCommit:
-			// Pushed already, and the host hasn't caught up yet: pending, never "push it".
-			if up, pushed, err := c.VCS.Pushed(ctx, dir, v.Head); err != nil {
-				return false, "", err
-			} else if pushed && up == tip {
-				k.pending = true
-				return false, fmt.Sprintf("pending: %s was pushed at %s, and %s still shows %s", v.Head, short(tip), c.Review.Name(), short(v.HeadCommit)), nil
-			}
-			return false, fmt.Sprintf("%s is at %s here and at %s on %s: push it", v.Head, short(tip), short(v.HeadCommit), c.Review.Name()), nil
+			return k.unpushed(ctx, v, tip)
 		case ok:
 			return true, "", nil
 		}
@@ -208,6 +201,37 @@ func (k *look) one(ctx context.Context, name string, r port.Ref) (bool, string, 
 		return false, "no comment or review since the spawn carries " + mark, nil
 	}
 	return false, "", fmt.Errorf("no check %s", name)
+}
+
+// unpushed says why a change's head isn't the local branch's tip. The host's head holding
+// commits the branch lacks (someone pushed onto it, or "Update branch") is a fail that says
+// to pull them, never pending: waiting would never end (motif 5). The branch ahead of the
+// host's head is pending when it was pushed already (the host lags a push by seconds,
+// seen live), else "push it".
+func (k *look) unpushed(ctx context.Context, v port.Change, tip string) (bool, string, error) {
+	c, dir, host := k.c, k.sp.Workspace.Dir, k.c.Review.Name()
+	has, err := c.VCS.Has(ctx, dir, v.HeadCommit)
+	if err != nil {
+		return false, "", err
+	}
+	ahead := false
+	if has {
+		if ahead, err = c.VCS.Descends(ctx, dir, v.HeadCommit, tip); err != nil {
+			return false, "", err
+		}
+	}
+	if !ahead {
+		return false, fmt.Sprintf("its head %s on %s has commits %s lacks (at %s): pull them, then push", short(v.HeadCommit), host, v.Head, short(tip)), nil
+	}
+	up, pushed, err := c.VCS.Pushed(ctx, dir, v.Head)
+	if err != nil {
+		return false, "", err
+	}
+	if pushed && up == tip {
+		k.pending = true
+		return false, fmt.Sprintf("pending: %s was pushed at %s, and %s still shows %s", v.Head, short(tip), host, short(v.HeadCommit)), nil
+	}
+	return false, fmt.Sprintf("%s is at %s here and at %s on %s: push it", v.Head, short(tip), short(v.HeadCommit), host), nil
 }
 
 // ciGreen is every CI check passing (skipped ones count). None registered is pending

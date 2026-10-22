@@ -31,7 +31,7 @@ var (
 	pitfalls string
 	//go:embed BEADS.md
 	beads string
-	//go:embed workspace/*.md goal/*.md
+	//go:embed workspace/*.md goal/*.md host/*.md
 	fragments embed.FS
 )
 
@@ -71,6 +71,16 @@ func Text(r Role, project, kind string, goals []string) string {
 	if ws, err := fragments.ReadFile("workspace/" + kind + ".md"); kind != "" && err == nil {
 		b.WriteString("\n## Workspace\n\n" + part(r, string(ws)))
 	}
+	b.WriteString(goalSection(r, heading, goals))
+	return strings.ReplaceAll(b.String(), "{{project}}", project)
+}
+
+// Goal is r's part of each goal type's fragment under "## Goal": what bs goal sends a
+// worker whose goal it amended, so the fragments it works to are the ones recorded.
+func Goal(r Role, goals []string) string { return goalSection(r, "## Goal", goals) }
+
+func goalSection(r Role, heading string, goals []string) string {
+	var b strings.Builder
 	if len(goals) > 0 {
 		b.WriteString("\n" + heading + "\n")
 	}
@@ -87,7 +97,7 @@ func Text(r Role, project, kind string, goals []string) string {
 		}
 		b.WriteString("\n" + part(r, string(f)))
 	}
-	return strings.ReplaceAll(b.String(), "{{project}}", project)
+	return b.String()
 }
 
 // part is r's share of a fragment: the shared lead, then r's own sections. A line
@@ -109,4 +119,15 @@ func part(r Role, fragment string) string {
 		}
 	}
 	return b.String()
+}
+
+// Host is r's part of the review host's fragment (host/<host>.md: how a change is
+// uploaded, reviewed and merged there) under "## Review host", or "" for a host with
+// none. The goal fragments name no host: a CL host brings its own commands here.
+func Host(r Role, host string) string {
+	f, err := fragments.ReadFile("host/" + host + ".md")
+	if err != nil {
+		return ""
+	}
+	return "\n## Review host\n\n" + part(r, string(f))
 }

@@ -67,7 +67,7 @@ func (c *Core) Queen(ctx context.Context, req QueenReq) ([]string, error) {
 	case !ok:
 		return nil, exit(ExitRefused, "", nil, "bs queen: %s already runs (pid %d, pane %s)", name, prev.PID, prev.Pane)
 	}
-	l.Files = withPrompt(l.Files, prompt.Text(prompt.Queen, c.Project, c.Kind, prompt.Goals()))
+	l.Files = withPrompt(l.Files, prompt.Text(prompt.Queen, c.Project, c.Kind, prompt.Goals())+prompt.Host(prompt.Queen, c.Review.Name()))
 	args, err := c.writeFiles(name, l)
 	if err != nil {
 		return nil, exit(ExitFail, "bsx queen", err, "bs queen: couldn't write its start files (her entry names this pid, which exits: harmless)")

@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -164,7 +166,13 @@ func (h *CLHost) ancestors(c string) []string {
 	return out
 }
 
-func (h *CLHost) offline() error {
+func (h *CLHost) offline() error { return h.offlineIn("") }
+
+// offlineIn is offline, and a dir that is gone refused as a real tool's cwd would be.
+func (h *CLHost) offlineIn(dir string) error {
+	if _, err := os.Stat(dir); dir != "" && err != nil {
+		return fmt.Errorf("cl: can't run in %s: %w", dir, err)
+	}
 	if h.Offline {
 		return &port.ExitError{Argv: []string{"cl"}, Code: 1, Stderr: []byte("cl: can't reach cl.test\n")}
 	}
@@ -186,11 +194,11 @@ func (h *CLHost) Parse(url string) (port.Ref, error) {
 	return port.Ref{URL: "https://cl.test/" + repo + "/" + num, Repo: repo}, nil
 }
 
-func (h *CLHost) View(_ context.Context, _ string, r port.Ref) (port.Change, error) {
+func (h *CLHost) View(_ context.Context, dir string, r port.Ref) (port.Change, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.init()
-	if err := h.offline(); err != nil {
+	if err := h.offlineIn(dir); err != nil {
 		return port.Change{}, err
 	}
 	n, _ := strconv.Atoi(r.URL[strings.LastIndex(r.URL, "/")+1:])
@@ -215,10 +223,10 @@ func (h *CLHost) View(_ context.Context, _ string, r port.Ref) (port.Change, err
 
 func (h *CLHost) change(c port.Change) *clChange { return h.changes[c.Number] }
 
-func (h *CLHost) CI(_ context.Context, _ string, c port.Change) ([]port.CICheck, error) {
+func (h *CLHost) CI(_ context.Context, dir string, c port.Change) ([]port.CICheck, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if err := h.offline(); err != nil {
+	if err := h.offlineIn(dir); err != nil {
 		return nil, err
 	}
 	return slices.Clone(h.change(c).CI), nil
@@ -230,10 +238,10 @@ func (h *CLHost) BaseCI(context.Context, string, port.Change) (int, error) {
 	return h.BaseChecks, h.offline()
 }
 
-func (h *CLHost) Behind(_ context.Context, _ string, c port.Change) (int, error) {
+func (h *CLHost) Behind(_ context.Context, dir string, c port.Change) (int, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if err := h.offline(); err != nil {
+	if err := h.offlineIn(dir); err != nil {
 		return 0, err
 	}
 	have := h.ancestors(c.HeadCommit)
@@ -271,6 +279,9 @@ func (h *CLHost) Landed(_ context.Context, _ string, branch string) ([]string, e
 // MergeDeny denies the CL tool's submit.
 func (*CLHost) MergeDeny() []string { return []string{"cl submit*", "cl * submit*"} }
 
+// ApproveDeny denies the CL tool's approval.
+func (*CLHost) ApproveDeny() []string { return []string{"cl approve*", "cl * approve*"} }
+
 // Fetch has nothing to do: every commit is in memory.
 func (h *CLHost) Fetch(context.Context, string, port.Change) error {
 	h.mu.Lock()
@@ -296,8 +307,18 @@ func (h *CLHost) Commits(_ context.Context, dir string, since time.Time) ([]stri
 	return out, nil
 }
 
-// Branch: a CL host has no local branches.
-func (*CLHost) Branch(context.Context, string, string) (string, bool, error) { return "", false, nil }
+// Branch is the head of the workspace named name: a worker's workspace is the only
+// "branch" a CL-shaped checkout has, and the change it uploads holds its commits.
+func (h *CLHost) Branch(_ context.Context, _ string, name string) (string, bool, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for dir, head := range h.heads {
+		if filepath.Base(dir) == name {
+			return head, true, nil
+		}
+	}
+	return "", false, nil
+}
 
 // Pushed: a CL host has no local branches to push.
 func (*CLHost) Pushed(context.Context, string, string) (string, bool, error) { return "", false, nil }

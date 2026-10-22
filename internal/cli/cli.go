@@ -236,7 +236,7 @@ func (r *run) oldSessions() error {
 		return nil
 	}
 	return &core.Exit{Code: core.ExitRefused, Msg: what + "; nothing was read or written",
-		Next: fmt.Sprintf("%s end <worker> for each (it closes the worker's herdr workspace), then run this again", bsname.Cmd)}
+		Next: fmt.Sprintf("%s end <worker> for each (it names the herdr workspace to close by hand), then run this again", bsname.Cmd)}
 }
 
 type run struct {

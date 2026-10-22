@@ -513,6 +513,8 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 		}
 		fmt.Fprintf(tw, "%s\t--goal %s\t%s\t%s\t%s\t%s\t%s\n", sp.Name, g, state, handoff, complete, running, dir)
 		switch {
+		case running == "unconfirmed" && sp.Legacy():
+			note("stuck", sp.Name, "started by the old bs, which recorded no process → %s end %s", bsname.Cmd, sp.Name)
 		case running == "unconfirmed":
 			note("stuck", sp.Name, "its start was never confirmed → %s end %s --incomplete", bsname.Cmd, sp.Name)
 		case strings.HasPrefix(running, "no"):

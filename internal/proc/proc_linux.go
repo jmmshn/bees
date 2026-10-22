@@ -21,6 +21,15 @@ func Parent(pid int) (int, error) {
 	return strconv.Atoi(f[1])
 }
 
+// Group is pid's process group (field 5 of /proc/<pid>/stat).
+func Group(pid int) (int, error) {
+	f, err := stat(pid)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(f[2])
+}
+
 // Start is field 22 of /proc/<pid>/stat, the start time in clock ticks.
 func Start(pid int) (string, error) {
 	f, err := stat(pid)

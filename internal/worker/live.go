@@ -46,6 +46,7 @@ type Procs interface {
 	Exe(pid int) (string, error)
 	Descendants(pid int) ([]proc.Process, error)
 	Parent(pid int) (int, error)
+	Group(pid int) (int, error) // the process group
 	Command(pid int) (string, error)
 	Listening(ctx context.Context, pids []int) (map[int][]int, error)
 	Signal(p proc.Process, sig syscall.Signal) error // only while p is the recorded process
@@ -60,6 +61,7 @@ func (SystemProcs) Name(pid int) (string, error)                { return proc.Na
 func (SystemProcs) Exe(pid int) (string, error)                 { return proc.Exe(pid) }
 func (SystemProcs) Descendants(pid int) ([]proc.Process, error) { return proc.Descendants(pid) }
 func (SystemProcs) Parent(pid int) (int, error)                 { return proc.Parent(pid) }
+func (SystemProcs) Group(pid int) (int, error)                  { return proc.Group(pid) }
 func (SystemProcs) Command(pid int) (string, error)             { return proc.Command(pid) }
 func (SystemProcs) Signal(p proc.Process, sig syscall.Signal) error {
 	return proc.Signal(p, sig)

@@ -66,6 +66,7 @@ type fakeHerdr struct {
 	cwds        map[string]string // pane → the directory its shell works in, for PanesUnder
 	signalled   []syscall.Signal
 	stubborn    map[int]bool // pids that ignore signals
+	groups      map[int]int  // pid → its process group, when not its own
 }
 
 // fakeProc is a process: a pid with a start time, a name and a parent, alive until it exits.
@@ -271,6 +272,16 @@ func (h *fakeHerdr) Descendants(pid int) ([]proc.Process, error) {
 		level = next
 	}
 	return out, nil
+}
+
+// Group is pid's process group: its own, unless groups puts it in another.
+func (h *fakeHerdr) Group(pid int) (int, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if g, ok := h.groups[pid]; ok {
+		return g, nil
+	}
+	return pid, nil
 }
 
 func (h *fakeHerdr) Parent(pid int) (int, error) {
@@ -2647,5 +2658,28 @@ func TestASpawnAdoptsItsOwnUnrecordedHarness(t *testing.T) {
 	sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8")
 	if s, ok, _ := r.lb.LatestStart(ctx, sp.ID); !ok || s.PID != r.h.pids["bees-8"] {
 		t.Fatalf("start = %+v, %v; want the adopted process recorded", s, ok)
+	}
+}
+
+// bees-12.50: bs's own pipeline (bs done 2>&1 | tail -3) shares its process group and is
+// the call itself, not background work; a loop the worker left running in the background
+// is, and the refusal says to stop it.
+func TestTheGateSkipsBsOwnPipeline(t *testing.T) {
+	defer worker.FastGate(time.Millisecond)()
+	ctx := context.Background()
+	r := newRig(t)
+	_, _ = r.fleet.Spawn(ctx, "bees-8", "spawn and end")
+	tail := r.h.child("bees-8", "tail -3")
+	r.h.mu.Lock()
+	r.h.groups = map[int]int{tail: os.Getpid()} // in this bs's process group
+	r.h.mu.Unlock()
+	sp, _, _ := r.lb.LatestSpawn(ctx, "bees-8")
+	if bg, err := worker.CheckBackground(ctx, r.lb, r.h, sp); err != nil || len(bg) != 0 {
+		t.Fatalf("CheckBackground = %v, %v; want bs's own tail skipped", bg, err)
+	}
+	loop := r.h.child("bees-8", "sh -c while sleep 5; do bs inbox; done")
+	err := r.fleet.End(ctx, "bees-8", worker.EndOpts{})
+	if !errors.Is(err, worker.ErrBackground) || !strings.Contains(err.Error(), fmt.Sprint(loop)) || strings.Contains(err.Error(), fmt.Sprint(tail)+" ") || !strings.Contains(err.Error(), "stop it and run this again") {
+		t.Fatalf("err = %v; want the loop named, the tail not, and the hint", err)
 	}
 }

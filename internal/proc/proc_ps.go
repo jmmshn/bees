@@ -23,6 +23,15 @@ func Parent(pid int) (int, error) {
 	return strconv.Atoi(out)
 }
 
+// Group is pid's process group.
+func Group(pid int) (int, error) {
+	out, err := ps(pid, "pgid=")
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(out)
+}
+
 // Start is the start time exactly as Claude records it on macOS:
 // LC_ALL=C TZ=UTC ps -o lstart= -p <pid>, trimmed. Claude skips zombies, and so does Start.
 func Start(pid int) (string, error) {

@@ -35,7 +35,8 @@ type settings struct {
 	Logbook      string     // the logbook file
 	Worktrees    string     // paths.worktrees with {repo} and ~ resolved
 	Pane         *core.Pane // the recorded pane bs runs in; nil outside one
-	PinnedDir    string     // BS_LOGBOOK_DIR, applied outside a recorded pane; "" when unset
+	PinnedDir    string     // BS_LOGBOOK_DIR outside a recorded pane, when it isn't paths.logbook_dir
+	ConfigDir    string     // paths.logbook_dir as the config files set it, without the pin
 	Warnings     []string
 }
 
@@ -107,7 +108,15 @@ func load(ctx context.Context, env Env, ports Ports) (*settings, error) {
 	} else if err := s.findProject(ctx, env.Dir, run, overrides["BS_PROJECT"]); err != nil {
 		return nil, err
 	}
-	s.PinnedDir = overrides["BS_LOGBOOK_DIR"]
+	if pin := overrides["BS_LOGBOOK_DIR"]; pin != "" {
+		unpinned, err := config.Load(config.Input{Dir: dir, Project: s.Project, Home: home})
+		if err != nil {
+			return nil, err
+		}
+		if want := unpinned.Expand(unpinned.Paths.LogbookDir); !samePath(unpinned.Expand(pin), want) {
+			s.PinnedDir, s.ConfigDir = pin, want
+		}
+	}
 	l, err := config.Load(config.Input{Dir: dir, Project: s.Project, Home: home, Env: overrides})
 	if err != nil {
 		return nil, err
@@ -275,13 +284,13 @@ func harnessProgram(name string) string {
 }
 
 // unpinned refuses a command that records a pane (bs queen, bs spawn) under a
-// BS_LOGBOOK_DIR pin: the entry would land where no pane scan looks, since a recorded
-// pane's bs reads only the config's paths.logbook_dir (motif 14).
+// BS_LOGBOOK_DIR pin other than paths.logbook_dir: the entry would land where no pane
+// scan looks, since a recorded pane's bs reads only the config's dir (motif 14).
 func (s *settings) unpinned(cmd string) error {
 	if s.PinnedDir == "" {
 		return nil
 	}
-	return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("BS_LOGBOOK_DIR=%s would record a pane where its own bs calls never look; nothing was recorded", s.PinnedDir),
+	return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("BS_LOGBOOK_DIR=%s isn't paths.logbook_dir (%s): a pane recorded there is never found by its own bs calls; nothing was recorded", s.PinnedDir, s.ConfigDir),
 		Next: "env -u BS_LOGBOOK_DIR bsx " + cmd + " ..., or set paths.logbook_dir in the session's config"}
 }
 

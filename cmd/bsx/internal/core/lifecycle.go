@@ -57,7 +57,7 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, force bool
 			case err != nil && force:
 				d.Unchecked = err.Error()
 			case err != nil:
-				return d, exit(ExitCantCheck, "bs done --force", err, "bs done: can't check %s for background work", sp.Name)
+				return d, exit(ExitCantCheck, "bs done --force", err, "can't check %s for background work", sp.Name)
 			case len(bg) > 0 && force:
 				d.Background = bg
 			case len(bg) > 0:
@@ -68,7 +68,7 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, force bool
 		}
 		r := c.check(ctx, sp, name, h)
 		if r.Err != "" {
-			return d, exit(ExitCantCheck, "", errors.New(r.Err), "bs done: check %s couldn't run", name)
+			return d, exit(ExitCantCheck, "", errors.New(r.Err), "check %s couldn't run", name)
 		}
 		if !r.Pass {
 			failed = append(failed, name+": "+r.Detail)
@@ -76,7 +76,7 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, force bool
 		d.Checks = append(d.Checks, r)
 	}
 	if len(failed) > 0 {
-		return d, exit(ExitHandoff, "fix it, then bs done again", nil, "bs done: %d handoff checks failed:\n  %s", len(failed), strings.Join(failed, "\n  "))
+		return d, exit(ExitHandoff, "fix it, then bs done again", nil, "%d handoff checks failed:\n  %s", len(failed), strings.Join(failed, "\n  "))
 	}
 	if d.ID, err = c.Logbook.RecordDone(ctx, d); err != nil {
 		return d, err
@@ -103,9 +103,9 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 	case err != nil:
 		return err
 	case !ok:
-		return exit(ExitRefused, "bs status", nil, "bs end: no worker %s", name)
+		return exit(ExitRefused, "bs status", nil, "no worker %s", name)
 	case sp.Ended:
-		return exit(ExitRefused, "bs prune", nil, "bs end: %s has already ended", name)
+		return exit(ExitRefused, "bs prune", nil, "%s has already ended", name)
 	}
 	e, err := c.Logbook.Goal(ctx, sp)
 	if err != nil {
@@ -114,13 +114,13 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 	done, passed, failed, err := c.complete(ctx, sp, e)
 	switch {
 	case err != nil:
-		return exit(ExitCantCheck, "", err, "bs end %s: can't tell whether its goal is complete", name)
+		return exit(ExitCantCheck, "", err, "%s: can't tell whether its goal is complete", name)
 	case !done && !o.Incomplete:
 		var why []string
 		for _, f := range failed {
 			why = append(why, f.Name+": "+f.Detail)
 		}
-		return exit(ExitIncomplete, "bs end "+name+" --incomplete", nil, "bs end %s: its goal (--goal %s) is not complete:\n  %s", name, e.Goal, strings.Join(why, "\n  "))
+		return exit(ExitIncomplete, "bs end "+name+" --incomplete", nil, "%s: its goal (--goal %s) is not complete:\n  %s", name, e.Goal, strings.Join(why, "\n  "))
 	case !done:
 		_, handed, err := c.Logbook.LatestDone(ctx, sp.ID)
 		if err != nil {
@@ -133,7 +133,7 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 		// An unconfirmed spawn never ran a worker that could hand off: --incomplete is its
 		// abort (motif 5). Any other spawn needs something handed off first.
 		if !handed && started {
-			return exit(ExitRefused, "", nil, "bs end %s --incomplete: nothing was handed off; ending it would lose the work's trail", name)
+			return exit(ExitRefused, "", nil, "%s --incomplete: nothing was handed off; ending it would lose the work's trail", name)
 		}
 	}
 	if !o.Force {
@@ -141,24 +141,24 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 		case errors.Is(err, ErrHarnessGone): // its children were reparented away: nothing to walk
 		case errors.Is(err, ErrNoStart): // nothing recorded to walk: an unconfirmed spawn
 		case err != nil:
-			return exit(ExitCantCheck, "bs end "+name+" --force", err, "bs end %s: can't check for background work", name)
+			return exit(ExitCantCheck, "bs end "+name+" --force", err, "%s: can't check for background work", name)
 		case len(bg) > 0:
 			return exit(ExitBackground, "bs end "+name+" --force", nil, "%s", background(name, bg))
 		}
 	}
 	switch g, err := c.guests(ctx, sp); {
 	case err != nil:
-		return exit(ExitCantCheck, "bs end "+name, err, "bs end %s: can't tell what else its workspace %s holds; nothing closed", name, sp.Herdr.Workspace)
+		return exit(ExitCantCheck, "bs end "+name, err, "%s: can't tell what else its workspace %s holds; nothing closed", name, sp.Herdr.Workspace)
 	case len(g) > 0:
 		return exit(ExitRefused, "herdr --session "+sp.Herdr.Session+" pane move <pane> --new-workspace, then bs end "+name, nil,
-			"bs end %s: its workspace %s also holds %s, which closing it would end; nothing closed", name, sp.Herdr.Workspace, strings.Join(g, ", "))
+			"%s: its workspace %s also holds %s, which closing it would end; nothing closed", name, sp.Herdr.Workspace, strings.Join(g, ", "))
 	}
 	h := c.herdr(sp.Herdr.Session)
 	if err := h.CloseWorkspace(ctx, sp.Herdr.Workspace); err != nil {
-		return exit(ExitKept, "bs end "+name, err, "bs end %s: herdr couldn't close its workspace; nothing was recorded", name)
+		return exit(ExitKept, "bs end "+name, err, "%s: herdr couldn't close its workspace; nothing was recorded", name)
 	}
 	if err := c.stop(ctx, sp); err != nil {
-		return exit(ExitFail, "bs end "+name, err, "bs end %s: its workspace is closed but its process wouldn't stop; nothing was recorded", name)
+		return exit(ExitFail, "bs end "+name, err, "%s: its workspace is closed but its process wouldn't stop; nothing was recorded", name)
 	}
 	if err := c.removeFiles(sp.Name); err != nil {
 		c.warn("couldn't remove %s's start files: %v", sp.Name, err)
@@ -178,6 +178,10 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 // process this logbook recorded is named by its session. Any lookup that fails is an
 // error, never "none" (motif 7).
 func (c *Core) guests(ctx context.Context, sp logbook.Spawn) ([]string, error) {
+	kind, err := c.kindOf(sp)
+	if err != nil {
+		return nil, err
+	}
 	h := c.herdr(sp.Herdr.Session)
 	panes, err := h.Panes(ctx, sp.Herdr.Workspace)
 	if err != nil {
@@ -195,7 +199,7 @@ func (c *Core) guests(ctx context.Context, sp logbook.Spawn) ([]string, error) {
 			return nil, err
 		}
 		for _, p := range pi.Foreground {
-			if p.Name != c.Harness.Kind() {
+			if p.Name != kind {
 				continue
 			}
 			who, err := c.recordedAs(ctx, p.PID)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -72,8 +73,17 @@ func TestTheQueenIsFoundByHerPane(t *testing.T) {
 	if l := lineOf(r.out, "queen-toy"); !strings.Contains(l, "queen  yes") {
 		t.Fatalf("status:\n%s", r)
 	}
+	files, _ := filepath.Glob(filepath.Join(x.ports.CacheDir, "queen-toy-*"))
 	x.shell(x.session, "keeper2", x.repo)
-	must(t, x.worker("keeper2", 1, "queen"), 2, "queen-toy already runs")
+	must(t, x.worker("keeper2", 1, "queen"), 2, "queen-toy already runs", "next: use her")
+	if again, _ := filepath.Glob(filepath.Join(x.ports.CacheDir, "queen-toy-*")); len(files) == 0 || !slices.Equal(files, again) {
+		t.Fatalf("a refused second queen touched the first's files: %q, then %q", files, again)
+	}
+	// A BS_LOGBOOK_DIR other than paths.logbook_dir, inherited by a shell: bs queen would
+	// record her where her own calls never look (motif 14).
+	x.herdr.Env = append(x.herdr.Env, "BS_LOGBOOK_DIR="+t.TempDir())
+	x.shell(x.session, "keeper3", x.repo)
+	must(t, x.worker("keeper3", 1, "queen"), 2, "isn't paths.logbook_dir", "nothing was recorded")
 }
 
 // Mail both ways between the queen and a worker she spawned from her pane: each send is
@@ -89,8 +99,19 @@ func TestQueenAndWorkerMailBothWays(t *testing.T) {
 		t.Fatalf("queen's rings: %q", rings)
 	}
 	must(t, x.queenRuns(2, "inbox"), 0, "from toy-1", "which base?")
-	must(t, x.queenRuns(3, "send", "toy-1", "main"), 0, "rung toy-1")
+	must(t, x.queenRuns(3, "send", "--now", "toy-1", "main"), 0, "rung toy-1")
+	if rings := x.harness.Rings("toy-1"); len(rings) == 0 || !strings.HasPrefix(rings[len(rings)-1], "now\t") {
+		t.Fatalf("toy-1's rings: %q, want the last at priority now", rings)
+	}
 	must(t, x.worker("toy-1", 3, "inbox"), 0, "from queen-toy", "main")
+}
+
+// bs send - reads the message from stdin.
+func TestSendReadsAMessageFromStdin(t *testing.T) {
+	x := newToy(t)
+	x.spawn("toy-1", "verdict")
+	must(t, x.shellRun(x.repo, x.env, "line one\nline two\n", "send", "--as", "queen-toy", "toy-1", "-"), 0, "rung toy-1")
+	must(t, x.worker("toy-1", 1, "inbox"), 0, "line one\nline two\n")
 }
 
 // bees-13.14: a keeper's herdr shell is a pane no entry recorded: --as names the session
@@ -168,8 +189,9 @@ func TestRound11AMovedPaneStaysRunningAndIsRung(t *testing.T) {
 	must(t, x.worker("toy-1", 1, "inbox"), 0, "still there?")
 }
 
-// A start confirmation missed (herdr couldn't be reached) is healed on a later trigger:
-// recorded late, and status says so. A heal whose probe fails prints and writes nothing.
+// A start confirmation missed (the process table couldn't be read while it looked) is
+// healed on a later trigger: recorded late, and status says so. A heal whose probe fails
+// (herdr unreachable) prints and writes nothing.
 func TestAMissedStartIsHealedLate(t *testing.T) {
 	x := newToy(t)
 	x.ports.Timing.Confirm, x.ports.Timing.AfterErr = 300*time.Millisecond, 300*time.Millisecond
@@ -225,7 +247,7 @@ func TestAMisaddressedSendIsRefused(t *testing.T) {
 	if ms, _ := x.open().Unread(context.Background(), "queen-other"); len(ms) != 0 {
 		t.Fatalf("stored: %+v", ms)
 	}
-	must(t, x.worker("toy-1", 2, "send", "--project", "other", "queen-other", "hi"), 0, "queued (queen-other: not running): queen-other reads it at its next bs inbox")
+	must(t, x.worker("toy-1", 2, "send", "--project", "other", "queen-other", "hi"), 0, "stored, not rung (queen-other: not running): queen-other reads it at its next bs inbox")
 	ro, err := logbook.OpenReadOnly(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
@@ -236,6 +258,36 @@ func TestAMisaddressedSendIsRefused(t *testing.T) {
 		t.Fatalf("other's inbox: %+v %v", ms, err)
 	}
 	must(t, x.worker("toy-1", 3, "send", "stranger", "hi"), 0, "stored, not rung")
+}
+
+// T11 (round 11's cross-project send and reply): a worker's send --project lands in the
+// other project's logbook, and that project's inbox shows how to reply across.
+func TestRound11CrossProjectSendAndReply(t *testing.T) {
+	x := newToy(t)
+	x.spawn("toy-1", "verdict")
+	lb, err := logbook.Open(context.Background(), filepath.Join(filepath.Dir(x.logbook), "other.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lb.Close()
+	must(t, x.worker("toy-1", 1, "send", "--project", "other", "queen-other", "your API changed?"), 0)
+	other := append(slices.Clone(x.env), "BS_PROJECT=other")
+	must(t, x.shellRun("/", other, "", "inbox", "--as", "queen-other"), 0,
+		"from toy-1", "your API changed?", `(reply with: bs send --project toy toy-1 "...")`)
+}
+
+// worker.path reaches the harness as dirs first on the worker's PATH (the live rig's
+// build under test).
+func TestRound11WorkersRunTheBuildUnderTest(t *testing.T) {
+	x := newToy(t)
+	bin := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(x.config, "projects"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	x.write(filepath.Join(x.config, "projects", "toy.toml"), "[worker]\npath = [\""+bin+"\"]\n")
+	if sp := x.spawn("toy-1", "verdict"); sp.Record["path"] != bin {
+		t.Fatalf("recorded launch: %v, want path %s", sp.Record, bin)
+	}
 }
 
 // bees-12.50: a reply-wait loop left running with & is background work: the gate lists
@@ -283,17 +335,28 @@ func TestRound11EndOnAMovedWorker(t *testing.T) {
 	sp := x.spawn("toy-1", "verdict")
 	must(t, x.worker("toy-1", 1, "done", "--answer", "yes", "--report", "fine"), 0)
 	x.move(sp.Herdr.Pane, "")
+	if fs, _ := filepath.Glob(filepath.Join(x.ports.CacheDir, "toy-1-*")); len(fs) == 0 {
+		t.Fatal("no start files to remove")
+	}
 	must(t, x.queen("end", "toy-1"), 0, "ended toy-1")
 	if _, ok := x.herdr.Agent("toy", "toy-1"); ok {
 		t.Fatal("toy-1 still runs")
 	}
+	if fs, _ := filepath.Glob(filepath.Join(x.ports.CacheDir, "toy-1-*")); len(fs) != 0 {
+		t.Fatalf("bs end left start files: %q", fs)
+	}
+	// Mail for an ended worker would never be read: refused, nothing stored (motif 11).
+	must(t, x.queen("send", "toy-1", "one more thing"), 2, "toy-1 has ended", "nothing stored")
 }
 
-// Motif 14: a BS_LOGBOOK_DIR pin would record a pane where its own bs calls never look,
-// so bs spawn (and bs queen) refuse to record under one.
+// Motif 14: a BS_LOGBOOK_DIR pin other than paths.logbook_dir would record a pane where
+// its own bs calls never look, so bs spawn (and bs queen) refuse to record under one.
 func TestRecordingAPaneUnderABSLogbookDirPinIsRefused(t *testing.T) {
 	x := newToy(t)
 	x.bead("toy-1", "work on toy-1")
-	x.env = append(x.env, "BS_LOGBOOK_DIR="+filepath.Dir(x.logbook))
-	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 2, "BS_LOGBOOK_DIR=", "nothing was recorded", "env -u BS_LOGBOOK_DIR")
+	env := x.env
+	x.env = append(slices.Clone(env), "BS_LOGBOOK_DIR="+t.TempDir())
+	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 2, "isn't paths.logbook_dir", "nothing was recorded", "env -u BS_LOGBOOK_DIR")
+	x.env = append(slices.Clone(env), "BS_LOGBOOK_DIR="+filepath.Dir(x.logbook)) // the config's own dir: no harm
+	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 0, "spawned toy-1")
 }

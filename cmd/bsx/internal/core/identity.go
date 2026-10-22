@@ -61,11 +61,11 @@ func ScanPanes(ctx context.Context, in ScanIn) (Pane, bool, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		return Pane{}, false, nil
 	} else if err != nil {
-		return Pane{}, false, exit(ExitCantCheck, "", err, "bs can't read the logbook dir %s to find this pane's session", in.Dir)
+		return Pane{}, false, exit(ExitCantCheck, "bsx doctor", err, "bs can't read the logbook dir %s to find this pane's session", in.Dir)
 	}
 	up, err := ancestors(in.Proc, in.Self)
 	if err != nil {
-		return Pane{}, false, exit(ExitCantCheck, "", err, "bs can't walk its own ancestors")
+		return Pane{}, false, exit(ExitCantCheck, "bsx doctor", err, "bs can't walk its own ancestors")
 	}
 	var found []Pane
 	var probe *herdr.PaneProcesses // the pane's processes, looked up once, for a heal
@@ -77,7 +77,7 @@ func ScanPanes(ctx context.Context, in ScanIn) (Pane, bool, error) {
 		path := filepath.Join(in.Dir, e.Name())
 		recs, err := inPane(ctx, path, in.Session, in.Pane)
 		if err != nil {
-			return Pane{}, false, exit(ExitCantCheck, "", err, "bs can't read logbook %s to find this pane's session", path)
+			return Pane{}, false, exit(ExitCantCheck, "check "+path+" (a logbook dir holds only <project>.db logbooks)", err, "bs can't read logbook %s to find this pane's session", path)
 		}
 		for _, r := range recs {
 			p := Pane{Session: in.Session, Pane: in.Pane, Project: project, Logbook: path,
@@ -89,7 +89,7 @@ func ScanPanes(ctx context.Context, in ScanIn) (Pane, bool, error) {
 				if probe == nil {
 					pi, err := (herdr.Client{Run: in.Run, Session: in.Session}).ProcessInfo(ctx, in.Pane)
 					if err != nil && !errors.Is(err, herdr.ErrPaneGone) {
-						return Pane{}, false, exit(ExitCantCheck, "", err, "pane %s holds %s, whose start was never confirmed, and bs can't look for its harness", in.Pane, r.Name)
+						return Pane{}, false, exit(ExitCantCheck, "herdr --session "+in.Session+" pane process-info --pane "+in.Pane, err, "pane %s holds %s, whose start was never confirmed, and bs can't look for its harness", in.Pane, r.Name)
 					}
 					probe = &pi
 				}
@@ -105,7 +105,7 @@ func ScanPanes(ctx context.Context, in ScanIn) (Pane, bool, error) {
 			}
 			alive, err := in.Proc.Alive(r.Process)
 			if err != nil {
-				return Pane{}, false, exit(ExitCantCheck, "", err, "bs can't tell whether %s's process runs", r.Name)
+				return Pane{}, false, exit(ExitCantCheck, "bsx doctor", err, "bs can't tell whether %s's process runs", r.Name)
 			}
 			if alive && slices.Contains(up, r.Process.PID) {
 				found = append(found, p)
@@ -122,7 +122,7 @@ func ScanPanes(ctx context.Context, in ScanIn) (Pane, bool, error) {
 	for _, p := range found {
 		names = append(names, p.Who.Name+" ("+p.Logbook+")")
 	}
-	return Pane{}, false, exit(ExitFail, "", nil, "pane %s on herdr session %s is recorded by %d live sessions: %s", in.Pane, in.Session, len(found), strings.Join(names, ", "))
+	return Pane{}, false, exit(ExitFail, "bsx status, then bsx end the one that shouldn't be there", nil, "pane %s on herdr session %s is recorded by %d live sessions: %s", in.Pane, in.Session, len(found), strings.Join(names, ", "))
 }
 
 // recorded is a logbook.Recorded with its spawn's workspace repo.
@@ -167,7 +167,7 @@ func (c *Core) Identify(ctx context.Context, p Pane, self int) (Who, error) {
 	}
 	i := slices.IndexFunc(recs, func(r logbook.Recorded) bool { return r.Name == p.Who.Name })
 	if i < 0 {
-		return Who{}, exit(ExitRefused, "", nil, "%s's entry for pane %s closed while bs looked", p.Who.Name, p.Pane)
+		return Who{}, exit(ExitRefused, "bsx status", nil, "%s's entry for pane %s closed while bs looked", p.Who.Name, p.Pane)
 	}
 	r := recs[i]
 	if !r.HasProcess {
@@ -178,7 +178,7 @@ func (c *Core) Identify(ctx context.Context, p Pane, self int) (Who, error) {
 		st, ok, err := c.StartOf(ctx, sp)
 		switch {
 		case err != nil:
-			return Who{}, exit(ExitCantCheck, "", err, "pane %s holds %s, whose start was never confirmed", p.Pane, r.Name)
+			return Who{}, exit(ExitCantCheck, "herdr --session "+p.Session+" pane process-info --pane "+p.Pane, err, "pane %s holds %s, whose start was never confirmed", p.Pane, r.Name)
 		case !ok:
 			return Who{}, exit(ExitStart, "bs end "+r.Name+" --incomplete", nil, "pane %s holds %s, whose start was never confirmed and whose harness bs can't find there", p.Pane, r.Name)
 		}
@@ -186,13 +186,13 @@ func (c *Core) Identify(ctx context.Context, p Pane, self int) (Who, error) {
 	}
 	up, err := c.ancestors(self)
 	if err != nil {
-		return Who{}, exit(ExitCantCheck, "", err, "bs can't walk its own ancestors")
+		return Who{}, exit(ExitCantCheck, "bsx doctor", err, "bs can't walk its own ancestors")
 	}
 	switch alive, err := c.Proc.Alive(r.Process); {
 	case err != nil:
-		return Who{}, exit(ExitCantCheck, "", err, "bs can't tell whether %s's process runs", r.Name)
+		return Who{}, exit(ExitCantCheck, "bsx doctor", err, "bs can't tell whether %s's process runs", r.Name)
 	case !alive || !slices.Contains(up, r.Process.PID):
-		return Who{}, exit(ExitRefused, "", nil, "%s's process (pid %d) is no longer this bs's ancestor", r.Name, r.Process.PID)
+		return Who{}, exit(ExitRefused, "bsx status", nil, "%s's process (pid %d) is no longer this bs's ancestor", r.Name, r.Process.PID)
 	}
 	return Who{Name: r.Name, Queen: r.Queen, Spawn: r.Spawn, Process: r.Process}, nil
 }

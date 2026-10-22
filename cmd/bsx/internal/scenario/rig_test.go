@@ -129,8 +129,15 @@ func (r result) String() string { return r.out + r.stderr }
 // command needs a session.
 func (x *toy) keeper(args ...string) result {
 	x.t.Helper()
+	return x.shellRun(x.repo, x.env, "", args...)
+}
+
+// shellRun runs bsx args from a keeper's shell outside any pane, in dir with env and
+// stdin.
+func (x *toy) shellRun(dir string, env []string, stdin string, args ...string) result {
+	x.t.Helper()
 	var out, errb bytes.Buffer
-	code := cli.Run(context.Background(), cli.Env{Vars: x.env, Dir: x.repo, Self: os.Getpid(), Stdin: strings.NewReader("")}, x.ports, args, &out, &errb)
+	code := cli.Run(context.Background(), cli.Env{Vars: env, Dir: dir, Self: os.Getpid(), Stdin: strings.NewReader(stdin)}, x.ports, args, &out, &errb)
 	return result{code, out.String(), errb.String()}
 }
 

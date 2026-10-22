@@ -16,17 +16,22 @@ import (
 // Queen is project's queen session name.
 func Queen(project string) string { return "queen-" + project }
 
+// ErrEnded is a ring for a worker whose spawn has ended: nobody reads its inbox.
+var ErrEnded = errors.New("has ended")
+
 // Ring rings session to of this logbook with its unread count, at the process its entry
-// recorded: the queen's newest queen entry, else an open spawn's start (healed if
-// missed). bs never looks a session up by name in herdr or the harness. A session whose
-// process is gone is port.ErrNotRunning, one whose harness can't ring port.ErrNoRing:
-// either way the message waits for its next bs inbox (motif 10).
+// recorded and through the harness it recorded: the queen's newest queen entry, else an
+// open spawn's start (healed if missed). bs never looks a session up by name in herdr or
+// the harness. A session whose process is gone is port.ErrNotRunning, one whose harness
+// can't ring port.ErrNoRing: either way the message waits for its next bs inbox (motif
+// 10). An ended worker is ErrEnded.
 func (c *Core) Ring(ctx context.Context, from, to string, p port.Priority) error {
 	t := port.Target{Name: to}
+	var harness string
 	if q, ok, err := c.Logbook.LatestQueen(ctx, to); err != nil {
 		return err
 	} else if ok {
-		t.Session, t.Pane, t.PID = q.Session, q.Pane, q.PID
+		t.Session, t.Pane, t.PID, harness = q.Session, q.Pane, q.PID, q.Harness
 		if err := c.running(q.Process); err != nil {
 			return err
 		}
@@ -35,8 +40,10 @@ func (c *Core) Ring(ctx context.Context, from, to string, p port.Priority) error
 		switch {
 		case err != nil:
 			return err
-		case !ok || sp.Ended:
+		case !ok:
 			return fmt.Errorf("%s: %w", to, port.ErrNotRunning)
+		case sp.Ended:
+			return fmt.Errorf("%s %w", to, ErrEnded)
 		}
 		st, ok, err := c.StartOf(ctx, sp)
 		switch {
@@ -48,16 +55,17 @@ func (c *Core) Ring(ctx context.Context, from, to string, p port.Priority) error
 		if err := c.running(st.Process); err != nil {
 			return err
 		}
-		t.Session, t.Pane, t.PID = sp.Herdr.Session, sp.Herdr.Pane, st.PID
+		t.Session, t.Pane, t.PID, harness = sp.Herdr.Session, sp.Herdr.Pane, st.PID, sp.Harness
 	}
-	if c.Harness == nil {
-		return port.ErrNoRing
+	h := c.harnessOf(harness)
+	if h == nil {
+		return fmt.Errorf("no adapter for its recorded harness %s: %w", harness, port.ErrNoRing)
 	}
 	unread, err := c.Logbook.Unread(ctx, to)
 	if err != nil {
 		return err
 	}
-	return c.Harness.Ring(t, Doorbell(unread, from), p)
+	return h.Ring(t, Doorbell(unread, from), p)
 }
 
 // running is nil while p runs, else port.ErrNotRunning; a failed lookup is an error.
@@ -129,7 +137,8 @@ func Owner(name string) string {
 
 // Addressed checks that to may be written into this logbook, whose dir holds every
 // project's: a session another project owns, whose logbook is there, would never read it
-// here, so it is refused with nothing stored (bees-12.38, motifs 4 and 11). stranger
+// here, so it is refused with nothing stored (bees-12.38, motifs 4 and 11), as is a
+// worker whose spawn has ended (motif 11: "stored" would promise a reader). stranger
 // reports a name that is neither this project's queen nor one of its spawns: stored, but
 // never rung (a ring is a user turn, bs rings only sessions it recorded).
 func (c *Core) Addressed(ctx context.Context, to, logbookDir string) (stranger bool, err error) {
@@ -137,12 +146,15 @@ func (c *Core) Addressed(ctx context.Context, to, logbookDir string) (stranger b
 		if _, err := os.Stat(filepath.Join(logbookDir, owner+".db")); err == nil {
 			return false, exit(ExitRefused, "bs send --project "+owner+" "+to+" \"...\"", nil, "%s is a session of project %s, not %s; nothing stored", to, owner, c.Project)
 		} else if !errors.Is(err, os.ErrNotExist) {
-			return false, exit(ExitCantCheck, "", err, "bs can't tell whether project %s has a logbook", owner)
+			return false, exit(ExitCantCheck, "bsx doctor", err, "bs can't tell whether project %s has a logbook", owner)
 		}
 	}
 	if to == Queen(c.Project) {
 		return false, nil
 	}
-	_, ok, err := c.Logbook.LatestSpawn(ctx, to)
+	sp, ok, err := c.Logbook.LatestSpawn(ctx, to)
+	if ok && sp.Ended {
+		return false, exit(ExitRefused, "bsx status", nil, "%s has ended: nobody would read it; nothing stored", to)
+	}
 	return !ok, err
 }

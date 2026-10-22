@@ -103,8 +103,17 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 			}
 			h = ports.NewHarness(s.Harness, model)
 		}
+		other := func(name string) port.Harness { // a harness some entry recorded, any model: it only rings and is looked for
+			if ports.Harness != nil {
+				return ports.Harness
+			}
+			if ports.NewHarness != nil {
+				return ports.NewHarness(name, "")
+			}
+			return nil
+		}
 		r.c = &core.Core{
-			Logbook: lb, Project: s.Project, Run: ports.Run, Harness: h, HarnessName: s.Harness,
+			Logbook: lb, Project: s.Project, Run: ports.Run, Harness: h, HarnessOf: other, HarnessName: s.Harness,
 			Proc: ports.Proc, Beads: ports.Beads, Repo: s.Repo, Worktrees: s.Worktrees,
 			ConfigDir: s.Dir, CacheDir: ports.CacheDir, Timing: ports.Timing, WorkerPath: s.workerPath(),
 			Warn: func(msg string) { fmt.Fprintf(stderr, "bsx %s: warning: %s\n", args[0], msg) },

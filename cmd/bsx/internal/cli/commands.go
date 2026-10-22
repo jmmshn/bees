@@ -244,9 +244,11 @@ func (r *run) ring(c *core.Core, from, to string, p port.Priority) {
 	case err == nil:
 		fmt.Fprintf(r.out, "rung %s\n", to)
 	case errors.Is(err, port.ErrNotRunning):
-		fmt.Fprintf(r.out, "queued (%v): %s reads it at its next bs inbox\n", err, to)
+		fmt.Fprintf(r.out, "stored, not rung (%v): %s reads it at its next bs inbox\n", err, to)
 	case errors.Is(err, port.ErrNoRing):
-		fmt.Fprintf(r.out, "stored; %s's harness has no ring, so it reads this at its next bs inbox\n", to)
+		fmt.Fprintf(r.out, "stored, not rung (%v): %s reads it at its next bs inbox\n", err, to)
+	case errors.Is(err, core.ErrEnded):
+		fmt.Fprintf(r.out, "stored, not rung: %v, so nobody reads it unless it is spawned again\n", err)
 	default:
 		fmt.Fprintf(r.err, "bsx %s: couldn't ring %s (the message is stored): %v\n", r.name, to, err)
 	}

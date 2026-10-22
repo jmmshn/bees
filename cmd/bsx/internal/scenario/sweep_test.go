@@ -89,12 +89,6 @@ func TestRound11ADeliveryFragmentForACLFlow(t *testing.T) {
 	later(t, "bees-13.11", "command workspaces and custom goals")
 }
 func TestRound11StaticGuards(t *testing.T) { later(t, "bees-13.6", "the guards matrix") }
-func TestRound11WorkersRunTheBuildUnderTest(t *testing.T) {
-	later(t, "bees-13.3", "worker.path and the live rig")
-}
-func TestRound11CrossProjectSendAndReply(t *testing.T) {
-	later(t, "bees-13.8", "cross-project mail (bees-12.38)")
-}
 func TestRound11AFreshAgentSetsUpFromSetupAgentMD(t *testing.T) {
 	later(t, "bees-13.8", "SETUP-AGENT.md")
 }

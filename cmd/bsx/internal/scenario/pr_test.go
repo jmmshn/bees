@@ -267,8 +267,9 @@ func TestPRGoalRefusesDraftsAndOtherRepos(t *testing.T) {
 	})
 }
 
-// pr:ready completes at handoff; pr:draft takes a draft, completes at handoff, and prunes
-// once its PR is closed unmerged, its branch with it.
+// pr:ready completes at handoff; pr:draft takes a draft, needs its CI green like every PR
+// goal (keeper, 2026-10-22), completes at handoff, and prunes once its PR is closed
+// unmerged, its branch with it.
 func TestPRReadyAndDraft(t *testing.T) {
 	both(t, func(t *testing.T, x *toy, b backend) {
 		ctx := context.Background()
@@ -287,7 +288,12 @@ func TestPRReadyAndDraft(t *testing.T) {
 		sp = x.spawn("toy-2", "pr:draft")
 		b.commit(x, sp.Workspace.Dir)
 		url = b.open(x, 2, sp.Workspace.Dir, "toy-2", true)
-		must(t, x.worker("toy-2", 1, "done", "--pr", url), 0)
+		b.ci(x, 2, "pending") // drafts need green CI too (keeper, 2026-10-22)
+		must(t, x.worker("toy-2", 1, "done", "--pr", url), 10, "pending: job1")
+		b.ci(x, 2, "fail")
+		must(t, x.worker("toy-2", 2, "done", "--pr", url), 7, "ci_green", "failing: job1")
+		b.ci(x, 2, "pass")
+		must(t, x.worker("toy-2", 3, "done", "--pr", url), 0)
 		must(t, x.queen("end", "toy-2"), 0)
 		must(t, x.queen("prune"), 3, url+": open")
 		b.close(x, 2)

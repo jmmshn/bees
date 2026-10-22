@@ -3,6 +3,7 @@ package logbook_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -89,7 +90,7 @@ func shape(t *testing.T, path string) (rows int, version int) {
 
 func open(t *testing.T, path string) *logbook.Logbook {
 	t.Helper()
-	lb, err := logbook.Open(context.Background(), path)
+	lb, _, err := logbook.Create(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +221,7 @@ func TestConcurrentFirstOpensOfANewLogbookAllSucceed(t *testing.T) {
 		var wg sync.WaitGroup
 		for range 8 {
 			wg.Go(func() {
-				lb, err := logbook.Open(context.Background(), path)
+				lb, _, err := logbook.Create(context.Background(), path)
 				if err != nil {
 					t.Error(err)
 					return
@@ -304,5 +305,33 @@ INSERT INTO entries VALUES ('e2', '2026-10-01T00:00:05.000Z', 'ended', 'queen-be
 	}
 	if got, err := open(t, write(t, v1)).Unstarted(ctx); err != nil || len(got) != 0 {
 		t.Fatalf("v1, started: %v, %v", got, err)
+	}
+}
+
+// Open never makes a logbook: a missing file is ErrNoLogbook and stays missing, so a
+// deleted logbook can't come back empty (R48, bees-8.12). Create makes it, once.
+func TestOpenRefusesAMissingFileAndCreateMakesIt(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "sub", "bees.db")
+	if _, err := logbook.Open(ctx, path); !errors.Is(err, logbook.ErrNoLogbook) {
+		t.Fatalf("Open of a missing file: %v", err)
+	}
+	if _, err := os.Stat(filepath.Dir(path)); !os.IsNotExist(err) {
+		t.Fatalf("Open made its dir: %v", err)
+	}
+	lb, created, err := logbook.Create(ctx, path)
+	if err != nil || !created {
+		t.Fatalf("Create: %v %v", created, err)
+	}
+	lb.Close()
+	lb, created, err = logbook.Create(ctx, path)
+	if err != nil || created {
+		t.Fatalf("Create of an existing file: %v %v", created, err)
+	}
+	lb.Close()
+	if lb, err := logbook.Open(ctx, path); err != nil {
+		t.Fatalf("Open once it exists: %v", err)
+	} else {
+		lb.Close()
 	}
 }

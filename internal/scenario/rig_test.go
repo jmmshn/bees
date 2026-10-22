@@ -168,7 +168,7 @@ func (x *toy) bead(id, title string) {
 // missing one (R48).
 func (x *toy) start() {
 	x.t.Helper()
-	lb, err := logbook.Open(context.Background(), x.logbook)
+	lb, _, err := logbook.Create(context.Background(), x.logbook)
 	if err != nil {
 		x.t.Fatal(err)
 	}

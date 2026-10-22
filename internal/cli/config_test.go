@@ -48,7 +48,7 @@ func newRig(t *testing.T) *rig {
 // start makes the rig project's logbook, as a first bs queen would (R48).
 func (r *rig) start() {
 	r.t.Helper()
-	lb, err := logbook.Open(context.Background(), filepath.Join(r.logbook, "mytoy.db"))
+	lb, _, err := logbook.Create(context.Background(), filepath.Join(r.logbook, "mytoy.db"))
 	if err != nil {
 		r.t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestRefusesTheRealLogbookDir(t *testing.T) {
 	if code, _, stderr := r.run(r.repo, nil, "status"); code != 0 {
 		t.Fatalf("a toy's own logbook dir: exit %d %s", code, stderr)
 	}
-	lb, err := logbook.Open(context.Background(), filepath.Join(real, "mytoy.db")) // the default session's own
+	lb, _, err := logbook.Create(context.Background(), filepath.Join(real, "mytoy.db")) // the default session's own
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -330,12 +330,11 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 		// so the reply needs no project read back out of a name (motif 3). Only the
 		// recipient's logbook changes: the sender stays who it is in its own project.
 		path := filepath.Join(filepath.Dir(r.s.Logbook), p+".db")
-		if _, err := os.Stat(path); err != nil {
-			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf(bsname.Cmd+" send --project %s: no logbook at %s; nothing stored", p, path), Err: err,
-				Next: "check the project name: " + bsname.Cmd + " bead ls names it, and its queen starts its logbook"}
-		}
 		lb, err := logbook.Open(r.ctx, path)
-		if err != nil {
+		if errors.Is(err, logbook.ErrNoLogbook) {
+			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf(bsname.Cmd+" send --project %s: no logbook at %s; nothing stored", p, path),
+				Next: "check the project name: " + bsname.Cmd + " bead ls names it, and its queen starts its logbook"}
+		} else if err != nil {
 			return err
 		}
 		defer lb.Close()

@@ -41,10 +41,36 @@ CREATE INDEX IF NOT EXISTS k_ref  ON entries (kind, ref);
 // bees-12 pilot's (queen, started, done), 2 ADR-0010's (goal, landed).
 const Version = 2
 
-// Open opens the logbook at path, creating the file, its directory and the schema if
-// missing, and migrating an older schema (migrate).
-// Writes take SQLite's write lock up front (BEGIN IMMEDIATE) and wait on a busy timeout.
+// ErrNoLogbook is a logbook file that doesn't exist, which Open never makes: a deleted
+// logbook must not come back empty without a word (R48, bees-8.12, motif 14).
+var ErrNoLogbook = errors.New("no logbook")
+
+// Open opens the existing logbook at path, migrating an older schema (migrate); a missing
+// file is ErrNoLogbook. Writes take SQLite's write lock up front (BEGIN IMMEDIATE) and wait
+// on a busy timeout.
 func Open(ctx context.Context, path string) (*Logbook, error) {
+	switch _, err := os.Stat(path); {
+	case errors.Is(err, os.ErrNotExist):
+		return nil, fmt.Errorf("%w at %s", ErrNoLogbook, path)
+	case err != nil:
+		return nil, err
+	}
+	return open(ctx, path)
+}
+
+// Create opens the logbook at path, making the file, its directory and the schema when
+// missing (created true): only bs queen and bs spawn, which start a project, call it.
+func Create(ctx context.Context, path string) (lb *Logbook, created bool, err error) {
+	_, err = os.Stat(path)
+	if created = errors.Is(err, os.ErrNotExist); err != nil && !created {
+		return nil, false, err
+	}
+	lb, err = open(ctx, path)
+	return lb, created, err
+}
+
+// open opens the logbook at path, making it if missing.
+func open(ctx context.Context, path string) (*Logbook, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err

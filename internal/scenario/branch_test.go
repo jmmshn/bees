@@ -242,7 +242,7 @@ func TestPruneDeletesADiscardedBranch(t *testing.T) {
 	x.commit(sp.Workspace.Dir, "work.txt")
 	must(t, x.worker("toy-1", 1, "done"), 0)
 	must(t, x.queen("end", "--incomplete", "toy-1"), 0)
-	lb, err := logbook.Open(ctx, x.logbook)
+	lb, _, err := logbook.Create(ctx, x.logbook)
 	if err != nil {
 		t.Fatal(err)
 	}

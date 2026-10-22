@@ -73,7 +73,7 @@ func TestOneOfConcurrentQueensIsRecorded(t *testing.T) {
 	recorded := 0
 	for pid := range 8 {
 		wg.Go(func() {
-			lb, err := logbook.Open(context.Background(), path)
+			lb, _, err := logbook.Create(context.Background(), path)
 			if err != nil {
 				t.Error(err)
 				return

@@ -146,7 +146,7 @@ func TestThePaneScanReadsEveryLogbook(t *testing.T) {
 	x := newToy(t)
 	x.spawn("toy-1", "verdict")
 	dir := filepath.Dir(x.logbook)
-	lb, err := logbook.Open(context.Background(), filepath.Join(dir, "other.db"))
+	lb, _, err := logbook.Create(context.Background(), filepath.Join(dir, "other.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +240,7 @@ func TestAMisaddressedSendIsRefused(t *testing.T) {
 	x := newToy(t)
 	x.spawn("toy-1", "verdict")
 	path := filepath.Join(filepath.Dir(x.logbook), "other.db")
-	lb, err := logbook.Open(context.Background(), path)
+	lb, _, err := logbook.Create(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,7 @@ func TestAMisaddressedSendIsRefused(t *testing.T) {
 func TestRound11CrossProjectSendAndReply(t *testing.T) {
 	x := newToy(t)
 	x.spawn("toy-1", "verdict")
-	lb, err := logbook.Open(context.Background(), filepath.Join(filepath.Dir(x.logbook), "other.db"))
+	lb, _, err := logbook.Create(context.Background(), filepath.Join(filepath.Dir(x.logbook), "other.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

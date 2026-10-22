@@ -81,7 +81,10 @@ func (r *run) spawn(fs *flag.FlagSet, args []string) error {
 	}
 	// A kind the config chose and spawn can't make yet is refused, never made a worktree;
 	// a worked-out none is left to Spawn, which names why the repo isn't a checkout.
-	if kind, why := r.s.Kind(r.s.GitTop); kind != config.GitWorktree && (r.s.Workspace.Kind != "" || r.s.Workspace.Command != nil) {
+	if r.s.RepoMissing {
+		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("the repo %s (%s) doesn't exist", r.s.Repo, r.s.RepoFrom), Next: "set paths.repo to the project's checkout"}
+	}
+	if kind, why, chosen := r.s.Kind(r.s.GitTop); chosen && kind != config.GitWorktree {
 		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("workspace kind %s (%s): bsx makes only git_worktree workspaces yet (none arrives with bees-13.10, command with bees-13.11)", kind, why)}
 	}
 	w, err := r.who(*as)

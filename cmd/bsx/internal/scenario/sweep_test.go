@@ -95,7 +95,7 @@ func TestRound11AFreshAgentSetsUpFromSetupAgentMD(t *testing.T) {
 }
 func TestRound11Doctor(t *testing.T) { later(t, "bees-13.8", "bs doctor") }
 func TestRound11TeardownLeavesNoLeaks(t *testing.T) {
-	later(t, "bees-13.3", "the live rig's leak check")
+	later(t, "bees-13.29", "a scripted self-test of the live rig's leak check")
 }
 
 // Pilot bugs.
@@ -135,7 +135,7 @@ func TestBSVariablesAreIgnoredInsideARecordedPane(t *testing.T) {
 
 // The live-test and docs bugs belong to the rig and setup beads.
 func TestPilotBugsOfTheLiveRig(t *testing.T) {
-	later(t, "bees-13.3", "the rig: 12.19, 12.22, 12.24, 12.26, 12.30, 12.34, 12.35, 12.40")
+	later(t, "bees-13.29", "a scripted self-test of the rig: 12.19, 12.22, 12.24, 12.26, 12.30, 12.34, 12.35, 12.40")
 }
 func TestPilotBugsOfSetupDocs(t *testing.T) { later(t, "bees-13.8", "SETUP-AGENT.md: 12.42, 12.48") }
 func TestPilotBug1251PromptFriction(t *testing.T) {
@@ -164,7 +164,20 @@ func TestPilotBug1241PruneAfterEndForce(t *testing.T) {
 func TestPilotBug1244DoctorAndConfigGaps(t *testing.T) {
 	later(t, "bees-13.8", "bs doctor warns of a PR goal with no remote and a stale herdr server; bs config lists guards")
 }
-func TestPilotBug1245DoctorNamesAStrayBSProject(t *testing.T) { later(t, "bees-13.8", "bs doctor") }
+
+// bees-12.45: doctor names a BS_PROJECT that leaked into a worker's pane, and says it is
+// ignored there; outside a pane, one naming another project is refused and named.
+func TestPilotBug1245DoctorNamesAStrayBSProject(t *testing.T) {
+	x := newToy(t)
+	x.herdr.Env = append(x.herdr.Env, "BS_PROJECT=elsewhere")
+	x.spawn("toy-1", "verdict")
+	r := x.worker("toy-1", 1, "doctor")
+	if !strings.Contains(r.String(), "WARN env: BS_PROJECT is set, and ignored in this herdr pane") {
+		t.Fatalf("doctor in the pane:\n%s", r)
+	}
+	x.env = append(x.env, "BS_PROJECT=elsewhere")
+	must(t, x.keeper("doctor"), 2, "BS_PROJECT=elsewhere names another project", "next: env -u BS_PROJECT")
+}
 
 // bees-12.50, 12.52: bs done's own pipeline (bs done | tail) is the call, not background
 // work: the gate skips the caller's process group. A reply-wait loop running bs is one of
@@ -382,7 +395,7 @@ func TestSpawnOfNoSuchBeadIsRefused(t *testing.T) {
 	must(t, x.queen("spawn", "--goal", "verdict", "toy-404"), 2, "no bead toy-404", "next: bd show toy-404")
 }
 
-// With no harness adapter (bsx's main until bees-13.3), mail to a running worker is
+// With no harness adapter (bsx's main until bees-13.4), mail to a running worker is
 // stored and says it wasn't rung, never a panic.
 func TestSendWithNoHarnessStoresAndSaysNotRung(t *testing.T) {
 	x := newToy(t)

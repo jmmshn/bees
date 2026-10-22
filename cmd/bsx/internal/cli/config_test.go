@@ -170,7 +170,12 @@ func TestBSProject(t *testing.T) {
 		t.Errorf("in an unrecorded pane: exit %d %s", code, stderr)
 	}
 	wantIn(t, stderr, "BS_PROJECT=bees names another project than the repo you are in (mytoy)")
-	code, out, _ := r.run("/", []string{"BS_PROJECT=other"}, "config")
+	// An unrecorded pane is outside one (bees-13.14): doctor names the old bs's pins as unread.
+	_, out, _ := r.run(r.repo, []string{"BS_NAME=bees-3", "HERDR_PANE_ID=w1:p1"}, "doctor")
+	wantIn(t, out, "WARN env: BS_NAME is set; bsx doesn't read it")
+	_, out, _ = r.run(r.repo, []string{"BS_NAME=bees-3", "BS_LOGBOOK_DIR=" + r.logbook}, "doctor")
+	wantIn(t, out, "WARN env: BS_NAME is set; bsx doesn't read it", "WARN env: BS_LOGBOOK_DIR is set and overrides the config here")
+	code, out, _ = r.run("/", []string{"BS_PROJECT=other"}, "config")
 	if code != 0 {
 		t.Errorf("outside any repo: exit %d", code)
 	}
@@ -186,10 +191,11 @@ func TestUnreadKeysAreMarked(t *testing.T) {
 	r.write("projects/mytoy.toml", "[guards]\ndeny = [\"git push*\"]\n")
 	_, out, _ := r.run(r.repo, nil, "config")
 	wantIn(t, out, `guards.deny = ["git push*"]  # project `, "; not read by bsx yet (bees-13.6)\n",
-		`worker.claude_code.model = ""  # default; not read by bsx yet`+"\n")
+		`worker.claude_code.model = ""  # default`+"\n",
+		"# [workspace.command] unset; not read by bsx yet (bees-13.11)\n", "# [goal.<name>] unset; ")
 	_, out, _ = r.run(r.repo, nil, "doctor")
 	wantIn(t, out, "WARN config: guards.deny set, but not read by bsx yet (bees-13.6): bsx ignores it")
-	if strings.Contains(out, "model set") {
+	if strings.Contains(out, "model set") || strings.Contains(out, "workspace.command") {
 		t.Errorf("doctor warns of a key nothing set:\n%s", out)
 	}
 }
@@ -212,6 +218,31 @@ func TestSpawnRefusesAKindItCantMake(t *testing.T) {
 
 // noHarness is a harness spawn never reaches.
 type noHarness struct{ port.Harness }
+
+// Motif 11: a paths.repo that doesn't exist is that, never "can't tell whether it's a git
+// checkout" (git can't start in a dir that's gone): config runs and says so, doctor
+// FAILs it, spawn refuses (exit 2).
+func TestAMissingPathsRepo(t *testing.T) {
+	r := newRig(t)
+	gone := filepath.Join(filepath.Dir(r.repo), "gone")
+	r.write("projects/other.toml", "[paths]\nrepo = \""+gone+"\"\n")
+	outside := []string{"BS_PROJECT=other"}
+	code, out, stderr := r.run("/", outside, "config")
+	if code != 0 {
+		t.Errorf("config: exit %d %s", code, stderr)
+	}
+	wantIn(t, stderr, "warning: the repo "+gone+" (paths.repo, project ")
+	wantIn(t, out, "# repo: "+gone+" (paths.repo, project ", "; missing)")
+	_, out, _ = r.run("/", outside, "doctor")
+	wantIn(t, out, "FAIL repo: "+gone)
+	var o, e bytes.Buffer
+	ports := Ports{Run: port.Exec{}, Harness: noHarness{}, CacheDir: filepath.Join(r.home, "cache")}
+	env := Env{Vars: append(append([]string{}, r.env...), outside...), Dir: "/", Self: os.Getpid()}
+	if code := Run(context.Background(), env, ports, []string{"spawn", "--as", "queen-other", "--goal", "branch", "other-1"}, &o, &e); code != 2 {
+		t.Errorf("spawn: exit %d %s", code, e.String())
+	}
+	wantIn(t, e.String(), "the repo "+gone, "doesn't exist", "next: set paths.repo")
+}
 
 func TestBrokenFileRefusesEveryCommand(t *testing.T) {
 	r := newRig(t)

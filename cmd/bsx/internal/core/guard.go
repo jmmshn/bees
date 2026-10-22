@@ -5,6 +5,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 	"github.com/jmmshn/bees/cmd/bsx/internal/config"
 	"github.com/jmmshn/bees/cmd/bsx/internal/guards"
 )
@@ -46,10 +47,10 @@ func (c *Core) CheckGuards(ctx context.Context) error {
 	}
 	in, err := c.guardIn(ctx)
 	if err != nil {
-		return exit(ExitCantCheck, "", err, "bs queen: can't check [guards] against the repo")
+		return exit(ExitCantCheck, "", err, "can't check [guards] against the repo")
 	}
 	if err := guards.Check(c.Guards, in); err != nil {
-		return exit(ExitRefused, "bsx config", err, "bs queen: every spawn would refuse this [guards] table")
+		return exit(ExitRefused, bsname.Cmd+" config", err, "every spawn would refuse this [guards] table")
 	}
 	return nil
 }
@@ -58,11 +59,11 @@ func (c *Core) CheckGuards(ctx context.Context) error {
 func (c *Core) deny(ctx context.Context) ([]string, error) {
 	in, err := c.guardIn(ctx)
 	if err != nil {
-		return nil, exit(ExitCantCheck, "", err, "bs spawn: can't build the worker's guards")
+		return nil, exit(ExitCantCheck, "", err, "can't build the worker's guards")
 	}
 	d, err := guards.Build(c.Guards, in)
 	if err != nil {
-		return nil, exit(ExitRefused, "bsx config", err, "bs spawn: its guards")
+		return nil, exit(ExitRefused, bsname.Cmd+" config", err, "its guards")
 	}
 	return d, nil
 }

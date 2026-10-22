@@ -23,7 +23,9 @@ import (
 //   - env: the variable that overrides both files outside a herdr pane (optional);
 //   - enum: its allowed values, separated by | ("" always passes where it is the default);
 //   - path: a path: "dir", or "{repo}" when it may begin with the {repo} placeholder;
-//   - doc: what it means.
+//   - unread: present when bsx doesn't act on the key yet; its value names the bead that
+//     wires it. bs config marks it and bs doctor warns when a file sets it;
+//   - doc: what it means, for bs config init (bees-13.8) to write as a comment.
 //
 // A table (a pointer to a struct, or a map of them) is a unit: the nearest file that
 // sets it sets all of it, and its own check method validates it.
@@ -31,8 +33,8 @@ type Config struct {
 	Harness   string              `toml:"harness" scope:"global" default:"claude_code" enum:"claude_code" doc:"the harness every queen and worker on this machine starts on (omp and agy arrive with bees-12.8 and bees-12.12)"`
 	Paths     Paths               `toml:"paths"`
 	Workspace Workspace           `toml:"workspace"`
-	Goal      map[string]GoalType `toml:"goal" scope:"both" doc:"custom goal types, by name (wired by bees-13.11)"`
-	Checks    map[string]Check    `toml:"checks" scope:"both" doc:"argv a custom goal's cmd:<name> check runs (wired by bees-13.11)"`
+	Goal      map[string]GoalType `toml:"goal" scope:"both" unread:"bees-13.11" doc:"custom goal types, by name"`
+	Checks    map[string]Check    `toml:"checks" scope:"both" unread:"bees-13.11" doc:"argv a custom goal's cmd:<name> check runs"`
 	Guards    Guards              `toml:"guards"`
 	Review    Review              `toml:"review"`
 	Queen     Role                `toml:"queen"`
@@ -51,7 +53,7 @@ type Paths struct {
 // only overrides it.
 type Workspace struct {
 	Kind    string   `toml:"kind" scope:"both" enum:"git_worktree|none|command" doc:"overrides the worked-out kind: command when [workspace.command] is set, else git_worktree in a git checkout's top level, else none"`
-	Command *Command `toml:"command" scope:"both" doc:"argv that make and remove a command workspace (cwd: paths.repo)"`
+	Command *Command `toml:"command" scope:"both" unread:"bees-13.11" doc:"argv that make and remove a command workspace (cwd: paths.repo)"`
 }
 
 // Command is [workspace.command]: its presence makes the kind command.
@@ -98,13 +100,13 @@ type Role struct {
 
 // Worker holds every worker's harness tables and bs spawn's own settings.
 type Worker struct {
-	Path       []string   `toml:"path" scope:"project" path:"dir" doc:"dirs put first on every worker's PATH (a live test's build under test)"`
+	Path       []string   `toml:"path" scope:"project" path:"dir" unread:"" doc:"dirs put first on every worker's PATH (a live test's build under test)"`
 	ClaudeCode ClaudeCode `toml:"claude_code"`
 }
 
 // ClaudeCode holds the settings bs passes to Claude Code.
 type ClaudeCode struct {
-	Model string `toml:"model" scope:"both" doc:"the model Claude Code starts on (claude --model); empty: Claude Code's default"`
+	Model string `toml:"model" scope:"both" unread:"" doc:"the model Claude Code starts on (claude --model); empty: Claude Code's default"`
 }
 
 // The workspace kinds.

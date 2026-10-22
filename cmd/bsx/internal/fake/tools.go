@@ -376,7 +376,7 @@ func (f *Beads) Show(_ context.Context, id string) (port.Bead, error) {
 	defer f.mu.Unlock()
 	b, ok := f.Beads[id]
 	if !ok {
-		return port.Bead{}, fmt.Errorf("bd show %s: no such bead", id)
+		return port.Bead{}, fmt.Errorf("bd show %s: %w", id, port.ErrNoBead)
 	}
 	return b, nil
 }

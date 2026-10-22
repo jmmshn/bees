@@ -13,6 +13,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 	"github.com/jmmshn/bees/cmd/bsx/internal/config"
 	"github.com/jmmshn/bees/cmd/bsx/internal/core"
 	"github.com/jmmshn/bees/cmd/bsx/internal/logbook"
@@ -26,7 +27,7 @@ func (r *run) queen(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("%w: bsx queen takes no arguments", errUsage)
+		return fmt.Errorf("%w: "+bsname.Cmd+" queen takes no arguments", errUsage)
 	}
 	pane := core.Getenv(r.env.Vars, "HERDR_PANE_ID")
 	if pane == "" { // before anything else bs queen needs: no pane, no queen
@@ -39,11 +40,11 @@ func (r *run) queen(fs *flag.FlagSet, args []string) error {
 		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("this pane runs %s already", p.Who.Name), Next: "start the queen in a pane of her own"}
 	}
 	if r.c.Harness == nil {
-		return &core.Exit{Code: core.ExitRefused, Msg: "no harness adapter for harness = " + r.s.Harness, Next: "bsx config"}
+		return &core.Exit{Code: core.ExitRefused, Msg: "no harness adapter for harness = " + r.s.Harness, Next: bsname.Cmd + " config"}
 	}
 	exe, ok := lookPath(core.Getenv(r.env.Vars, "PATH"), r.c.Harness.Kind())
 	if !ok {
-		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("%s is not on PATH", r.c.Harness.Kind()), Next: "bsx doctor"}
+		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("%s is not on PATH", r.c.Harness.Kind()), Next: bsname.Cmd + " doctor"}
 	}
 	if err := r.c.CheckGuards(r.ctx); err != nil { // bees-12.20: refused now, not at every spawn
 		return err
@@ -71,13 +72,18 @@ func (r *run) spawn(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return fmt.Errorf("%w: bsx spawn --goal <goal> <bead>", errUsage)
+		return fmt.Errorf("%w: "+bsname.Cmd+" spawn --goal <goal> <bead>", errUsage)
 	}
 	if err := r.s.unpinned("spawn"); err != nil {
 		return err
 	}
 	if r.c.Harness == nil {
-		return &core.Exit{Code: core.ExitRefused, Msg: "no harness adapter for harness = " + r.s.Harness, Next: "bsx config"}
+		return &core.Exit{Code: core.ExitRefused, Msg: "no harness adapter for harness = " + r.s.Harness, Next: bsname.Cmd + " config"}
+	}
+	// A kind the config chose and spawn can't make yet is refused, never made a worktree;
+	// a worked-out none is left to Spawn, which names why the repo isn't a checkout.
+	if kind, why := r.s.Kind(r.s.GitTop); kind != config.GitWorktree && (r.s.Workspace.Kind != "" || r.s.Workspace.Command != nil) {
+		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("workspace kind %s (%s): bsx makes only git_worktree workspaces yet (none arrives with bees-13.10, command with bees-13.11)", kind, why)}
 	}
 	w, err := r.who(*as)
 	if err != nil {
@@ -108,7 +114,7 @@ func (r *run) done(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("%w: bsx done takes no arguments; say it with --report (got %q)", errUsage, strings.Join(fs.Args(), " "))
+		return fmt.Errorf("%w: "+bsname.Cmd+" done takes no arguments; say it with --report (got %q)", errUsage, strings.Join(fs.Args(), " "))
 	}
 	if err := r.ownProject("done", "handoff", *project); err != nil {
 		return err
@@ -227,7 +233,7 @@ func (r *run) end(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return fmt.Errorf("%w: bsx end <worker>", errUsage)
+		return fmt.Errorf("%w: "+bsname.Cmd+" end <worker>", errUsage)
 	}
 	w, err := r.who(*as)
 	if err != nil {
@@ -237,7 +243,7 @@ func (r *run) end(fs *flag.FlagSet, args []string) error {
 	if err := r.c.End(r.ctx, w.Name, name, r.env.Self, core.EndOpts{Force: *force, Incomplete: *incomplete}); err != nil {
 		return err
 	}
-	fmt.Fprintf(r.out, "ended %s; its workspace stays for bsx prune\n", name)
+	fmt.Fprintf(r.out, "ended %s; its workspace stays for "+bsname.Cmd+" prune\n", name)
 	return nil
 }
 
@@ -270,7 +276,7 @@ func (r *run) prune(fs *flag.FlagSet, args []string) error {
 			fmt.Fprintf(r.out, "  its work is on %s\n", p.Held)
 		}
 		if p.Remote != "" {
-			fmt.Fprintf(r.out, "  left %s: bs never touches a remote branch; it is the keeper's\n", p.Remote)
+			fmt.Fprintf(r.out, "  left %s: %s never touches a remote branch; it is the keeper's\n", p.Remote, bsname.Cmd)
 		}
 		what := p.Dir
 		if p.Removed || p.Gone {
@@ -300,7 +306,7 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	if fs.NArg() != 2 {
-		return fmt.Errorf("%w: bsx send [--project P] [--now] <to> <message | ->", errUsage)
+		return fmt.Errorf("%w: "+bsname.Cmd+" send [--project P] [--now] <to> <message | ->", errUsage)
 	}
 	w, err := r.who(*as)
 	if err != nil {
@@ -321,8 +327,8 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 		// recipient's logbook changes: the sender stays who it is in its own project.
 		path := filepath.Join(filepath.Dir(r.s.Logbook), p+".db")
 		if _, err := os.Stat(path); err != nil {
-			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bsx send --project %s: no logbook at %s; nothing stored", p, path), Err: err,
-				Next: "check the project name: bs bead ls names it, and its queen starts its logbook"}
+			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf(bsname.Cmd+" send --project %s: no logbook at %s; nothing stored", p, path), Err: err,
+				Next: "check the project name: " + bsname.Cmd + " bead ls names it, and its queen starts its logbook"}
 		}
 		lb, err := logbook.Open(r.ctx, path)
 		if err != nil {
@@ -343,7 +349,7 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 	}
 	fmt.Fprintf(r.out, "sent %s to %s\n", id, to)
 	if stranger {
-		fmt.Fprintf(r.err, "bsx send: warning: %s is neither %s nor a worker spawned in project %s: stored, not rung; it reads it only as a session of %s\n",
+		fmt.Fprintf(r.err, bsname.Cmd+" send: warning: %s is neither %s nor a worker spawned in project %s: stored, not rung; it reads it only as a session of %s\n",
 			to, core.Queen(c.Project), c.Project, c.Project)
 		return nil
 	}
@@ -378,9 +384,11 @@ func (r *run) ring(c *core.Core, from, to string, p port.Priority) {
 	case err == nil:
 		fmt.Fprintf(r.out, "rung %s\n", to)
 	case errors.Is(err, port.ErrNotRunning):
-		fmt.Fprintf(r.out, "queued (%v): %s reads it at its next bs inbox\n", err, to)
+		fmt.Fprintf(r.out, "stored, not rung (%v): %s reads it at its next "+bsname.Cmd+" inbox\n", err, to)
 	case errors.Is(err, port.ErrNoRing):
-		fmt.Fprintf(r.out, "stored; %s's harness has no ring, so it reads this at its next bs inbox\n", to)
+		fmt.Fprintf(r.out, "stored, not rung (%v): %s reads it at its next "+bsname.Cmd+" inbox\n", err, to)
+	case errors.Is(err, core.ErrEnded):
+		fmt.Fprintf(r.out, "stored, not rung: %v, so nobody reads it unless it is spawned again\n", err)
 	default:
 		fmt.Fprintf(r.err, "bsx %s: couldn't ring %s (the message is stored): %v\n", r.name, to, err)
 	}
@@ -411,7 +419,7 @@ func (r *run) inbox(fs *flag.FlagSet, args []string) error {
 	for _, m := range ms {
 		fmt.Fprintf(r.out, "── %s from %s · %s\n%s\n\n", m.ID, m.From, m.TS.Local().Format("2006-01-02 15:04:05"), m.Body)
 		if m.FromProject != "" { // cross-project mail: the sender reads its own project's logbook
-			fmt.Fprintf(r.out, "   (reply with: bs send --project %s %s \"...\")\n\n", m.FromProject, m.From)
+			fmt.Fprintf(r.out, "   (reply with: "+bsname.Cmd+" send --project %s %s \"...\")\n\n", m.FromProject, m.From)
 		}
 		ids = append(ids, m.ID)
 	}
@@ -498,38 +506,38 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 		switch {
 		case lerr != nil: // couldn't read whether it landed: never read as "no" (Rule G)
 		case running == "unconfirmed":
-			note("stuck", sp.Name, "its start was never confirmed → bs end %s --incomplete", sp.Name)
+			note("stuck", sp.Name, "its start was never confirmed → %s end %s --incomplete", bsname.Cmd, sp.Name)
 		case strings.HasPrefix(running, "no"):
-			next := "bs end " + sp.Name
+			next := bsname.Cmd + " end " + sp.Name
 			if !landed {
 				next += " (--incomplete if its goal isn't complete)"
 			}
 			note("stuck", sp.Name, "its process is gone but it isn't ended → %s", next)
 		case sp.Ended && !landed && !sp.Legacy() && !discarded && gerr == nil:
-			note("stuck", sp.Name, "ended with its goal incomplete → bs prune completes it once --goal %s holds", g)
+			note("stuck", sp.Name, "ended with its goal incomplete → %s prune completes it once --goal %s holds", bsname.Cmd, g)
 		case sp.Ended && (landed || discarded) && sp.Workspace.Kind == "git_worktree" && sp.Workspace.Dir != "":
 			why := "its goal is complete"
 			if discarded {
 				why = "its goal is discarded"
 			}
 			if _, err := os.Stat(sp.Workspace.Dir); err == nil {
-				note("kept", sp.Name, "%s, but its workspace is still on disk → bs prune removes it, or names what keeps it", why)
+				note("kept", sp.Name, "%s, but its workspace is still on disk → %s prune removes it, or names what keeps it", why, bsname.Cmd)
 			} else if !errors.Is(err, os.ErrNotExist) {
 				errs = append(errs, fmt.Errorf("%s: can't tell whether its workspace is still on disk: %w", sp.Name, err))
 			}
 		}
 		if gerr == nil && !landed {
 			if len(e.Waived) > 0 {
-				note("waived", sp.Name, "%s no longer checked → bs goal %s %s puts it back", strings.Join(e.Waived, ", "), sp.Name, e.String())
+				note("waived", sp.Name, "%s no longer checked → %s goal %s %s puts it back", strings.Join(e.Waived, ", "), bsname.Cmd, sp.Name, e.String())
 			}
 			if discarded && !sp.Ended {
-				note("discarded", sp.Name, "the keeper discarded its goal: the work is wanted nowhere → bs end %s", sp.Name)
+				note("discarded", sp.Name, "the keeper discarded its goal: the work is wanted nowhere → %s end %s", bsname.Cmd, sp.Name)
 			}
 		}
 		if st, ok, err := r.c.Logbook.LatestStart(r.ctx, sp.ID); err != nil {
 			errs = append(errs, err)
 		} else if ok && st.Late && !sp.Ended {
-			note("late", sp.Name, "its start was recorded late, after confirmation missed it (pid %d) → nothing to do; bs end %s if it misbehaves", st.PID, sp.Name)
+			note("late", sp.Name, "its start was recorded late, after confirmation missed it (pid %d) → nothing to do; %s end %s if it misbehaves", st.PID, bsname.Cmd, sp.Name)
 		}
 	}
 	if err := tw.Flush(); err != nil {

@@ -1,8 +1,10 @@
 package port
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
@@ -20,6 +22,10 @@ type bdBead struct {
 
 func (b BeadsCLI) Show(ctx context.Context, id string) (Bead, error) {
 	out, err := b.R.Run(ctx, "", "bd", "show", id, "--json")
+	var ee *ExitError
+	if errors.As(err, &ee) && ee.Code == 1 && bytes.Contains(ee.Stdout, []byte(`"no issues found`)) {
+		return Bead{}, fmt.Errorf("bd show %s: %w", id, ErrNoBead) // bd 1.x: exit 1, {"error": "no issues found …"}
+	}
 	if err != nil {
 		return Bead{}, fmt.Errorf("bd show %s: %w", id, err)
 	}
@@ -28,7 +34,7 @@ func (b BeadsCLI) Show(ctx context.Context, id string) (Bead, error) {
 		return Bead{}, fmt.Errorf("bd show %s: %w", id, err)
 	}
 	if len(bs) == 0 {
-		return Bead{}, fmt.Errorf("bd show %s: no such bead", id)
+		return Bead{}, fmt.Errorf("bd show %s: %w", id, ErrNoBead)
 	}
 	x := bs[0]
 	return Bead(x), nil

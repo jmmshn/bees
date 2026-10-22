@@ -54,6 +54,15 @@ func (c *Core) merged(ctx context.Context, ws logbook.Workspace) (bool, string, 
 	return false, fmt.Sprintf("%s has work not on %s", ws.Branch, strings.Join(bases, " or ")), nil
 }
 
+// base is the first of ws's bases: the ref its branch is measured against.
+func (c *Core) base(ctx context.Context, ws logbook.Workspace) (string, error) {
+	bs, err := c.bases(ctx, ws)
+	if err != nil {
+		return "", err
+	}
+	return bs[0], nil
+}
+
 // bases is where ws's branch lands: its recorded base and, when it has one, the base's
 // upstream (where a hosted merge is pulled). A spawn from before goals recorded no base
 // ref (main's v0) or the repo's path in its place (the pilot's v1), and a base branch can

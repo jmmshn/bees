@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 )
 
 // Role picks a role prompt.
@@ -48,7 +50,7 @@ func Hash(typ string) string {
 // Text is r's prompt for project: the role prompt, PITFALLS.md and BEADS.md, then r's part
 // of the workspace fragment of kind under "## Workspace" and of each goal type's fragment
 // under "## Goal" (a worker: its own goal's types) or "## Goals" (the queen), with
-// {{project}} filled in. A goal type with no fragment yet gets a line saying bs done
+// {{project}} and {{bs}} (the command, bsname.Cmd) filled in. A goal type with no fragment yet gets a line saying bsx done
 // checks it. A kind with no fragment yet (none, command: bees-13.10, 13.11) gets no
 // workspace section; "" is no workspace known.
 func Text(r Role, project, kind string, goals []string) string {
@@ -62,12 +64,17 @@ func Text(r Role, project, kind string, goals []string) string {
 		b.WriteString("\n## Workspace\n\n" + part(r, string(ws)))
 	}
 	b.WriteString(goalSection(r, heading, goals))
-	return strings.ReplaceAll(b.String(), "{{project}}", project)
+	return fill(b.String(), project)
+}
+
+// fill puts the project and the command's name into a prompt's placeholders.
+func fill(s, project string) string {
+	return strings.NewReplacer("{{project}}", project, "{{bs}}", bsname.Cmd).Replace(s)
 }
 
 // Goal is r's part of each goal type's fragment under "## Goal": what bs goal sends a
 // worker whose goal it amended, so the fragments it works to are the ones recorded.
-func Goal(r Role, goals []string) string { return goalSection(r, "## Goal", goals) }
+func Goal(r Role, goals []string) string { return fill(goalSection(r, "## Goal", goals), "") }
 
 func goalSection(r Role, heading string, goals []string) string {
 	var b strings.Builder
@@ -82,7 +89,7 @@ func goalSection(r Role, heading string, goals []string) string {
 		seen = append(seen, g)
 		f, err := fragments.ReadFile("goal/" + g + ".md")
 		if err != nil {
-			fmt.Fprintf(&b, "\n`--goal %s`: `bs done` checks it and says what is missing.\n", g)
+			fmt.Fprintf(&b, "\n`--goal %s`: `{{bs}} done` checks it and says what is missing.\n", g)
 			continue
 		}
 		b.WriteString("\n" + part(r, string(f)))
@@ -119,5 +126,5 @@ func Host(r Role, host string) string {
 	if err != nil {
 		return ""
 	}
-	return "\n## Review host\n\n" + part(r, string(f))
+	return fill("\n## Review host\n\n"+part(r, string(f)), "")
 }

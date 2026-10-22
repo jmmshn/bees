@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 	"slices"
 	"strings"
 	"time"
@@ -78,8 +79,9 @@ type CheckResult struct {
 	Pass   bool   `json:"pass"`
 	Detail string `json:"detail,omitempty"` // what bs found, or why it failed
 	Err    string `json:"error,omitempty"`  // why it couldn't run
-	// Pending: it failed only because CI is still running; bs done says to re-run, with an
-	// exit code of its own.
+	Waived bool   `json:"waived,omitempty"` // failed or couldn't run, and bs done --force handed off anyway
+	// Pending: it failed only because CI is still running, or the host doesn't show a push
+	// yet; bs done says to wait for it, with an exit code of its own.
 	Pending bool `json:"pending,omitempty"`
 }
 
@@ -104,9 +106,9 @@ type Done struct {
 	PR string `json:"pr,omitempty"`
 }
 
-// Passed reports whether every check d ran passed.
+// Passed reports whether every check d ran passed or was waived with --force.
 func (d Done) Passed() bool {
-	return !slices.ContainsFunc(d.Checks, func(c CheckResult) bool { return !c.Pass })
+	return !slices.ContainsFunc(d.Checks, func(c CheckResult) bool { return !c.Pass && !c.Waived })
 }
 
 // Text is d as its queen's inbox shows it.
@@ -127,14 +129,14 @@ func (d Done) Text() string {
 		}
 	}
 	if len(d.Background) > 0 {
-		s += "\n(reported with bs done --force while it still ran background work:"
+		s += "\n(reported with " + bsname.Cmd + " done --force while it still ran background work:"
 		for _, b := range d.Background {
 			s += "\n  " + b.String()
 		}
 		s += ")"
 	}
 	if d.Unchecked != "" {
-		s += "\n(reported with bs done --force; " + d.Unchecked + ")"
+		s += "\n(reported with " + bsname.Cmd + " done --force; " + d.Unchecked + ")"
 	}
 	return s
 }

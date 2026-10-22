@@ -31,9 +31,9 @@ func TestFragmentsSplitPerRole(t *testing.T) {
 		has  []string
 		not  []string
 	}{
-		{w, []string{"bs send queen-web2", "## Workspace", "its own git worktree", "Commit everything you hand off", "## Goal\n", "`--goal branch`", "Your goal is your branch"},
-			[]string{"## Goals", "bs prune` removes", "merge it into its base"}},
-		{q, []string{"queen-web2", "bs spawn --goal", "## Workspace", "its own git worktree", "bs prune` removes", "## Goals", "merge it into its base", "`--goal pr`:", "`--goal verdict`:"},
+		{w, []string{"bsx send queen-web2", "## Workspace", "its own git worktree", "Commit everything you hand off", "## Goal\n", "`--goal branch`", "Your goal is your branch"},
+			[]string{"## Goals", "bsx prune` removes", "merge it into its base"}},
+		{q, []string{"queen-web2", "bsx spawn --goal", "## Workspace", "its own git worktree", "bsx prune` removes", "## Goals", "merge it into its base", "`--goal pr`:", "`--goal verdict`:"},
 			[]string{"Commit everything you hand off", "Your goal is your branch"}},
 	} {
 		for _, h := range c.has {
@@ -55,7 +55,7 @@ func TestFragmentsSplitPerRole(t *testing.T) {
 // A goal type with no fragment yet still names how to hand it off; each type appears once.
 func TestAGoalWithNoFragmentStillSaysBsDone(t *testing.T) {
 	got := prompt.Text(prompt.Worker, "web2", "git_worktree", []string{"cl", "branch", "branch"})
-	if !strings.Contains(got, "`--goal cl`: `bs done` checks it") || strings.Count(got, "`--goal branch`:") != 1 {
+	if !strings.Contains(got, "`--goal cl`: `bsx done` checks it") || strings.Count(got, "`--goal branch`:") != 1 {
 		t.Fatalf("prompt:\n%s", got)
 	}
 }
@@ -64,7 +64,7 @@ func TestAGoalWithNoFragmentStillSaysBsDone(t *testing.T) {
 // reports left in scratch/ were lost). A beads worker writes no report: its beads are it.
 func TestNonPRGoalsSayWhereTheReportGoes(t *testing.T) {
 	for g, want := range map[string]string{
-		"verdict": "bs done --answer yes|no --report",
+		"verdict": "bsx done --answer yes|no --report",
 		"note":    "bd update <bead> --append-notes",
 		"beads":   "bd create --force --parent <bead>",
 	} {

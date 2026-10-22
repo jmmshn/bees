@@ -46,9 +46,9 @@ func TestStatusNamesWaivedDiscardedAndKept(t *testing.T) {
 	must(t, x.queen("prune"), 3, "kept "+sp.Workspace.Dir+" (toy-3)")
 	r := x.keeper("status")
 	must(t, r, 0,
-		"waived: toy-1: branch_ahead no longer checked → bs goal toy-1 branch puts it back",
-		"discarded: toy-2: the keeper discarded its goal: the work is wanted nowhere → bs end toy-2",
-		"kept: toy-3: its goal is complete, but its workspace is still on disk → bs prune removes it, or names what keeps it")
+		"waived: toy-1: branch_ahead no longer checked → bsx goal toy-1 branch puts it back",
+		"discarded: toy-2: the keeper discarded its goal: the work is wanted nowhere → bsx end toy-2",
+		"kept: toy-3: its goal is complete, but its workspace is still on disk → bsx prune removes it, or names what keeps it")
 	if strings.Contains(r.out, "stuck:") {
 		t.Fatalf("nothing is stuck:\n%s", r)
 	}
@@ -93,7 +93,7 @@ func TestMailAcrossProjects(t *testing.T) {
 	x.startQueenOf("other", other)
 
 	must(t, x.queenRuns(1, "send", "--project", "other", "queen-other", "hi from toy"), 0, "rung queen-other")
-	if rings := x.harness.Rings("queen-other"); len(rings) != 1 || !strings.Contains(rings[0], `1 unread (queen-toy) — run: bs inbox   (reply with: bs send --project toy queen-toy "...")`) {
+	if rings := x.harness.Rings("queen-other"); len(rings) != 1 || !strings.Contains(rings[0], `1 unread (queen-toy) — run: bsx inbox   (reply with: bsx send --project toy queen-toy "...")`) {
 		t.Fatalf("queen-other's rings: %q", rings)
 	}
 	path := filepath.Join(filepath.Dir(x.logbook), "other.db")
@@ -109,9 +109,9 @@ func TestMailAcrossProjects(t *testing.T) {
 	if ms, _ := x.open().Unread(ctx, "queen-other"); len(ms) != 0 {
 		t.Fatalf("toy.db got a copy: %+v", ms)
 	}
-	must(t, x.worker("queen-other", 1, "inbox"), 0, "from queen-toy", "hi from toy", `(reply with: bs send --project toy queen-toy "...")`)
+	must(t, x.worker("queen-other", 1, "inbox"), 0, "from queen-toy", "hi from toy", `(reply with: bsx send --project toy queen-toy "...")`)
 	must(t, x.worker("queen-other", 2, "send", "--project", "toy", "queen-toy", "hello back"), 0, "rung queen-toy")
-	must(t, x.queenRuns(2, "inbox"), 0, "from queen-other", "hello back", `(reply with: bs send --project other queen-other "...")`)
+	must(t, x.queenRuns(2, "inbox"), 0, "from queen-other", "hello back", `(reply with: bsx send --project other queen-other "...")`)
 
 	must(t, x.queenRuns(3, "inbox", "--project", "other"), 2, "you are queen-toy of project toy, so your mail is in toy's logbook; only bsx send crosses projects")
 	must(t, x.queenRuns(4, "send", "--as", "queen-other", "--project", "other", "queen-other", "spoof"), 2, "--as queen-other inside queen-toy's recorded pane")

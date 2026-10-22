@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -14,9 +15,10 @@ import (
 // Handed is what a handoff gives besides the record: the worker's only freedom at exit,
 // its PR URLs or a verdict (ADR-0010).
 type Handed struct {
-	PRs    []string
-	Answer string
-	Report string
+	PRs      []string
+	Replaces []string // PRs handed off before that these replace
+	Answer   string
+	Report   string
 }
 
 // errNotBuilt is a built-in check whose feature lands in a later bead: it can't run,
@@ -24,73 +26,102 @@ type Handed struct {
 func errNotBuilt(bead string) error { return fmt.Errorf("not built yet (%s)", bead) }
 
 // notBuilt is each built-in check of a later bead.
-var notBuilt = map[string]string{
-	goal.PRExists: "bees-13.6", goal.PROpen: "bees-13.6", goal.PRNotDraft: "bees-13.6",
-	goal.PRWorkspaceCommit: "bees-13.6", goal.PRPushed: "bees-13.6", goal.PRCurrent: "bees-13.6",
-	goal.CIGreen: "bees-13.6", goal.PRMerged: "bees-13.6", goal.PRClosed: "bees-13.6",
-	goal.PushMoved: "bees-13.6", goal.ReviewComment: "bees-13.6",
-	goal.NoteChanged: "bees-13.7", goal.BeadCreated: "bees-13.7",
+var notBuilt = map[string]string{goal.NoteChanged: "bees-13.7", goal.BeadCreated: "bees-13.7"}
+
+// check runs one built-in check of sp outside any goal part (prune's clean check).
+func (c *Core) check(ctx context.Context, sp logbook.Spawn, name string, h Handed) logbook.CheckResult {
+	return c.look(sp, h).check(ctx, goal.Part{}, name)
 }
 
-// check runs one built-in check of sp. The gate is run by its callers, who know self.
-func (c *Core) check(ctx context.Context, sp logbook.Spawn, name string, h Handed) logbook.CheckResult {
+// check runs check name of part p. The gate is run by its callers, who know self.
+func (k *look) check(ctx context.Context, p goal.Part, name string) logbook.CheckResult {
 	r := logbook.CheckResult{Name: name}
-	pass, detail, err := c.run(ctx, sp, name, h)
-	r.Pass, r.Detail = pass && err == nil, detail
+	o, detail, err := k.run(ctx, p, name)
+	r.Pass, r.Detail, r.Pending = o == passed && err == nil, detail, o == pending && err == nil
 	if err != nil {
 		r.Err = err.Error()
 	}
 	return r
 }
 
-func (c *Core) run(ctx context.Context, sp logbook.Spawn, name string, h Handed) (bool, string, error) {
-	ws := sp.Workspace
+// stage runs the checks of(part) for every part of e, in order, skipping waived ones and
+// the gate: a PR check once per set of PRs it reads, any other once. It stops at the first
+// check that can't run, returning the results so far and that one.
+func (k *look) stage(ctx context.Context, e logbook.Effective, of func(goal.Part) []string) ([]logbook.CheckResult, *logbook.CheckResult) {
+	var out []logbook.CheckResult
+	var seen []string
+	for _, p := range e.Parts {
+		for _, name := range of(p) {
+			key := name
+			if isPRCheck(name) && p.Type != "pr" {
+				key += " " + p.Target
+			}
+			if name == goal.NoBackground || slices.Contains(e.Waived, name) || slices.Contains(seen, key) {
+				continue
+			}
+			seen = append(seen, key)
+			r := k.check(ctx, p, name)
+			if r.Err != "" {
+				return out, &r
+			}
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+func (k *look) run(ctx context.Context, p goal.Part, name string) (outcome, string, error) {
+	c, ws, h := k.c, k.sp.Workspace, k.h
 	if b, ok := notBuilt[name]; ok {
-		return false, "", errNotBuilt(b)
+		return failed, "", errNotBuilt(b)
+	}
+	if isPRCheck(name) {
+		return k.prCheck(ctx, p, name)
 	}
 	switch name {
 	case goal.VerdictGiven:
 		switch {
 		case h.Answer != "yes" && h.Answer != "no":
-			return false, "--answer yes|no is missing", nil
+			return failed, "--answer yes|no is missing", nil
 		case h.Report == "":
-			return false, "--report <text>|- is missing", nil
+			return failed, "--report <text>|- is missing", nil
 		}
-		return true, "", nil
+		return passed, "", nil
 	case goal.Clean:
 		// Not c.git: trimming would cut the first line's status column.
 		b, err := c.Run.Run(ctx, ws.Dir, "git", "-C", ws.Dir, "status", "--porcelain")
 		if err != nil {
-			return false, "", err
+			return failed, "", err
 		}
 		if out := string(b); out != "" {
-			return false, "uncommitted or untracked files in " + ws.Dir + ": " + porcelainPaths(out), nil
+			return failed, "uncommitted or untracked files in " + ws.Dir + ": " + porcelainPaths(out), nil
 		}
-		return true, "", nil
+		return passed, "", nil
 	case goal.BranchAhead:
 		base, err := c.base(ctx, ws)
 		if err != nil {
-			return false, "", err
+			return failed, "", err
 		}
 		out, err := c.git(ctx, ws.Dir, "rev-list", "--count", base+"..refs/heads/"+ws.Branch)
 		if err != nil {
-			return false, "", err
+			return failed, "", err
 		}
 		n, err := strconv.Atoi(out)
 		if err != nil {
-			return false, "", fmt.Errorf("git rev-list --count: %q", out)
+			return failed, "", fmt.Errorf("git rev-list --count: %q", out)
 		}
 		if n == 0 {
-			return false, fmt.Sprintf("%s has no commit that %s lacks", ws.Branch, short(base)), nil
+			return failed, fmt.Sprintf("%s has no commit that %s lacks", ws.Branch, short(base)), nil
 		}
 		if n == 1 {
-			return true, "1 commit ahead of " + short(base), nil
+			return passed, "1 commit ahead of " + short(base), nil
 		}
-		return true, fmt.Sprintf("%d commits ahead of %s", n, short(base)), nil
+		return passed, fmt.Sprintf("%d commits ahead of %s", n, short(base)), nil
 	case goal.BranchMerged:
-		return c.merged(ctx, ws)
+		ok, why, err := c.merged(ctx, ws)
+		return of(ok), why, err
 	}
-	return false, "", fmt.Errorf("no check %s", name)
+	return failed, "", fmt.Errorf("no check %s", name)
 }
 
 // porcelainPaths is the paths git status --porcelain listed, the first ten of them.
@@ -109,8 +140,9 @@ func porcelainPaths(out string) string {
 
 // complete reports whether sp's goal is complete now, with the complete checks that
 // passed: a landed entry says so; a legacy goal is; any other needs a done that passed,
-// and every part not complete at handoff needs its complete checks to pass. A check that can't run
-// is an error, never "incomplete".
+// and every part not complete at handoff needs its complete checks, over the PRs handed
+// off, to pass (waived ones skipped). A check that can't run is an error, never
+// "incomplete".
 func (c *Core) complete(ctx context.Context, sp logbook.Spawn, e logbook.Effective) (bool, []string, []logbook.CheckResult, error) {
 	if ld, ok, err := c.Logbook.LandedOf(ctx, sp.ID); err != nil || ok {
 		return ok, ld.Checks, nil, err
@@ -126,16 +158,21 @@ func (c *Core) complete(ctx context.Context, sp logbook.Spawn, e logbook.Effecti
 	if !ok || !d.Passed() {
 		return false, nil, []logbook.CheckResult{{Name: "handoff", Detail: "no " + bsname.Cmd + " done that passed its checks"}}, nil
 	}
+	rs, cant := c.look(sp, Handed{PRs: d.PRs}).stage(ctx, e, func(p goal.Part) []string {
+		if p.AtHandoff {
+			return nil
+		}
+		return p.Complete
+	})
+	if cant != nil {
+		return false, nil, nil, fmt.Errorf("%s: %s", cant.Name, cant.Err)
+	}
 	var passed []string
 	var failed []logbook.CheckResult
-	for _, name := range e.Complete() {
-		r := c.check(ctx, sp, name, Handed{})
-		switch {
-		case r.Err != "":
-			return false, nil, nil, fmt.Errorf("%s: %s", name, r.Err)
-		case r.Pass:
-			passed = append(passed, name)
-		default:
+	for _, r := range rs {
+		if r.Pass {
+			passed = append(passed, r.Name)
+		} else {
 			failed = append(failed, r)
 		}
 	}

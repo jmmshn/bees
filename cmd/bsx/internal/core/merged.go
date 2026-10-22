@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,8 +15,9 @@ import (
 // why not: the pilot's three proofs (origin/pilot/bees-12:internal/worker/merged.go),
 // checked against the base and, when it has one, the base's upstream. A rebase or squash
 // merge rewrites the commits, so ancestry is only the first proof; then every path the
-// branch changed being identical on the base; then a merged GitHub pull request whose
-// head is the branch tip. The local proofs run first, so gh is asked only when they fail.
+// branch changed being identical on the base; then a merged change on the review host
+// whose head is the branch tip. The local proofs run first, so the host is asked only
+// when they fail.
 // err is a proof that couldn't run: never "not merged" (Rule G).
 func (c *Core) merged(ctx context.Context, ws logbook.Workspace) (bool, string, error) {
 	tip, err := c.git(ctx, ws.Repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+ws.Branch)
@@ -45,12 +45,12 @@ func (c *Core) merged(ctx context.Context, ws logbook.Workspace) (bool, string, 
 			return true, "the files it changed are identical on " + short(b) + " (a squash or rebase merge)", nil
 		}
 	}
-	heads, skipped, err := c.mergedHeads(ctx, ws.Repo, ws.Branch)
+	heads, skipped, err := c.Review.Landed(ctx, ws.Repo, ws.Branch)
 	switch {
 	case err != nil:
-		return false, "", fmt.Errorf("not merged locally, and GitHub couldn't be asked: %w", err)
+		return false, "", fmt.Errorf("not merged locally, and %s couldn't be asked: %w", c.Review.Name(), err)
 	case slices.Contains(heads, tip):
-		return true, "a merged pull request has its tip as head", nil
+		return true, "a merged change on " + c.Review.Name() + " has its tip as head", nil
 	}
 	names := make([]string, len(bases))
 	for i, b := range bases {
@@ -171,51 +171,6 @@ func (c *Core) sameContent(ctx context.Context, repo, base, branch string) (bool
 		return false, nil
 	}
 	return err == nil, err
-}
-
-// mergedHeads is the head commit of each merged pull request whose head branch is branch,
-// in repo's origin, asked of gh only when origin is on github.com (gh --repo, so a fork's
-// upstream is never asked instead). skipped says why gh wasn't asked of an origin that
-// isn't on github.com (an ssh alias, GitHub Enterprise); with no origin it is "".
-func (c *Core) mergedHeads(ctx context.Context, repo, branch string) (heads []string, skipped string, err error) {
-	url, err := c.git(ctx, repo, "config", "--get", "remote.origin.url")
-	switch {
-	case isExit(err, 1):
-		return nil, "", nil
-	case err != nil:
-		return nil, "", err
-	}
-	gh := githubRepo(url)
-	if gh == "" {
-		return nil, "origin " + url + " is not on github.com, so no merged pull request was looked for", nil
-	}
-	out, err := c.Run.Run(ctx, repo, "gh", "pr", "list", "--repo", gh, "--head", branch, "--state", "merged", "--json", "headRefOid")
-	if err != nil {
-		return nil, "", err
-	}
-	var prs []struct {
-		OID string `json:"headRefOid"`
-	}
-	if err := json.Unmarshal(out, &prs); err != nil {
-		return nil, "", fmt.Errorf("gh pr list: %w", err)
-	}
-	for _, p := range prs {
-		heads = append(heads, p.OID)
-	}
-	return heads, "", nil
-}
-
-// githubRepo is OWNER/REPO of a github.com remote URL (https, ssh or scp-like), or "".
-func githubRepo(url string) string {
-	_, path, ok := strings.Cut(url, "github.com")
-	if !ok || path == "" || (path[0] != '/' && path[0] != ':') {
-		return ""
-	}
-	path = strings.TrimSuffix(strings.TrimSuffix(path[1:], "/"), ".git")
-	if strings.Count(path, "/") != 1 || strings.HasPrefix(path, "/") || strings.HasSuffix(path, "/") {
-		return ""
-	}
-	return path
 }
 
 // checkedOut returns the worktree of repo that has branch in use, as git counts it when it

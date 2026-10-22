@@ -134,7 +134,7 @@ func TestAMergedPullRequestProvesTheBranch(t *testing.T) {
 	x.commit(sp.Workspace.Dir, "work.txt")
 	must(t, x.worker("toy-1", 1, "done"), 0)
 	x.gh.Offline = true
-	must(t, x.queen("end", "toy-1"), 6, "GitHub couldn't be asked", "error connecting")
+	must(t, x.queen("end", "toy-1"), 6, "github couldn't be asked", "error connecting")
 	x.gh.Offline = false
 	must(t, x.queen("end", "toy-1"), 9, "toy-1 has work not on main")
 	x.gh.PRs["https://github.com/x/toy/pull/1"] = &fake.PR{URL: "https://github.com/x/toy/pull/1", Head: "toy-1",

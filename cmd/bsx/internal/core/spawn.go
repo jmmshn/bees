@@ -12,7 +12,9 @@ import (
 	"strings"
 
 	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
+	"github.com/jmmshn/bees/cmd/bsx/internal/config"
 	"github.com/jmmshn/bees/cmd/bsx/internal/goal"
+	"github.com/jmmshn/bees/cmd/bsx/internal/herdr"
 	"github.com/jmmshn/bees/cmd/bsx/internal/logbook"
 	"github.com/jmmshn/bees/cmd/bsx/internal/port"
 	"github.com/jmmshn/bees/cmd/bsx/internal/prompt"
@@ -53,26 +55,37 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 	case ok && !prev.Ended:
 		return logbook.Spawn{}, exit(ExitRefused, bsname.Cmd+" end "+name, nil, "%s is already spawned and not ended", name)
 	}
-	ws, err := c.workspace(ctx, name)
+	target, err := c.resolveReview(ctx, &g)
 	if err != nil {
 		return logbook.Spawn{}, err
 	}
-	if err := c.refuse(ctx, g); err != nil {
+	ws, err := c.workspace(ctx, name, target != nil && !target.branch)
+	if err != nil {
+		return logbook.Spawn{}, err
+	}
+	if err := c.refuse(g, ws); err != nil {
+		return logbook.Spawn{}, err
+	}
+	deny, err := c.deny(ctx)
+	if err != nil {
 		return logbook.Spawn{}, err
 	}
 	// Prepare is pure, so it runs before anything is made: a refused launch leaves nothing.
-	launch, err := c.Harness.Prepare(port.Start{Role: port.Worker, Name: name, Dir: ws.Dir, PromptFile: "{{prompt.md}}", Doorbell: doorbell(name, bead.ID, req.By), Path: c.WorkerPath})
+	launch, err := c.Harness.Prepare(port.Start{Role: port.Worker, Name: name, Dir: ws.Dir, PromptFile: "{{prompt.md}}", Doorbell: doorbell(name, bead.ID, req.By), Path: c.WorkerPath, Deny: deny, ShellTimeout: ShellTimeout})
 	if err != nil {
 		return logbook.Spawn{}, exit(ExitRefused, "", err, "%s: its harness refused the launch; nothing was made", name)
 	}
-	launch.Files = withPrompt(launch.Files, prompt.Text(prompt.Worker, c.Project, ws.Kind, g.Types()))
+	text := prompt.Text(prompt.Worker, c.Project, ws.Kind, g.Types())
+	if slices.ContainsFunc(g.Parts, goal.Part.Reviewed) {
+		text += prompt.Host(prompt.Worker, c.Review.Name())
+	}
+	launch.Files = withPrompt(launch.Files, text)
 	label := cmp.Or(req.Label, bead.Title)
 	session := cmp.Or(req.Session, logbook.DefaultSession)
-	hw, err := c.herdr(session).CreateWorktree(ctx, ws.Repo, ws.Base, ws.Branch, ws.Dir, c.Project+" · "+label)
+	hw, err := c.makeWorkspace(ctx, session, &ws, target, c.Project+" · "+label)
 	if err != nil {
-		return logbook.Spawn{}, exit(ExitFail, "", err, "%s: herdr couldn't make its worktree; nothing was recorded", name)
+		return logbook.Spawn{}, err
 	}
-	ws.Dir = hw.Path // herdr makes it where asked; its answer is the record
 	// The worker= tag names whose workspace this is to anyone reading herdr's list.
 	if err := c.herdr(session).TagWorkspace(ctx, hw.ID, map[string]string{"worker": name}); err != nil {
 		err = errors.Join(err, c.unmake(context.WithoutCancel(ctx), session, hw.ID, ws))
@@ -84,7 +97,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 		Goal: g, ConfigDir: c.ConfigDir,
 	}
 	sp.Record = launch.Record
-	if sp.ID, err = c.Logbook.RecordSpawn(ctx, req.By, sp, brief(bead, g)); err != nil {
+	if sp.ID, err = c.Logbook.RecordSpawn(ctx, req.By, sp, brief(bead, g, target, c.Guards.AllowMergeInto)); err != nil {
 		err = errors.Join(err, c.unmake(context.WithoutCancel(ctx), session, hw.ID, ws))
 		if errors.Is(err, logbook.ErrAlreadySpawned) {
 			return logbook.Spawn{}, exit(ExitRefused, bsname.Cmd+" end "+name, err, "another spawn of %s was recorded first", name)
@@ -97,13 +110,15 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 	return sp, nil
 }
 
-// refuse runs the spawn-time refusals bs can make now (Rule G) for goal g. The network
-// ones (a PR goal's remote, a push or review target) arrive with bees-13.6.
-func (c *Core) refuse(ctx context.Context, g goal.Goal) error {
+// refuse runs the spawn-time refusals of goal g that need no network, in workspace ws,
+// for bs spawn and every bs goal amend.
+func (c *Core) refuse(g goal.Goal, ws logbook.Workspace) error {
 	for _, p := range g.Parts {
 		switch p.Type {
-		case "pr", "push", "review":
-			return exit(ExitRefused, "", nil, "--goal %s: PR goals arrive with bees-13.6", p)
+		case "branch", "pr":
+			if ws.Branch == "" {
+				return exit(ExitRefused, "", nil, "--goal %s: a %s workspace with no branch has none to hand off", p, ws.Kind)
+			}
 		case "note", "beads":
 			return exit(ExitRefused, "", nil, "--goal %s: arrives with bees-13.7", p)
 		}
@@ -111,10 +126,75 @@ func (c *Core) refuse(ctx context.Context, g goal.Goal) error {
 	return nil
 }
 
+// target is a push goal's change as spawn found it: the workspace starts at its head,
+// detached, or on a branch of its own cut there when another part (pr, branch) needs one.
+type target struct {
+	c      port.Change
+	hint   string // how to push onto it
+	branch bool
+}
+
+// resolveReview runs the spawn-time refusals of g's pr, push and review parts (Rule G),
+// for bs spawn and every bs goal amend: the project's checkout must
+// belong to a repo on the review host, which each part freezes; a push or review target
+// must be an open change of that repo, recorded in its one spelling; a push target whose
+// head lives elsewhere (a fork) must let the project push to it. A host that couldn't be
+// asked (network, auth) is exit 6, never 2. It returns the push target a workspace starts
+// at, if any.
+func (c *Core) resolveReview(ctx context.Context, g *goal.Goal) (*target, error) {
+	var t *target
+	needsBranch := slices.ContainsFunc(g.Parts, func(p goal.Part) bool { return p.Type == "pr" || p.Type == "branch" })
+	for i := range g.Parts {
+		p := &g.Parts[i]
+		if !p.Reviewed() {
+			continue
+		}
+		repo, ok, err := c.Review.Repo(ctx, c.Repo)
+		switch {
+		case err != nil:
+			return nil, exit(ExitCantCheck, "", err, "--goal %s: can't tell which %s repo %s belongs to", p, c.Review.Name(), c.Repo)
+		case !ok:
+			return nil, exit(ExitRefused, "add a remote for it (review.host = "+c.Review.Name()+")", nil,
+				"--goal %s: %s belongs to no %s repo, so none of its changes can be checked", p, c.Repo, c.Review.Name())
+		}
+		p.Repo = repo
+		if p.Target == "" {
+			continue
+		}
+		r, err := c.Review.Parse(p.Target)
+		if err != nil {
+			return nil, exit(ExitRefused, "", err, "--goal %s", p)
+		}
+		if !strings.EqualFold(r.Repo, repo) {
+			return nil, exit(ExitRefused, "", nil, "--goal %s: that is a change of %s, not of this project's repo %s", p, r.Repo, repo)
+		}
+		v, err := c.Review.View(ctx, c.Repo, r)
+		switch {
+		case errors.Is(err, port.ErrNoChange):
+			return nil, exit(ExitRefused, "", nil, "--goal %s: %s has no such change", p, repo)
+		case err != nil:
+			return nil, exit(ExitCantCheck, "", err, "--goal %s: can't ask %s about it", p, c.Review.Name())
+		case v.State != port.Open:
+			return nil, exit(ExitRefused, "", nil, "--goal %s: it is %s, not open", p, v.State)
+		case p.Type == "push" && !v.Editable:
+			return nil, exit(ExitRefused, "ask its author to allow edits by maintainers", nil,
+				"--goal %s: its head is in %s, which doesn't let this project push to it", p, v.ForeignRepo)
+		}
+		p.Target = r.URL
+		if p.Type == "push" && t == nil {
+			t = &target{c: v, hint: c.Review.PushHint(ctx, c.Repo, v), branch: needsBranch}
+		}
+	}
+	return t, nil
+}
+
 // unmake takes back the worktree and branch a spawn made but couldn't record, or a second
 // spawn would find them with nothing to prune them (motif 8). The branch is the spawn's
 // own: workspace refused one that already existed.
 func (c *Core) unmake(ctx context.Context, session, workspace string, ws logbook.Workspace) error {
+	if ws.Branch == "" { // a detached worktree bs made itself, and a workspace on it
+		return errors.Join(c.herdr(session).CloseWorkspace(ctx, workspace), c.removeDetached(ctx, ws))
+	}
 	if err := c.herdr(session).RemoveWorktree(ctx, workspace, true); err != nil {
 		return fmt.Errorf("and its worktree %s stays: %w", ws.Dir, err)
 	}
@@ -130,8 +210,8 @@ func (c *Core) unmake(ctx context.Context, session, workspace string, ws logbook
 }
 
 // workspace works out the spawn's workspace (Rule D): the project dir the top level of a
-// git checkout is git_worktree. none and command arrive with bees-13.10 and 13.11.
-func (c *Core) workspace(ctx context.Context, name string) (logbook.Workspace, error) {
+// git checkout is git_worktree, on a branch of its own, or detached for a push goal. none and command arrive with bees-13.10 and 13.11.
+func (c *Core) workspace(ctx context.Context, name string, detached bool) (logbook.Workspace, error) {
 	if c.Repo == "" {
 		return logbook.Workspace{}, exit(ExitRefused, "", nil, "project %s has no repo: run it in the repo, or set paths.repo", c.Project)
 	}
@@ -158,6 +238,9 @@ func (c *Core) workspace(ctx context.Context, name string) (logbook.Workspace, e
 	dir := filepath.Join(c.Worktrees, name)
 	if _, err := os.Stat(dir); err == nil {
 		return logbook.Workspace{}, exit(ExitRefused, bsname.Cmd+" prune", nil, "%s already exists", dir)
+	}
+	if detached { // a push goal: the target's head, never a branch of its own
+		return logbook.Workspace{Kind: config.GitWorktree, Dir: dir, Repo: c.Repo}, nil
 	}
 	ws := logbook.Workspace{Kind: "git_worktree", Dir: dir, Repo: c.Repo, Branch: name, Base: base}
 	// The branch is the spawn's own, whatever its goal, so prune may delete it later: one
@@ -207,8 +290,20 @@ func (c *Core) writeFiles(name string, l port.Launch) ([]string, error) {
 	return args, nil
 }
 
-func brief(b port.Bead, g goal.Goal) string {
-	return fmt.Sprintf("You own %s: %s\n\nYour goal: --goal %s. Hand it off with "+bsname.Cmd+" done when it holds.\n\n%s", b.ID, b.Title, g, b.Description)
+func brief(b port.Bead, g goal.Goal, t *target, mergeInto []string) string {
+	s := fmt.Sprintf("You own %s: %s\n\nYour goal: --goal %s. Hand it off with "+bsname.Cmd+" done when it holds.\n", b.ID, b.Title, g)
+	if len(mergeInto) > 0 { // the guard can't see a PR's base: the brief says which (guards.allow_merge_into)
+		s += fmt.Sprintf("The keeper lets you merge your own change when its base matches %s; check its base first, and never merge into the default branch.\n", strings.Join(mergeInto, " or "))
+	}
+	for _, p := range g.Parts {
+		switch {
+		case p.Type == "review":
+			s += fmt.Sprintf("Your review comment on %s must carry the marker %s%s: "+bsname.Cmd+" done looks for it.\n", p.Target, "bs:", logbook.SpawnID)
+		case p.Type == "push" && t != nil && t.c.URL == p.Target:
+			s += fmt.Sprintf("Your workspace starts at %s's head (%s). Push your commits for it onto it: %s\n", p.Target, short(t.c.HeadCommit), t.hint)
+		}
+	}
+	return s + "\n" + b.Description
 }
 
 // doorbell is a worker's first prompt: who it is, and where to read and reply.
@@ -230,4 +325,47 @@ func refusedOrCant(err error, next, format string, a ...any) *Exit {
 		return exit(ExitRefused, next, err, format, a...)
 	}
 	return exit(ExitCantCheck, "", err, format, a...)
+}
+
+// makeWorkspace makes ws and opens a herdr workspace on it: herdr cuts a branch's
+// worktree; a push goal's checkout at its target's head the VCS makes (herdr takes no
+// --detach), once the review host has fetched that head. ws.Dir becomes
+// herdr's answer. Nothing is recorded yet: a failure leaves nothing behind.
+func (c *Core) makeWorkspace(ctx context.Context, session string, ws *logbook.Workspace, t *target, label string) (herdr.Workspace, error) {
+	name := filepath.Base(ws.Dir)
+	if t == nil || t.branch {
+		from := ws.Base
+		if t != nil { // a mixed goal: its own branch, cut at the push target's head
+			if err := c.Review.Fetch(ctx, ws.Repo, t.c); err != nil {
+				return herdr.Workspace{}, exit(ExitCantCheck, "", err, "%s: can't fetch %s's head; nothing was made", name, t.c.URL)
+			}
+			from = t.c.HeadCommit
+		}
+		hw, err := c.herdr(session).CreateWorktree(ctx, ws.Repo, from, ws.Branch, ws.Dir, label)
+		if err != nil {
+			return hw, exit(ExitFail, "", err, "%s: herdr couldn't make its worktree; nothing was recorded", name)
+		}
+		ws.Dir = hw.Path // herdr makes it where asked; its answer is the record
+		return hw, nil
+	}
+	if err := c.Review.Fetch(ctx, ws.Repo, t.c); err != nil {
+		return herdr.Workspace{}, exit(ExitCantCheck, "", err, "%s: can't fetch %s's head; nothing was made", name, t.c.URL)
+	}
+	if err := c.VCS.Detach(ctx, ws.Repo, ws.Dir, t.c.HeadCommit); err != nil {
+		return herdr.Workspace{}, exit(ExitFail, "", err, "%s: couldn't make its workspace at %s; nothing was recorded", name, short(t.c.HeadCommit))
+	}
+	hw, err := c.herdr(session).CreateWorkspace(ctx, ws.Dir, label)
+	if err != nil {
+		err = errors.Join(err, c.removeDetached(context.WithoutCancel(ctx), *ws))
+		return hw, exit(ExitFail, "", err, "%s: herdr couldn't open a workspace on its worktree; nothing was recorded", name)
+	}
+	return hw, nil
+}
+
+// removeDetached removes the detached checkout makeWorkspace made.
+func (c *Core) removeDetached(ctx context.Context, ws logbook.Workspace) error {
+	if err := c.VCS.Drop(ctx, ws.Repo, ws.Dir); err != nil {
+		return fmt.Errorf("and its workspace %s stays: %w", ws.Dir, err)
+	}
+	return nil
 }

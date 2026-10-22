@@ -59,3 +59,20 @@ func TestAGoalWithNoFragmentStillSaysBsDone(t *testing.T) {
 		t.Fatalf("prompt:\n%s", got)
 	}
 }
+
+// The goal fragments name no review host's commands; the host fragment does, by role.
+func TestGoalFragmentsLeaveCommandsToTheHost(t *testing.T) {
+	w := prompt.Text(prompt.Worker, "web2", "git_worktree", []string{"pr", "push", "review"})
+	for _, host := range []string{"gh pr", "github"} {
+		if strings.Contains(strings.ToLower(w), host) {
+			t.Errorf("a goal fragment names %q:\n%s", host, w)
+		}
+	}
+	hw, hq := prompt.Host(prompt.Worker, "github"), prompt.Host(prompt.Queen, "github")
+	if !strings.Contains(hw, "gh pr create") || strings.Contains(hw, "gh pr merge") || !strings.Contains(hq, "gh pr merge") {
+		t.Errorf("github's host fragment by role:\nworker %s\nqueen %s", hw, hq)
+	}
+	if prompt.Host(prompt.Worker, "fakecl") != "" {
+		t.Error("a host with no fragment got one")
+	}
+}

@@ -188,13 +188,16 @@ func TestBSProject(t *testing.T) {
 // one: a guards.deny that does nothing is a guard the keeper thinks is on.
 func TestUnreadKeysAreMarked(t *testing.T) {
 	r := newRig(t)
-	r.write("projects/mytoy.toml", "[guards]\ndeny = [\"git push*\"]\n")
+	r.write("projects/mytoy.toml", "[checks.lint]\nrun = [\"make\", \"lint\"]\n")
 	_, out, _ := r.run(r.repo, nil, "config")
-	wantIn(t, out, `guards.deny = ["git push*"]  # project `, "; not read by bsx yet (bees-13.6)\n",
+	wantIn(t, out, `checks.lint.run = ["make", "lint"]  # project `, "; not read by bsx yet (bees-13.11)\n",
 		`worker.claude_code.model = ""  # default`+"\n",
 		"# [workspace.command] unset; not read by bsx yet (bees-13.11)\n", "# [goal.<name>] unset; ")
 	_, out, _ = r.run(r.repo, nil, "doctor")
-	wantIn(t, out, "WARN config: guards.deny set, but not read by bsx yet (bees-13.6): bsx ignores it")
+	wantIn(t, out, "set, but not read by bsx yet (bees-13.11): bsx ignores it")
+	if strings.Contains(out, "guards") {
+		t.Errorf("doctor calls the guards unread; bees-13.6 reads them:\n%s", out)
+	}
 	if strings.Contains(out, "model set") || strings.Contains(out, "workspace.command") {
 		t.Errorf("doctor warns of a key nothing set:\n%s", out)
 	}

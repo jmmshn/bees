@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/jmmshn/bees/cmd/bsx/internal/goal"
 )
@@ -41,6 +43,7 @@ type Workspace struct {
 // frozen at spawn (ADR-0010). It says nothing about whether the worker is running.
 type Spawn struct {
 	ID        ID                `json:"-"`
+	TS        time.Time         `json:"-"`
 	Name      string            `json:"-"`
 	By        string            `json:"-"` // who spawned it: the queen bs done reports to
 	Bead      string            `json:"bead"`
@@ -109,6 +112,10 @@ func (s *Spawn) decode(data string) error {
 	return nil
 }
 
+// SpawnID, in a brief, is replaced with the spawn's id: a review goal's marker
+// (bs:<spawn id>) names an id that exists only once the spawn is recorded.
+const SpawnID = "{{spawn}}"
+
 // ErrAlreadySpawned is a spawn of a worker whose last spawn hasn't ended.
 var ErrAlreadySpawned = errors.New("already spawned and not ended")
 
@@ -136,6 +143,7 @@ func (l *Logbook) RecordSpawn(ctx context.Context, by string, s Spawn, brief str
 			return err
 		}
 		if brief != "" {
+			brief = strings.ReplaceAll(brief, SpawnID, string(id))
 			_, err = insert(ctx, tx, entry{kind: "message", actor: by, subject: s.Name, ref: id, data: map[string]string{"body": brief}})
 		}
 		return err
@@ -145,7 +153,7 @@ func (l *Logbook) RecordSpawn(ctx context.Context, by string, s Spawn, brief str
 
 // spawnCols selects a spawned entry s with whether it has ended and whether its worker
 // has read a message since.
-const spawnCols = `s.id, s.subject, s.actor, s.data,
+const spawnCols = `s.id, s.ts, s.subject, s.actor, s.data,
   EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = s.id),
   EXISTS (SELECT 1 FROM entries r WHERE r.kind = 'received' AND r.actor = s.subject AND r.rowid > s.rowid)`
 
@@ -153,9 +161,13 @@ type scanner interface{ Scan(dest ...any) error }
 
 func scanSpawn(r scanner) (Spawn, error) {
 	var s Spawn
-	var data string
-	if err := r.Scan(&s.ID, &s.Name, &s.By, &data, &s.Ended, &s.Read); err != nil {
+	var data, ts string
+	if err := r.Scan(&s.ID, &ts, &s.Name, &s.By, &data, &s.Ended, &s.Read); err != nil {
 		return Spawn{}, err
+	}
+	var err error
+	if s.TS, err = time.Parse(tsLayout, ts); err != nil {
+		return Spawn{}, fmt.Errorf("spawn record %s: %w", s.ID, err)
 	}
 	return s, s.decode(data)
 }
@@ -168,6 +180,19 @@ func (l *Logbook) LatestSpawn(ctx context.Context, name string) (Spawn, bool, er
 		return Spawn{}, false, nil
 	}
 	return s, err == nil, err
+}
+
+// FirstSpawnAt is when the first spawn that recorded dir as its workspace was recorded:
+// a workspace commit is one made there since (ADR-0010). ok is false when none did.
+func (l *Logbook) FirstSpawnAt(ctx context.Context, dir string) (t time.Time, ok bool, err error) {
+	var ts sql.NullString
+	err = l.db.QueryRowContext(ctx, `SELECT MIN(ts) FROM entries WHERE kind = 'spawned'
+  AND coalesce(json_extract(data, '$.workspace.dir'), json_extract(data, '$.worktree'), json_extract(data, '$.dir')) = ?`, dir).Scan(&ts)
+	if err != nil || !ts.Valid {
+		return time.Time{}, false, err
+	}
+	t, err = time.Parse(tsLayout, ts.String)
+	return t, err == nil, err
 }
 
 // Spawn returns the spawned entry id.

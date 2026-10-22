@@ -40,7 +40,13 @@ type Part struct {
 	// Fragment is the sha256 of its type's fragment file at spawn (both roles' parts, before
 	// {{…}} is filled: prompt.Hash); "" when its type has none yet.
 	Fragment string `json:"fragment,omitempty"`
+	// Repo is the review host's repo a pr, push or review part's changes must belong to:
+	// the one the project's checkout belongs to, found and frozen at spawn (Rule D).
+	Repo string `json:"repo,omitempty"`
 }
+
+// Reviewed reports whether p's checks read changes on the review host.
+func (p Part) Reviewed() bool { return p.Type == "pr" || p.Type == "push" || p.Type == "review" }
 
 // String is the part as --goal spells it.
 func (p Part) String() string {
@@ -84,7 +90,7 @@ const (
 	PRWorkspaceCommit = "pr_workspace_commit" // each one's range holds a workspace commit
 	PRPushed          = "pr_pushed"           // the PR's head is the pushed workspace commit
 	PRCurrent         = "pr_current"          // current with its own base
-	CIGreen           = "ci_green"            // gh pr checks all pass
+	CIGreen           = "ci_green"            // every required CI check passes
 	PRMerged          = "pr_merged"           // every handed-off PR merged
 	PRClosed          = "pr_merged_or_closed" // every handed-off PR merged or closed
 	PushMoved         = "push_moved"          // the target's head descends from a workspace commit

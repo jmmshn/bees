@@ -74,6 +74,9 @@ type CheckResult struct {
 	Detail string `json:"detail,omitempty"` // what bs found, or why it failed
 	Err    string `json:"error,omitempty"`  // why it couldn't run
 	Waived bool   `json:"waived,omitempty"` // failed or couldn't run, and bs done --force handed off anyway
+	// Pending: it failed only because CI is still running, or the host doesn't show a push
+	// yet; bs done says to wait for it, with an exit code of its own.
+	Pending bool `json:"pending,omitempty"`
 }
 
 // Done is a done entry, a worker's handoff (bs done): the PRs handed off so far, or a

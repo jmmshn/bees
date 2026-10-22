@@ -3,6 +3,7 @@ package scenario_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -178,6 +179,9 @@ func TestPilotBug1241PruneAfterEndForce(t *testing.T) {
 func TestPilotBug1243APaneActsOnItsOwnProject(t *testing.T) {
 	later(t, "bees-13.4", "the pane scan across logbooks")
 }
+func TestPilotBug1244DoctorAndConfigGaps(t *testing.T) {
+	later(t, "bees-13.8", "bs doctor warns of a PR goal with no remote and a stale herdr server; bs config lists guards")
+}
 func TestPilotBug1245DoctorNamesAStrayBSProject(t *testing.T) { later(t, "bees-13.8", "bs doctor") }
 
 // bees-12.50, 12.52: bs done's own pipeline (bs done | tail) is the call, not background
@@ -266,6 +270,39 @@ INSERT INTO entries VALUES ('s1','2026-10-01T00:00:00.000Z','spawned','queen-toy
 	}
 }
 
+// A legacy worktree prunes on proof 1 against the repo's default branch: its recorded
+// base was a checkout path, never a ref (bees-11.3), so merge-base can't be given it.
+func TestPruneTakesALegacyWorktreeOnTheDefaultBranch(t *testing.T) {
+	x := newToy(t)
+	merged, open := filepath.Join(x.repo+"-WT", "toy-8"), filepath.Join(x.repo+"-WT", "toy-9")
+	x.git(x.repo, "worktree", "add", "-q", "-b", "toy-8", merged, "main")
+	x.git(x.repo, "worktree", "add", "-q", "-b", "toy-9", open, "main")
+	x.commit(open, "work.txt")
+	if err := os.MkdirAll(filepath.Dir(x.logbook), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", x.logbook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := func(id, name, dir string) string {
+		return fmt.Sprintf(`INSERT INTO entries VALUES ('%[1]s','2026-10-01T00:00:00.000Z','spawned','queen-toy','%[2]s',NULL,'{"bead":"%[2]s","workspace":"w2","pane":"w2:p1","worktree":"%[3]s","branch":"%[2]s","repo":"%[4]s","base":"%[4]s"}');
+INSERT INTO entries VALUES ('e%[1]s','2026-10-01T00:00:01.000Z','ended','queen-toy','%[2]s','%[1]s',NULL);`, id, name, dir, x.repo)
+	}
+	_, err = db.Exec(`CREATE TABLE entries (id TEXT PRIMARY KEY, ts TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('message','received','rang','spawned','ended')),
+  actor TEXT NOT NULL, subject TEXT, ref TEXT REFERENCES entries(id),
+  data TEXT CHECK (data IS NULL OR json_valid(data))) STRICT;` + row("s1", "toy-8", merged) + row("s2", "toy-9", open))
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	must(t, x.queen("prune"), 3, "removed "+merged, "toy-9 is not merged into main")
+	if _, err := os.Stat(open); err != nil {
+		t.Fatalf("prune removed the unmerged %s: %v", open, err)
+	}
+}
+
 func TestPRGoalHandoffChecks(t *testing.T) {
 	later(t, "bees-13.6", "pr, pr:ready, pr:draft handoff and completion")
 }
@@ -318,7 +355,7 @@ func TestAnUnconfirmedStartIsExit8AndEndClearsIt(t *testing.T) {
 	x.herdr.Programs["claude"] = "/bin/true"
 	x.ports.Timing.Confirm = 300 * time.Millisecond
 	x.bead("toy-1", "x")
-	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 8, "start unconfirmed", "next: bs end toy-1 --incomplete")
+	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 8, "start unconfirmed", "next: bsx end toy-1 --incomplete")
 	must(t, x.queen("end", "toy-1"), 9)                                // a verdict never handed off is incomplete
 	must(t, x.queen("end", "--incomplete", "toy-1"), 0, "ended toy-1") // the abort of a spawn that never ran (motif 5)
 	sp, _, _ := x.open().LatestSpawn(context.Background(), "toy-1")
@@ -360,4 +397,19 @@ func lineOf(s, word string) string {
 		}
 	}
 	return ""
+}
+
+// A bead the tracker says doesn't exist refuses the spawn (exit 2) and names it.
+func TestSpawnOfNoSuchBeadIsRefused(t *testing.T) {
+	x := newToy(t)
+	must(t, x.queen("spawn", "--goal", "verdict", "toy-404"), 2, "no bead toy-404", "next: bd show toy-404")
+}
+
+// With no harness adapter (bsx's main until bees-13.3), mail to a running worker is
+// stored and says it wasn't rung, never a panic.
+func TestSendWithNoHarnessStoresAndSaysNotRung(t *testing.T) {
+	x := newToy(t)
+	x.spawn("toy-1", "verdict")
+	x.ports.Harness = nil
+	must(t, x.queen("send", "toy-1", "hi"), 0, "not rung", "has no ring")
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 	"io"
 	"strings"
 	"text/tabwriter"
@@ -76,7 +77,7 @@ func (r *run) done(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	fmt.Fprintf(r.out, "handed off to %s:\n%s\n", d.Queen, d.Text())
-	r.ring(d.Queen, "[bs] 1 unread ("+d.Name+") — run: bs inbox")
+	r.ring(d.Queen, "["+bsname.Cmd+"] 1 unread ("+d.Name+") — run: "+bsname.Cmd+" inbox")
 	return nil
 }
 
@@ -151,7 +152,7 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	fmt.Fprintf(r.out, "sent to %s\n", to)
-	r.ring(to, "[bs] 1 unread ("+w.Name+") — run: bs inbox")
+	r.ring(to, "["+bsname.Cmd+"] 1 unread ("+w.Name+") — run: "+bsname.Cmd+" inbox")
 	return nil
 }
 
@@ -164,18 +165,21 @@ func (r *run) ring(name, text string) {
 	}
 	st, ok, err := r.c.Logbook.LatestStart(r.ctx, sp.ID)
 	if err != nil || !ok {
-		fmt.Fprintf(r.err, "bsx: %s has no confirmed start: not rung; the message waits for its bs inbox\n", name)
+		fmt.Fprintf(r.err, "bsx: %s has no confirmed start: not rung; the message waits for its "+bsname.Cmd+" inbox\n", name)
 		return
 	}
 	alive, err := r.c.Proc.Alive(st.Process)
 	if err == nil && !alive {
 		err = port.ErrNotRunning
 	}
+	if err == nil && r.c.Harness == nil { // bsx's own main until bees-13.3's adapter
+		err = port.ErrNoRing
+	}
 	if err == nil {
 		err = r.c.Harness.Ring(port.Target{Name: name, Session: sp.Herdr.Session, Pane: sp.Herdr.Pane, PID: st.PID}, text, port.Next)
 	}
 	if err != nil {
-		fmt.Fprintf(r.err, "bsx: not rung (%v); the message waits for %s's bs inbox\n", err, name)
+		fmt.Fprintf(r.err, "bsx: not rung (%v); the message waits for %s's "+bsname.Cmd+" inbox\n", err, name)
 	}
 }
 

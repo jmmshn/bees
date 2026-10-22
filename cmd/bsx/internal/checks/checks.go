@@ -14,8 +14,9 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
+
+	"github.com/jmmshn/bees/cmd/bsx/internal/port"
 )
 
 // Cmd is an argv with its bound, as config gives it and a spawn freezes it.
@@ -54,7 +55,7 @@ const DefaultTimeout = 60 * time.Second
 var placeholder = regexp.MustCompile(`^\{([a-z][a-z0-9_]*)\}$`)
 
 // Fill returns argv with each whole-argument {key} replaced by vals[key]. argv[0] is
-// never a placeholder.
+// never a placeholder. A ref git couldn't check is ErrCantRun, not ErrBadArgv.
 func Fill(argv []string, vals map[string]Value) ([]string, error) {
 	if len(argv) == 0 || argv[0] == "" {
 		return nil, fmt.Errorf("%w: empty argv", ErrBadArgv)
@@ -80,17 +81,27 @@ func Fill(argv []string, vals map[string]Value) ([]string, error) {
 			return nil, fmt.Errorf("%w: argument %d: %s is empty", ErrBadArgv, i, a)
 		case strings.HasPrefix(v.S, "-"):
 			return nil, fmt.Errorf("%w: argument %d: %s = %q starts with -", ErrBadArgv, i, a, v.S)
-		case v.Ref && !refOK(v.S):
-			return nil, fmt.Errorf("%w: argument %d: %s = %q isn't a valid git ref", ErrBadArgv, i, a, v.S)
+		case v.Ref:
+			if ok, err := refOK(v.S); err != nil {
+				return nil, fmt.Errorf("%w: argument %d: checking %s = %q: %w", ErrCantRun, i, a, v.S, err)
+			} else if !ok {
+				return nil, fmt.Errorf("%w: argument %d: %s = %q isn't a valid git ref", ErrBadArgv, i, a, v.S)
+			}
 		}
 		out[i] = v.S
 	}
 	return out, nil
 }
 
-// refOK reports whether git check-ref-format accepts s as a branch name.
-func refOK(s string) bool {
-	return exec.Command("git", "check-ref-format", "--branch", s).Run() == nil
+// refOK reports whether git check-ref-format accepts s as a branch name. A git that
+// couldn't run or answer is an error, never "bad ref" (Rule G).
+func refOK(s string) (bool, error) {
+	_, err := port.Exec{}.Run(context.Background(), "", "git", "check-ref-format", "--branch", s)
+	var ee *port.ExitError
+	if errors.As(err, &ee) {
+		return false, nil
+	}
+	return err == nil, err
 }
 
 // env is the only environment a command gets: PATH, HOME and LANG, as bs has them.
@@ -124,12 +135,7 @@ func Run(ctx context.Context, c Cmd, dir string, vals map[string]Value) (Result,
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	var out bytes.Buffer
 	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = dir, env(), &out, &out
-	cmd.Stdin = nil
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	// The whole group: a child that forked a grandchild holding the pipe must not outlive
-	// the bound (motif 15).
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
-	cmd.WaitDelay = time.Second
+	port.Group(cmd)
 	err = cmd.Run()
 	var ee *exec.ExitError
 	switch {

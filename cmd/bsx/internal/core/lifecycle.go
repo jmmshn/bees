@@ -125,7 +125,7 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 		return exit(ExitCantCheck, bsname.Cmd+" end "+name+" --incomplete", err, "%s: can't tell whether its goal is complete", name)
 	case err != nil:
 		// --incomplete is the way out while a check can't run (motif 5); prune completes it.
-		c.warn("can't tell whether %s's goal is complete (%v): ending it --incomplete", name, err)
+		c.warn("can't tell whether %s's goal is complete (%v): treating it as incomplete", name, err)
 		done = false
 	}
 	switch {
@@ -356,8 +356,15 @@ func (c *Core) Prune(ctx context.Context, by string) ([]Pruned, error) {
 		}
 		branch, err := c.hasBranch(ctx, ws)
 		switch {
+		case err != nil && dir:
+			// Its directory is still pruned; its branch waits for a lookup that works.
+			p := c.prune(ctx, by, sp, dir, false)
+			if p.Why == "" {
+				p.Unknown, p.Why = true, "can't tell whether its branch exists: "+err.Error()
+			}
+			out = append(out, p)
 		case err != nil:
-			out = append(out, Pruned{Name: sp.Name, Dir: ws.Dir, Branch: ws.Branch, Unknown: true, Why: "can't tell whether its branch exists: " + err.Error()})
+			out = append(out, Pruned{Name: sp.Name, Dir: ws.Dir, Branch: ws.Branch, Gone: true, Unknown: true, Why: "can't tell whether its branch exists: " + err.Error()})
 		case dir || branch:
 			out = append(out, c.prune(ctx, by, sp, dir, branch))
 		}
@@ -410,8 +417,8 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 			}
 		}
 	}
-	// An ended worker whose process still runs (a --force that couldn't stop it) may
-	// still write there.
+	// An ended worker whose recorded process still runs (one whose start was confirmed
+	// late) may still write there.
 	if st, ok, err := c.StartOf(ctx, sp); err != nil {
 		return keep(true, "can't tell whether its worker still runs: %v", err)
 	} else if ok {
@@ -421,21 +428,17 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 			return keep(false, "its ended worker still runs (pid %d): stop it, then %s prune again", st.PID, bsname.Cmd)
 		}
 	}
+	// The remote branch is named whatever happens to the local one (bees-1.34).
+	switch _, err := c.git(ctx, ws.Repo, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+ws.Branch); {
+	case ws.Branch == "":
+	case err == nil:
+		p.Remote = "origin/" + ws.Branch
+	case !isExit(err, 1):
+		c.warn("can't tell whether origin/%s exists: %v", ws.Branch, err)
+	}
 	if dir {
-		// Only a directory that is still a worktree of its repo: one taken over or remade
-		// by hand is not this spawn's to remove (the pilot's samePath guard, bees-8.4).
-		if mine, err := c.isWorktree(ctx, ws); err != nil {
-			return keep(true, "can't list %s's worktrees: %v", ws.Repo, err)
-		} else if !mine {
-			return keep(false, "it is no longer a worktree of %s", ws.Repo)
-		}
-		if r := c.check(ctx, sp, goal.Clean, Handed{}); r.Err != "" {
-			return keep(true, "can't check for uncommitted files: %s", r.Err)
-		} else if !r.Pass {
-			return keep(false, "%s", r.Detail)
-		}
-		if _, err := c.git(ctx, ws.Repo, "worktree", "remove", ws.Dir); err != nil {
-			return keep(true, "git worktree remove: %v", err)
+		if why, unknown := c.freeDir(ctx, sp); why != "" {
+			return keep(unknown, "%s", why)
 		}
 		p.Removed = true
 	}
@@ -450,13 +453,87 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 		return keep(false, "%s", why)
 	}
 	p.Deleted = true
-	switch _, err := c.git(ctx, ws.Repo, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+ws.Branch); {
-	case err == nil:
-		p.Remote = "origin/" + ws.Branch
-	case !isExit(err, 1):
-		c.warn("can't tell whether origin/%s exists: %v", ws.Branch, err)
-	}
 	return p
+}
+
+// freeDir removes ended spawn sp's worktree, or says why it kept it (unknown: it couldn't
+// check): it is no longer a worktree of its repo, herdr has a workspace open on it or a
+// pane working in it, it has uncommitted or untracked files, its HEAD has commits on no
+// branch, or git refused the removal. Never --force (the pilot's freeWorktree).
+func (c *Core) freeDir(ctx context.Context, sp logbook.Spawn) (why string, unknown bool) {
+	ws := sp.Workspace
+	// Only a directory that is still a worktree of its repo: one taken over or remade by
+	// hand is not this spawn's to remove (the pilot's samePath guard, bees-8.4).
+	if mine, err := c.isWorktree(ctx, ws); err != nil {
+		return fmt.Sprintf("can't list %s's worktrees: %v", ws.Repo, err), true
+	} else if !mine {
+		return "it is no longer a worktree of " + ws.Repo, false
+	}
+	// Its own workspace is closed: anything herdr still has there is someone else's, or a
+	// process bs never recorded (a start never confirmed).
+	if why, err := c.inUse(ctx, sp); err != nil {
+		return "can't tell whether herdr uses it: " + err.Error(), true
+	} else if why != "" {
+		return why, false
+	}
+	if r := c.check(ctx, sp, goal.Clean, Handed{}); r.Err != "" {
+		return "can't check for uncommitted files: " + r.Err, true
+	} else if !r.Pass {
+		return r.Detail, false
+	}
+	// Commits made on a detached HEAD are on no branch: removing the worktree loses them.
+	switch out, err := c.git(ctx, ws.Dir, "rev-list", "-n1", "HEAD", "--not", "--branches", "--tags", "--remotes"); {
+	case err != nil:
+		return "can't tell whether its HEAD is on a branch: " + err.Error(), true
+	case out != "":
+		return fmt.Sprintf("its HEAD has commits on no branch (%s): git -C %s switch -c <branch> keeps them", out, ws.Dir), false
+	}
+	if _, err := c.git(ctx, ws.Repo, "worktree", "remove", ws.Dir); isExit(err, 128) {
+		// git ran and refused: a locked worktree, or one with submodules.
+		return fmt.Sprintf("git refused to remove it (%v): git worktree unlock it, or remove it by hand with git worktree remove --force", err), false
+	} else if err != nil {
+		return "git worktree remove: " + err.Error(), true
+	}
+	return "", false
+}
+
+// inUse names what herdr, in sp's session, has open on its directory: a workspace on it,
+// or a pane whose shell or foreground process works inside it (a keeper's shell, a pane
+// moved out of its workspace).
+func (c *Core) inUse(ctx context.Context, sp logbook.Spawn) (string, error) {
+	h := c.herdr(sp.Herdr.Session)
+	wss, err := h.Workspaces(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, w := range wss {
+		if w.Path != "" && samePath(w.Path, sp.Workspace.Dir) {
+			return fmt.Sprintf("herdr workspace %s (%s) is open on it", w.ID, w.Label), nil
+		}
+	}
+	panes, err := h.PaneDirs(ctx)
+	if err != nil {
+		return "", err
+	}
+	var in []string
+	for _, p := range panes {
+		if under(p.Cwd, sp.Workspace.Dir) || under(p.ForegroundCwd, sp.Workspace.Dir) {
+			in = append(in, p.ID)
+		}
+	}
+	if len(in) == 0 {
+		return "", nil
+	}
+	return fmt.Sprintf("herdr pane %s works in it", strings.Join(in, ", ")), nil
+}
+
+// under reports whether path is dir or inside it, symlinks resolved.
+func under(path, dir string) bool {
+	if path == "" {
+		return false
+	}
+	rel, err := filepath.Rel(resolved(dir), resolved(path))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
 }
 
 // pruneBranch deletes ws's local branch once it is proven merged into its base, whatever

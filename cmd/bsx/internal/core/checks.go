@@ -72,7 +72,7 @@ func (c *Core) run(ctx context.Context, sp logbook.Spawn, name string, h Handed)
 		if err != nil {
 			return false, "", err
 		}
-		out, err := c.git(ctx, ws.Dir, "rev-list", "--count", base+".."+ws.Branch)
+		out, err := c.git(ctx, ws.Dir, "rev-list", "--count", base+"..refs/heads/"+ws.Branch)
 		if err != nil {
 			return false, "", err
 		}
@@ -81,12 +81,12 @@ func (c *Core) run(ctx context.Context, sp logbook.Spawn, name string, h Handed)
 			return false, "", fmt.Errorf("git rev-list --count: %q", out)
 		}
 		if n == 0 {
-			return false, fmt.Sprintf("%s has no commit that %s lacks", ws.Branch, base), nil
+			return false, fmt.Sprintf("%s has no commit that %s lacks", ws.Branch, short(base)), nil
 		}
 		if n == 1 {
-			return true, "1 commit ahead of " + base, nil
+			return true, "1 commit ahead of " + short(base), nil
 		}
-		return true, fmt.Sprintf("%d commits ahead of %s", n, base), nil
+		return true, fmt.Sprintf("%d commits ahead of %s", n, short(base)), nil
 	case goal.BranchMerged:
 		return c.merged(ctx, ws)
 	}

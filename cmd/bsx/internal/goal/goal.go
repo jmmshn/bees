@@ -37,8 +37,8 @@ type Part struct {
 	Complete  []string `json:"complete"`
 	// Prune must pass before bs prune removes the workspace; none means at once.
 	Prune []string `json:"prune"`
-	// Fragment is the sha256 of the goal fragment the worker's prompt took at spawn; ""
-	// when its type has none yet.
+	// Fragment is the sha256 of its type's fragment file at spawn (both roles' parts, before
+	// {{…}} is filled: prompt.Hash); "" when its type has none yet.
 	Fragment string `json:"fragment,omitempty"`
 }
 

@@ -122,8 +122,9 @@ func (g *GH) Run(_ context.Context, _ string, argv ...string) ([]byte, error) {
 	return nil, ghFail(argv, "fake gh: no pr "+argv[2])
 }
 
-// list is gh pr list --head <branch> --state <state> --json headRefOid: the PRs whose head
-// branch is branch, in state (open, merged, closed, all).
+// list is gh pr list [--repo OWNER/REPO] --head <branch> --state <state> --json headRefOid:
+// the PRs of that repo (by URL) whose head branch is branch, in state (open, merged,
+// closed, all).
 func (g *GH) list(argv []string) ([]byte, error) {
 	flag := func(name string) string {
 		if i := slices.Index(argv, name); i >= 0 && i+1 < len(argv) {
@@ -137,6 +138,9 @@ func (g *GH) list(argv []string) ([]byte, error) {
 	head, state := flag("--head"), strings.ToUpper(cmp.Or(flag("--state"), "open"))
 	out := []map[string]string{}
 	for _, url := range slices.Sorted(maps.Keys(g.PRs)) {
+		if repo := flag("--repo"); repo != "" && !strings.HasPrefix(url, "https://github.com/"+repo+"/pull/") {
+			continue
+		}
 		if pr := g.PRs[url]; pr.Head == head && (state == "ALL" || pr.State == state) {
 			out = append(out, map[string]string{"headRefOid": pr.HeadOID})
 		}

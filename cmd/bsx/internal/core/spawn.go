@@ -57,7 +57,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 	if err != nil {
 		return logbook.Spawn{}, err
 	}
-	if err := c.refuse(ctx, g, ws); err != nil {
+	if err := c.refuse(ctx, g); err != nil {
 		return logbook.Spawn{}, err
 	}
 	// Prepare is pure, so it runs before anything is made: a refused launch leaves nothing.
@@ -94,11 +94,9 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 	return sp, nil
 }
 
-// refuse runs the spawn-time refusals bs can make now (Rule G) for goal g in workspace
-// ws. A branch goal needs a workspace with a branch: every workspace has one until kind
-// none (bees-13.10). The network ones (a PR goal's remote, a push or review target)
-// arrive with bees-13.6.
-func (c *Core) refuse(ctx context.Context, g goal.Goal, ws logbook.Workspace) error {
+// refuse runs the spawn-time refusals bs can make now (Rule G) for goal g. The network
+// ones (a PR goal's remote, a push or review target) arrive with bees-13.6.
+func (c *Core) refuse(ctx context.Context, g goal.Goal) error {
 	for _, p := range g.Parts {
 		switch p.Type {
 		case "pr", "push", "review":
@@ -165,7 +163,7 @@ func (c *Core) workspace(ctx context.Context, name string) (logbook.Workspace, e
 	case err != nil:
 		return logbook.Workspace{}, exit(ExitCantCheck, "", err, "can't tell whether branch %s exists", name)
 	case ok:
-		return logbook.Workspace{}, exit(ExitRefused, bsname.Cmd+" prune (once its work is merged), or git -C "+c.Repo+" branch -D "+name, nil,
+		return logbook.Workspace{}, exit(ExitRefused, bsname.Cmd+" prune (once its work is merged)", nil,
 			"branch %s already exists in %s", name, c.Repo)
 	}
 	return ws, nil

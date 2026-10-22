@@ -256,6 +256,13 @@ func OpenReadOnly(ctx context.Context, path string) (*Logbook, error) {
 	return &Logbook{db: db}, nil
 }
 
+// Empty reports whether the logbook holds no entries.
+func (l *Logbook) Empty(ctx context.Context) (bool, error) {
+	var n int
+	err := l.db.QueryRowContext(ctx, `SELECT count(*) FROM entries`).Scan(&n)
+	return n == 0, err
+}
+
 // SchemaVersion is the file's PRAGMA user_version.
 func (l *Logbook) SchemaVersion(ctx context.Context) (int, error) {
 	var v int

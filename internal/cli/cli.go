@@ -135,6 +135,7 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 		}
 		rest = nil
 	}
+	var lb *logbook.Logbook
 	if cmd.logbook {
 		if err := s.checkLogbook(env); err != nil {
 			return report(stderr, args[0], err)
@@ -142,7 +143,7 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 		if err := r.oldSessions(); err != nil {
 			return report(stderr, args[0], err)
 		}
-		lb, err := r.openLogbook()
+		lb, err = r.openLogbook()
 		if err != nil {
 			return report(stderr, args[0], err)
 		}
@@ -184,6 +185,9 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 		}
 	}
 	err = cmd.run(r, fs, rest)
+	if err != nil && r.created {
+		r.uncreate(lb) // refused after it made the logbook: it leaves none (motif 14)
+	}
 	if err == nil && r.created {
 		fmt.Fprintf(stderr, "%s %s: new logbook for project %s at %s\n", bsname.Cmd, args[0], s.Project, s.Logbook)
 	}
@@ -228,6 +232,22 @@ func (r *run) openLogbook() (*logbook.Logbook, error) {
 		r.created = false
 	}
 	return lb, err
+}
+
+// uncreate removes the logbook this command made, when it still holds no entries: a
+// command refused after Create must not leave an empty logbook passing for a started
+// project. One that recorded anything keeps it.
+func (r *run) uncreate(lb *logbook.Logbook) {
+	if empty, err := lb.Empty(r.ctx); err != nil || !empty {
+		return
+	}
+	lb.Close()
+	for _, p := range []string{r.s.Logbook, r.s.Logbook + "-wal", r.s.Logbook + "-shm"} {
+		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(r.err, "%s %s: warning: couldn't remove the empty logbook it made, %s: %v\n", bsname.Cmd, r.name, p, err)
+		}
+	}
+	r.created = false
 }
 
 // oldSessions refuses, before the logbook is opened (and so migrated), a command on a

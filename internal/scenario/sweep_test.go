@@ -387,6 +387,37 @@ func TestOnlyQueenAndSpawnStartALogbook(t *testing.T) {
 	}
 }
 
+// A spawn refused after its arguments passed (no --as outside a pane, a BS_LOGBOOK_DIR pin,
+// herdr down) leaves no logbook it made: a refused command records nothing, and an empty
+// logbook left behind would pass for a started project (bees-13.9 re-review 1, motif 14).
+func TestARefusedSpawnLeavesNoLogbook(t *testing.T) {
+	x := newToy(t)
+	x.bead("toy-1", "work")
+	other := filepath.Join(t.TempDir(), "pinned")
+	for _, c := range []struct {
+		name string
+		env  []string
+		args []string
+		down bool
+	}{
+		{"no --as", nil, []string{"spawn", "--goal", "branch", "toy-1"}, false},
+		{"pin", []string{"BS_LOGBOOK_DIR=" + other}, []string{"spawn", "--as", "queen-toy", "--goal", "branch", "toy-1"}, false},
+		{"herdr down", nil, []string{"spawn", "--as", "queen-toy", "--goal", "branch", "toy-1"}, true},
+	} {
+		x.herdr.Down = c.down
+		r := x.shellRun(x.repo, append(append([]string{}, x.env...), c.env...), "", c.args...)
+		if r.code == 0 || strings.Contains(r.String(), "new logbook") {
+			t.Fatalf("%s: exit %d\n%s", c.name, r.code, r)
+		}
+		for _, p := range []string{x.logbook, filepath.Join(other, "toy.db")} {
+			if _, err := os.Stat(p); !os.IsNotExist(err) {
+				t.Fatalf("%s left %s: %v\n%s", c.name, p, err, r)
+			}
+		}
+	}
+	x.herdr.Down = false
+}
+
 // bs queen starts a project: on a fresh one it makes the logbook, its entry the first.
 func TestBsQueenMakesALogbook(t *testing.T) {
 	x := newToy(t)

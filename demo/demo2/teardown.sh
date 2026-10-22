@@ -5,6 +5,10 @@
 # It removes only the absolute paths below, the buzz-* beads and the herdr session buzz;
 # Claude's transcripts of the toy's sessions move to $KEEP (default ~/.cache/bees-demo2/<time>).
 set -uo pipefail
+# demo2 drives the old bs (bs status --project … --json, bs end --project); the new bs
+# reads a herdr --session's own config, which setup.sh doesn't write yet (bees-13.33).
+echo "teardown.sh: demo2 isn't ported to the new bs yet (bees-13.33); nothing was done" >&2
+exit 1
 unset BS_LOGBOOK BS_PROJECT
 session=buzz
 fail() { echo "teardown: $*; fix it and run teardown.sh again" >&2; exit 1; }

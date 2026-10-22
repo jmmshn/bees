@@ -141,3 +141,8 @@ Both files live under the config dir, `~/.config/bees`; no repo ships config bs 
 - `bs spawn` without `--goal` is refused; the role prompts name the goal and stop guessing what "done" means.
 - `bs end` no longer removes a worktree; prune does, on the frozen rule. Main's `bs end` exit codes keep their meaning; 7 (a handoff check failed), 8 (a start unconfirmed) and 9 (`bs end` on an incomplete goal) are new.
 - Every rebuild PR is compared with the pilot's version of the same part: what it keeps, what it changes, which pilot bug it must not bring back.
+
+## Amendment 1 (bees-13.6, keeper, 2026-10-22)
+
+- **Review host and VCS ports.** The pr, push and review checks see a change only through `port.Review` (parse, view, CI, behind, protection, fetch) and a workspace's commits only through `port.VCS` (commits since, branch tip, ancestry, a detached checkout). `review.host = "github"` (global or project, the only value yet) picks GitHub through gh and git, the default; a CL-shaped host plugs in there without touching the goal code. The scenario suite runs every PR-goal scenario on GitHub (fake gh over real git) and on `fake.CLHost`, which has neither.
+- **CI is bs's word.** A PR goal's handoff needs every CI check on the change's current head to pass (`ci_green`). Checks still running, or none registered while the base's tip has some, with nothing else failing, is exit 10 ("re-run when CI finishes"); a failed check is exit 7, naming it. A vacuous pass is printed. #104–#107 each sent a done with CI pending, and sat red unnoticed.

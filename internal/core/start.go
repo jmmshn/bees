@@ -20,8 +20,9 @@ import (
 // of the worker's first bs call, which would otherwise heal it as late. herdr's
 // agent_pane_busy (a new pane's shell not at its prompt) is retried, since herdr typed
 // nothing (bees-12.33); any other herdr error still looks for the harness for
-// Timing.AfterErr, since herdr can give up while it runs (bees-12.49, adopted).
-func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch) error {
+// Timing.AfterErr, since herdr can give up while it runs (bees-12.49, adopted). replaces is
+// the dead start a resume restarts, "" on a first start.
+func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch, replaces logbook.ID) error {
 	next := bsname.Cmd + " end " + sp.Name + " --incomplete"
 	args, err := c.writeFiles(sp.Name, l)
 	if err != nil {
@@ -36,7 +37,7 @@ func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch) erro
 	case err != nil:
 		return exit(ExitStart, next, err, "%s: can't tell whether pane %s already runs %s", sp.Name, sp.Herdr.Pane, c.Harness.Kind())
 	case ok:
-		if _, _, err := c.recordStart(ctx, sp, p, false); err != nil {
+		if _, _, err := c.recordStart(ctx, sp, p, false, replaces); err != nil {
 			return exit(ExitStart, next, err, "%s: its start (pid %d) couldn't be recorded", sp.Name, p.PID)
 		}
 		return nil
@@ -55,7 +56,9 @@ func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch) erro
 		got := c.watch(wctx, sp, time.Now().Add(t.Confirm))
 		if got.pid != 0 {
 			// A process with --name sp.Name in sp's pane is this start: herdr's answer can't undo it.
-			_, _, got.err = c.Logbook.RecordStartOnce(context.WithoutCancel(ctx), got.start(sp))
+			st := got.start(sp)
+			st.Replaces = replaces
+			_, _, got.err = c.Logbook.RecordStartOnce(context.WithoutCancel(ctx), st)
 		}
 		seen <- got
 	}()
@@ -196,13 +199,14 @@ func named(argv []string, name string) bool {
 	return i >= 0 && i+1 < len(argv) && argv[i+1] == name
 }
 
-// recordStart records p as sp's start, reading its baseline now; late marks a heal.
-func (c *Core) recordStart(ctx context.Context, sp logbook.Spawn, p proc.Process, late bool) (logbook.Start, bool, error) {
+// recordStart records p as sp's start, reading its baseline now; late marks a heal, and
+// replaces names the dead start a resume restarts.
+func (c *Core) recordStart(ctx context.Context, sp logbook.Spawn, p proc.Process, late bool, replaces logbook.ID) (logbook.Start, bool, error) {
 	s := sighting{pid: p.PID, process: p}
 	s.exe, _ = c.Proc.Exe(p.PID)
 	s.baseline, s.walkErr = c.Proc.Descendants(p.PID)
 	st := s.start(sp)
-	st.Late = late
+	st.Late, st.Replaces = late, replaces
 	return c.Logbook.RecordStartOnce(ctx, st)
 }
 
@@ -222,7 +226,7 @@ func (c *Core) StartOf(ctx context.Context, sp logbook.Spawn) (logbook.Start, bo
 	if !found {
 		return st, false, nil
 	}
-	st, recorded, err := c.recordStart(ctx, sp, p, true)
+	st, recorded, err := c.recordStart(ctx, sp, p, true, "")
 	if err != nil || !recorded { // another trigger healed it first: its record stands
 		return st, err == nil, err
 	}

@@ -89,10 +89,14 @@ func (r *run) spawn(fs *flag.FlagSet, args []string) error {
 	if err != nil {
 		return err
 	}
-	sp, err := r.c.Spawn(r.ctx, core.SpawnReq{By: w.Name, Session: cmp.Or(core.Getenv(r.env.Vars, "HERDR_SESSION"), logbook.DefaultSession),
+	sp, resumed, err := r.c.Spawn(r.ctx, core.SpawnReq{By: w.Name, Session: cmp.Or(core.Getenv(r.env.Vars, "HERDR_SESSION"), logbook.DefaultSession),
 		Bead: fs.Arg(0), Label: *label, Goals: goals})
 	if err != nil {
 		return err
+	}
+	if resumed {
+		fmt.Fprintf(r.out, "resumed %s in pane %s on herdr session %s, in %s\n", sp.Name, sp.Herdr.Pane, sp.Herdr.Session, sp.Workspace.Dir)
+		return nil
 	}
 	fmt.Fprintf(r.out, "spawned %s (--goal %s) in %s, pane %s on herdr session %s\n", sp.Name, sp.Goal, sp.Workspace.Dir, sp.Herdr.Pane, sp.Herdr.Session)
 	return nil
@@ -512,7 +516,7 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 			if !landed {
 				next += " (--incomplete if its goal isn't complete)"
 			}
-			note("stuck", sp.Name, "its process is gone but it isn't ended → %s", next)
+			note("stuck", sp.Name, "its process is gone but it isn't ended → %s spawn --goal %s %s resumes it in its pane, or %s", bsname.Cmd, g, sp.Bead, next)
 		case sp.Ended && !landed && !sp.Legacy() && !discarded && gerr == nil:
 			note("stuck", sp.Name, "ended with its goal incomplete → %s prune completes it once --goal %s holds", bsname.Cmd, g)
 		case sp.Ended && (landed || discarded) && sp.Workspace.Kind == "git_worktree" && sp.Workspace.Dir != "":

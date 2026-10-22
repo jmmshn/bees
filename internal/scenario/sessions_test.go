@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -367,4 +368,66 @@ func TestRecordingAPaneUnderABSLogbookDirPinIsRefused(t *testing.T) {
 	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 2, "isn't paths.logbook_dir", "nothing was recorded", "env -u BS_LOGBOOK_DIR")
 	x.env = append(slices.Clone(env), "BS_LOGBOOK_DIR="+filepath.Dir(x.logbook)) // the config's own dir: no harm
 	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 0, "spawned toy-1")
+}
+
+// kill stops worker name's harness process and waits for herdr to see it gone.
+func (x *toy) kill(name string) {
+	x.t.Helper()
+	pid, ok := x.herdr.Agent(x.session, name)
+	if !ok {
+		x.t.Fatalf("no agent %s", name)
+	}
+	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
+		x.t.Fatal(err)
+	}
+	for range 100 {
+		if _, ok := x.herdr.Agent(x.session, name); !ok {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	x.t.Fatalf("%s still runs", name)
+}
+
+// bees-13.27: bs spawn on an open spawn whose process died restarts it in its recorded
+// pane and records a new start that names the dead one, so status, rings and the gate
+// follow the restart. A live worker, or one
+// whose pane is gone, is refused, saying the next step (motif 5, 9, 10).
+func TestSpawnResumesADeadWorker(t *testing.T) {
+	x := newToy(t)
+	sp := x.spawn("toy-1", "branch")
+	must(t, x.worker("toy-1", 1, "inbox"), 0)
+	first, _, _ := x.open().LatestStart(context.Background(), sp.ID)
+	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 2, "toy-1 is already running", "next: bs send toy-1")
+	x.kill("toy-1")
+	must(t, x.keeper("status"), 0, "stuck: toy-1: its process is gone but it isn't ended → bs spawn --goal branch toy-1 resumes it in its pane")
+	must(t, x.queen("send", "toy-1", "while you were down"), 0, "stored, not rung")
+	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 0, "resumed toy-1 in pane "+sp.Herdr.Pane)
+	st, ok, err := x.open().LatestStart(context.Background(), sp.ID)
+	if err != nil || !ok || st.ID == first.ID || st.Replaces != first.ID || st.PID == first.PID {
+		t.Fatalf("the resume's start: %+v (first %+v), %v %v", st, first, ok, err)
+	}
+	if r := x.keeper("status"); cell(r.out, "toy-1", "RUNNING") != "yes" {
+		t.Fatalf("status after the resume:\n%s", r)
+	}
+	// Its doorbell says to run bs inbox, where the mail it missed waits; a send now rings it.
+	must(t, x.queen("send", "toy-1", "welcome back"), 0, "rung toy-1")
+	var rings []string
+	for range 100 { // beesfake logs a ring as it takes it
+		if rings = x.harness.Rings("toy-1"); len(rings) > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(rings) == 0 || !strings.Contains(rings[len(rings)-1], "2 unread (queen-toy ×2)") {
+		t.Fatalf("the resumed worker's rings: %q", rings)
+	}
+	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 2, "it was spawned with --goal branch", "bs goal toy-1")
+
+	sp2 := x.spawn("toy-2", "branch")
+	x.kill("toy-2")
+	if _, err := x.herdr.Run(context.Background(), "", "herdr", "--session", x.session, "workspace", "close", sp2.Herdr.Workspace); err != nil {
+		t.Fatal(err)
+	}
+	must(t, x.queen("spawn", "--goal", "branch", "toy-2"), 2, "pane "+sp2.Herdr.Pane+" is gone", "bs end toy-2 --incomplete")
 }

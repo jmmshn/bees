@@ -93,6 +93,9 @@ type Start struct {
 	Baseline    []Process `json:"baseline"`
 	BaselineErr string    `json:"baseline_error,omitempty"`
 	Late        bool      `json:"late,omitempty"`
+	// Replaces is the dead start a resume restarted (bs spawn on an open spawn); "" for
+	// the spawn's first start.
+	Replaces ID `json:"replaces,omitempty"`
 }
 
 // LatestStart returns the newest start recorded for spawn; ok is false when the spawn has
@@ -104,9 +107,10 @@ func (l *Logbook) LatestStart(ctx context.Context, spawn ID) (s Start, ok bool, 
 	return s, ok, err
 }
 
-// RecordStartOnce records start s unless spawn s.Spawn already has one: then it returns
-// that start and recorded false. The check and the record share one write transaction,
-// so two heals racing record one start (motif 7).
+// RecordStartOnce records start s unless spawn s.Spawn already has a start other than the
+// one s replaces (none, for a first start): then it returns that start and recorded
+// false. The check and the record share one write transaction, so two heals, or a heal
+// racing a resume, record one start (motif 7).
 func (l *Logbook) RecordStartOnce(ctx context.Context, s Start) (got Start, recorded bool, err error) {
 	if s.Baseline == nil {
 		s.Baseline = []Process{}
@@ -114,6 +118,7 @@ func (l *Logbook) RecordStartOnce(ctx context.Context, s Start) (got Start, reco
 	err = l.write(ctx, func(tx *sql.Tx) error {
 		var data string
 		switch err := tx.QueryRowContext(ctx, `SELECT id, data FROM entries WHERE kind = 'started' AND ref = ? ORDER BY rowid DESC LIMIT 1`, string(s.Spawn)).Scan(&got.ID, &data); {
+		case err == nil && got.ID == s.Replaces: // the dead start this one restarts
 		case err == nil:
 			got.Spawn, got.Name = s.Spawn, s.Name
 			return json.Unmarshal([]byte(data), &got)

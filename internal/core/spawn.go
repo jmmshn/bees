@@ -33,11 +33,12 @@ type SpawnReq struct {
 // Spawn starts a worker for req.Bead: it resolves the goal, opens its git_worktree
 // workspace through herdr, records the spawn with its brief, launches the harness, and
 // confirms the start. Nothing is recorded until the workspace exists; a launch that fails
-// after the record leaves an unconfirmed spawn (exit 8) that bs end clears.
-func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
+// after the record leaves an unconfirmed spawn (exit 8) that bs end clears. An open spawn
+// whose process died is resumed instead (resumed true).
+func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resumed bool, err error) {
 	g, err := goal.Parse(req.Goals)
 	if err != nil {
-		return logbook.Spawn{}, exit(ExitRefused, "", err, "%s", req.Bead)
+		return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s", req.Bead)
 	}
 	for i, p := range g.Parts {
 		g.Parts[i].Fragment = prompt.Hash(p.Type)
@@ -45,40 +46,40 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 	bead, err := c.Beads.Show(ctx, req.Bead)
 	if err != nil {
 		if errors.Is(err, port.ErrNoBead) {
-			return logbook.Spawn{}, exit(ExitRefused, "bd show "+req.Bead, err, "no bead %s", req.Bead)
+			return logbook.Spawn{}, false, exit(ExitRefused, "bd show "+req.Bead, err, "no bead %s", req.Bead)
 		}
-		return logbook.Spawn{}, exit(ExitCantCheck, "", err, "can't read bead %s", req.Bead)
+		return logbook.Spawn{}, false, exit(ExitCantCheck, "", err, "can't read bead %s", req.Bead)
 	}
 	name := Name(bead.ID)
 	switch prev, ok, err := c.Logbook.LatestSpawn(ctx, name); {
 	case err != nil:
-		return logbook.Spawn{}, err
+		return logbook.Spawn{}, false, err
 	case ok && !prev.Ended:
-		return logbook.Spawn{}, exit(ExitRefused, bsname.Cmd+" end "+name, nil, "%s is already spawned and not ended", name)
+		return prev, true, c.resume(ctx, prev, bead, req)
 	}
 	at, err := c.beadAt(ctx, bead)
 	if err != nil {
-		return logbook.Spawn{}, err
+		return logbook.Spawn{}, false, err
 	}
 	target, err := c.resolveReview(ctx, &g)
 	if err != nil {
-		return logbook.Spawn{}, err
+		return logbook.Spawn{}, false, err
 	}
 	ws, err := c.workspace(ctx, name, target != nil && !target.branch)
 	if err != nil {
-		return logbook.Spawn{}, err
+		return logbook.Spawn{}, false, err
 	}
 	if err := c.refuse(g, ws); err != nil {
-		return logbook.Spawn{}, err
+		return logbook.Spawn{}, false, err
 	}
 	deny, err := c.deny(ctx)
 	if err != nil {
-		return logbook.Spawn{}, err
+		return logbook.Spawn{}, false, err
 	}
 	// Prepare is pure, so it runs before anything is made: a refused launch leaves nothing.
 	launch, err := c.Harness.Prepare(port.Start{Role: port.Worker, Name: name, Dir: ws.Dir, PromptFile: "{{prompt.md}}", Doorbell: doorbell(name, bead.ID, req.By), Path: c.WorkerPath, Deny: deny})
 	if err != nil {
-		return logbook.Spawn{}, exit(ExitRefused, "", err, "%s: its harness refused the launch; nothing was made", name)
+		return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s: its harness refused the launch; nothing was made", name)
 	}
 	text := prompt.Text(prompt.Worker, c.Project, ws.Kind, g.Types())
 	if slices.ContainsFunc(g.Parts, goal.Part.Reviewed) {
@@ -89,14 +90,14 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 	session := cmp.Or(req.Session, logbook.DefaultSession)
 	hw, err := c.makeWorkspace(ctx, session, &ws, target, c.Project+" · "+label)
 	if err != nil {
-		return logbook.Spawn{}, err
+		return logbook.Spawn{}, false, err
 	}
 	// The worker= tag names whose workspace this is to anyone reading herdr's list.
 	if err := c.herdr(session).TagWorkspace(ctx, hw.ID, map[string]string{"worker": name}); err != nil {
 		err = errors.Join(err, c.unmake(context.WithoutCancel(ctx), session, hw.ID, ws))
-		return logbook.Spawn{}, exit(ExitFail, "", err, "%s: herdr couldn't tag its workspace; nothing was recorded", name)
+		return logbook.Spawn{}, false, exit(ExitFail, "", err, "%s: herdr couldn't tag its workspace; nothing was recorded", name)
 	}
-	sp := logbook.Spawn{
+	sp = logbook.Spawn{
 		Name: name, By: req.By, Bead: bead.ID, Label: label, Harness: c.HarnessName,
 		Herdr: logbook.Pane{Session: session, Workspace: hw.ID, Pane: hw.Pane}, Workspace: ws,
 		Goal: g, ConfigDir: c.ConfigDir, At: at,
@@ -104,12 +105,66 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 	sp.Record = launch.Record
 	if sp.ID, err = c.Logbook.RecordSpawn(ctx, req.By, sp, brief(bead, g, target, c.Guards.AllowMergeInto)); err != nil {
 		err = errors.Join(err, c.unmake(context.WithoutCancel(ctx), session, hw.ID, ws))
-		return logbook.Spawn{}, exit(ExitFail, "", err, "%s: couldn't record the spawn", name)
+		return logbook.Spawn{}, false, exit(ExitFail, "", err, "%s: couldn't record the spawn", name)
 	}
-	if err := c.launch(ctx, sp, launch); err != nil {
-		return sp, err
+	return sp, false, c.launch(ctx, sp, launch, "")
+}
+
+// resume restarts open spawn sp whose recorded process died, in its recorded pane, with
+// its recorded conversation once it has one (it read its inbox), and records the new
+// start as replacing the dead one (bees-13.27; ADR-0009: resume the recorded conversation
+// or fail visibly). A running worker, a goal other than the recorded one, or a pane herdr
+// no longer has is refused with the next step; the workspace and record stay as they are.
+func (c *Core) resume(ctx context.Context, sp logbook.Spawn, bead port.Bead, req SpawnReq) error {
+	e, err := c.Logbook.Goal(ctx, sp)
+	if err != nil {
+		return err
 	}
-	return sp, nil
+	if g, err := goal.Parse(req.Goals); err == nil && g.String() != e.String() {
+		return exit(ExitRefused, bsname.Cmd+" goal "+sp.Name+" "+strings.Join(req.Goals, " "), nil,
+			"%s is spawned and not ended, and it was spawned with --goal %s, not --goal %s; a resume keeps its goal", sp.Name, e.Goal, g)
+	}
+	st, started, err := c.StartOf(ctx, sp)
+	if err != nil {
+		return exit(ExitCantCheck, "", err, "%s: can't tell whether it still runs; nothing started", sp.Name)
+	}
+	if started {
+		switch err := c.running(st.Process); {
+		case err == nil:
+			return exit(ExitRefused, bsname.Cmd+" send "+sp.Name+" \"...\"", nil, "%s is already running (pid %d)", sp.Name, st.PID)
+		case !errors.Is(err, port.ErrNotRunning):
+			return exit(ExitCantCheck, "", err, "%s: can't tell whether pid %d still runs; nothing started", sp.Name, st.PID)
+		}
+	}
+	if _, err := c.herdr(sp.Herdr.Session).ProcessInfo(ctx, sp.Herdr.Pane); errors.Is(err, herdr.ErrPaneGone) {
+		return exit(ExitRefused, bsname.Cmd+" end "+sp.Name+" --incomplete, then "+bsname.Cmd+" spawn", nil,
+			"%s: its pane %s is gone from herdr session %s, so there is nowhere to resume it; nothing started", sp.Name, sp.Herdr.Pane, sp.Herdr.Session)
+	} else if err != nil {
+		return exit(ExitCantCheck, "", err, "%s: can't look at its pane %s; nothing started", sp.Name, sp.Herdr.Pane)
+	}
+	h := c.harnessOf(sp.Harness)
+	if h == nil {
+		return exit(ExitRefused, "", nil, "%s: no adapter for its recorded harness %s; nothing started", sp.Name, sp.Harness)
+	}
+	deny, err := c.deny(ctx)
+	if err != nil {
+		return err
+	}
+	launch, err := h.Prepare(port.Start{Role: port.Worker, Name: sp.Name, Dir: sp.Workspace.Dir, PromptFile: "{{prompt.md}}",
+		Doorbell: doorbell(sp.Name, bead.ID, sp.By), Continue: sp.Read, Record: sp.Record, Path: c.WorkerPath, Deny: deny})
+	if err != nil {
+		return exit(ExitRefused, "", err, "%s: its harness refused the restart; nothing started", sp.Name)
+	}
+	text := prompt.Text(prompt.Worker, c.Project, sp.Workspace.Kind, e.Types())
+	if slices.ContainsFunc(e.Parts, goal.Part.Reviewed) {
+		text += prompt.Host(prompt.Worker, c.Review.Name())
+	}
+	launch.Files = withPrompt(launch.Files, text)
+	var replaces logbook.ID
+	if started {
+		replaces = st.ID
+	}
+	return c.launch(ctx, sp, launch, replaces)
 }
 
 // refuse runs the spawn-time refusals of goal g that need no network, in workspace ws,

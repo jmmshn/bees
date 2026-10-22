@@ -168,8 +168,9 @@ sequenceDiagram
     C->>L: bs inbox
 ```
 
-`scripts/e2e.sh` checks this with real sessions: the idle worker's doorbell lands about
-20 ms after `bs send`, and a full queen → worker → queen round trip needs nobody typing.
+Measured with real sessions (the old bs's `scripts/e2e.sh`): the idle worker's doorbell
+lands about 20 ms after `bs send`, and a full queen → worker → queen round trip needs nobody
+typing. The `live-test` skill now runs such checks in a throwaway project.
 
 ### What one `bs send` does
 
@@ -226,8 +227,8 @@ time from Claude's registry and `/proc`. A dead session needs no cleanup: its me
 
 ## Status
 
-v0 on Linux: every "Done when" item in [SPEC](docs/SPEC.md#done-when) passes (`go test ./...`
-and `scripts/e2e.sh <throwaway bead>`). The [v1 outline](docs/SPEC.md#v1-outline) adds
+v0 on Linux: every "Done when" item in [SPEC](docs/SPEC.md#done-when) passes (`go test ./...`,
+and live through the `live-test` skill). The [v1 outline](docs/SPEC.md#v1-outline) adds
 re-ringing, hooks, a keeper inbox and an adapter for [omp](GLOSSARY.md#outside-names).
 
 ## License

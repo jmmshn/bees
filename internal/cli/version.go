@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jmmshn/bees/internal/bsname"
+	"github.com/jmmshn/bees/internal/port"
 )
 
 // ownModule is bs's module: a directory whose go.mod declares it is bs's source.
@@ -65,8 +67,11 @@ func warnIfStale(ctx context.Context, env Env, ports Ports, s *settings, stderr 
 		return
 	}
 	var what string
-	if _, err := git("merge-base", "--is-ancestor", rev, "main"); err != nil {
+	var ee *port.ExitError
+	if _, err := git("merge-base", "--is-ancestor", rev, "main"); errors.As(err, &ee) && ee.Code == 1 {
 		what = "a commit not on main (a branch build)"
+	} else if err != nil { // no main, a timeout: it can't tell
+		return
 	} else if n, err := git("rev-list", "--count", rev+"..main"); err != nil || n == "0" {
 		return
 	} else if n == "1" {

@@ -76,6 +76,8 @@ func TestBeadStaysInTheProject(t *testing.T) {
 		{[]string{"bead", "new", "--parent", "other-1", "Fix"}, "other-1 is not a mytoy bead"},
 		{[]string{"bead", "new", "--parent", "mytoy2-1", "Fix"}, "mytoy2-1 is not a mytoy bead"},
 		{[]string{"bead"}, "usage"},
+		{[]string{"bead", "ls", "priority<=1) OR (status=open"}, "parentheses don't balance"},
+		{[]string{"bead", "ls", "(priority<=1"}, "parentheses don't balance"},
 		{[]string{"epic"}, "usage"},
 	} {
 		if code, _, stderr := r.runWith(Ports{Run: bd}, nil, c.args...); code != core.ExitRefused || !strings.Contains(stderr, c.want) {
@@ -161,6 +163,13 @@ func TestACurrentOrForeignBsDoesNotWarn(t *testing.T) {
 		{"no vcs stamp", dir, ""},
 		{"outside the source repo", t.TempDir(), revs[0]},
 	} {
+		if c.name == "built from main" { // a repo with no main can't tell, so says nothing
+			nomain, nrevs := fakeSourceRepo(t)
+			gitIn(t, nomain, "branch", "-m", "main", "trunk")
+			if code, _, stderr := version(t, nomain, nrevs[0], "/usr/local/bin/bs"); code != 0 || strings.Contains(stderr, "built from") {
+				t.Errorf("no main: exit %d %q", code, stderr)
+			}
+		}
 		if code, _, stderr := version(t, c.dir, c.rev, "/usr/local/bin/bs"); code != 0 || strings.Contains(stderr, "built from") {
 			t.Errorf("%s: exit %d %q", c.name, code, stderr)
 		}

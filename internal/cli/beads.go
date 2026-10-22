@@ -46,10 +46,7 @@ func interleaved(fs *flag.FlagSet, args []string) ([]string, error) {
 
 // project is the caller's project, refused when bs can't tell it.
 func (r *run) project() (string, error) {
-	if r.s.Project == "" {
-		return "", &core.Exit{Code: core.ExitRefused, Msg: "no project: bs isn't in a git repo and BS_PROJECT is unset", Next: "cd into the project's repo"}
-	}
-	return r.s.Project, nil
+	return r.s.Project, r.s.needProject()
 }
 
 // bd runs bd args, its stderr folded into the error.
@@ -124,7 +121,11 @@ func (r *run) bead(fs *flag.FlagSet, args []string) error {
 			return err
 		}
 		// Project names are only letters and digits, so the wildcard can't match another
-		// project's beads.
+		// project's beads; a query whose parentheses don't balance could step out of the
+		// AND, so it is refused. A scope, not a guard: bd query itself reads every project.
+		if !balanced(query) {
+			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bead ls: %q: its parentheses don't balance, so it could reach outside %s", strings.Join(query, " "), p)}
+		}
 		expr := fmt.Sprintf("id=%q", p+"-*")
 		if !*all {
 			expr += " AND status!=closed"
@@ -155,7 +156,8 @@ func (r *run) bead(fs *flag.FlagSet, args []string) error {
 				Next: bsname.Cmd + ` epic "<title>"`}
 		}
 		if rest, ok := strings.CutPrefix(*parent, p); !ok || !beadNumber.MatchString(rest) {
-			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("%s is not a %s bead (want %s-N[.M…]); nothing was filed", *parent, p, p)}
+			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("%s is not a %s bead (want %s-N[.M…]); nothing was filed", *parent, p, p),
+				Next: bsname.Cmd + " bead ls"}
 		}
 		bdArgs := []string{"create", "--silent", "--force", "--parent", *parent, "--title", strings.Join(title, " ")}
 		for _, f := range [][2]string{{"--description", *desc}, {"--type", *typ}, {"--priority", *prio}} {
@@ -171,4 +173,27 @@ func (r *run) bead(fs *flag.FlagSet, args []string) error {
 		return nil
 	}
 	return fmt.Errorf("%w: %s", errUsage, beadUsage)
+}
+
+// balanced reports whether the parentheses in args, outside quotes, never close more than
+// they opened and all close.
+func balanced(args []string) bool {
+	depth, quote := 0, rune(0)
+	for _, c := range strings.Join(args, " ") {
+		switch {
+		case quote != 0:
+			if c == quote {
+				quote = 0
+			}
+		case c == '"' || c == '\'':
+			quote = c
+		case c == '(':
+			depth++
+		case c == ')':
+			if depth--; depth < 0 {
+				return false
+			}
+		}
+	}
+	return depth == 0
 }

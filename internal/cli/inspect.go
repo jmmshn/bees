@@ -249,7 +249,7 @@ func (r *run) doctor(fs *flag.FlagSet, args []string) error {
 		switch {
 		case !strings.HasPrefix(k, "BS_"):
 		case !slices.Contains(envKeys, k):
-			d.line("WARN", "env", "%s is set: %s doesn't read it (the shared bs may); it does nothing here", k, bsname.Cmd)
+			d.line("WARN", "env", "%s is set: %s doesn't read it (an older bs did); it does nothing here", k, bsname.Cmd)
 		case s.Pane != nil:
 			d.line("WARN", "env", "%s is set in %s's pane, where %s ignores it: %s sets no BS_* in a session's env, so it leaked from the shell that started herdr", k, s.Pane.Who.Name, bsname.Cmd, bsname.Cmd)
 		default:

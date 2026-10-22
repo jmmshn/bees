@@ -207,11 +207,11 @@ func (r *run) oldSessions() error {
 	if err != nil || len(names) == 0 {
 		return err
 	}
-	what := fmt.Sprintf("%s has %d open spawns the old bs started, which this bs can neither ring nor see run: %s",
-		r.s.Logbook, len(names), strings.Join(names, ", "))
-	if len(names) == 1 {
-		what = fmt.Sprintf("%s has an open spawn the old bs started, which this bs can neither ring nor see run: %s", r.s.Logbook, names[0])
+	n := "an open spawn"
+	if len(names) > 1 {
+		n = fmt.Sprintf("%d open spawns", len(names))
 	}
+	what := fmt.Sprintf("%s has %s the old bs started, which this bs can neither ring nor see run: %s", r.s.Logbook, n, strings.Join(names, ", "))
 	if r.name == "end" || r.name == "status" {
 		fmt.Fprintf(r.err, "%s %s: warning: %s\n  next: %s end <worker> for each\n", bsname.Cmd, r.name, what, bsname.Cmd)
 		return nil

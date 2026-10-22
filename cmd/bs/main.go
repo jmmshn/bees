@@ -34,8 +34,8 @@ func main() {
 		Exec:     execHarness,
 		Revision: revision(),
 	}
-	ports.Exe, _ = os.Executable()
-	dir, _ := os.Getwd() // "" when gone: bs then knows the project only from BS_PROJECT
+	ports.Exe, _ = os.Executable() // "": bs is then checked as the shared install
+	dir, _ := os.Getwd()           // "" when gone: bs then knows the project only from BS_PROJECT
 	env := cli.Env{Vars: os.Environ(), Dir: dir, Self: os.Getpid(), Stdin: os.Stdin}
 	os.Exit(cli.Run(context.Background(), env, ports, os.Args[1:], os.Stdout, os.Stderr))
 }

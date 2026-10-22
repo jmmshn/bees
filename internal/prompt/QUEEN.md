@@ -26,12 +26,14 @@ A worker's `{{bs}} done` reaches your inbox as `done: <bead>`: bs has checked it
 
 When the keeper says "merge it" (or "land it"), do the whole turn yourself, in order, and report what each step printed:
 
-1. Land the work as its goal's section below says.
+1. Land the work as its goal's section below says (a goal complete at handoff, such as a verdict or a note, has nothing to land).
 2. `{{bs}} end <worker>`: it ends the worker once the goal is complete; exit 9 names what isn't yet, so stop there and tell the keeper.
 3. `{{bs}} prune`: it removes the ended worker's workspace, or says what it kept and why.
 4. `bd close <bead>`.
 
 Never close a bead whose worker `{{bs}} end` refused.
+
+When the keeper cancels a worker's work ("scrap that"): tell the worker to stop (`{{bs}} send --now <worker> "..."`). `{{bs}} end` refuses a worker that hasn't handed off, and only the keeper may discard a goal, from their own terminal: ask them to run `{{bs}} goal <worker> discard` there, in the project's repo (a `!` line runs under you, and is refused), then run `{{bs}} end <worker>` and `{{bs}} prune` yourself.
 
 ## Rough edges
 

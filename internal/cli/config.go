@@ -295,18 +295,26 @@ func mainCheckout(ctx context.Context, run port.Runner, dir string) (string, err
 // checkLogbook checks s names a project and, on a herdr --session toy, that its logbook
 // isn't a real one, which a toy must never migrate or write.
 func (s *settings) checkLogbook(env Env) error {
-	if s.Project == "" {
-		// A recorded pane always names its project (bees-13.15): this is outside one.
-		return &core.Exit{Code: core.ExitRefused, Msg: "no project: bs isn't in a git repo and BS_PROJECT is unset",
-			Next: "cd into the project's repo"}
+	if err := s.needProject(); err != nil {
+		return err
 	}
 	if s.Session == config.DefaultSession {
 		return nil
 	}
 	for _, real := range realLogbookDirs(env.Vars) {
 		if samePath(filepath.Dir(s.Logbook), real) {
-			return fmt.Errorf("%w, %s (%s)", ErrRealLogbook, s.Paths.LogbookDir, s.Sources["paths.logbook_dir"])
+			return &core.Exit{Code: core.ExitRefused, Err: fmt.Errorf("%w, %s (%s); nothing was read or written", ErrRealLogbook, s.Paths.LogbookDir, s.Sources["paths.logbook_dir"]),
+				Next: "set paths.logbook_dir in " + filepath.Join(s.Dir, "config.toml") + " to a dir of this session's own"}
 		}
+	}
+	return nil
+}
+
+// needProject refuses when bs can't tell the project. A recorded pane always names its
+// project (bees-13.15), so this is outside one.
+func (s *settings) needProject() error {
+	if s.Project == "" {
+		return &core.Exit{Code: core.ExitRefused, Msg: "no project: bs isn't in a git repo and BS_PROJECT is unset", Next: "cd into the project's repo"}
 	}
 	return nil
 }

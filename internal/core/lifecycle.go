@@ -291,6 +291,16 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 			return exit(ExitBackground, bsname.Cmd+" end "+name+" --force", nil, "%s", background(name, bg))
 		}
 	}
+	// The old bs's spawn recorded no process, and herdr reuses workspace ids once its server
+	// restarts: bs can't prove the recorded workspace is still the worker's, so it leaves it
+	// open and says so rather than close one it guessed (motif 12).
+	if _, started, err := c.StartOf(ctx, sp); err != nil {
+		return exit(ExitCantCheck, bsname.Cmd+" end "+name, err, "%s: can't tell whether it ever started; nothing closed", name)
+	} else if e.IsLegacy() && !started {
+		c.warn("%s was started by the old bs, which recorded no process, so bs can't prove herdr workspace %s (session %s) is still its own: left open; close it yourself if it is (herdr workspace close %s)",
+			name, sp.Herdr.Workspace, sp.Herdr.Session, sp.Herdr.Workspace)
+		return c.Logbook.RecordEnd(ctx, by, sp.ID, logbook.Ended{Force: o.Force, Incomplete: !done})
+	}
 	// A pane moved out of its workspace keeps running there: closing the workspace
 	// wouldn't stop it, so only --force ends it, by its recorded process (bees-12.46).
 	switch pid, err := c.moved(ctx, sp); {

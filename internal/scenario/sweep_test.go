@@ -243,7 +243,8 @@ INSERT INTO entries VALUES ('s1','2026-10-01T00:00:00.000Z','spawned','queen-toy
 	if _, err := os.Stat(x.logbook + ".pre-2"); err != nil {
 		t.Fatalf("no copy aside: %v", err)
 	}
-	must(t, x.keeper("end", "--as", "queen-toy", "toy-9"), 0, "ended toy-9")
+	// It recorded no process, so bs can't prove herdr's w2 is still its own: left open (motif 12).
+	must(t, x.keeper("end", "--as", "queen-toy", "toy-9"), 0, "ended toy-9", "can't prove herdr workspace w2 (session default) is still its own: left open")
 	if r := x.keeper("status"); r.code != 0 || strings.Contains(r.String(), "old bs") {
 		t.Fatalf("still warned once toy-9 ended:\n%s", r)
 	}

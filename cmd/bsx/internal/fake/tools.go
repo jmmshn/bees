@@ -187,7 +187,7 @@ func (g *GH) Run(ctx context.Context, _ string, argv ...string) ([]byte, error) 
 		"isCrossRepository": pr.Fork != "", "maintainerCanModify": pr.MaintainerCanModify,
 		"headRepository": map[string]string{"nameWithOwner": cmp.Or(pr.Fork, repo)},
 	}
-	cs, rs := []any{}, []any{}
+	cs, rs := []any{}, []any{} // gh says [] for none, never null
 	for _, c := range pr.Comments {
 		cs = append(cs, map[string]any{"author": map[string]string{"login": c.Author}, "body": c.Body, "createdAt": c.At.UTC().Format(time.RFC3339)})
 	}

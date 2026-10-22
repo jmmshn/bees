@@ -46,7 +46,7 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 		return logbook.Done{}, exit(ExitRefused, "", nil, bsname.Cmd+" done is a worker's handoff; %s is a queen", who.Name)
 	}
 	if who.Spawn == "" {
-		return logbook.Done{}, exit(ExitRefused, bsname.Cmd+" status", nil, bsname.Cmd+" done: no open spawn for %s", who.Name)
+		return logbook.Done{}, exit(ExitRefused, bsname.Cmd+" status", nil, "no open spawn for %s", who.Name)
 	}
 	sp, err := c.Logbook.Spawn(ctx, who.Spawn)
 	if err != nil {
@@ -134,12 +134,11 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 	if len(failed) > 0 {
 		return d, exit(ExitHandoff, "fix it, then "+bsname.Cmd+" done again", nil, "%d handoff checks failed:\n  %s", len(failed), strings.Join(failed, "\n  "))
 	}
-	if d.ID, err = c.Logbook.RecordDone(ctx, d); err != nil {
-		return d, err
-	}
+	var landed *logbook.Landed
 	if !slices.ContainsFunc(e.Parts, func(p goal.Part) bool { return !p.AtHandoff }) {
-		err = c.Logbook.RecordLanded(ctx, sp.ID, sp.Name, sp.Name, logbook.Landed{By: "done"})
+		landed = &logbook.Landed{By: "done"}
 	}
+	d.ID, err = c.Logbook.RecordDone(ctx, d, landed)
 	return d, err
 }
 
@@ -235,6 +234,10 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 		return exit(ExitRefused, bsname.Cmd+" status", nil, "no worker %s", name)
 	case sp.Ended:
 		return exit(ExitRefused, bsname.Cmd+" prune", nil, "%s has already ended", name)
+	case sp.Herdr.Session == logbook.DefaultSession:
+		// A spawn there (every legacy one) is a real worker of the shared bs: its workspace
+		// and pid are not a toy's to close or signal.
+		return exit(ExitRefused, "", nil, "%s runs on herdr's default session, which is bs's until the swap (bees-13.9)", name)
 	}
 	e, err := c.Logbook.Goal(ctx, sp)
 	if err != nil {

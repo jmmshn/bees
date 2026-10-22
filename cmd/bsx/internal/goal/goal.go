@@ -69,11 +69,17 @@ func (g Goal) String() string {
 	return strings.Join(s, " ")
 }
 
+// The goal types never given at spawn.
+const (
+	LegacyType  = "legacy"  // what a spawn recorded before goals reads as
+	DiscardType = "discard" // what a keeper's discard amends a goal to
+)
+
 // Legacy is the goal a spawn recorded before goals reads as.
-func Legacy() Goal { return Goal{Parts: []Part{resolve("legacy", "", "")}} }
+func Legacy() Goal { return Goal{Parts: []Part{resolve(LegacyType, "", "")}} }
 
 // IsLegacy reports whether g is Legacy.
-func (g Goal) IsLegacy() bool { return len(g.Parts) == 1 && g.Parts[0].Type == "legacy" }
+func (g Goal) IsLegacy() bool { return len(g.Parts) == 1 && g.Parts[0].Type == LegacyType }
 
 // The built-in checks. Each names one fact bs finds (Rule D).
 const (
@@ -97,7 +103,8 @@ const (
 	BranchMerged      = "branch_merged"       // the branch is merged into its base
 )
 
-// builtins are the built-in checks, for IsCheck.
+// builtins are the built-in checks, for IsCheck; TestEveryCheckAGoalRunsIsBuiltIn keeps
+// it in step with the goal table.
 var builtins = []string{NoBackground, PRExists, PROpen, PRNotDraft, PRWorkspaceCommit, PRPushed, PRCurrent,
 	CIGreen, PRMerged, PRClosed, PushMoved, ReviewComment, VerdictGiven, NoteChanged, BeadCreated, BranchAhead,
 	Clean, BranchMerged}
@@ -113,7 +120,7 @@ func BuiltinTypes() []string {
 // IsType reports whether name is a built-in goal type, or one never given at spawn.
 func IsType(name string) bool {
 	_, ok := types[name]
-	return ok || name == "legacy" || name == "discard"
+	return ok || name == LegacyType || name == DiscardType
 }
 
 // prHandoff is what bs checks of each handed-off PR for pr and pr:ready.
@@ -161,7 +168,7 @@ func resolve(typ, state, target string) Part {
 		p.Handoff, p.Complete, p.Prune = []string{BranchAhead, Clean}, []string{BranchMerged}, []string{BranchMerged}
 	case "branch:ready":
 		p.Handoff, p.AtHandoff, p.Prune = []string{BranchAhead, Clean}, true, []string{BranchMerged}
-	case "legacy:":
+	case LegacyType + ":":
 		p.Prune = []string{BranchMerged}
 	}
 	p.Handoff = slices.Clip(p.Handoff)
@@ -192,7 +199,7 @@ func Parse(values []string) (Goal, error) {
 		typ, state, _ := strings.Cut(head, ":")
 		t, ok := types[typ]
 		switch {
-		case typ == "legacy", typ == "discard":
+		case typ == LegacyType, typ == DiscardType:
 			errs = append(errs, fmt.Errorf("%w %q: %s is never given at spawn", ErrBad, v, typ))
 		case !ok:
 			errs = append(errs, fmt.Errorf("%w %q: no goal type %q (built in: pr, push, review, verdict, note, beads, branch; custom types arrive with bees-13.11)", ErrBad, v, typ))

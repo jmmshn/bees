@@ -40,7 +40,8 @@ type CLHost struct {
 type clChange struct {
 	port.Change
 	CI     []port.CICheck
-	landed string // the trunk commit it landed as
+	next   *[]port.CICheck // replaces CI once CI has answered (CLHost.Next)
+	landed string          // the trunk commit it landed as
 }
 
 type clMade struct {
@@ -229,7 +230,20 @@ func (h *CLHost) CI(_ context.Context, dir string, c port.Change) ([]port.CIChec
 	if err := h.offlineIn(dir); err != nil {
 		return nil, err
 	}
-	return slices.Clone(h.change(c).CI), nil
+	ch := h.change(c)
+	out := slices.Clone(ch.CI)
+	if ch.next != nil {
+		ch.CI, ch.next = *ch.next, nil
+	}
+	return out, nil
+}
+
+// Next replaces change n's CI once CI has answered with it as it is: a run that finishes
+// after bs has seen it pending.
+func (h *CLHost) Next(n int, ci []port.CICheck) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.changes[n].next = &ci
 }
 
 func (h *CLHost) BaseCI(context.Context, string, port.Change) (int, error) {

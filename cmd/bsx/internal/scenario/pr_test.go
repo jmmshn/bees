@@ -79,7 +79,7 @@ type backend interface {
 	open(x *toy, n int, dir, head string, draft bool) string // publish dir's head as change n
 	update(x *toy, n int, dir string)                        // push dir's head onto change n
 	ci(x *toy, n int, buckets ...string)                     // pass, fail or pending
-	ciLater(x *toy, n int, after time.Duration, buckets ...string)
+	ciLater(x *toy, n int, buckets ...string)                // CI as given once bs has seen it as it is
 	baseChecks(x *toy, k int)
 	behind(x *toy)           // trunk moves on elsewhere
 	sync(x *toy, dir string) // bring trunk into dir, with a commit
@@ -130,12 +130,14 @@ func (ghBackend) ci(x *toy, n int, buckets ...string) {
 	}
 	ci(states...)(x.gh.PRs[ghBackend{}.url(n)])
 }
-func (ghBackend) ciLater(x *toy, n int, after time.Duration, buckets ...string) {
+func (ghBackend) ciLater(x *toy, n int, buckets ...string) {
 	var states []string
 	for _, b := range buckets {
 		states = append(states, map[string]string{"pass": "SUCCESS", "fail": "FAILURE", "pending": "PENDING"}[b])
 	}
-	time.AfterFunc(after, func() { x.gh.Edit(ghBackend{}.url(n), ci(states...)) })
+	var next fake.PR
+	ci(states...)(&next)
+	x.gh.Edit(ghBackend{}.url(n), func(pr *fake.PR) { pr.Next = &next.CI })
 }
 func (ghBackend) baseChecks(x *toy, k int) { x.gh.BaseChecks = map[string]int{"main": k} }
 func (ghBackend) behind(x *toy) {
@@ -187,8 +189,12 @@ func (b *clBackend) ci(_ *toy, n int, buckets ...string) {
 		}
 	})
 }
-func (b *clBackend) ciLater(x *toy, n int, after time.Duration, buckets ...string) {
-	time.AfterFunc(after, func() { b.ci(x, n, buckets...) })
+func (b *clBackend) ciLater(_ *toy, n int, buckets ...string) {
+	var next []port.CICheck
+	for i, s := range buckets {
+		next = append(next, port.CICheck{Name: fmt.Sprintf("job%d", i+1), Bucket: s})
+	}
+	b.h.Next(n, next)
 }
 func (b *clBackend) baseChecks(_ *toy, k int) { b.h.BaseChecks = k }
 func (b *clBackend) behind(*toy)              { b.h.Trunk() }
@@ -451,10 +457,10 @@ func TestDoneWaitsForCI(t *testing.T) {
 		must(t, x.worker("toy-1", 1, "done", "--pr", url), 10, "next: bs done --wait")
 		must(t, x.worker("toy-1", 2, "done", "--wait", "--timeout", "1s", "--pr", url), 11, "still pending after 1s", "pending: job1")
 		must(t, x.worker("toy-1", 3, "done", "--wait", "--timeout", "20m", "--pr", url), 2, "at most 9m0s")
-		b.ciLater(x, 1, 300*time.Millisecond, "pass", "fail")
+		b.ciLater(x, 1, "pass", "fail")
 		must(t, x.worker("toy-1", 4, "done", "--wait", "--pr", url), 7, "failing: job2", "still pending (")
 		b.ci(x, 1, "pending")
-		b.ciLater(x, 1, 300*time.Millisecond, "pass")
+		b.ciLater(x, 1, "pass")
 		must(t, x.worker("toy-1", 5, "handoff", "--pr", url), 0, "handed off to queen-toy") // handoff is done --wait
 		b.ci(x, 1, "pending")
 		must(t, x.keeper("check", "toy-1"), 10, "FAIL ci_green", "pending: job1")

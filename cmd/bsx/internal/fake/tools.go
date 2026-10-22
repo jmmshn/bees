@@ -64,6 +64,9 @@ type PR struct {
 	// Stale keeps the head GitHub last saw: it lags a push by a few seconds (probed live,
 	// bees-13.6).
 	Stale bool
+	// Next, when set, replaces CI once gh pr checks has answered with CI as it is: a CI run
+	// that finishes after bs has seen it pending, however slow the machine.
+	Next *[]Check
 }
 
 // Check is one CI check of a PR.
@@ -197,6 +200,11 @@ func (g *GH) Run(_ context.Context, _ string, argv ...string) ([]byte, error) {
 			return nil, ghFail(argv, fmt.Sprintf("no checks reported on the '%s' branch", pr.Head))
 		}
 		var out []map[string]string
+		defer func() {
+			if pr.Next != nil {
+				pr.CI, pr.Next = *pr.Next, nil
+			}
+		}()
 		for _, c := range pr.CI {
 			row := map[string]string{}
 			for _, f := range strings.Split(want, ",") {

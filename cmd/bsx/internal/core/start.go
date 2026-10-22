@@ -7,6 +7,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 	"github.com/jmmshn/bees/cmd/bsx/internal/herdr"
 	"github.com/jmmshn/bees/cmd/bsx/internal/logbook"
 	"github.com/jmmshn/bees/cmd/bsx/internal/port"
@@ -21,30 +22,30 @@ import (
 // nothing (bees-12.33); any other herdr error still looks for the harness for
 // Timing.AfterErr, since herdr can give up while it runs (bees-12.49, adopted).
 func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch) error {
-	next := "bs end " + sp.Name + " --incomplete"
+	next := bsname.Cmd + " end " + sp.Name + " --incomplete"
 	args, err := c.writeFiles(sp.Name, l)
 	if err != nil {
-		return exit(ExitStart, next, err, "bs spawn %s: couldn't write its start files", sp.Name)
+		return exit(ExitStart, next, err, "%s: couldn't write its start files", sp.Name)
 	}
 	if err := herdr.CheckAgentArgs(args); err != nil {
-		return exit(ExitStart, next, err, "bs spawn %s: the launch can't be typed into a pane", sp.Name)
+		return exit(ExitStart, next, err, "%s: the launch can't be typed into a pane", sp.Name)
 	}
 	// A harness already in the pane: this worker's own is adopted; any other would get a
 	// twin beside it (motif 7). A pane bs can't look into starts nothing.
 	switch p, ok, err := c.own(ctx, sp); {
 	case err != nil:
-		return exit(ExitStart, next, err, "bs spawn %s: can't tell whether pane %s already runs %s", sp.Name, sp.Herdr.Pane, c.Harness.Kind())
+		return exit(ExitStart, next, err, "%s: can't tell whether pane %s already runs %s", sp.Name, sp.Herdr.Pane, c.Harness.Kind())
 	case ok:
 		if _, _, err := c.recordStart(ctx, sp, p, false); err != nil {
-			return exit(ExitStart, next, err, "bs spawn %s: its start (pid %d) couldn't be recorded", sp.Name, p.PID)
+			return exit(ExitStart, next, err, "%s: its start (pid %d) couldn't be recorded", sp.Name, p.PID)
 		}
 		return nil
 	}
 	switch p, ok, err := c.harnessIn(ctx, sp); {
 	case err != nil:
-		return exit(ExitStart, next, err, "bs spawn %s: can't tell whether pane %s already runs %s", sp.Name, sp.Herdr.Pane, c.Harness.Kind())
+		return exit(ExitStart, next, err, "%s: can't tell whether pane %s already runs %s", sp.Name, sp.Herdr.Pane, c.Harness.Kind())
 	case ok:
-		return exit(ExitStart, next, nil, "bs spawn %s: pane %s already runs %s (pid %d), which bs has no start of: a second would be its twin", sp.Name, sp.Herdr.Pane, c.Harness.Kind(), p.PID)
+		return exit(ExitStart, next, nil, "%s: pane %s already runs %s (pid %d), which bs has no start of: a second would be its twin", sp.Name, sp.Herdr.Pane, c.Harness.Kind(), p.PID)
 	}
 	t := c.timing()
 	wctx, cancel := context.WithCancel(ctx)
@@ -65,7 +66,7 @@ func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch) erro
 		if got := <-seen; got.pid != 0 {
 			return got.err // seen all the same: recorded
 		}
-		return exit(ExitStart, next, startErr, "bs spawn %s: herdr started nothing", sp.Name)
+		return exit(ExitStart, next, startErr, "%s: herdr started nothing", sp.Name)
 	case startErr != nil:
 		timer := time.AfterFunc(t.AfterErr, cancel)
 		defer timer.Stop()
@@ -73,9 +74,9 @@ func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch) erro
 	got := <-seen
 	switch {
 	case got.pid == 0:
-		return exit(ExitStart, next, errors.Join(startErr, got.err), "bs spawn %s: start unconfirmed: no %s named %s in pane %s", sp.Name, c.Harness.Kind(), sp.Name, sp.Herdr.Pane)
+		return exit(ExitStart, next, errors.Join(startErr, got.err), "%s: start unconfirmed: no %s named %s in pane %s", sp.Name, c.Harness.Kind(), sp.Name, sp.Herdr.Pane)
 	case got.err != nil:
-		return exit(ExitStart, next, got.err, "bs spawn %s: its start (pid %d) couldn't be recorded", sp.Name, got.pid)
+		return exit(ExitStart, next, got.err, "%s: its start (pid %d) couldn't be recorded", sp.Name, got.pid)
 	case startErr != nil:
 		c.warn("herdr said %v, but %s started all the same (pid %d): adopted", startErr, sp.Name, got.pid)
 	}
@@ -146,6 +147,10 @@ func (c *Core) watch(ctx context.Context, sp logbook.Spawn, deadline time.Time) 
 // kind with --name sp.Name in its argv, as every launch of it has. A pane herdr no longer
 // knows holds none.
 func (c *Core) own(ctx context.Context, sp logbook.Spawn) (proc.Process, bool, error) {
+	kind, err := c.kindOf(sp)
+	if err != nil {
+		return proc.Process{}, false, err
+	}
 	pi, err := c.herdr(sp.Herdr.Session).ProcessInfo(ctx, sp.Herdr.Pane)
 	if errors.Is(err, herdr.ErrPaneGone) {
 		return proc.Process{}, false, nil
@@ -153,7 +158,7 @@ func (c *Core) own(ctx context.Context, sp logbook.Spawn) (proc.Process, bool, e
 		return proc.Process{}, false, err
 	}
 	for _, p := range pi.Foreground {
-		if p.Name != c.Harness.Kind() || !named(p.Argv, sp.Name) {
+		if p.Name != kind || !named(p.Argv, sp.Name) {
 			continue
 		}
 		start, err := c.Proc.Start(p.PID)
@@ -167,6 +172,10 @@ func (c *Core) own(ctx context.Context, sp logbook.Spawn) (proc.Process, bool, e
 
 // harnessIn finds any foreground process of the harness's kind in sp's pane.
 func (c *Core) harnessIn(ctx context.Context, sp logbook.Spawn) (proc.Process, bool, error) {
+	kind, err := c.kindOf(sp)
+	if err != nil {
+		return proc.Process{}, false, err
+	}
 	pi, err := c.herdr(sp.Herdr.Session).ProcessInfo(ctx, sp.Herdr.Pane)
 	if errors.Is(err, herdr.ErrPaneGone) {
 		return proc.Process{}, false, nil
@@ -174,7 +183,7 @@ func (c *Core) harnessIn(ctx context.Context, sp logbook.Spawn) (proc.Process, b
 		return proc.Process{}, false, err
 	}
 	for _, p := range pi.Foreground {
-		if p.Name == c.Harness.Kind() {
+		if p.Name == kind {
 			return proc.Process{PID: p.PID}, true, nil
 		}
 	}
@@ -203,7 +212,7 @@ func (c *Core) recordStart(ctx context.Context, sp logbook.Spawn, p proc.Process
 // probe fails is an error and writes nothing; one that finds nothing is ok false.
 func (c *Core) StartOf(ctx context.Context, sp logbook.Spawn) (logbook.Start, bool, error) {
 	st, ok, err := c.Logbook.LatestStart(ctx, sp.ID)
-	if err != nil || ok || sp.Ended || c.Harness == nil {
+	if err != nil || ok || sp.Ended {
 		return st, ok, err
 	}
 	p, found, err := c.own(ctx, sp)

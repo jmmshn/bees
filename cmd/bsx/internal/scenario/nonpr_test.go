@@ -40,7 +40,7 @@ func TestOnlyAVerdictTakesAReport(t *testing.T) {
 	x.spawn("toy-1", "note")
 	must(t, x.worker("toy-1", 1, "done", "--report", "see scratch/report.md"), 2, "takes no --answer or --report", "bd update toy-1 --append-notes")
 	x.spawn("toy-2", "branch")
-	must(t, x.worker("toy-2", 1, "done", "--answer", "yes"), 2, "takes no --answer or --report", "bs send queen-toy")
+	must(t, x.worker("toy-2", 1, "done", "--answer", "yes"), 2, "takes no --answer or --report", "bsx send queen-toy")
 }
 
 // A note goal needs the bead's notes or design changed since spawn: other fields, a

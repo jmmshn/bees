@@ -62,13 +62,15 @@ func (Harness) Kind() string { return "claude" }
 // Dir is the state dir of session name.
 func (h Harness) Dir(name string) string { return filepath.Join(h.State, name) }
 
-// Prepare is pure: the argv names the session and its state dir. A worker's guards are
-// a per-start file, deny.json, as claude_code's are its settings file.
+// Prepare is pure: the argv names the session and its state dir; Record keeps the state
+// dir and the PATH dirs it was given, for tests to read back from the spawned entry. A
+// worker's guards are a per-start file, deny.json, as claude_code's are its settings file.
 func (h Harness) Prepare(st port.Start) (port.Launch, error) {
 	if st.Name == "" {
 		return port.Launch{}, errors.New("beesfake: no name")
 	}
-	l := port.Launch{Args: []string{"--name", st.Name, "--state", h.Dir(st.Name)}, Record: map[string]string{"state": h.Dir(st.Name)}}
+	l := port.Launch{Args: []string{"--name", st.Name, "--state", h.Dir(st.Name)},
+		Record: map[string]string{"state": h.Dir(st.Name), "path": strings.Join(st.Path, ":")}}
 	if st.Role == port.Worker {
 		b, err := json.Marshal(st.Deny)
 		if err != nil {

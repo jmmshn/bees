@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 	"github.com/jmmshn/bees/cmd/bsx/internal/goal"
 	"github.com/jmmshn/bees/cmd/bsx/internal/logbook"
 	"github.com/jmmshn/bees/cmd/bsx/internal/port"
@@ -111,7 +112,7 @@ func (k *look) prCheck(ctx context.Context, p goal.Part, name string) (bool, str
 		return false, "", err
 	}
 	if len(refs) == 0 {
-		return false, "no PR handed off: bs done --pr <url>", nil
+		return false, "no PR handed off: " + bsname.Cmd + " done --pr <url>", nil
 	}
 	var fails, oks []string
 	allPending := true

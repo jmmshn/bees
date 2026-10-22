@@ -46,6 +46,13 @@ func Beesfake(t testing.TB) string {
 	return build.path
 }
 
+// RemoveBuild removes Beesfake's build: a TestMain's, after its tests ran.
+func RemoveBuild() {
+	if build.path != "" {
+		os.RemoveAll(filepath.Dir(build.path))
+	}
+}
+
 // Harness is the harness adapter for beesfake: kind claude, a state dir per session
 // under State (short, so its socket path fits sun_path).
 type Harness struct{ State string }
@@ -111,6 +118,9 @@ func (h Harness) Await(t testing.TB, name string, n int) Result {
 			var r Result
 			if err := json.Unmarshal([]byte(lines[n-1]), &r); err != nil {
 				t.Fatal(err)
+			}
+			if r.PID > 0 && r.Step[0] != "kill" { // a child, detached ones too: the test's to end
+				t.Cleanup(func() { _ = syscall.Kill(r.PID, syscall.SIGKILL) })
 			}
 			return r
 		}

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,9 +19,10 @@ import (
 // fake herdr whose socket is a file of the test's.
 type doctorRig struct {
 	*rig
-	bin    string
-	herdr  *fake.Herdr
-	socket string
+	bin     string
+	herdr   *fake.Herdr
+	socket  string
+	cantRun string // a subcommand (auth, where) whose run fails before it starts
 }
 
 func newDoctorRig(t *testing.T) *doctorRig {
@@ -60,10 +62,29 @@ func (r *doctorRig) stub(name, body string) {
 // doctor runs bsx doctor in the repo, with extra env.
 func (r *doctorRig) doctor(extra ...string) (int, string) {
 	r.t.Helper()
+	return r.doctorIn(r.repo, extra...)
+}
+
+// cantStart fails a command whose argv[1] is sub as if it never started: not an exit.
+type cantStart struct {
+	port.Runner
+	sub string
+}
+
+func (c cantStart) Run(ctx context.Context, dir string, argv ...string) ([]byte, error) {
+	if c.sub != "" && len(argv) > 1 && argv[1] == c.sub {
+		return nil, errors.New("fork/exec: resource temporarily unavailable")
+	}
+	return c.Runner.Run(ctx, dir, argv...)
+}
+
+// doctorIn runs bsx doctor in dir, with extra env.
+func (r *doctorRig) doctorIn(dir string, extra ...string) (int, string) {
+	r.t.Helper()
 	var out, errb bytes.Buffer
-	ports := Ports{Run: fake.Commands{Herdr: r.herdr, Real: port.Exec{}}, CacheDir: filepath.Join(r.home, "cache"),
+	ports := Ports{Run: cantStart{fake.Commands{Herdr: r.herdr, Real: port.Exec{}}, r.cantRun}, CacheDir: filepath.Join(r.home, "cache"),
 		NewHarness: func(string, string) port.Harness { return claude.Adapter{} }}
-	code := Run(context.Background(), Env{Vars: append(append([]string{}, r.env...), extra...), Dir: r.repo, Self: os.Getpid()}, ports, []string{"doctor"}, &out, &errb)
+	code := Run(context.Background(), Env{Vars: append(append([]string{}, r.env...), extra...), Dir: dir, Self: os.Getpid()}, ports, []string{"doctor"}, &out, &errb)
 	return code, out.String() + errb.String()
 }
 
@@ -94,6 +115,12 @@ func TestDoctorPasses(t *testing.T) {
 	if _, out := r.doctor(); !strings.Contains(out, "WARN gh: "+filepath.Join(r.bin, "gh")+" 2.80.0, but not logged in") {
 		t.Errorf("gh logged out:\n%s", out)
 	}
+	// Rule G: gh that couldn't run is never "not logged in".
+	r.cantRun = "auth"
+	if _, out := r.doctor(); !strings.Contains(out, "WARN gh: "+filepath.Join(r.bin, "gh")+" 2.80.0, but gh auth status couldn't run") {
+		t.Errorf("gh auth status can't run:\n%s", out)
+	}
+	r.cantRun = ""
 	os.Remove(filepath.Join(r.bin, "gh"))
 	if _, out := r.doctor(); !strings.Contains(out, "WARN gh: gh is not on PATH: install it") {
 		t.Errorf("no gh:\n%s", out)
@@ -114,10 +141,22 @@ func TestDoctorHerdrServer(t *testing.T) {
 	if _, out := r.doctor(); !strings.Contains(out, "WARN herdr session toy: herdr says its server needs a restart") {
 		t.Errorf("restart needed:\n%s", out)
 	}
-	r.herdr.ServerVersion, r.herdr.Incompatible = "0.9.3", true
-	if code, out := r.doctor(); code != 1 || !strings.Contains(out, "FAIL herdr session toy: client 0.9.5 can't talk to server 0.9.3") {
-		t.Errorf("incompatible: exit %d\n%s", code, out)
+	// 0.9.5 says server_binary_stale with no restart needed.
+	r.herdr.RestartNeeded, r.herdr.BinaryStale = false, true
+	if _, out := r.doctor(); !strings.Contains(out, "WARN herdr session toy: herdr says its server runs a stale binary") {
+		t.Errorf("stale binary:\n%s", out)
 	}
+	r.herdr.BinaryStale = false
+	// Each protocol alone fails (motif 13: the fake reports them apart, as herdr does).
+	r.herdr.ServerVersion, r.herdr.EndpointIncompatible = "0.9.3", true
+	if code, out := r.doctor(); code != 1 || !strings.Contains(out, "FAIL herdr session toy: client 0.9.5 can't reach server 0.9.3's endpoint") {
+		t.Errorf("endpoint incompatible: exit %d\n%s", code, out)
+	}
+	r.herdr.EndpointIncompatible, r.herdr.ProtocolIncompatible = false, true
+	if code, out := r.doctor(); code != 1 || !strings.Contains(out, "FAIL herdr session toy: client 0.9.5 doesn't speak server 0.9.3's private protocol: restart the server (herdr --session toy server stop") {
+		t.Errorf("private protocol incompatible: exit %d\n%s", code, out)
+	}
+	r.herdr.ProtocolIncompatible = false
 	r.herdr.Down = true
 	if code, out := r.doctor(); code != 1 || !strings.Contains(out, "FAIL herdr session toy: server not running (socket "+r.socket+"): start it with this build first on its PATH, PATH=") {
 		t.Errorf("down: exit %d\n%s", code, out)
@@ -155,22 +194,45 @@ func TestDoctorSocketModes(t *testing.T) {
 	}
 }
 
-// Tools missing or too old fail, naming the oldest bs works with; so does a cmd: check's
-// argv[0] not on PATH.
+// Tools missing or too old fail, naming the oldest bs works with. A config argv[0] not on
+// PATH is a WARN while bsx doesn't read its key (checks: bees-13.11), and a relative one
+// is found from the repo top, wherever doctor runs.
 func TestDoctorTools(t *testing.T) {
 	r := newDoctorRig(t)
 	r.stub("claude", `echo "2.1.200 (Claude Code)"`)
 	os.Remove(filepath.Join(r.bin, "bd"))
-	r.write("config.toml", "[paths]\nlogbook_dir = \""+r.logbook+"\"\n[checks.sent]\nrun = [\"cl-status\", \"{name}\"]\n")
-	code, out := r.doctor()
+	r.write("config.toml", "[paths]\nlogbook_dir = \""+r.logbook+"\"\n[checks.sent]\nrun = [\"cl-status\", \"{name}\"]\n[checks.local]\nrun = [\"./scripts/chk\"]\n")
+	if err := os.MkdirAll(filepath.Join(r.repo, "scripts"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(r.repo, "scripts", "chk"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(r.repo, "sub")
+	if err := os.Mkdir(sub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	code, out := r.doctorIn(sub)
 	if code != 1 {
 		t.Errorf("exit %d", code)
 	}
 	wantIn(t, out, "FAIL harness claude_code: "+filepath.Join(r.bin, "claude")+" 2.1.200 is older than 2.1.296",
-		"FAIL bd: bd is not on PATH", "FAIL checks.sent.run: cl-status is not on PATH")
+		"FAIL bd: bd is not on PATH", "WARN checks.sent.run: cl-status is not on this shell's PATH (a check runs on the PATH of the bsx that runs it", "bsx doesn't read checks.sent.run yet")
+	if strings.Contains(out, "checks.local.run: ") || strings.Contains(out, "FAIL checks") {
+		t.Errorf("./scripts/chk from the repo top, or an unread key failed:\n%s", out)
+	}
 	r.stub("cl-status", "exit 0")
-	if _, out := r.doctor(); !strings.Contains(out, "ok   commands: 1 argv in the config, each argv[0] on PATH") {
+	if _, out := r.doctor(); !strings.Contains(out, "ok   commands: 2 argv in the config, each argv[0] on this shell's PATH") {
 		t.Errorf("with cl-status:\n%s", out)
+	}
+}
+
+// Rule G: bd that couldn't run is never "no store".
+func TestDoctorBdCantRun(t *testing.T) {
+	r := newDoctorRig(t)
+	r.cantRun = "where"
+	if code, out := r.doctor(); code != 1 || !strings.Contains(out, "FAIL bd: "+filepath.Join(r.bin, "bd")+" 1.1.2, but bd where couldn't run from "+r.repo) {
+		t.Errorf("exit %d\n%s", code, out)
 	}
 }
 
@@ -201,15 +263,19 @@ func TestDoctorFailsAKindSpawnRefuses(t *testing.T) {
 	}
 }
 
-// With the project refused, doctor says which checks it skipped (Rule G), and a flag it
-// doesn't know is a refusal, exit 2.
+// With the project refused, doctor says which checks it skipped (Rule G).
 func TestDoctorSaysWhatItSkipped(t *testing.T) {
 	r := newDoctorRig(t)
 	code, out := r.doctor("BS_PROJECT=bees")
 	if code != 1 {
 		t.Errorf("exit %d", code)
 	}
-	wantIn(t, out, "FAIL project: BS_PROJECT=bees", "skip project: project, workspace and logbook dir", "skip project: gh and the GitHub remote")
+	wantIn(t, out, "FAIL project: BS_PROJECT=bees", "skip project: project, workspace and logbook dir", "skip review and commands: gh and the GitHub remote")
+}
+
+// A flag a command doesn't know is a refusal, exit 2, never a failure.
+func TestUnknownFlagIsRefusal(t *testing.T) {
+	r := newRig(t)
 	for _, args := range [][]string{{"config", "init", "--bogus"}, {"inbox", "--bogus"}} {
 		if code, _, stderr := r.run(r.repo, nil, args...); code != 2 || !strings.Contains(stderr, "flag provided but not defined") {
 			t.Errorf("%v: exit %d %s", args, code, stderr)

@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 )
 
 // DefaultSession is the herdr session a pane without HERDR_SESSION is on.
@@ -304,7 +306,7 @@ func (l *Loaded) Fields() []Field {
 	for _, f := range leaves(reflect.ValueOf(&l.Config).Elem(), "") {
 		scope, unread := f.tag.Get("scope"), ""
 		if bead, ok := f.tag.Lookup("unread"); ok {
-			unread = "not read by bsx yet"
+			unread = "not read by " + bsname.Cmd + " yet"
 			if bead != "" {
 				unread += " (" + bead + ")"
 			}

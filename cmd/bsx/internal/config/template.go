@@ -58,8 +58,11 @@ func Template(scope string, set map[string]string) (string, error) {
 			table, key = f.key[:i], f.key[i+1:]
 		}
 		unread := ""
-		if bead := f.tag.Get("unread"); bead != "" {
-			unread = " (not read by " + bsname.Cmd + " yet: " + bead + ")"
+		if bead, ok := f.tag.Lookup("unread"); ok {
+			unread = " (not read by " + bsname.Cmd + " yet)"
+			if bead != "" {
+				unread = " (not read by " + bsname.Cmd + " yet: " + bead + ")"
+			}
 		}
 		if f.table() {
 			fmt.Fprintf(&b, "\n# %s%s\n", f.tag.Get("doc"), unread)

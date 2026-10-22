@@ -45,7 +45,8 @@ type Ports struct {
 	Exec func(dir string, env, argv []string) error
 }
 
-const usage = `usage: bsx <command> [flags] [arguments]   (flags before arguments)
+// usage says {cmd} for the command a reader runs.
+var usage = strings.ReplaceAll(`usage: {cmd} <command> [flags] [arguments]   (flags before arguments)
 
 bsx is the ADR-0010 rebuild of bs; until the swap (bees-13.9) it runs only on a
 herdr --session server, on that session's config (~/.config/bees/sessions/<session>).
@@ -64,8 +65,8 @@ commands:
   status                                                   list workers and their goals
   config                                                   every setting and where it came from
   config  init [--project] [--harness H] [--logbook-dir D] [--repos D] [--worktrees D] [--workspace K] [--repo D]   write a commented config file
-  doctor                                                   check what bsx needs
-`
+  doctor                                                   check what {cmd} needs
+`, "{cmd}", bsname.Cmd)
 
 // Run runs bsx args for env on ports, printing to stdout and stderr, and returns the exit
 // code.
@@ -76,7 +77,7 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 	}
 	cmd, ok := commands[args[0]]
 	if !ok {
-		fmt.Fprintf(stderr, "bsx: unknown command %q\n\n%s", args[0], usage)
+		fmt.Fprintf(stderr, bsname.Cmd+": unknown command %q\n\n%s", args[0], usage)
 		return core.ExitRefused
 	}
 	s, err := load(ctx, env, ports)
@@ -88,11 +89,11 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 			if s.Missing && len(args) > 1 && args[0] == "config" && args[1] == "init" {
 				continue // config init writes the missing dir
 			}
-			fmt.Fprintf(stderr, "bsx %s: warning: %s\n", args[0], w)
+			fmt.Fprintf(stderr, bsname.Cmd+" %s: warning: %s\n", args[0], w)
 		}
 	}
 	if err != nil { // a bad file or a refused dir: refused before anything changed
-		fmt.Fprintf(stderr, "bsx %s: %v\n", args[0], err)
+		fmt.Fprintf(stderr, bsname.Cmd+" %s: %v\n", args[0], err)
 		var x *core.Exit
 		if errors.As(err, &x) {
 			return x.Code
@@ -100,7 +101,7 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 		return core.ExitRefused
 	}
 	if s.Missing && cmd.logbook { // the defaults would name the real logbook (bees-12.26)
-		fmt.Fprintf(stderr, "bsx %s: refused: %v %s, so bsx won't guess a logbook; nothing was read or written\n", args[0], errNoConfigDir, s.Session)
+		fmt.Fprintf(stderr, bsname.Cmd+" %s: refused: %v %s, so "+bsname.Cmd+" won't guess a logbook; nothing was read or written\n", args[0], errNoConfigDir, s.Session)
 		return core.ExitRefused
 	}
 	r := &run{ctx: ctx, name: args[0], env: env, s: s, ports: ports, out: stdout, err: stderr}
@@ -142,10 +143,10 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 			Logbook: lb, Project: s.Project, Run: ports.Run, Harness: h, HarnessOf: other, HarnessName: s.Harness,
 			Proc: ports.Proc, Beads: ports.Beads, Repo: s.Repo, Worktrees: s.Worktrees, Kind: kind, KindWhy: why,
 			ConfigDir: s.Dir, CacheDir: ports.CacheDir, Timing: ports.Timing, WorkerPath: s.workerPath(), Guards: s.Guards, PruneIgnore: s.Prune.Ignore, Review: review, VCS: vcs,
-			Warn: func(msg string) { fmt.Fprintf(stderr, "bsx %s: warning: %s\n", args[0], msg) },
+			Warn: func(msg string) { fmt.Fprintf(stderr, bsname.Cmd+" %s: warning: %s\n", args[0], msg) },
 		}
 	}
-	fs := flag.NewFlagSet("bsx "+args[0], flag.ContinueOnError)
+	fs := flag.NewFlagSet(bsname.Cmd+" "+args[0], flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	badFlag := false // flag calls Usage on a flag it can't parse: a refusal, never exit 1
 	fs.Usage = func() { badFlag = true; fs.PrintDefaults() }
@@ -166,7 +167,7 @@ func report(stderr io.Writer, name string, err error) int {
 	if err == nil {
 		return 0
 	}
-	fmt.Fprintf(stderr, "bsx %s: %v\n", name, err)
+	fmt.Fprintf(stderr, bsname.Cmd+" %s: %v\n", name, err)
 	var x *core.Exit
 	switch {
 	case errors.As(err, &x):

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -217,7 +218,7 @@ func TestSpawnRefusesAKindItCantMake(t *testing.T) {
 		if code != 2 {
 			t.Errorf("%q: exit %d %s", body, code, errb.String())
 		}
-		wantIn(t, errb.String(), "bsx makes only git_worktree workspaces yet")
+		wantIn(t, errb.String(), "bsx spawn makes only git_worktree workspaces until bees-13.1")
 	}
 }
 
@@ -347,14 +348,50 @@ func TestConfigInit(t *testing.T) {
 			t.Errorf("%v: exit %d %s", args, code, stderr)
 		}
 	}
-	code, out, stderr = r.run(r.repo, nil, "config", "init", "--project", "--workspace", "none", "--repo", r.repo)
+	// A kind spawn won't make yet is never written (bees-13.10, 13.11).
+	for _, kind := range []string{"none", "command"} {
+		if code, _, stderr := r.run(r.repo, nil, "config", "init", "--project", "--workspace", kind); code != 2 || !strings.Contains(stderr, "until bees-13.1") {
+			t.Errorf("--workspace %s: exit %d %s", kind, code, stderr)
+		}
+	}
+	code, out, stderr = r.run(r.repo, nil, "config", "init", "--project", "--workspace", "git_worktree", "--repo", r.repo)
 	if code != 0 {
 		t.Fatalf("--project: exit %d %s", code, stderr)
 	}
 	project := filepath.Join(r.session, "projects", "mytoy.toml")
 	wantIn(t, out, "wrote "+project)
 	_, out, _ = r.run(r.repo, nil, "config")
-	wantIn(t, out, `workspace.kind = "none"  # project `+project, "# workspace kind: none (workspace.kind, project "+project+")")
+	wantIn(t, out, `workspace.kind = "git_worktree"  # project `+project, "# workspace kind: git_worktree (workspace.kind, project "+project+")")
 	b, _ := os.ReadFile(project)
-	wantIn(t, string(b), "# path = []", `repo = "`+r.repo+`"`)
+	wantIn(t, string(b), "# path = []", `repo = "`+r.repo+`"`, "(not read by bsx yet)")
+}
+
+// Rule G: config init that can't look (the global file it reads over, --repo) refuses
+// with exit 6 and writes nothing, never reading "can't look" as "absent".
+func TestConfigInitCantLook(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root reads a mode-0 file")
+	}
+	r := newRig(t)
+	locked := filepath.Join(t.TempDir(), "locked")
+	if err := os.MkdirAll(filepath.Join(locked, "notes"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	code, _, stderr := r.run(r.repo, nil, "config", "init", "--project", "--repo", filepath.Join(locked, "notes"))
+	if code != 6 || !strings.Contains(stderr, "can't look at --repo") {
+		t.Errorf("--repo under a dir it can't search: exit %d %s", code, stderr)
+	}
+	// load reads the global file first, so initRefusals is called directly.
+	global := filepath.Join(r.session, "config.toml")
+	if err := os.Chmod(global, 0); err != nil {
+		t.Fatal(err)
+	}
+	run := &run{ctx: context.Background(), env: Env{Vars: r.env}, s: &settings{Dir: r.session, Project: "mytoy"}}
+	if err := run.initRefusals("project", nil, ""); !errors.Is(err, os.ErrPermission) {
+		t.Errorf("an unreadable global file: %v, want permission denied", err)
+	}
 }

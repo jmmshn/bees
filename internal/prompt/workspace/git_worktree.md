@@ -6,5 +6,6 @@ Each worker works in its own git worktree, on its own branch named after it.
 <!-- queen -->
 
 - `bs spawn` cuts each worker its own worktree and branch. `bs end <worker>` removes the worktree its spawn recorded and keeps its branch.
+- Once a worker's work is merged, clean up in the same turn, unasked: `bs end` the worker and run `bs prune`. Leave its branch on origin: remote branches are the keeper's.
 - Now and then run `bs prune`: it deletes ended workers' local branches once their work is on main (rebase and squash merges included), never touches remote branches, and says which it kept and why. Report only what its output says.
 - `git branch -d` says unmerged after a rebase or squash merge → the work is on main under other SHAs → use `bs prune`.

@@ -44,6 +44,9 @@ type Ports struct {
 	// Exec replaces bs with argv (argv[0] a path), run in dir with env: bs queen's last
 	// step. It returns only on failure.
 	Exec func(dir string, env, argv []string) error
+	// Revision is the commit bs was built from ("" with no VCS stamp), and Exe the running
+	// binary's path: bs version prints the one, and both decide whether bs is stale.
+	Revision, Exe string
 }
 
 const usage = `usage: bs <command> [flags] [arguments]   (flags before arguments)
@@ -66,6 +69,9 @@ commands:
   config                                                   every setting and where it came from
   config  init [--project] [--harness H] [--logbook-dir D] [--repos D] [--worktrees D] [--workspace K] [--repo D]   write a commented config file
   doctor                                                   check what bs needs
+  epic    <title>                                          create the project's next epic (<project>-<n>)
+  bead    ls [--all] [<bd query>] | new --parent <project>-N [--description D] [--type T] [--priority P] <title>
+  version                                                  print the commit bs was built from
 `
 
 // Run runs bs args for env on ports, printing to stdout and stderr, and returns the exit
@@ -84,6 +90,7 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 	if err != nil && args[0] == "doctor" { // doctor says what broke, and checks the rest
 		s, err = broken(env, err)
 	}
+	warnIfStale(ctx, env, ports, s, stderr)
 	if s != nil {
 		for _, w := range s.Warnings {
 			if s.Missing && len(args) > 1 && args[0] == "config" && args[1] == "init" {
@@ -277,4 +284,7 @@ var commands = map[string]command{
 	"status":  {(*run).status, true},
 	"config":  {(*run).config, false},
 	"doctor":  {(*run).doctor, false},
+	"epic":    {(*run).epic, false},
+	"bead":    {(*run).bead, false},
+	"version": {(*run).version, false},
 }

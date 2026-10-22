@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"syscall"
 
 	"github.com/jmmshn/bees/internal/cli"
@@ -31,7 +32,9 @@ func main() {
 		},
 		CacheDir: filepath.Join(cache, "bees", "bs"),
 		Exec:     execHarness,
+		Revision: revision(),
 	}
+	ports.Exe, _ = os.Executable()
 	dir, _ := os.Getwd() // "" when gone: bs then knows the project only from BS_PROJECT
 	env := cli.Env{Vars: os.Environ(), Dir: dir, Self: os.Getpid(), Stdin: os.Stdin}
 	os.Exit(cli.Run(context.Background(), env, ports, os.Args[1:], os.Stdout, os.Stderr))
@@ -43,4 +46,17 @@ func execHarness(dir string, env, argv []string) error {
 		return err
 	}
 	return syscall.Exec(argv[0], argv, env)
+}
+
+// revision is the commit bs was built from, from Go's VCS stamp (go install in the repo
+// sets it), or "" if there is none.
+func revision() string {
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range bi.Settings {
+			if s.Key == "vcs.revision" {
+				return s.Value
+			}
+		}
+	}
+	return ""
 }

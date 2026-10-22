@@ -24,8 +24,12 @@ import (
 // dropped), then the gate, then every handoff check of the frozen goal (waivers skipped).
 // It stops at the first check that can't run (exit 6), otherwise reports every failure at
 // once (exit 7), and records the done only when all pass, with landed when the goal
-// completes at handoff. force waives the gate and nothing else.
-func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, force bool) (logbook.Done, error) {
+// completes at handoff. CI still running, with nothing else failing, is exit 10; with
+// o.Wait, bs asks the review host again every Timing.CIPoll until CI finishes, then hands
+// off or names what failed, and exit 11 past o.Wait (it runs in the caller's foreground:
+// no background job of the harness's). o.Force waives the gate and nothing else.
+func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts) (logbook.Done, error) {
+	force := o.Force
 	if who.Queen {
 		return logbook.Done{}, exit(ExitRefused, "", nil, "bs done is a worker's handoff; %s is a queen", who.Name)
 	}
@@ -50,21 +54,50 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, force bool
 		return d, err
 	}
 	var failed []string
-	// The gate first: no_background, implicit in every handoff.
-	switch bg, err := c.Background(ctx, sp, self); {
-	case err != nil && force:
-		d.Unchecked = err.Error()
-	case err != nil:
-		return d, exit(ExitCantCheck, "bs done --force", err, "bs done: can't check %s for background work", sp.Name)
-	case len(bg) > 0 && force:
-		d.Background = bg
-	case len(bg) > 0:
-		return d, exit(ExitBackground, "stop it, then bs done again (or bs done --force)", nil, "%s", background(sp.Name, bg))
+	// The gate first: no_background, implicit in every handoff; again after a --wait,
+	// since the worker may have started something meanwhile.
+	gate := func() error {
+		switch bg, err := c.Background(ctx, sp, self); {
+		case err != nil && force:
+			d.Unchecked = err.Error()
+		case err != nil:
+			return exit(ExitCantCheck, "bs done --force", err, "bs done: can't check %s for background work", sp.Name)
+		case len(bg) > 0 && force:
+			d.Background = bg
+		case len(bg) > 0:
+			return exit(ExitBackground, "stop it, then bs done again (or bs done --force)", nil, "%s", background(sp.Name, bg))
+		}
+		return nil
+	}
+	if err := gate(); err != nil {
+		return d, err
 	}
 	d.Checks = append(d.Checks, logbook.CheckResult{Name: goal.NoBackground, Pass: true})
-	rs, cant := c.look(sp, Handed{PRs: d.PRs, Answer: h.Answer, Report: h.Report}).stage(ctx, e, func(p goal.Part) []string { return p.Handoff })
-	if cant != nil {
-		return d, exit(ExitCantCheck, "bs done again once it can run", errors.New(cant.Err), "bs done: check %s couldn't run", cant.Name)
+	deadline, waited := time.Now().Add(o.Wait), false
+	var rs []logbook.CheckResult
+	for {
+		var cant *logbook.CheckResult
+		rs, cant = c.look(sp, Handed{PRs: d.PRs, Answer: h.Answer, Report: h.Report}).stage(ctx, e, func(p goal.Part) []string { return p.Handoff })
+		if cant != nil {
+			return d, exit(ExitCantCheck, "bs done again once it can run", errors.New(cant.Err), "bs done: check %s couldn't run", cant.Name)
+		}
+		if o.Wait <= 0 || !pendingOnly(rs) {
+			break
+		}
+		left := time.Until(deadline)
+		if left <= 0 {
+			return d, exit(ExitWaited, "bs done --wait again, or ask the queen", nil, "bs done --wait: CI still running after %s:\n  %s", o.Wait, strings.Join(pendingLines(rs), "\n  "))
+		}
+		c.warn("CI still running (%s); asking again in %s", strings.Join(pendingLines(rs), "; "), min(c.timing().CIPoll, left).Round(time.Second))
+		if err := sleep(ctx, min(c.timing().CIPoll, left)); err != nil {
+			return d, err
+		}
+		waited = true
+	}
+	if waited {
+		if err := gate(); err != nil {
+			return d, err
+		}
 	}
 	for _, r := range rs {
 		if !r.Pass {
@@ -73,7 +106,7 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, force bool
 	}
 	d.Checks = append(d.Checks, rs...)
 	if pendingOnly(rs) {
-		return d, exit(ExitPending, "bs done again once CI finishes", nil, "bs done: CI is still running, and nothing else failed:\n  %s", strings.Join(failed, "\n  "))
+		return d, exit(ExitPending, "bs done --wait (bs waits for CI, then hands off or names what failed)", nil, "bs done: CI is still running, and nothing else failed:\n  %s", strings.Join(failed, "\n  "))
 	}
 	if len(failed) > 0 {
 		return d, exit(ExitHandoff, "fix it, then bs done again", nil, "bs done: %d handoff checks failed:\n  %s", len(failed), strings.Join(failed, "\n  "))
@@ -85,6 +118,23 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, force bool
 		err = c.Logbook.RecordLanded(ctx, sp.ID, sp.Name, sp.Name, logbook.Landed{By: "done"})
 	}
 	return d, err
+}
+
+// DoneOpts are bs done's flags.
+type DoneOpts struct {
+	Force bool          // waive the gate, and nothing else
+	Wait  time.Duration // wait this long for CI still running; 0 doesn't wait
+}
+
+// pendingLines is each pending result of rs, as bs prints it.
+func pendingLines(rs []logbook.CheckResult) []string {
+	var out []string
+	for _, r := range rs {
+		if r.Pending {
+			out = append(out, r.Name+": "+r.Detail)
+		}
+	}
+	return out
 }
 
 // pendingOnly reports whether rs failed, and only on CI still running.
@@ -495,13 +545,13 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 		return p
 	}
 	release := e.Discarded
-	if !release && slices.Contains(e.Prune(), goal.PRClosed) {
+	if !release && slices.ContainsFunc(e.Parts, func(p goal.Part) bool { return p.Type == "pr" }) {
 		d, _, err := c.Logbook.LatestDone(ctx, sp.ID)
 		if err != nil {
 			return keep(true, "%v", err)
 		}
-		if release, err = c.closedAtTip(ctx, sp, d.PRs); err != nil {
-			return keep(true, "can't tell whether branch %s is a closed draft's head: %v", ws.Branch, err)
+		if release, err = c.heldByChange(ctx, sp, d.PRs, slices.Contains(e.Prune(), goal.PRClosed)); err != nil {
+			return keep(true, "can't tell whether a handed-off change holds branch %s: %v", ws.Branch, err)
 		}
 	}
 	if why, err := c.pruneBranch(ctx, ws, release); err != nil {
@@ -519,13 +569,15 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 	return p
 }
 
-// closedAtTip reports whether one of prs, handed off under a pr:draft goal, was closed
-// unmerged with sp's branch tip as its head: its work then stays on GitHub as that PR,
-// and the local branch holds nothing more.
-func (c *Core) closedAtTip(ctx context.Context, sp logbook.Spawn, prs []string) (bool, error) {
+// heldByChange reports whether one of prs, handed off under a pr goal, holds sp's branch
+// tip among its commits and is merged (or, with closed, closed unmerged): the work is then
+// on the review host, whatever the branch was called there, and the local branch holds
+// nothing more. It catches a squash merge of a branch pushed under another name, which
+// merged's proofs miss.
+func (c *Core) heldByChange(ctx context.Context, sp logbook.Spawn, prs []string, closed bool) (bool, error) {
 	ws := sp.Workspace
-	tip, ok, err := c.VCS.Branch(ctx, ws.Repo, ws.Branch)
-	if err != nil || !ok {
+	tip, err := c.git(ctx, ws.Repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+ws.Branch)
+	if err != nil {
 		return false, err
 	}
 	k := c.look(sp, Handed{})
@@ -538,7 +590,8 @@ func (c *Core) closedAtTip(ctx context.Context, sp logbook.Spawn, prs []string) 
 		if err != nil {
 			return false, err
 		}
-		if v.State == "closed" && v.Head == ws.Branch && v.HeadCommit == tip {
+		done := v.State == "merged" || closed && v.State == "closed"
+		if done && (v.HeadCommit == tip || slices.Contains(v.Commits, tip)) {
 			return true, nil
 		}
 	}
@@ -547,7 +600,7 @@ func (c *Core) closedAtTip(ctx context.Context, sp logbook.Spawn, prs []string) 
 
 // pruneBranch deletes ws's local branch once it is proven merged into its base, whatever
 // the goal's prune rule (a verdict goal prunes at once, but its branch may hold commits),
-// or released: discarded, or a closed draft's head.
+// or released: discarded, or held by a merged (or closed draft) change.
 // It returns why it kept the branch, or err when it couldn't check.
 func (c *Core) pruneBranch(ctx context.Context, ws logbook.Workspace, released bool) (string, error) {
 	// A discard is the keeper's recorded word that the work is wanted nowhere.

@@ -9,6 +9,7 @@ import (
 
 	"github.com/jmmshn/bees/cmd/bsx/internal/config"
 	"github.com/jmmshn/bees/cmd/bsx/internal/guards"
+	"github.com/jmmshn/bees/cmd/bsx/internal/review/github"
 )
 
 // matches is the oracle: a glob over a whole command line as Claude Code's Bash(...) rules
@@ -25,7 +26,8 @@ func denied(deny []string, cmd string) bool {
 	return slices.ContainsFunc(deny, func(g string) bool { return matches(g, cmd) })
 }
 
-var worktree = guards.In{Kind: config.GitWorktree, Git: true, DefaultBranches: guards.DefaultBranches("develop")}
+// worktree is a git_worktree worker of a GitHub repo whose default branch is develop.
+var worktree = guards.In{Kind: config.GitWorktree, Git: true, DefaultBranches: guards.DefaultBranches("develop"), MergeDeny: github.Host{}.MergeDeny()}
 
 func build(t *testing.T, g config.Guards, in guards.In) []string {
 	t.Helper()
@@ -63,10 +65,11 @@ func TestTheDefaultMatrix(t *testing.T) {
 			t.Errorf("git_worktree refuses the worker's own %q", cmd)
 		}
 	}
-	// none and command in a git checkout: no push to a default branch, and nothing else.
+	// none and command in a git checkout: no push to a default branch, no force push, and
+	// nothing else.
 	for _, kind := range []string{config.NoWorkspace, config.CommandKind} {
-		deny := build(t, config.Guards{}, guards.In{Kind: kind, Git: true, DefaultBranches: guards.DefaultBranches()})
-		for _, cmd := range []string{"git push origin main", "git push origin x:master"} {
+		deny := build(t, config.Guards{}, guards.In{Kind: kind, Git: true, DefaultBranches: guards.DefaultBranches(), MergeDeny: github.Host{}.MergeDeny()})
+		for _, cmd := range []string{"git push origin main", "git push origin x:master", "git push --force origin x"} {
 			if !denied(deny, cmd) {
 				t.Errorf("%s lets through %q", kind, cmd)
 			}

@@ -31,10 +31,11 @@ func exited(err error, code int) bool {
 }
 
 // writesCommit is a HEAD reflog subject that wrote a commit: commit (amend, initial,
-// merge…), a rebase's pick, squash, fixup, reword or continue, a cherry-pick, revert or am,
-// and a merge that made a merge commit. Never checkout, reset, pull or a fast-forward:
-// those move HEAD to commits made elsewhere (ADR-0010).
-var writesCommit = regexp.MustCompile(`^(commit( \([^)]*\))?|rebase( -i)? \((pick|squash|fixup|reword|continue)\)|cherry-pick|revert|am): |^merge [^:]*: Merge made by `)
+// merge…), a rebase's pick, squash, fixup, reword or continue (a pull --rebase's too: it
+// replays the workspace's own commits), a cherry-pick, revert or am, and a merge that
+// made a merge commit. Never checkout, reset, a pull's merge or a fast-forward: those
+// move HEAD to commits made elsewhere (ADR-0010).
+var writesCommit = regexp.MustCompile(`^(commit( \([^)]*\))?|(rebase( -i)?|pull --rebase) \((pick|squash|fixup|reword|continue)\)|cherry-pick|revert|am): |^merge [^:]*: Merge made by `)
 
 // Commits reads dir's HEAD reflog (a worktree's own) for the entries since since that
 // wrote a commit.
@@ -42,6 +43,11 @@ func (v VCS) Commits(ctx context.Context, dir string, since time.Time) ([]string
 	out, err := v.git(ctx, dir, "log", "--walk-reflogs", "--date=unix", "--format=%H%x1f%gd%x1f%gs", "HEAD")
 	if err != nil {
 		return nil, fmt.Errorf("reading %s's HEAD reflog: %w", dir, err)
+	}
+	if out == "" {
+		// Even a new worktree's HEAD reflog has its creation: none at all is a reflog git
+		// doesn't keep (core.logAllRefUpdates), never "nothing was committed" (motif 11).
+		return nil, fmt.Errorf("%s has no HEAD reflog to read its commits from", dir)
 	}
 	var wc []string
 	for line := range strings.Lines(out) {
@@ -68,9 +74,12 @@ func (v VCS) Branch(ctx context.Context, dir, name string) (string, bool, error)
 	return tip, err == nil, err
 }
 
+// Has: git cat-file -e says a missing object with exit 128 and "Not a valid object
+// name"; any other failure is an error, never "missing".
 func (v VCS) Has(ctx context.Context, dir, commit string) (bool, error) {
 	_, err := v.git(ctx, dir, "cat-file", "-e", commit+"^{commit}")
-	if exited(err, 1) || exited(err, 128) {
+	var ee *port.ExitError
+	if errors.As(err, &ee) && (ee.Code == 1 || ee.Code == 128 && strings.Contains(string(ee.Stderr), "Not a valid object name")) {
 		return false, nil
 	}
 	return err == nil, err

@@ -142,13 +142,13 @@ func (k *look) one(ctx context.Context, name string, r port.Ref) (bool, string, 
 	case goal.PRExists:
 		return true, "", nil
 	case goal.PROpen:
-		return v.State == "open", v.State, nil
+		return unless(v.State == "open", v.State)
 	case goal.PRNotDraft:
-		return !v.Draft, "a draft: mark it ready", nil
+		return unless(!v.Draft, "a draft: mark it ready")
 	case goal.PRMerged:
-		return v.State == "merged", v.State, nil
+		return unless(v.State == "merged", v.State)
 	case goal.PRClosed:
-		return v.State == "merged" || v.State == "closed", v.State, nil
+		return unless(v.State == "merged" || v.State == "closed", v.State)
 	case goal.PRWorkspaceCommit:
 		wc, err := k.commits(ctx)
 		if err != nil {
@@ -183,7 +183,7 @@ func (k *look) one(ctx context.Context, name string, r port.Ref) (bool, string, 
 		if err != nil {
 			return false, "", err
 		}
-		return n == 0, fmt.Sprintf("%d commits behind %s: bring %s in, then push", n, v.Base, v.Base), nil
+		return unless(n == 0, fmt.Sprintf("%d commits behind %s: bring %s in, then push", n, v.Base, v.Base))
 	case goal.CIGreen:
 		return k.ciGreen(ctx, v)
 	case goal.PushMoved:
@@ -236,7 +236,7 @@ func (k *look) ciGreen(ctx context.Context, v port.Change) (bool, string, error)
 	if len(pending) > 0 {
 		why = append(why, "pending: "+strings.Join(pending, ", "))
 	}
-	return len(why) == 0, strings.Join(why, "; "), nil
+	return unless(len(why) == 0, strings.Join(why, "; "))
 }
 
 // pushMoved is the target's head descending from a commit made in the workspace; a head
@@ -268,6 +268,15 @@ func (k *look) pushMoved(ctx context.Context, v port.Change) (bool, string, erro
 		}
 	}
 	return false, fmt.Sprintf("its head %s descends from no commit made in %s: %s", short(v.HeadCommit), dir, c.Review.PushHint(ctx, dir, v)), nil
+}
+
+// unless is a check's outcome: why it failed, only when it did. A passing check says
+// nothing, so its detail never reads as a failure (motif 11).
+func unless(ok bool, why string) (bool, string, error) {
+	if ok {
+		return true, "", nil
+	}
+	return false, why, nil
 }
 
 func short(oid string) string { return oid[:min(len(oid), 9)] }

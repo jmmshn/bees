@@ -48,7 +48,9 @@ func (x *toy) mergePR(url string) {
 	x.git(x.repo, "fetch", "-q", "origin")
 	pr.HeadOID = x.git(x.repo, "rev-parse", "origin/"+pr.Head)
 	x.git(x.repo, "merge", "-q", "--squash", "origin/"+pr.Head)
-	x.git(x.repo, "commit", "-qm", "squash "+pr.Head)
+	if x.git(x.repo, "diff", "--cached", "--name-only") != "" { // nothing new when a merged PR held it
+		x.git(x.repo, "commit", "-qm", "squash "+pr.Head)
+	}
 	x.git(x.repo, "push", "-q", "origin", "main")
 	pr.State = "MERGED"
 }
@@ -77,6 +79,7 @@ type backend interface {
 	open(x *toy, n int, dir, head string, draft bool) string // publish dir's head as change n
 	update(x *toy, n int, dir string)                        // push dir's head onto change n
 	ci(x *toy, n int, buckets ...string)                     // pass, fail or pending
+	ciLater(x *toy, n int, after time.Duration, buckets ...string)
 	baseChecks(x *toy, k int)
 	behind(x *toy)           // trunk moves on elsewhere
 	sync(x *toy, dir string) // bring trunk into dir, with a commit
@@ -126,6 +129,13 @@ func (ghBackend) ci(x *toy, n int, buckets ...string) {
 		states = append(states, map[string]string{"pass": "SUCCESS", "fail": "FAILURE", "pending": "PENDING"}[b])
 	}
 	ci(states...)(x.gh.PRs[ghBackend{}.url(n)])
+}
+func (ghBackend) ciLater(x *toy, n int, after time.Duration, buckets ...string) {
+	var states []string
+	for _, b := range buckets {
+		states = append(states, map[string]string{"pass": "SUCCESS", "fail": "FAILURE", "pending": "PENDING"}[b])
+	}
+	time.AfterFunc(after, func() { x.gh.Edit(ghBackend{}.url(n), ci(states...)) })
 }
 func (ghBackend) baseChecks(x *toy, k int) { x.gh.BaseChecks = map[string]int{"main": k} }
 func (ghBackend) behind(x *toy) {
@@ -177,6 +187,9 @@ func (b *clBackend) ci(_ *toy, n int, buckets ...string) {
 		}
 	})
 }
+func (b *clBackend) ciLater(x *toy, n int, after time.Duration, buckets ...string) {
+	time.AfterFunc(after, func() { b.ci(x, n, buckets...) })
+}
 func (b *clBackend) baseChecks(_ *toy, k int) { b.h.BaseChecks = k }
 func (b *clBackend) behind(*toy)              { b.h.Trunk() }
 func (b *clBackend) sync(_ *toy, dir string)  { b.h.Sync(dir) }
@@ -218,7 +231,7 @@ func TestPRGoalHandoffChecks(t *testing.T) {
 		b.ci(x, 1, "pass", "fail")
 		must(t, x.worker("toy-1", 2, "done", "--pr", url), 7, "1 handoff checks failed", "ci_green", "failing: job2")
 		b.ci(x, 1, "pending")
-		must(t, x.worker("toy-1", 3, "done", "--pr", url), 10, "CI is still running", "pending: job1", "next: bs done again once CI finishes")
+		must(t, x.worker("toy-1", 3, "done", "--pr", url), 10, "CI is still running", "pending: job1", "next: bs done --wait")
 		b.ci(x, 1)
 		b.baseChecks(x, 2)
 		must(t, x.worker("toy-1", 4, "done", "--pr", url), 10, "no checks registered yet")
@@ -418,4 +431,72 @@ func (x *toy) headOf(b backend, dir string) string {
 		return cl.h.Head(dir)
 	}
 	return x.git(dir, "rev-parse", "HEAD")
+}
+
+// bs done --wait (keeper, bees-13.6): on CI still running bs itself asks again until it
+// finishes, then hands off on green or names what failed; past --timeout it is exit 11.
+// bs check says pending with exit 10 too.
+func TestDoneWaitsForCI(t *testing.T) {
+	both(t, func(t *testing.T, x *toy, b backend) {
+		sp := x.spawn("toy-1", "pr")
+		b.commit(x, sp.Workspace.Dir)
+		url := b.open(x, 1, sp.Workspace.Dir, "toy-1", false)
+		b.ci(x, 1, "pending")
+		must(t, x.worker("toy-1", 1, "done", "--pr", url), 10, "next: bs done --wait")
+		must(t, x.worker("toy-1", 2, "done", "--wait", "--timeout", "1s", "--pr", url), 11, "CI still running after 1s", "pending: job1")
+		b.ciLater(x, 1, 300*time.Millisecond, "pass", "fail")
+		must(t, x.worker("toy-1", 3, "done", "--wait", "--pr", url), 7, "failing: job2", "CI still running")
+		b.ci(x, 1, "pending")
+		b.ciLater(x, 1, 300*time.Millisecond, "pass")
+		must(t, x.worker("toy-1", 4, "handoff", "--wait", "--pr", url), 0, "handed off to queen-toy")
+		b.ci(x, 1, "pending")
+		must(t, x.keeper("check", "toy-1"), 10, "FAIL ci_green", "pending: job1")
+	})
+}
+
+// A waiver holds at end and prune as at handoff; an amend re-runs the spawn refusals on
+// either host.
+func TestWaiversHoldAtEndAndAmendsAreRefused(t *testing.T) {
+	both(t, func(t *testing.T, x *toy, b backend) {
+		ctx := context.Background()
+		sp := x.spawn("toy-1", "pr")
+		b.commit(x, sp.Workspace.Dir)
+		url := b.open(x, 1, sp.Workspace.Dir, "toy-1", false)
+		must(t, x.worker("toy-1", 1, "done", "--pr", url), 0)
+		b.close(x, 1)
+		must(t, x.keeper("goal", "toy-1", "push="+url), 2, "bs goal toy-1 --goal push="+url, "not open")
+		must(t, x.queen("end", "toy-1"), 9, "closed")
+		must(t, x.keeper("goal", "toy-1", "--waive", "pr_merged"), 0, "(waived: pr_merged)")
+		must(t, x.queen("end", "toy-1"), 0)
+		if ld, ok, _ := x.open().LandedOf(ctx, sp.ID); !ok || len(ld.Checks) != 0 {
+			t.Fatalf("landed = %+v, %v; want landed with no complete check run", ld, ok)
+		}
+	})
+}
+
+// A mixed goal (push=<url> plus pr) holds every part: the worker's own branch is cut at the
+// push target's head, its commits must reach the target, and its own PR must pass too.
+func TestAMixedGoalHoldsEveryPart(t *testing.T) {
+	x := newToy(t)
+	b := ghBackend{}
+	b.setup(x, true)
+	other := filepath.Join(filepath.Dir(x.repo), "theirs")
+	x.git(x.repo, "worktree", "add", "-q", "-b", "feature", other)
+	b.commit(x, other)
+	target := b.open(x, 5, other, "feature", false)
+	sp := x.spawn("toy-1", "push="+target, "pr")
+	dir := sp.Workspace.Dir
+	if sp.Workspace.Branch != "toy-1" || x.headOf(b, dir) != x.git(other, "rev-parse", "HEAD") {
+		t.Fatalf("mixed workspace %+v not cut at the target's head", sp.Workspace)
+	}
+	must(t, x.worker("toy-1", 1, "inbox"), 0, "starts at "+target+"'s head", "git push origin HEAD:feature")
+	b.commit(x, dir)
+	mine := b.open(x, 6, dir, "toy-1", false)
+	must(t, x.worker("toy-1", 2, "done", "--pr", mine), 7, "push_moved")
+	b.update(x, 5, dir)
+	must(t, x.worker("toy-1", 3, "done", "--pr", mine), 0)
+	b.land(x, 6)
+	must(t, x.queen("end", "toy-1"), 9, target+": open")
+	b.land(x, 5)
+	must(t, x.queen("end", "toy-1"), 0)
 }

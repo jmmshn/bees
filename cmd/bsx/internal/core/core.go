@@ -54,12 +54,13 @@ type Timing struct {
 	Gate       time.Duration // the whole gate check
 	AfterErr   time.Duration // after herdr's start erred: how long to look for the harness anyway (bees-12.49)
 	Busy       time.Duration // how long agent_pane_busy is retried (bees-12.33)
+	CIPoll     time.Duration // bs done --wait: how often it asks the review host again
 	Stop       time.Duration // SIGTERM before SIGKILL
 }
 
 // DefaultTiming is ADR-0010's: confirmation polled every 250 ms within 20 s, 5 s after a
 // herdr error, agent_pane_busy retried for 8 s.
-var DefaultTiming = Timing{Confirm: 20 * time.Second, Poll: 250 * time.Millisecond, SecondLook: time.Second, Stop: 3 * time.Second,
+var DefaultTiming = Timing{CIPoll: 20 * time.Second, Confirm: 20 * time.Second, Poll: 250 * time.Millisecond, SecondLook: time.Second, Stop: 3 * time.Second,
 	Gate: 5 * time.Second, AfterErr: 5 * time.Second, Busy: 8 * time.Second}
 
 func (c *Core) timing() Timing {
@@ -69,6 +70,7 @@ func (c *Core) timing() Timing {
 	}
 	t.Poll, t.SecondLook, t.Stop = cmp.Or(t.Poll, d.Poll), cmp.Or(t.SecondLook, d.SecondLook), cmp.Or(t.Stop, d.Stop)
 	t.Gate, t.AfterErr, t.Busy = cmp.Or(t.Gate, d.Gate), cmp.Or(t.AfterErr, d.AfterErr), cmp.Or(t.Busy, d.Busy)
+	t.CIPoll = cmp.Or(t.CIPoll, d.CIPoll)
 	return t
 }
 
@@ -93,7 +95,8 @@ const (
 	ExitHandoff    = 7  // a handoff check failed
 	ExitStart      = 8  // a start bs couldn't confirm
 	ExitIncomplete = 9  // bs end on an incomplete goal
-	ExitPending    = 10 // a handoff waits only on CI still running: re-run when it finishes
+	ExitPending    = 10 // a handoff waits only on CI still running: re-run with --wait
+	ExitWaited     = 11 // bs done --wait ran out of time with CI still running
 )
 
 // Exit is a refusal or failure with its exit code and the next command to run.

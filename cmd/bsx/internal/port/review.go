@@ -60,8 +60,14 @@ type Review interface {
 	BaseCI(ctx context.Context, dir string, c Change) (int, error)
 	// Behind is how many commits c's base has that its head lacks.
 	Behind(ctx context.Context, dir string, c Change) (int, error)
-	// Protected reports whether the host protects repo's branch.
-	Protected(ctx context.Context, dir, repo, branch string) (bool, error)
+	// Protected reports whether the host protects repo's default branch.
+	Protected(ctx context.Context, dir, repo string) (bool, error)
+	// Landed is the head commit of each merged change whose head is dir's branch: the
+	// third proof that a branch landed, after a squash or rebase (none, with no repo).
+	Landed(ctx context.Context, dir, branch string) ([]string, error)
+	// MergeDeny is the guard globs that keep a worker from landing (or approving) a change
+	// itself on this host (ADR-0010 guards: no merge).
+	MergeDeny() []string
 	// Fetch makes c's head commit present in dir's checkout, writing no ref.
 	Fetch(ctx context.Context, dir string, c Change) error
 	// PushHint is the command that pushes the HEAD of dir's checkout onto c's head.

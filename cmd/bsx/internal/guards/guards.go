@@ -26,15 +26,19 @@ type In struct {
 	// DefaultBranches are the names the repo's default branch may have (DefaultBranches):
 	// every one is denied.
 	DefaultBranches []string
-	// Protected is GitHub's word that the default branch is protected: only then may
-	// allow_merge_into lift the merge deny (bees-12.13, 12.20). The caller asks GitHub
-	// only when g.AllowMergeInto is set.
+	// Protected is the review host's word that the default branch is protected: only then
+	// may allow_merge_into lift the merge deny (bees-12.13, 12.20). The caller asks the
+	// host only when g.AllowMergeInto is set.
 	Protected bool
+	// MergeDeny is the review host's globs for landing or approving a change (gh pr merge
+	// on GitHub): a git_worktree worker is denied them unless allow_merge_into grants
+	// merges. None without a host.
+	MergeDeny []string
 }
 
 // ErrUnprotected is allow_merge_into on a repo whose default branch GitHub doesn't
 // confirm is protected (bees-12.20).
-var ErrUnprotected = errors.New("guards.allow_merge_into: GitHub doesn't confirm the repo's default branch is protected, and with merges allowed only that protection keeps a worker's merge off it; protect it (Settings → Branches), or drop allow_merge_into")
+var ErrUnprotected = errors.New("guards.allow_merge_into: the review host doesn't confirm the repo's default branch is protected, and with merges allowed only that protection keeps a worker's merge off it; protect it (on GitHub: Settings → Branches), or drop allow_merge_into")
 
 // DefaultBranches is main, master and each of heads (origin's HEAD, the main checkout's
 // branch; "" when unknown), without repeats.
@@ -91,11 +95,12 @@ func Build(g config.Guards, in In) ([]string, error) {
 	case in.Kind == config.GitWorktree:
 		deny = append(pushes(in.DefaultBranches), force()...)
 		if len(g.AllowMergeInto) == 0 {
-			deny = append(deny, "gh pr merge*", "gh * pr merge*", "gh api *merge*")
+			deny = append(deny, in.MergeDeny...)
+		} else { // the grant lifts the merge, never an approval
+			deny = append(deny, slices.DeleteFunc(slices.Clone(in.MergeDeny), func(g string) bool { return strings.Contains(g, "merge") })...)
 		}
-		deny = append(deny, "gh pr review* --approve*", "gh pr review* -a *", "gh pr review* -a")
-	case in.Git:
-		deny = pushes(in.DefaultBranches)
+	case in.Git: // none and command in a git checkout (bees-12.21: no kind allows a force push)
+		deny = append(pushes(in.DefaultBranches), force()...)
 	}
 	for _, d := range g.Deny {
 		if !slices.Contains(deny, d) {

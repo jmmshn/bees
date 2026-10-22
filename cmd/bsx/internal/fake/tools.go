@@ -86,6 +86,14 @@ type GH struct {
 	Protected  map[string]bool // branch protection, by branch
 }
 
+// Edit changes PR url under the lock gh's calls take: a test's change while a bs done
+// --wait polls.
+func (g *GH) Edit(url string, f func(*PR)) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	f(g.PRs[url])
+}
+
 func ghFail(argv []string, msg string) error {
 	return &port.ExitError{Argv: argv, Code: 1, Stderr: []byte(msg + "\n")}
 }
@@ -96,8 +104,8 @@ func (g *GH) git(args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
-// sync reads pr's head, commits and lag from the bare repo, when there is one.
-func (g *GH) sync(pr *PR) error {
+// refresh reads pr's head, commits and lag from the bare repo, when there is one.
+func (g *GH) refresh(pr *PR) error {
 	if g.Git == "" {
 		return nil
 	}
@@ -139,7 +147,7 @@ func (g *GH) Run(_ context.Context, _ string, argv ...string) ([]byte, error) {
 	if pr == nil {
 		return nil, ghFail(argv, "GraphQL: Could not resolve to a PullRequest with the number of "+argv[3][strings.LastIndex(argv[3], "/")+1:]+". (repository.pullRequest)")
 	}
-	if err := g.sync(pr); err != nil {
+	if err := g.refresh(pr); err != nil {
 		return nil, ghFail(argv, err.Error())
 	}
 	repo := strings.TrimPrefix(pr.URL[:strings.Index(pr.URL, "/pull/")], "https://github.com/")
@@ -202,41 +210,62 @@ func (g *GH) Run(_ context.Context, _ string, argv ...string) ([]byte, error) {
 	return nil, ghFail(argv, "fake gh: no pr "+argv[2])
 }
 
-// api answers gh api repos/<o>/<r>/… for compare/<base>...<head>, commits/<ref>/check-runs,
-// commits/<ref>/status and branches/<branch>.
+// api answers gh api repos/<o>/<r> (its default branch, main), and under it
+// compare/<base>...<head>, commits/<ref>/check-runs, commits/<ref>/status and
+// branches/<branch>; a ref or branch the bare repo doesn't have is a 404, as on GitHub.
 func (g *GH) api(argv []string) ([]byte, error) {
+	notFound := &port.ExitError{Argv: argv, Code: 1, Stderr: []byte("gh: Not Found (HTTP 404)\n")}
 	parts := strings.SplitN(argv[2], "/", 4)
-	if len(parts) < 4 || parts[0] != "repos" {
+	if len(parts) < 3 || parts[0] != "repos" {
 		return nil, ghFail(argv, "fake gh: api "+argv[2])
+	}
+	if len(parts) == 3 {
+		return json.Marshal(map[string]string{"default_branch": "main"})
+	}
+	has := func(ref string) bool {
+		if g.Git == "" {
+			return true
+		}
+		_, err := g.git("rev-parse", "--verify", "--quiet", ref+"^{commit}")
+		return err == nil
 	}
 	rest := parts[3]
 	switch {
 	case strings.HasPrefix(rest, "compare/"):
 		base, head, _ := strings.Cut(strings.TrimPrefix(rest, "compare/"), "...")
 		for _, pr := range g.PRs {
-			if err := g.sync(pr); err != nil {
+			if err := g.refresh(pr); err != nil {
 				return nil, ghFail(argv, err.Error())
 			}
 			if pr.HeadOID == head && pr.Base == base {
 				return json.Marshal(map[string]int{"behind_by": pr.Behind})
 			}
 		}
-		if g.Git != "" {
-			if out, err := g.git("rev-list", "--count", head+"..refs/heads/"+base); err == nil {
-				n, _ := strconv.Atoi(out)
-				return json.Marshal(map[string]int{"behind_by": n})
+		if g.Git != "" && has(head) && has("refs/heads/"+base) {
+			out, err := g.git("rev-list", "--count", head+"..refs/heads/"+base)
+			if err != nil {
+				return nil, ghFail(argv, err.Error())
 			}
+			n, _ := strconv.Atoi(out)
+			return json.Marshal(map[string]int{"behind_by": n})
 		}
-		return nil, &port.ExitError{Argv: argv, Code: 1, Stderr: []byte("gh: Not Found (HTTP 404)\n")}
+		return nil, notFound
 	case strings.HasPrefix(rest, "commits/"):
 		ref, what, _ := strings.Cut(strings.TrimPrefix(rest, "commits/"), "/")
+		if !has("refs/heads/" + ref) {
+			return nil, &port.ExitError{Argv: argv, Code: 1, Stderr: []byte("gh: No commit found for SHA: " + ref + " (HTTP 422)\n")}
+		}
 		n := 0
 		if what == "check-runs" {
 			n = g.BaseChecks[ref]
 		}
 		return json.Marshal(map[string]int{"total_count": n})
 	case strings.HasPrefix(rest, "branches/"):
-		return json.Marshal(map[string]bool{"protected": g.Protected[strings.TrimPrefix(rest, "branches/")]})
+		b := strings.TrimPrefix(rest, "branches/")
+		if !has("refs/heads/" + b) {
+			return nil, notFound
+		}
+		return json.Marshal(map[string]bool{"protected": g.Protected[b]})
 	}
 	return nil, ghFail(argv, "fake gh: api "+argv[2])
 }

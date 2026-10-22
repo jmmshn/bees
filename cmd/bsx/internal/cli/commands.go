@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/jmmshn/bees/cmd/bsx/internal/config"
 	"github.com/jmmshn/bees/cmd/bsx/internal/core"
@@ -95,6 +96,8 @@ func (r *run) done(fs *flag.FlagSet, args []string) error {
 	answer := fs.String("answer", "", "a verdict goal's answer: yes or no")
 	report := fs.String("report", "", "a verdict goal's report, or - to read it from stdin")
 	force := fs.Bool("force", false, "hand off while background work runs (waives that gate only)")
+	wait := fs.Bool("wait", false, "while CI is still running, wait for it (up to --timeout), then hand off or name what failed")
+	timeout := fs.Duration("timeout", 8*time.Minute, "how long --wait waits (under the 10 min a harness's shell call may take)")
 	as := fs.String("as", "", "the worker, outside a herdr pane")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -113,7 +116,7 @@ func (r *run) done(fs *flag.FlagSet, args []string) error {
 	if err != nil {
 		return err
 	}
-	d, err := r.c.Done(r.ctx, w, r.env.Self, core.Handed{PRs: prs, Replaces: replaces, Answer: *answer, Report: *report}, *force)
+	d, err := r.c.Done(r.ctx, w, r.env.Self, core.Handed{PRs: prs, Replaces: replaces, Answer: *answer, Report: *report}, core.DoneOpts{Force: *force, Wait: waitFor(*wait, *timeout)})
 	if err != nil {
 		return err
 	}
@@ -190,6 +193,14 @@ func (r *run) goal(fs *flag.FlagSet, args []string) error {
 	}
 	fmt.Fprintf(r.out, "%s: %s\n", name, g)
 	return nil
+}
+
+// waitFor is how long bs done waits for CI: --timeout with --wait, else not at all.
+func waitFor(wait bool, timeout time.Duration) time.Duration {
+	if !wait {
+		return 0
+	}
+	return max(timeout, time.Second)
 }
 
 func (r *run) end(fs *flag.FlagSet, args []string) error {

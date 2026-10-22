@@ -25,17 +25,18 @@ func (c *Core) guardIn(ctx context.Context) (guards.In, error) {
 		return in, err
 	}
 	in.DefaultBranches = guards.DefaultBranches(origin, head)
+	if c.Review == nil {
+		return in, nil // no review host: no merge to deny, nothing protects a default branch
+	}
+	in.MergeDeny = c.Review.MergeDeny()
 	if len(c.Guards.AllowMergeInto) == 0 {
 		return in, nil
-	}
-	if c.Review == nil {
-		return in, nil // no review host: nothing protects a default branch
 	}
 	repo, ok, err := c.Review.Repo(ctx, c.Repo)
 	if err != nil || !ok {
 		return in, err
 	}
-	in.Protected, err = c.Review.Protected(ctx, c.Repo, repo, cmp.Or(origin, head, "main"))
+	in.Protected, err = c.Review.Protected(ctx, c.Repo, repo)
 	return in, err
 }
 

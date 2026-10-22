@@ -14,10 +14,12 @@ import (
 	"github.com/jmmshn/bees/cmd/bsx/internal/port"
 )
 
-// CLHost is a review host and a workspace VCS with no git and no gh: CL-shaped changes
-// (https://cl.test/<repo>/<n>) and a commit graph, all in memory. A workspace's commits
-// are what Commit made there; uploading a workspace points a change at its head. It
-// shows the goal checks need neither git nor GitHub (keeper, bees-13.6).
+// CLHost is a review host and a workspace VCS that use neither git nor gh for the goal
+// checks: CL-shaped changes (https://cl.test/<repo>/<n>) and a commit graph, all in
+// memory. A workspace's commits are what Commit made there; uploading a workspace points
+// a change at its head. It shows the goal checks need neither git nor GitHub (keeper,
+// bees-13.6). The workspace itself is still git_worktree's (command arrives with
+// bees-13.11): Detach makes a plain git worktree, and prune removes it with git.
 type CLHost struct {
 	mu       sync.Mutex
 	RepoName string // the repo every checkout belongs to; "" is none
@@ -244,11 +246,30 @@ func (h *CLHost) Behind(_ context.Context, _ string, c port.Change) (int, error)
 	return n, nil
 }
 
-func (h *CLHost) Protected(context.Context, string, string, string) (bool, error) {
+func (h *CLHost) Protected(context.Context, string, string) (bool, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.TrunkProtected, h.offline()
 }
+
+// Landed is the head of each merged change whose head is branch.
+func (h *CLHost) Landed(_ context.Context, _ string, branch string) ([]string, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := h.offline(); err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, c := range h.changes {
+		if c.State == "merged" && c.Head == branch {
+			out = append(out, c.HeadCommit)
+		}
+	}
+	return out, nil
+}
+
+// MergeDeny denies the CL tool's submit.
+func (*CLHost) MergeDeny() []string { return []string{"cl submit*", "cl * submit*"} }
 
 // Fetch has nothing to do: every commit is in memory.
 func (h *CLHost) Fetch(context.Context, string, port.Change) error {

@@ -52,7 +52,8 @@ herdr --session server, on that session's config (~/.config/bees/sessions/<sessi
 commands:
   queen                                                    record this pane's queen, then exec the harness
   spawn   --goal <goal>... [--label L] [--as Q] <bead>   start a worker
-  done    [--pr URL]... [--replaces URL]... [--answer yes|no --report TEXT|-] [--force] [--as W]   hand off
+  done    [--pr URL]... [--replaces URL]... [--answer yes|no --report TEXT|-] [--wait [--timeout D]] [--force] [--as W]   hand off
+  handoff                                                  the same as done
   check   <worker>                                         run its handoff checks now; writes nothing
   goal    [--as Q] <worker> <goal>... | discard | --waive <check>   amend, waive or (keeper) discard
   end     [--force] [--incomplete] [--as Q] <worker>      complete and end a worker
@@ -203,16 +204,17 @@ type command struct {
 }
 
 var commands = map[string]command{
-	"queen":  {(*run).queen, true, true},
-	"spawn":  {(*run).spawn, true, true},
-	"done":   {(*run).done, true, true},
-	"check":  {(*run).check, false, true},
-	"goal":   {(*run).goal, true, true},
-	"end":    {(*run).end, true, true},
-	"prune":  {(*run).prune, true, true},
-	"send":   {(*run).send, true, true},
-	"inbox":  {(*run).inbox, true, true}, // it writes receipts
-	"status": {(*run).status, false, true},
-	"config": {(*run).config, false, false},
-	"doctor": {(*run).doctor, false, false},
+	"queen":   {(*run).queen, true, true},
+	"spawn":   {(*run).spawn, true, true},
+	"done":    {(*run).done, true, true},
+	"handoff": {(*run).done, true, true}, // the glossary's word for it
+	"check":   {(*run).check, false, true},
+	"goal":    {(*run).goal, true, true},
+	"end":     {(*run).end, true, true},
+	"prune":   {(*run).prune, true, true},
+	"send":    {(*run).send, true, true},
+	"inbox":   {(*run).inbox, true, true}, // it writes receipts
+	"status":  {(*run).status, false, true},
+	"config":  {(*run).config, false, false},
+	"doctor":  {(*run).doctor, false, false},
 }

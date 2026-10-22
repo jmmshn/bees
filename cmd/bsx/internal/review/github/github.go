@@ -126,11 +126,13 @@ type view struct {
 
 const fields = "url,state,isDraft,headRefName,headRefOid,baseRefName,isCrossRepository,maintainerCanModify,headRepository,commits,comments,reviews"
 
-// gh runs gh in dir. gh saying the PR or repo doesn't exist is port.ErrNoChange; any other
-// failure is returned as is, and read as "couldn't look".
+// gh runs gh in dir. gh saying the PR doesn't exist is port.ErrNoChange; any other
+// failure is returned as is, and read as "couldn't look": "Could not resolve to a
+// Repository" too, since GitHub says it of a private repo the token can't see (exit 6,
+// never 2).
 func (h Host) gh(ctx context.Context, dir string, args ...string) ([]byte, error) {
 	out, err := h.Run.Run(ctx, dir, append([]string{"gh"}, args...)...)
-	if said(err, "Could not resolve to a PullRequest") || said(err, "Could not resolve to a Repository") {
+	if said(err, "Could not resolve to a PullRequest") {
 		return nil, fmt.Errorf("%w: %v", port.ErrNoChange, err)
 	}
 	return out, err
@@ -217,12 +219,49 @@ func (h Host) Behind(ctx context.Context, dir string, c port.Change) (int, error
 	return v.Behind, err
 }
 
-func (h Host) Protected(ctx context.Context, dir, repo, branch string) (bool, error) {
+// Protected asks GitHub for repo's default branch, then whether it is protected.
+func (h Host) Protected(ctx context.Context, dir, repo string) (bool, error) {
+	var r struct {
+		Default string `json:"default_branch"`
+	}
+	if err := h.api(ctx, dir, "repos/"+repo, &r); err != nil {
+		return false, err
+	}
 	var v struct {
 		Protected bool `json:"protected"`
 	}
-	err := h.api(ctx, dir, "repos/"+repo+"/branches/"+url.PathEscape(branch), &v)
+	err := h.api(ctx, dir, "repos/"+repo+"/branches/"+url.PathEscape(r.Default), &v)
 	return v.Protected, err
+}
+
+// Landed is gh pr list --state merged --head branch, asked only when dir's repo is on
+// GitHub: with no GitHub remote no pull request could have merged it.
+func (h Host) Landed(ctx context.Context, dir, branch string) ([]string, error) {
+	if _, ok, err := h.Repo(ctx, dir); err != nil || !ok {
+		return nil, err
+	}
+	out, err := h.gh(ctx, dir, "pr", "list", "--head", branch, "--state", "merged", "--json", "headRefOid")
+	if err != nil {
+		return nil, err
+	}
+	var prs []struct {
+		OID string `json:"headRefOid"`
+	}
+	if err := json.Unmarshal(out, &prs); err != nil {
+		return nil, fmt.Errorf("gh pr list: %w", err)
+	}
+	var heads []string
+	for _, p := range prs {
+		heads = append(heads, p.OID)
+	}
+	return heads, nil
+}
+
+// MergeDeny denies gh's merge, whatever the spelling (gh pr merge, gh -R o/r pr merge,
+// the API's merge endpoint), and an approving review, which on a repo that requires one
+// is the merge's other half.
+func (Host) MergeDeny() []string {
+	return []string{"gh pr merge*", "gh * pr merge*", "gh api *merge*", "gh pr review* --approve*", "gh pr review* -a *", "gh pr review* -a"}
 }
 
 // Fetch fetches refs/pull/<n>/head from the remote of c's repo, writing no ref.

@@ -2,7 +2,8 @@
 <!-- worker -->
 
 - Push your branch and open a PR from it (`gh pr create`; a draft under `--goal pr:draft`), then hand it off: `bs done --pr <url>`. Push further commits to that PR whenever the work needs them, then `bs done --pr <url>` again.
-- bs checks each PR you name: open and not a draft (except `pr:draft`), holding a commit made in this workspace, pushed, current with its base, and CI green. It refuses (exit 7) naming each failure; exit 10 when the only thing missing is CI still running: wait for it, then `bs done` again; exit 6 when it couldn't ask the review host: run it again.
+- bs checks each PR you name: open and not a draft (except `pr:draft`), holding a commit made in this workspace, pushed, current with its base, and CI green. It refuses (exit 7) naming each failure, and exit 6 when it couldn't ask the review host: run it again.
+- CI still running is exit 10: run `bs done --wait --pr <url>` (give that shell call a 10-minute timeout). bs waits for CI itself, up to 8 minutes, then hands off when it is green or names what failed (exit 7); still running then is exit 11: run it again. Never hand off and walk away from a red or pending PR.
 - A stack, or a follow-up PR: name each one with `--pr`; the PRs you handed off before stay handed off. A PR that replaces an earlier one: `bs done --pr <new> --replaces <old>`.
 - Never merge or approve a PR yourself: landing it is the queen's.
 <!-- queen -->

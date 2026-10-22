@@ -69,7 +69,6 @@ type oldSpawn struct {
 	Worktree  string            `json:"worktree"`
 	Branch    string            `json:"branch"`
 	Repo      string            `json:"repo"`
-	Base      string            `json:"base"`
 	Kind      string            `json:"workspace_kind"` // v1: "none", or "" for git_worktree
 	Dir       string            `json:"dir"`            // v1, kind none
 	Harness   string            `json:"harness"`
@@ -100,7 +99,9 @@ func (s *Spawn) decode(data string) error {
 	s.Bead, s.Label, s.Record, s.Path = o.Bead, o.Label, o.Record, o.Path
 	s.Harness = cmp.Or(o.Harness, DefaultHarness)
 	s.Herdr = Pane{Session: DefaultSession, Workspace: o.Workspace, Pane: o.Pane}
-	s.Workspace = Workspace{Kind: "git_worktree", Dir: o.Worktree, Repo: o.Repo, Branch: o.Branch, Base: o.Base}
+	// An old base is the checkout the branch was cut from, a path, never a ref: left
+	// empty, it reads as the repo's default branch.
+	s.Workspace = Workspace{Kind: "git_worktree", Dir: o.Worktree, Repo: o.Repo, Branch: o.Branch}
 	if o.Kind == "none" {
 		s.Workspace.Kind, s.Workspace.Dir = "none", cmp.Or(o.Dir, o.Worktree)
 	}

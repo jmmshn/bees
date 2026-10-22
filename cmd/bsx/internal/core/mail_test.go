@@ -17,11 +17,11 @@ func TestDoorbell(t *testing.T) {
 		want   string
 	}{
 		{[]logbook.Message{m("queen-bees", ""), m("bees-1", ""), m("queen-bees", "")}, "queen-bees",
-			`[bs] 3 unread (queen-bees ×2, bees-1) — run: bs inbox   (reply with: bs send queen-bees "...")`},
+			`[bsx] 3 unread (queen-bees ×2, bees-1) — run: bsx inbox   (reply with: bsx send queen-bees "...")`},
 		{[]logbook.Message{m("queen-dot", "dot")}, "queen-dot",
-			`[bs] 1 unread (queen-dot) — run: bs inbox   (reply with: bs send --project dot queen-dot "...")`},
+			`[bsx] 1 unread (queen-dot) — run: bsx inbox   (reply with: bsx send --project dot queen-dot "...")`},
 		{[]logbook.Message{m("queen-dot", "dot"), m("bees-1", "")}, "bees-1",
-			`[bs] 2 unread (queen-dot, bees-1) — run: bs inbox   (it shows how to reply to each)`},
+			`[bsx] 2 unread (queen-dot, bees-1) — run: bsx inbox   (it shows how to reply to each)`},
 	} {
 		if got := core.Doorbell(c.unread, c.from); got != c.want {
 			t.Errorf("Doorbell = %q\n want %q", got, c.want)

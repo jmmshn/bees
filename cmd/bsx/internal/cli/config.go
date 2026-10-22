@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 	"github.com/jmmshn/bees/cmd/bsx/internal/config"
 	"github.com/jmmshn/bees/cmd/bsx/internal/core"
 	"github.com/jmmshn/bees/cmd/bsx/internal/port"
@@ -151,7 +152,7 @@ func (s *settings) findProject(ctx context.Context, cwd string, run port.Runner,
 		case errors.As(err, new(*core.Exit)):
 			return err
 		case err != nil: // "couldn't look" is never "no project" (Rule G)
-			return &core.Exit{Code: core.ExitCantCheck, Msg: "bs can't tell which project " + cwd + " is in", Err: err}
+			return &core.Exit{Code: core.ExitCantCheck, Msg: bsname.Cmd + " can't tell which project " + cwd + " is in", Err: err}
 		default:
 			s.Project, s.ProjectFrom, s.Repo, s.RepoFrom = config.Normalise(filepath.Base(main)), "the git repo at "+main, main, "the git repo bs runs in"
 		}
@@ -162,7 +163,7 @@ func (s *settings) findProject(ctx context.Context, cwd string, run port.Runner,
 		s.Project, s.ProjectFrom = p, "env BS_PROJECT"
 	case p != s.Project:
 		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("BS_PROJECT=%s names another project than the repo you are in (%s)", pinned, s.Project),
-			Next: "env -u BS_PROJECT bsx ..., or run it from " + p + "'s repo"}
+			Next: "env -u BS_PROJECT " + bsname.Cmd + " ..., or run it from " + p + "'s repo"}
 	}
 	return nil
 }
@@ -177,7 +178,7 @@ func (s *settings) cwdRepo(ctx context.Context, cwd string, run port.Runner) err
 	switch {
 	case errors.Is(err, errNotGit):
 	case err != nil:
-		return &core.Exit{Code: core.ExitCantCheck, Msg: "bs can't tell which project " + cwd + " is in", Err: err}
+		return &core.Exit{Code: core.ExitCantCheck, Msg: bsname.Cmd + " can't tell which project " + cwd + " is in", Err: err}
 	case config.Normalise(filepath.Base(main)) == s.Project:
 		s.Repo, s.RepoFrom = main, "the git repo bs runs in"
 	}
@@ -211,7 +212,7 @@ func (s *settings) findRepo(ctx context.Context, run port.Runner) error {
 	switch err := notGit(err); {
 	case errors.Is(err, errNotGit):
 	case err != nil: // a failing git must not quietly make the kind none
-		return &core.Exit{Code: core.ExitCantCheck, Msg: "bs can't tell whether " + s.Repo + " is a git checkout", Err: err}
+		return &core.Exit{Code: core.ExitCantCheck, Msg: bsname.Cmd + " can't tell whether " + s.Repo + " is a git checkout", Err: err}
 	default:
 		s.GitTop = samePath(strings.TrimSpace(string(top)), s.Repo)
 	}
@@ -223,7 +224,7 @@ func (s *settings) findRepo(ctx context.Context, run port.Runner) error {
 func cantRead(err error) error {
 	var pe *fs.PathError
 	if errors.As(err, &pe) {
-		return &core.Exit{Code: core.ExitCantCheck, Msg: "bs couldn't read its config", Err: err}
+		return &core.Exit{Code: core.ExitCantCheck, Msg: bsname.Cmd + " couldn't read its config", Err: err}
 	}
 	return err
 }
@@ -267,7 +268,7 @@ func mainCheckout(ctx context.Context, run port.Runner, dir string) (string, err
 		return filepath.Dir(common), nil
 	}
 	return "", &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("%s is a linked worktree of %s, whose main checkout git doesn't record", top, common),
-		Next: "run bsx in the main checkout, or outside a herdr pane with BS_PROJECT set"}
+		Next: "run " + bsname.Cmd + " in the main checkout, or outside a herdr pane with BS_PROJECT set"}
 }
 
 // checkLogbook checks s names a project and that its logbook isn't the real one, which no toy may migrate before the swap.

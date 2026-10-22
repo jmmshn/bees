@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 	"github.com/jmmshn/bees/cmd/bsx/internal/logbook"
 	"github.com/jmmshn/bees/cmd/bsx/internal/port"
 )
@@ -83,7 +84,7 @@ func (c *Core) running(p logbook.Process) error {
 // Doorbell names who the unread messages are from, never what they say, and how to
 // reply to the newest from `from`:
 //
-//	[bs] 3 unread (queen-bees ×2, bees-1-2) — run: bs inbox   (reply with: bs send queen-bees "...")
+//	[bsx] 3 unread (queen-bees ×2, bees-1-2) — run: bsx inbox   (reply with: bsx send queen-bees "...")
 func Doorbell(unread []logbook.Message, from string) string {
 	reply := from
 	projects := map[string]bool{}
@@ -112,9 +113,9 @@ func Doorbell(unread []logbook.Message, from string) string {
 		}
 	}
 	if len(projects) > 1 { // more than one reply command: bs inbox prints each (bees-12.41)
-		return fmt.Sprintf(`[bs] %d unread (%s) — run: bs inbox   (it shows how to reply to each)`, len(unread), strings.Join(senders, ", "))
+		return fmt.Sprintf(`[%s] %d unread (%s) — run: %s inbox   (it shows how to reply to each)`, bsname.Cmd, len(unread), strings.Join(senders, ", "), bsname.Cmd)
 	}
-	return fmt.Sprintf(`[bs] %d unread (%s) — run: bs inbox   (reply with: bs send %s "...")`, len(unread), strings.Join(senders, ", "), reply)
+	return fmt.Sprintf(`[%s] %d unread (%s) — run: %s inbox   (reply with: %s send %s "...")`, bsname.Cmd, len(unread), strings.Join(senders, ", "), bsname.Cmd, bsname.Cmd, reply)
 }
 
 // Owner is the project a session name belongs to by the naming rule (ADR-0006): queen-<p>,
@@ -144,9 +145,9 @@ func Owner(name string) string {
 func (c *Core) Addressed(ctx context.Context, to, logbookDir string) (stranger bool, err error) {
 	if owner := Owner(to); owner != "" && owner != c.Project {
 		if _, err := os.Stat(filepath.Join(logbookDir, owner+".db")); err == nil {
-			return false, exit(ExitRefused, "bs send --project "+owner+" "+to+" \"...\"", nil, "%s is a session of project %s, not %s; nothing stored", to, owner, c.Project)
+			return false, exit(ExitRefused, bsname.Cmd+" send --project "+owner+" "+to+" \"...\"", nil, "%s is a session of project %s, not %s; nothing stored", to, owner, c.Project)
 		} else if !errors.Is(err, os.ErrNotExist) {
-			return false, exit(ExitCantCheck, "bsx doctor", err, "bs can't tell whether project %s has a logbook", owner)
+			return false, exit(ExitCantCheck, bsname.Cmd+" doctor", err, bsname.Cmd+" can't tell whether project %s has a logbook", owner)
 		}
 	}
 	if to == Queen(c.Project) {
@@ -154,7 +155,7 @@ func (c *Core) Addressed(ctx context.Context, to, logbookDir string) (stranger b
 	}
 	sp, ok, err := c.Logbook.LatestSpawn(ctx, to)
 	if ok && sp.Ended {
-		return false, exit(ExitRefused, "bsx status", nil, "%s has ended: nobody would read it; nothing stored", to)
+		return false, exit(ExitRefused, bsname.Cmd+" status", nil, "%s has ended: nobody would read it; nothing stored", to)
 	}
 	return !ok, err
 }

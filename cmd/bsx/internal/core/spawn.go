@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 	"github.com/jmmshn/bees/cmd/bsx/internal/goal"
 	"github.com/jmmshn/bees/cmd/bsx/internal/logbook"
 	"github.com/jmmshn/bees/cmd/bsx/internal/port"
@@ -37,14 +38,17 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 	}
 	bead, err := c.Beads.Show(ctx, req.Bead)
 	if err != nil {
-		return logbook.Spawn{}, refusedOrCant(err, "bs bead ls", "can't read bead %s", req.Bead)
+		if errors.Is(err, port.ErrNoBead) {
+			return logbook.Spawn{}, exit(ExitRefused, "bd show "+req.Bead, err, "no bead %s", req.Bead)
+		}
+		return logbook.Spawn{}, exit(ExitCantCheck, "", err, "can't read bead %s", req.Bead)
 	}
 	name := Name(bead.ID)
 	switch prev, ok, err := c.Logbook.LatestSpawn(ctx, name); {
 	case err != nil:
 		return logbook.Spawn{}, err
 	case ok && !prev.Ended:
-		return logbook.Spawn{}, exit(ExitRefused, "bs end "+name, nil, "%s is already spawned and not ended", name)
+		return logbook.Spawn{}, exit(ExitRefused, bsname.Cmd+" end "+name, nil, "%s is already spawned and not ended", name)
 	}
 	if err := c.refuse(ctx, g); err != nil {
 		return logbook.Spawn{}, err
@@ -123,7 +127,7 @@ func (c *Core) workspace(ctx context.Context, name string) (logbook.Workspace, e
 	}
 	dir := filepath.Join(c.Worktrees, name)
 	if _, err := os.Stat(dir); err == nil {
-		return logbook.Workspace{}, exit(ExitRefused, "bs prune", nil, "%s already exists", dir)
+		return logbook.Workspace{}, exit(ExitRefused, bsname.Cmd+" prune", nil, "%s already exists", dir)
 	}
 	return logbook.Workspace{Kind: "git_worktree", Dir: dir, Repo: c.Repo, Branch: name, Base: base}, nil
 }
@@ -163,12 +167,12 @@ func (c *Core) writeFiles(name string, l port.Launch) ([]string, error) {
 }
 
 func brief(b port.Bead, g goal.Goal) string {
-	return fmt.Sprintf("You own %s: %s\n\nYour goal: --goal %s. Hand it off with bs done when it holds.\n\n%s", b.ID, b.Title, g, b.Description)
+	return fmt.Sprintf("You own %s: %s\n\nYour goal: --goal %s. Hand it off with "+bsname.Cmd+" done when it holds.\n\n%s", b.ID, b.Title, g, b.Description)
 }
 
 // doorbell is a worker's first prompt: who it is, and where to read and reply.
 func doorbell(name, bead, queen string) string {
-	return fmt.Sprintf(`[bs] you are %s, working on %s — run: bs inbox   (reply with: bs send %s "...")`, name, bead, queen)
+	return fmt.Sprintf(`[%s] you are %s, working on %s — run: %s inbox   (reply with: %s send %s "...")`, bsname.Cmd, name, bead, bsname.Cmd, bsname.Cmd, queen)
 }
 
 // refusedOrCant is a refusal (exit 2) when the tool ran and said no, and "can't check"

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 	"github.com/jmmshn/bees/cmd/bsx/internal/goal"
 	"github.com/jmmshn/bees/cmd/bsx/internal/logbook"
 	"github.com/jmmshn/bees/cmd/bsx/internal/port"
@@ -67,7 +68,11 @@ func (c *Core) run(ctx context.Context, sp logbook.Spawn, name string, h Handed)
 		}
 		return true, "", nil
 	case goal.BranchAhead:
-		out, err := c.git(ctx, ws.Dir, "rev-list", "--count", ws.Base+".."+ws.Branch)
+		base, err := c.base(ctx, ws)
+		if err != nil {
+			return false, "", err
+		}
+		out, err := c.git(ctx, ws.Dir, "rev-list", "--count", base+".."+ws.Branch)
 		if err != nil {
 			return false, "", err
 		}
@@ -76,23 +81,57 @@ func (c *Core) run(ctx context.Context, sp logbook.Spawn, name string, h Handed)
 			return false, "", fmt.Errorf("git rev-list --count: %q", out)
 		}
 		if n == 0 {
-			return false, fmt.Sprintf("%s has no commit that %s lacks", ws.Branch, ws.Base), nil
+			return false, fmt.Sprintf("%s has no commit that %s lacks", ws.Branch, base), nil
 		}
-		return true, fmt.Sprintf("%d commits ahead of %s", n, ws.Base), nil
+		return true, fmt.Sprintf("%d commits ahead of %s", n, base), nil
 	case goal.BranchMerged:
 		// Proof 1 of the pilot's three: the branch tip is in the base. Squash and rebase
 		// merges (proofs 2 and 3) arrive with bees-13.5.
-		_, err := c.git(ctx, ws.Repo, "merge-base", "--is-ancestor", ws.Branch, ws.Base)
+		base, err := c.base(ctx, ws)
+		if err != nil {
+			return false, "", err
+		}
+		_, err = c.git(ctx, ws.Repo, "merge-base", "--is-ancestor", ws.Branch, base)
 		var ee *port.ExitError
 		if errors.As(err, &ee) && ee.Code == 1 {
-			return false, fmt.Sprintf("%s is not merged into %s", ws.Branch, ws.Base), nil
+			return false, fmt.Sprintf("%s is not merged into %s", ws.Branch, base), nil
 		}
 		if err != nil {
 			return false, "", err
 		}
-		return true, "merged into " + ws.Base, nil
+		return true, "merged into " + base, nil
 	}
 	return false, "", fmt.Errorf("no check %s", name)
+}
+
+// base is the ref ws's branch was cut from: the recorded one, or for a spawn that
+// recorded none (legacy) the repo's default branch, as the pilot's proof 1 found it:
+// origin/HEAD's branch if set, else main.
+func (c *Core) base(ctx context.Context, ws logbook.Workspace) (string, error) {
+	if ws.Base != "" {
+		return ws.Base, nil
+	}
+	head, err := c.git(ctx, ws.Repo, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+	var ee *port.ExitError
+	switch {
+	case errors.As(err, &ee) && ee.Code == 1:
+		head = ""
+	case err != nil:
+		return "", err
+	}
+	for _, ref := range []string{head, "main"} {
+		if ref == "" {
+			continue
+		}
+		_, err := c.git(ctx, ws.Repo, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+		if errors.As(err, &ee) && ee.Code == 1 {
+			continue
+		} else if err != nil {
+			return "", err
+		}
+		return ref, nil
+	}
+	return "", fmt.Errorf("%s records no base and has no default branch (tried origin/HEAD, main)", ws.Repo)
 }
 
 // complete reports whether sp's goal is complete now, with the complete checks that
@@ -112,7 +151,7 @@ func (c *Core) complete(ctx context.Context, sp logbook.Spawn, e logbook.Effecti
 		return false, nil, nil, err
 	}
 	if !ok || !d.Passed() {
-		return false, nil, []logbook.CheckResult{{Name: "handoff", Detail: "no bs done that passed its checks"}}, nil
+		return false, nil, []logbook.CheckResult{{Name: "handoff", Detail: "no " + bsname.Cmd + " done that passed its checks"}}, nil
 	}
 	var passed []string
 	var failed []logbook.CheckResult

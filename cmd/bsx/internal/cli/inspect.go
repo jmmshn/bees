@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 	"github.com/jmmshn/bees/cmd/bsx/internal/config"
 	"github.com/jmmshn/bees/cmd/bsx/internal/core"
 	"github.com/jmmshn/bees/cmd/bsx/internal/herdr"
@@ -23,7 +24,7 @@ func (r *run) config(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("%w: bsx config takes no arguments", errUsage)
+		return fmt.Errorf("%w: "+bsname.Cmd+" config takes no arguments", errUsage)
 	}
 	s, w := r.s, r.out
 	missing := ""

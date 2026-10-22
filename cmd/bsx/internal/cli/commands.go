@@ -12,6 +12,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 	"github.com/jmmshn/bees/cmd/bsx/internal/config"
 	"github.com/jmmshn/bees/cmd/bsx/internal/core"
 	"github.com/jmmshn/bees/cmd/bsx/internal/logbook"
@@ -25,7 +26,7 @@ func (r *run) queen(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("%w: bsx queen takes no arguments", errUsage)
+		return fmt.Errorf("%w: "+bsname.Cmd+" queen takes no arguments", errUsage)
 	}
 	pane := core.Getenv(r.env.Vars, "HERDR_PANE_ID")
 	if pane == "" { // before anything else bs queen needs: no pane, no queen
@@ -38,11 +39,11 @@ func (r *run) queen(fs *flag.FlagSet, args []string) error {
 		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("this pane runs %s already", p.Who.Name), Next: "start the queen in a pane of her own"}
 	}
 	if r.c.Harness == nil {
-		return &core.Exit{Code: core.ExitRefused, Msg: "no harness adapter for harness = " + r.s.Harness, Next: "bsx config"}
+		return &core.Exit{Code: core.ExitRefused, Msg: "no harness adapter for harness = " + r.s.Harness, Next: bsname.Cmd + " config"}
 	}
 	exe, ok := lookPath(core.Getenv(r.env.Vars, "PATH"), r.c.Harness.Kind())
 	if !ok {
-		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("%s is not on PATH", r.c.Harness.Kind()), Next: "bsx doctor"}
+		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("%s is not on PATH", r.c.Harness.Kind()), Next: bsname.Cmd + " doctor"}
 	}
 	argv, err := r.c.Queen(r.ctx, core.QueenReq{Session: r.s.Session, Pane: pane, Self: r.env.Self, Exe: exe})
 	if err != nil {
@@ -67,13 +68,13 @@ func (r *run) spawn(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return fmt.Errorf("%w: bsx spawn --goal <goal> <bead>", errUsage)
+		return fmt.Errorf("%w: "+bsname.Cmd+" spawn --goal <goal> <bead>", errUsage)
 	}
 	if err := r.s.unpinned("spawn"); err != nil {
 		return err
 	}
 	if r.c.Harness == nil {
-		return &core.Exit{Code: core.ExitRefused, Msg: "no harness adapter for harness = " + r.s.Harness, Next: "bsx config"}
+		return &core.Exit{Code: core.ExitRefused, Msg: "no harness adapter for harness = " + r.s.Harness, Next: bsname.Cmd + " config"}
 	}
 	// A kind the config chose and spawn can't make yet is refused, never made a worktree;
 	// a worked-out none is left to Spawn, which names why the repo isn't a checkout.
@@ -104,7 +105,7 @@ func (r *run) done(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("%w: bsx done takes no arguments; say it with --report (got %q)", errUsage, strings.Join(fs.Args(), " "))
+		return fmt.Errorf("%w: "+bsname.Cmd+" done takes no arguments; say it with --report (got %q)", errUsage, strings.Join(fs.Args(), " "))
 	}
 	if *report == "-" {
 		b, err := io.ReadAll(r.env.Stdin)
@@ -134,7 +135,7 @@ func (r *run) end(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	if fs.NArg() != 1 {
-		return fmt.Errorf("%w: bsx end <worker>", errUsage)
+		return fmt.Errorf("%w: "+bsname.Cmd+" end <worker>", errUsage)
 	}
 	w, err := r.who(*as)
 	if err != nil {
@@ -144,7 +145,7 @@ func (r *run) end(fs *flag.FlagSet, args []string) error {
 	if err := r.c.End(r.ctx, w.Name, name, r.env.Self, core.EndOpts{Force: *force, Incomplete: *incomplete}); err != nil {
 		return err
 	}
-	fmt.Fprintf(r.out, "ended %s; its workspace stays for bsx prune\n", name)
+	fmt.Fprintf(r.out, "ended %s; its workspace stays for "+bsname.Cmd+" prune\n", name)
 	return nil
 }
 
@@ -188,7 +189,7 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	if fs.NArg() != 2 {
-		return fmt.Errorf("%w: bsx send [--project P] [--now] <to> <message | ->", errUsage)
+		return fmt.Errorf("%w: "+bsname.Cmd+" send [--project P] [--now] <to> <message | ->", errUsage)
 	}
 	w, err := r.who(*as)
 	if err != nil {
@@ -208,8 +209,8 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 		// so the reply needs no project read back out of a name (motif 3).
 		path := filepath.Join(filepath.Dir(r.s.Logbook), p+".db")
 		if _, err := os.Stat(path); err != nil {
-			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bsx send --project %s: no logbook at %s; nothing stored", p, path), Err: err,
-				Next: "check the project name: bs bead ls names it, and its queen starts its logbook"}
+			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf(bsname.Cmd+" send --project %s: no logbook at %s; nothing stored", p, path), Err: err,
+				Next: "check the project name: " + bsname.Cmd + " bead ls names it, and its queen starts its logbook"}
 		}
 		lb, err := logbook.Open(r.ctx, path)
 		if err != nil {
@@ -230,7 +231,7 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 	}
 	fmt.Fprintf(r.out, "sent %s to %s\n", id, to)
 	if stranger {
-		fmt.Fprintf(r.err, "bsx send: warning: %s is neither %s nor a worker spawned in project %s: stored, not rung; it reads it only as a session of %s\n",
+		fmt.Fprintf(r.err, bsname.Cmd+" send: warning: %s is neither %s nor a worker spawned in project %s: stored, not rung; it reads it only as a session of %s\n",
 			to, core.Queen(c.Project), c.Project, c.Project)
 		return nil
 	}
@@ -249,9 +250,9 @@ func (r *run) ring(c *core.Core, from, to string, p port.Priority) {
 	case err == nil:
 		fmt.Fprintf(r.out, "rung %s\n", to)
 	case errors.Is(err, port.ErrNotRunning):
-		fmt.Fprintf(r.out, "stored, not rung (%v): %s reads it at its next bs inbox\n", err, to)
+		fmt.Fprintf(r.out, "stored, not rung (%v): %s reads it at its next "+bsname.Cmd+" inbox\n", err, to)
 	case errors.Is(err, port.ErrNoRing):
-		fmt.Fprintf(r.out, "stored, not rung (%v): %s reads it at its next bs inbox\n", err, to)
+		fmt.Fprintf(r.out, "stored, not rung (%v): %s reads it at its next "+bsname.Cmd+" inbox\n", err, to)
 	case errors.Is(err, core.ErrEnded):
 		fmt.Fprintf(r.out, "stored, not rung: %v, so nobody reads it unless it is spawned again\n", err)
 	default:
@@ -280,7 +281,7 @@ func (r *run) inbox(fs *flag.FlagSet, args []string) error {
 	for _, m := range ms {
 		fmt.Fprintf(r.out, "── %s from %s · %s\n%s\n\n", m.ID, m.From, m.TS.Local().Format("2006-01-02 15:04:05"), m.Body)
 		if m.FromProject != "" { // cross-project mail: the sender reads its own project's logbook
-			fmt.Fprintf(r.out, "   (reply with: bs send --project %s %s \"...\")\n\n", m.FromProject, m.From)
+			fmt.Fprintf(r.out, "   (reply with: "+bsname.Cmd+" send --project %s %s \"...\")\n\n", m.FromProject, m.From)
 		}
 		ids = append(ids, m.ID)
 	}

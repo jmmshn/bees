@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 	"github.com/jmmshn/bees/cmd/bsx/internal/logbook"
 	"github.com/jmmshn/bees/cmd/bsx/internal/port"
 	"github.com/jmmshn/bees/internal/prompt"
@@ -45,18 +46,18 @@ func (c *Core) Queen(ctx context.Context, req QueenReq) ([]string, error) {
 		return nil, err
 	} else if ok {
 		if up, err := running(q); err != nil {
-			return nil, exit(ExitCantCheck, "bsx doctor", err, "can't tell whether a queen already runs")
+			return nil, exit(ExitCantCheck, bsname.Cmd+" doctor", err, "can't tell whether a queen already runs")
 		} else if up {
 			return nil, twin(q)
 		}
 	}
 	start, err := c.Proc.Start(req.Self)
 	if err != nil {
-		return nil, exit(ExitCantCheck, "bsx doctor", err, "can't read its own start time")
+		return nil, exit(ExitCantCheck, bsname.Cmd+" doctor", err, "can't read its own start time")
 	}
 	l, err := c.Harness.Prepare(port.Start{Role: port.Queen, Name: name, Dir: c.Repo, PromptFile: "{{prompt.md}}"})
 	if err != nil {
-		return nil, exit(ExitRefused, "bsx config", err, "its harness refused the launch")
+		return nil, exit(ExitRefused, bsname.Cmd+" config", err, "its harness refused the launch")
 	}
 	q := logbook.Queen{Name: name, Harness: c.HarnessName, Session: req.Session, Pane: req.Pane,
 		Process: logbook.Process{PID: req.Self, Start: start}, Exe: req.Exe}
@@ -69,7 +70,7 @@ func (c *Core) Queen(ctx context.Context, req QueenReq) ([]string, error) {
 	l.Files = withPrompt(l.Files, prompt.Queen, c.Project)
 	args, err := c.writeFiles(name, l)
 	if err != nil {
-		return nil, exit(ExitFail, "bsx queen", err, "couldn't write her start files (her entry names this pid, which exits: harmless)")
+		return nil, exit(ExitFail, bsname.Cmd+" queen", err, "couldn't write her start files (her entry names this pid, which exits: harmless)")
 	}
 	return append([]string{c.Harness.Kind()}, args...), nil
 }

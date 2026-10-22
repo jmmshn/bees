@@ -104,3 +104,12 @@ func alive(pid int) bool {
 	_, err := proc.Start(pid)
 	return err == nil
 }
+
+// A ref git can't check is "couldn't run", never "bad ref" (Rule G).
+func TestFillOfARefWithNoGitCantRun(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	_, err := checks.Fill([]string{"git", "{branch}"}, map[string]checks.Value{"branch": {S: "toy-1", Ref: true}})
+	if !errors.Is(err, checks.ErrCantRun) || errors.Is(err, checks.ErrBadArgv) {
+		t.Fatalf("Fill = %v; want ErrCantRun", err)
+	}
+}

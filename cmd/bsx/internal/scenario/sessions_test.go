@@ -95,7 +95,7 @@ func TestQueenAndWorkerMailBothWays(t *testing.T) {
 	must(t, x.queenRuns(1, "spawn", "--goal", "branch", "toy-1"), 0, "spawned toy-1")
 	must(t, x.worker("toy-1", 1, "inbox"), 0, "from queen-toy", "You own toy-1")
 	must(t, x.worker("toy-1", 2, "send", "queen-toy", "which base?"), 0, "rung queen-toy")
-	if rings := x.harness.Rings("queen-toy"); len(rings) != 1 || !strings.Contains(rings[0], `1 unread (toy-1) — run: bs inbox   (reply with: bs send toy-1 "...")`) {
+	if rings := x.harness.Rings("queen-toy"); len(rings) != 1 || !strings.Contains(rings[0], `1 unread (toy-1) — run: bsx inbox   (reply with: bsx send toy-1 "...")`) {
 		t.Fatalf("queen's rings: %q", rings)
 	}
 	must(t, x.queenRuns(2, "inbox"), 0, "from toy-1", "which base?")
@@ -243,11 +243,11 @@ func TestAMisaddressedSendIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	lb.Close()
-	must(t, x.worker("toy-1", 1, "send", "queen-other", "hi"), 2, "queen-other is a session of project other, not toy; nothing stored", "bs send --project other queen-other")
+	must(t, x.worker("toy-1", 1, "send", "queen-other", "hi"), 2, "queen-other is a session of project other, not toy; nothing stored", "bsx send --project other queen-other")
 	if ms, _ := x.open().Unread(context.Background(), "queen-other"); len(ms) != 0 {
 		t.Fatalf("stored: %+v", ms)
 	}
-	must(t, x.worker("toy-1", 2, "send", "--project", "other", "queen-other", "hi"), 0, "stored, not rung (queen-other: not running): queen-other reads it at its next bs inbox")
+	must(t, x.worker("toy-1", 2, "send", "--project", "other", "queen-other", "hi"), 0, "stored, not rung (queen-other: not running): queen-other reads it at its next bsx inbox")
 	ro, err := logbook.OpenReadOnly(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
@@ -273,7 +273,7 @@ func TestRound11CrossProjectSendAndReply(t *testing.T) {
 	must(t, x.worker("toy-1", 1, "send", "--project", "other", "queen-other", "your API changed?"), 0)
 	other := append(slices.Clone(x.env), "BS_PROJECT=other")
 	must(t, x.shellRun("/", other, "", "inbox", "--as", "queen-other"), 0,
-		"from toy-1", "your API changed?", `(reply with: bs send --project toy toy-1 "...")`)
+		"from toy-1", "your API changed?", `(reply with: bsx send --project toy toy-1 "...")`)
 }
 
 // worker.path reaches the harness as dirs first on the worker's PATH (the live rig's

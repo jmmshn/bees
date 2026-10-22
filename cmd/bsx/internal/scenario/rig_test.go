@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -202,6 +203,9 @@ func must(t *testing.T, r result, code int, want ...string) {
 	t.Helper()
 	if r.code != code {
 		t.Fatalf("exit %d, want %d:\n%s", r.code, code, r)
+	}
+	if regexp.MustCompile(`(^|[^\w-])bs (done|end|inbox|status|prune|spawn|send)\b`).MatchString(r.String()) {
+		t.Fatalf("output sends its reader to the shared bs (motif 14):\n%s", r)
 	}
 	for _, w := range want {
 		if !strings.Contains(r.String(), w) {

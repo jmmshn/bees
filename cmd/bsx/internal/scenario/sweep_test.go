@@ -3,6 +3,7 @@ package scenario_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -252,6 +253,39 @@ INSERT INTO entries VALUES ('s1','2026-10-01T00:00:00.000Z','spawned','queen-toy
 	must(t, r, 0, "--goal legacy")
 	if _, err := os.Stat(x.logbook + ".pre-2"); err != nil {
 		t.Fatalf("no copy aside: %v", err)
+	}
+}
+
+// A legacy worktree prunes on proof 1 against the repo's default branch: its recorded
+// base was a checkout path, never a ref (bees-11.3), so merge-base can't be given it.
+func TestPruneTakesALegacyWorktreeOnTheDefaultBranch(t *testing.T) {
+	x := newToy(t)
+	merged, open := filepath.Join(x.repo+"-WT", "toy-8"), filepath.Join(x.repo+"-WT", "toy-9")
+	x.git(x.repo, "worktree", "add", "-q", "-b", "toy-8", merged, "main")
+	x.git(x.repo, "worktree", "add", "-q", "-b", "toy-9", open, "main")
+	x.commit(open, "work.txt")
+	if err := os.MkdirAll(filepath.Dir(x.logbook), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", x.logbook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := func(id, name, dir string) string {
+		return fmt.Sprintf(`INSERT INTO entries VALUES ('%[1]s','2026-10-01T00:00:00.000Z','spawned','queen-toy','%[2]s',NULL,'{"bead":"%[2]s","workspace":"w2","pane":"w2:p1","worktree":"%[3]s","branch":"%[2]s","repo":"%[4]s","base":"%[4]s"}');
+INSERT INTO entries VALUES ('e%[1]s','2026-10-01T00:00:01.000Z','ended','queen-toy','%[2]s','%[1]s',NULL);`, id, name, dir, x.repo)
+	}
+	_, err = db.Exec(`CREATE TABLE entries (id TEXT PRIMARY KEY, ts TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('message','received','rang','spawned','ended')),
+  actor TEXT NOT NULL, subject TEXT, ref TEXT REFERENCES entries(id),
+  data TEXT CHECK (data IS NULL OR json_valid(data))) STRICT;` + row("s1", "toy-8", merged) + row("s2", "toy-9", open))
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	must(t, x.queen("prune"), 3, "removed "+merged, "toy-9 is not merged into main")
+	if _, err := os.Stat(open); err != nil {
+		t.Fatalf("prune removed the unmerged %s: %v", open, err)
 	}
 }
 

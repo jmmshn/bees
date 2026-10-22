@@ -39,7 +39,10 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 	}
 	bead, err := c.Beads.Show(ctx, req.Bead)
 	if err != nil {
-		return logbook.Spawn{}, refusedOrCant(err, "bd show "+req.Bead, bsname.Cmd+" spawn: can't read bead %s", req.Bead)
+		if errors.Is(err, port.ErrNoBead) {
+			return logbook.Spawn{}, exit(ExitRefused, "bd show "+req.Bead, err, bsname.Cmd+" spawn: no bead %s", req.Bead)
+		}
+		return logbook.Spawn{}, exit(ExitCantCheck, "", err, bsname.Cmd+" spawn: can't read bead %s", req.Bead)
 	}
 	name := Name(bead.ID)
 	switch prev, ok, err := c.Logbook.LatestSpawn(ctx, name); {

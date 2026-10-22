@@ -368,3 +368,9 @@ func lineOf(s, word string) string {
 	}
 	return ""
 }
+
+// A bead the tracker says doesn't exist refuses the spawn (exit 2) and names it.
+func TestSpawnOfNoSuchBeadIsRefused(t *testing.T) {
+	x := newToy(t)
+	must(t, x.queen("spawn", "--goal", "verdict", "toy-404"), 2, "no bead toy-404", "next: bd show toy-404")
+}

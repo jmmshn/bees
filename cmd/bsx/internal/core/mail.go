@@ -157,5 +157,8 @@ func (c *Core) Addressed(ctx context.Context, to, logbookDir string) (stranger b
 	if ok && sp.Ended {
 		return false, exit(ExitRefused, bsname.Cmd+" status", nil, "%s has ended: nobody would read it; nothing stored", to)
 	}
-	return !ok, err
+	if err != nil {
+		return false, err
+	}
+	return !ok, nil
 }

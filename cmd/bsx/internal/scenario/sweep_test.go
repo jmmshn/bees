@@ -210,10 +210,9 @@ func TestDoneStopsAtACheckThatCantRun(t *testing.T) {
 	must(t, x.worker("toy-1", 1, "done"), 6, "couldn't run")
 }
 
-// The worktree's .git gone, the worker's cwd is in no repo, so bs can't find its project.
-// It should still run the check and stop at exit 6 (bees-13.15).
+// The worktree's .git gone, the worker's cwd is in no repo; its pane still names its
+// project, so the check runs and stops at exit 6 (bees-13.15).
 func TestDoneWithTheWorktreesGitGone(t *testing.T) {
-	t.Skip("bees-13.15: bsx finds a pane's project only from its cwd")
 	x := newToy(t)
 	sp := x.spawn("toy-1", "branch")
 	if err := os.RemoveAll(filepath.Join(sp.Workspace.Dir, ".git")); err != nil {

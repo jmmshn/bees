@@ -29,10 +29,12 @@ func (c *Core) Queen(ctx context.Context, req QueenReq) ([]string, error) {
 	if c.Repo == "" {
 		return nil, exit(ExitRefused, "cd into the project's repo, or set paths.repo", nil, "project %s has no repo to start her in", c.Project)
 	}
+	var checkErr error // running's failure, told apart from a logbook write's
 	running := func(q logbook.Queen) (bool, error) {
 		up, err := c.Proc.Alive(q.Process)
 		if err != nil {
-			return false, fmt.Errorf("can't tell whether %s still runs (pid %d): %w", q.Name, q.PID, err)
+			checkErr = fmt.Errorf("can't tell whether %s still runs (pid %d): %w", q.Name, q.PID, err)
+			return false, checkErr
 		}
 		return up, nil
 	}
@@ -60,10 +62,12 @@ func (c *Core) Queen(ctx context.Context, req QueenReq) ([]string, error) {
 		return nil, exit(ExitRefused, bsname.Cmd+" config", err, "its harness refused the launch")
 	}
 	q := logbook.Queen{Name: name, Harness: c.HarnessName, Session: req.Session, Pane: req.Pane,
-		Process: logbook.Process{PID: req.Self, Start: start}, Exe: req.Exe}
+		Process: logbook.Process{PID: req.Self, Start: start}, Exe: req.Exe, Repo: c.Repo}
 	switch prev, ok, err := c.Logbook.RecordQueen(ctx, q, running); {
+	case checkErr != nil:
+		return nil, exit(ExitCantCheck, bsname.Cmd+" doctor", checkErr, "can't tell whether a queen already runs")
 	case err != nil:
-		return nil, err
+		return nil, exit(ExitFail, bsname.Cmd+" doctor", err, "couldn't record %s", name)
 	case !ok:
 		return nil, twin(prev)
 	}

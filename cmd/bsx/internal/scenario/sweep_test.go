@@ -253,10 +253,13 @@ INSERT INTO entries VALUES ('s1','2026-10-01T00:00:00.000Z','spawned','queen-toy
 		t.Fatal(err)
 	}
 	r := x.keeper("status")
-	must(t, r, 0, "--goal legacy")
+	must(t, r, 0, "--goal legacy", "no start recorded (legacy)")
 	if _, err := os.Stat(x.logbook + ".pre-2"); err != nil {
 		t.Fatalf("no copy aside: %v", err)
 	}
+	// Its pane and pid are on herdr's default session, bs's until the swap: bsx never
+	// closes a workspace there or signals a process it recorded.
+	must(t, x.queen("end", "--incomplete", "toy-9"), 2, "herdr's default session", "bees-13.9")
 }
 
 // A legacy worktree prunes on proof 1 against the repo's default branch: its recorded
@@ -400,4 +403,18 @@ func TestSendWithNoHarnessStoresAndSaysNotRung(t *testing.T) {
 	x.spawn("toy-1", "verdict")
 	x.ports.Harness = nil
 	must(t, x.queen("send", "toy-1", "hi"), 0, "not rung", "has no ring")
+}
+
+// A bad flag is a usage refusal (exit 2), never a failure.
+func TestABadFlagIsRefused(t *testing.T) {
+	x := newToy(t)
+	must(t, x.queen("end", "--bogus", "toy-1"), 2, "flag provided but not defined: -bogus")
+}
+
+// Mail to a bead id reaches its worker: the id names the session (ADR-0006, motif 3).
+func TestSendToABeadIDReachesItsWorker(t *testing.T) {
+	x := newToy(t)
+	x.spawn("toy-1.2", "verdict")
+	must(t, x.queen("send", "toy-1.2", "hi"), 0, "sent to toy-1-2")
+	must(t, x.worker("toy-1-2", 1, "inbox"), 0, "from queen-toy", "hi")
 }

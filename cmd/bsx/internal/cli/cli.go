@@ -100,6 +100,16 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 
 var errUsage = errors.New("usage")
 
+// parse parses args into fs: a bad flag is a usage refusal (exit 2), -h is help.
+func parse(fs *flag.FlagSet, args []string) error {
+	if err := fs.Parse(args); err != nil && !errors.Is(err, flag.ErrHelp) {
+		return fmt.Errorf("%w: %v", errUsage, err)
+	} else if err != nil {
+		return err
+	}
+	return nil
+}
+
 type run struct {
 	ctx      context.Context
 	env      Env

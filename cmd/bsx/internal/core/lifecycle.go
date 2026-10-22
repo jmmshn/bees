@@ -117,6 +117,10 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 		return exit(ExitRefused, bsname.Cmd+" status", nil, bsname.Cmd+" end: no worker %s", name)
 	case sp.Ended:
 		return exit(ExitRefused, bsname.Cmd+" prune", nil, bsname.Cmd+" end: %s has already ended", name)
+	case sp.Herdr.Session == logbook.DefaultSession:
+		// A spawn there (every legacy one) is a real worker of the shared bs: its workspace
+		// and pid are not a toy's to close or signal.
+		return exit(ExitRefused, "", nil, bsname.Cmd+" end: %s runs on herdr's default session, which is bs's until the swap (bees-13.9); end it with bs", name)
 	}
 	e, err := c.Logbook.Goal(ctx, sp)
 	if err != nil {

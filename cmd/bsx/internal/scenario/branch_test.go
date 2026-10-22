@@ -92,7 +92,8 @@ func TestPruneKeepsABranchInUseElsewhere(t *testing.T) {
 	x.git(sp.Workspace.Dir, "checkout", "-q", "--detach")
 	other := filepath.Join(filepath.Dir(x.repo), "other")
 	x.git(x.repo, "worktree", "add", "-q", other, "toy-1")
-	must(t, x.queen("prune"), 3, "removed "+sp.Workspace.Dir+" (toy-1)", "kept branch toy-1 (toy-1): branch toy-1 is in use by the worktree "+other)
+	at, _ := filepath.EvalSymlinks(other) // git names it resolved: /private/var on macOS
+	must(t, x.queen("prune"), 3, "removed "+sp.Workspace.Dir+" (toy-1)", "kept branch toy-1 (toy-1): branch toy-1 is in use by the worktree "+at)
 	x.git(x.repo, "worktree", "remove", other)
 	must(t, x.queen("prune"), 0, "removed branch toy-1 (toy-1)")
 }

@@ -16,7 +16,7 @@ func TestSpawnHandoffEndPruneOnABranchGoal(t *testing.T) {
 	x := newToy(t)
 	ctx := context.Background()
 	sp := x.spawn("toy-1", "branch")
-	if sp.Goal.String() != "branch" || sp.Herdr.Session != "toy" || sp.Workspace.Kind != "git_worktree" || sp.Workspace.Base != "main" || sp.ConfigDir == "" {
+	if sp.Goal.String() != "branch" || sp.Herdr.Session != "toy" || sp.Workspace.Kind != "git_worktree" || sp.Workspace.Base != "main" || sp.ConfigDir != x.config {
 		t.Fatalf("spawned = %+v", sp)
 	}
 	st, ok, err := x.open().LatestStart(ctx, sp.ID)

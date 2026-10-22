@@ -1,0 +1,184 @@
+// Package config is bsx's config (ADR-0010 Config, on ADR-0008's loader): a global
+// config.toml and projects/<project>.toml under the config dir, declared once as a tagged
+// struct. Unlike main's internal/config it reads no process state: the caller's env comes
+// in, so a toy's bs reads its own session's dir and nothing else (bees-12.26).
+package config
+
+import (
+	"errors"
+	"fmt"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/jmmshn/bees/cmd/bsx/internal/goal"
+)
+
+// Config is every setting bsx reads; its tables mirror the TOML tables. Each string,
+// bool or list leaf is tagged with:
+//
+//   - toml: its key within its table;
+//   - scope: which file may set it: global, project or both;
+//   - default: its value when nothing sets it (absent means "");
+//   - env: the variable that overrides both files outside a herdr pane (optional);
+//   - enum: its allowed values, separated by | ("" always passes where it is the default);
+//   - path: a path: "dir", or "{repo}" when it may begin with the {repo} placeholder;
+//   - doc: what it means.
+//
+// A table (a pointer to a struct, or a map of them) is a unit: the nearest file that
+// sets it sets all of it, and its own check method validates it.
+type Config struct {
+	Harness   string              `toml:"harness" scope:"global" default:"claude_code" enum:"claude_code" doc:"the harness every queen and worker on this machine starts on (omp and agy arrive with bees-12.8 and bees-12.12)"`
+	Paths     Paths               `toml:"paths"`
+	Workspace Workspace           `toml:"workspace"`
+	Goal      map[string]GoalType `toml:"goal" scope:"both" doc:"custom goal types, by name (wired by bees-13.11)"`
+	Checks    map[string]Check    `toml:"checks" scope:"both" doc:"argv a custom goal's cmd:<name> check runs (wired by bees-13.11)"`
+	Guards    Guards              `toml:"guards"`
+	Queen     Role                `toml:"queen"`
+	Worker    Worker              `toml:"worker"`
+}
+
+// Paths says where bs keeps its files and finds repos.
+type Paths struct {
+	LogbookDir string `toml:"logbook_dir" scope:"global" env:"BS_LOGBOOK_DIR" default:"~/.local/share/bees" path:"dir" doc:"where each project's logbook, <project>.db, lives"`
+	Repos      string `toml:"repos" scope:"global" env:"BS_REPOS" path:"dir" doc:"a directory of repos, where a project's repo is found by its normalised name"`
+	Repo       string `toml:"repo" scope:"project" path:"dir" doc:"the project's directory, when bs isn't run inside it"`
+	Worktrees  string `toml:"worktrees" scope:"both" default:"{repo}-WT" path:"{repo}" doc:"where git_worktree workspaces go, as <worktrees>/<worker>; {repo} is the main checkout"`
+}
+
+// Workspace says what a worker's workspace is. The kind is worked out (Kind); the key
+// only overrides it.
+type Workspace struct {
+	Kind    string   `toml:"kind" scope:"both" enum:"git_worktree|none|command" doc:"overrides the worked-out kind: command when [workspace.command] is set, else git_worktree in a git checkout's top level, else none"`
+	Command *Command `toml:"command" scope:"both" doc:"argv that make and remove a command workspace (cwd: paths.repo)"`
+}
+
+// Command is [workspace.command]: its presence makes the kind command.
+type Command struct {
+	Create  []string `toml:"create"`
+	Remove  []string `toml:"remove"`
+	Clean   []string `toml:"clean"` // exits 0 when nothing would be lost: required
+	Dir     string   `toml:"dir"`
+	Timeout string   `toml:"timeout"`
+}
+
+// GoalType is a custom goal type, [goal.<name>]: the checks each stage runs, by name (a
+// built-in check, or cmd:<name> for [checks.<name>]), and its prompt fragment.
+type GoalType struct {
+	Handoff  []string `toml:"handoff"`
+	Complete []string `toml:"complete"`
+	Prune    []string `toml:"prune"`
+	Fragment string   `toml:"fragment"`
+}
+
+// Check is [checks.<name>]: an argv, never a shell, and its bound.
+type Check struct {
+	Run     []string `toml:"run"`
+	Timeout string   `toml:"timeout"`
+}
+
+// Guards add to (or with Replace, replace) the workspace's default deny list, and grant
+// merges into the bases AllowMergeInto names.
+type Guards struct {
+	Deny           []string `toml:"deny" scope:"both" doc:"shell globs over a command line every worker is denied, added to the workspace's default"`
+	Replace        bool     `toml:"replace" scope:"both" doc:"deny replaces the default instead of adding to it"`
+	AllowMergeInto []string `toml:"allow_merge_into" scope:"both" doc:"base-branch globs a worker may merge its own PR into (refused unless the base is protected)"`
+}
+
+// Role holds the queen's harness tables.
+type Role struct {
+	ClaudeCode ClaudeCode `toml:"claude_code"`
+}
+
+// Worker holds every worker's harness tables and bs spawn's own settings.
+type Worker struct {
+	Path       []string   `toml:"path" scope:"project" path:"dir" doc:"dirs put first on every worker's PATH (a live test's build under test)"`
+	ClaudeCode ClaudeCode `toml:"claude_code"`
+}
+
+// ClaudeCode holds the settings bs passes to Claude Code.
+type ClaudeCode struct {
+	Model string `toml:"model" scope:"both" doc:"the model Claude Code starts on (claude --model); empty: Claude Code's default"`
+}
+
+// The workspace kinds.
+const (
+	GitWorktree = "git_worktree"
+	NoWorkspace = "none"
+	CommandKind = "command"
+)
+
+// Kind is the workspace kind, worked out (Rule D): the override, else command when
+// [workspace.command] is set, else git_worktree when the project dir is the top level of
+// a git checkout, else none.
+func (c Config) Kind(gitTop bool) string {
+	switch {
+	case c.Workspace.Kind != "":
+		return c.Workspace.Kind
+	case c.Workspace.Command != nil:
+		return CommandKind
+	case gitTop:
+		return GitWorktree
+	}
+	return NoWorkspace
+}
+
+func (c *Command) check() error {
+	var errs []error
+	for _, a := range []struct {
+		key  string
+		argv []string
+	}{{"create", c.Create}, {"remove", c.Remove}, {"clean", c.Clean}} {
+		if len(a.argv) == 0 || a.argv[0] == "" {
+			errs = append(errs, fmt.Errorf("%s: an argv is required", a.key))
+		}
+	}
+	if c.Dir == "" {
+		errs = append(errs, errors.New("dir: required, e.g. \"{repo}-WS/{name}\""))
+	}
+	return errors.Join(append(errs, checkTimeout(c.Timeout))...)
+}
+
+func (g GoalType) check(name string, checks map[string]Check) error {
+	if goal.IsType(name) {
+		return fmt.Errorf("%s is a built-in goal type", name)
+	}
+	var errs []error
+	for _, s := range []struct {
+		key   string
+		names []string
+	}{{"handoff", g.Handoff}, {"complete", g.Complete}, {"prune", g.Prune}} {
+		for _, n := range s.names {
+			cmd, ok := strings.CutPrefix(n, "cmd:")
+			switch _, defined := checks[cmd]; {
+			case ok && !defined:
+				errs = append(errs, fmt.Errorf("%s: %q names no [checks.%s]", s.key, n, cmd))
+			case !ok && !goal.IsCheck(n):
+				errs = append(errs, fmt.Errorf("%s: %q is no built-in check; a command check is cmd:<name>", s.key, n))
+			}
+		}
+	}
+	if g.Fragment != "" && !filepath.IsAbs(g.Fragment) && !strings.HasPrefix(g.Fragment, "~/") {
+		errs = append(errs, fmt.Errorf("fragment = %q: not an absolute path (only ~ is expanded)", g.Fragment))
+	}
+	return errors.Join(errs...)
+}
+
+func (c Check) check() error {
+	if len(c.Run) == 0 || c.Run[0] == "" {
+		return errors.New("run: an argv is required")
+	}
+	return checkTimeout(c.Timeout)
+}
+
+// checkTimeout refuses a timeout time.ParseDuration can't read, or one not above zero;
+// "" is the default bound.
+func checkTimeout(s string) error {
+	if s == "" {
+		return nil
+	}
+	if d, err := time.ParseDuration(s); err != nil || d <= 0 {
+		return fmt.Errorf("timeout = %q: want a duration above zero, e.g. \"60s\"", s)
+	}
+	return nil
+}

@@ -223,9 +223,8 @@ func TestEndIncompleteNeedsAHandoff(t *testing.T) {
 func TestDoneStopsAtACheckThatCantRun(t *testing.T) {
 	x := newToy(t)
 	sp := x.spawn("toy-1", "branch")
-	if err := os.RemoveAll(filepath.Join(sp.Workspace.Dir, ".git")); err != nil {
-		t.Fatal(err)
-	}
+	// The base gone, git rev-list can't run; the workspace still names the project.
+	x.git(x.repo, "update-ref", "-d", "refs/heads/"+sp.Workspace.Base)
 	must(t, x.worker("toy-1", 1, "done"), 6, "couldn't run")
 }
 
@@ -282,7 +281,23 @@ func TestBsxRefusesTheDefaultConfigDirAndAMissingSessionDir(t *testing.T) {
 	x.env = append(x.env, "HERDR_SESSION=")
 	must(t, x.keeper("status"), 2, "refuses the default config dir")
 	x.env = append(x.env, "HERDR_SESSION=nosuch")
-	must(t, x.keeper("status"), 2, "no config dir")
+	must(t, x.keeper("status"), 2, "warning: no config dir for this herdr session nosuch")
+}
+
+// Rule G inside a pane: with the session's config dir gone, a worker's writes are refused
+// (exit 2) and write nothing; status runs, warning.
+func TestAMissingSessionDirRefusesAWorkersWrites(t *testing.T) {
+	x := newToy(t)
+	x.spawn("toy-1", "branch")
+	if err := os.RemoveAll(x.config); err != nil {
+		t.Fatal(err)
+	}
+	must(t, x.worker("toy-1", 1, "send", "queen-toy", "hi"), 2, "warning: no config dir for this herdr session toy", "refused", "nothing was written")
+	must(t, x.worker("toy-1", 2, "inbox"), 2, "refused")
+	must(t, x.worker("toy-1", 3, "status"), 2, "warning: no config dir", "refuses the default config dir")
+	if ms, err := x.open().Unread(context.Background(), "queen-toy"); err != nil || len(ms) != 0 {
+		t.Fatalf("queen's unread = %v, %v", ms, err)
+	}
 }
 
 // A start bs can't confirm is exit 8, says what to run next, and bs end clears it.

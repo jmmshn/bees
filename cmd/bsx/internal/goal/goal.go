@@ -88,6 +88,20 @@ const (
 	BranchMerged      = "branch_merged"       // the branch is merged into its base
 )
 
+// builtins are the built-in checks, for IsCheck.
+var builtins = []string{NoBackground, PRExists, PROpen, PRNotDraft, PRWorkspaceCommit, PRPushed, PRCurrent,
+	CIGreen, PRMerged, PRClosed, PushMoved, ReviewComment, VerdictGiven, NoteChanged, BeadCreated, BranchAhead,
+	Clean, BranchMerged}
+
+// IsCheck reports whether name is a built-in check.
+func IsCheck(name string) bool { return slices.Contains(builtins, name) }
+
+// IsType reports whether name is a built-in goal type, or one never given at spawn.
+func IsType(name string) bool {
+	_, ok := types[name]
+	return ok || name == "legacy" || name == "discard"
+}
+
 // prHandoff is what bs checks of each handed-off PR for pr and pr:ready.
 var prHandoff = []string{PROpen, PRNotDraft, PRWorkspaceCommit, PRPushed, PRCurrent, CIGreen}
 

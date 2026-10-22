@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"path/filepath"
 	"strings"
 
 	"github.com/jmmshn/bees/cmd/bsx/internal/core"
@@ -19,6 +18,7 @@ import (
 // Env is the calling process as bs sees it.
 type Env struct {
 	Vars  []string // its environment
+	Dir   string   // its working directory: the project is the git repo it is in
 	Self  int      // its pid: identity and the gate walk from here
 	Stdin io.Reader
 }
@@ -47,6 +47,8 @@ commands:
   send    [--as S] <to> <message>                          store a message, then ring
   inbox   [--as S]                                         print unread mail
   status                                                   list workers and their goals
+  config                                                   every setting and where it came from
+  doctor                                                   check what bsx needs
 `
 
 // Run runs bsx args for env on ports, printing to stdout and stderr, and returns the exit
@@ -61,40 +63,60 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 		fmt.Fprintf(stderr, "bsx: unknown command %q\n\n%s", args[0], usage)
 		return core.ExitRefused
 	}
-	cfg, err := loadConfig(env.Vars)
-	if err != nil {
+	s, err := load(ctx, env, ports.Run)
+	if err != nil { // a bad file or a refused dir: refused before anything changed
 		fmt.Fprintf(stderr, "bsx %s: %v\n", args[0], err)
+		var x *core.Exit
+		if errors.As(err, &x) {
+			return x.Code
+		}
 		return core.ExitRefused
 	}
-	lb, err := logbook.Open(ctx, filepath.Join(cfg.Paths.LogbookDir, cfg.Project+".db"))
-	if err != nil {
-		fmt.Fprintf(stderr, "bsx %s: %v\n", args[0], err)
-		return core.ExitFail
+	for _, w := range s.Warnings {
+		fmt.Fprintf(stderr, "bsx %s: warning: %s\n", args[0], w)
 	}
-	defer lb.Close()
-	c := &core.Core{
-		Logbook: lb, Project: cfg.Project, Run: ports.Run, Harness: ports.Harness, HarnessName: cfg.Harness,
-		Proc: ports.Proc, Beads: ports.Beads, Repo: cfg.Paths.Repo, Worktrees: cfg.Paths.Worktrees,
-		ConfigDir: cfg.Dir, CacheDir: ports.CacheDir, Timing: ports.Timing,
+	if s.Missing && cmd.writes {
+		fmt.Fprintf(stderr, "bsx %s: refused: %v %s; nothing was written\n", args[0], errNoConfigDir, s.Session)
+		return core.ExitRefused
 	}
-	r := &run{ctx: ctx, env: env, c: c, out: stdout, err: stderr}
+	r := &run{ctx: ctx, env: env, s: s, ports: ports, out: stdout, err: stderr}
+	if cmd.logbook {
+		if err := s.checkLogbook(env); err != nil {
+			return report(stderr, args[0], err)
+		}
+		lb, err := logbook.Open(ctx, s.Logbook)
+		if err != nil {
+			return report(stderr, args[0], err)
+		}
+		defer lb.Close()
+		r.c = &core.Core{
+			Logbook: lb, Project: s.Project, Run: ports.Run, Harness: ports.Harness, HarnessName: s.Harness,
+			Proc: ports.Proc, Beads: ports.Beads, Repo: s.Repo, Worktrees: s.Worktrees,
+			ConfigDir: s.Dir, CacheDir: ports.CacheDir, Timing: ports.Timing,
+		}
+	}
 	fs := flag.NewFlagSet("bsx "+args[0], flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	err = cmd(r, fs, args[1:])
+	if err := cmd.run(r, fs, args[1:]); !errors.Is(err, flag.ErrHelp) {
+		return report(stderr, args[0], err)
+	}
+	return 0
+}
+
+// report prints err for command name and returns its exit code: an *Exit's own, 2 for
+// usage and a refused logbook dir, else 1.
+func report(stderr io.Writer, name string, err error) int {
+	if err == nil {
+		return 0
+	}
+	fmt.Fprintf(stderr, "bsx %s: %v\n", name, err)
 	var x *core.Exit
 	switch {
-	case err == nil:
-		return 0
-	case errors.Is(err, flag.ErrHelp):
-		return 0
 	case errors.As(err, &x):
-		fmt.Fprintf(stderr, "bsx %s: %v\n", args[0], x)
 		return x.Code
-	case errors.Is(err, errUsage):
-		fmt.Fprintf(stderr, "bsx %s: %v\n", args[0], err)
+	case errors.Is(err, errUsage), errors.Is(err, ErrDefaultConfig):
 		return core.ExitRefused
 	}
-	fmt.Fprintf(stderr, "bsx %s: %v\n", args[0], err)
 	return core.ExitFail
 }
 
@@ -103,7 +125,9 @@ var errUsage = errors.New("usage")
 type run struct {
 	ctx      context.Context
 	env      Env
-	c        *core.Core
+	s        *settings
+	ports    Ports
+	c        *core.Core // nil for a command that opens no logbook
 	out, err io.Writer
 }
 
@@ -113,17 +137,11 @@ type list []string
 func (l *list) String() string     { return strings.Join(*l, " ") }
 func (l *list) Set(v string) error { *l = append(*l, v); return nil }
 
-// who is the caller: its recorded pane inside one, else --as (ADR-0010 identity). BS_*
-// variables inside a recorded pane are ignored, with a warning.
+// who is the caller: its recorded pane inside one, else --as (ADR-0010 identity). load
+// has already ignored, with a warning, every BS_* variable inside a pane.
 func (r *run) who(as string) (core.Who, error) {
 	w, err := r.c.Identify(r.ctx, r.env.Vars, r.env.Self)
 	if err == nil {
-		for _, v := range r.env.Vars {
-			if strings.HasPrefix(v, "BS_") {
-				k, _, _ := strings.Cut(v, "=")
-				fmt.Fprintf(r.err, "bsx: ignoring %s inside %s's recorded pane\n", k, w.Name)
-			}
-		}
 		if as != "" && as != w.Name {
 			return core.Who{}, fmt.Errorf("%w: --as %s inside %s's recorded pane", errUsage, as, w.Name)
 		}
@@ -145,12 +163,21 @@ func (r *run) who(as string) (core.Who, error) {
 	return core.Who{Name: as, Queen: strings.HasPrefix(as, "queen-")}, nil
 }
 
-var commands = map[string]func(r *run, fs *flag.FlagSet, args []string) error{
-	"spawn":  (*run).spawn,
-	"done":   (*run).done,
-	"end":    (*run).end,
-	"prune":  (*run).prune,
-	"send":   (*run).send,
-	"inbox":  (*run).inbox,
-	"status": (*run).status,
+// command is one bsx command: whether it writes (refused with no config dir, Rule G) and
+// whether it opens the logbook.
+type command struct {
+	run             func(r *run, fs *flag.FlagSet, args []string) error
+	writes, logbook bool
+}
+
+var commands = map[string]command{
+	"spawn":  {(*run).spawn, true, true},
+	"done":   {(*run).done, true, true},
+	"end":    {(*run).end, true, true},
+	"prune":  {(*run).prune, true, true},
+	"send":   {(*run).send, true, true},
+	"inbox":  {(*run).inbox, true, true}, // it writes receipts
+	"status": {(*run).status, false, true},
+	"config": {(*run).config, false, false},
+	"doctor": {(*run).doctor, false, false},
 }

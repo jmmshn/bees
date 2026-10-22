@@ -357,7 +357,11 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 				g += " (discarded)"
 			}
 		}
-		fmt.Fprintf(tw, "%s\t--goal %s\t%s\t%s\t%s\t%s\t%s\n", sp.Name, g, state, handoff, complete, running, sp.Workspace.Dir)
+		dir := sp.Workspace.Dir
+		if _, err := os.Stat(dir); dir != "" && os.IsNotExist(err) {
+			dir += " (removed)"
+		}
+		fmt.Fprintf(tw, "%s\t--goal %s\t%s\t%s\t%s\t%s\t%s\n", sp.Name, g, state, handoff, complete, running, dir)
 		switch {
 		case running == "unconfirmed":
 			stuck = append(stuck, fmt.Sprintf("%s: its start was never confirmed → bsx end %s --incomplete", sp.Name, sp.Name))

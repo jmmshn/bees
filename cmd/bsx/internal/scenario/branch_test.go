@@ -47,6 +47,9 @@ func TestASquashMergedBranchLandsAndPrunes(t *testing.T) {
 		t.Fatalf("prune kept the branch: %q", out)
 	}
 	must(t, x.queen("prune"), 0) // nothing left: says nothing, exits 0
+	if r := x.keeper("status"); !strings.HasSuffix(cell(r.out, "toy-1", "WORKSPACE"), " (removed)") {
+		t.Fatalf("status after prune:\n%s", r)
+	}
 }
 
 // bees-12.41: a worker ended with --force (its gate waived) still has its worktree and

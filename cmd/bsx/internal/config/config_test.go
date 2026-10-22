@@ -117,6 +117,20 @@ func TestErrorsNameFileAndKey(t *testing.T) {
 		proj+": worker.path: an empty item")
 }
 
+// Every path key is absolute once ~ is expanded: a relative one, or ~ with HOME unset, is
+// refused, as main's internal/config does.
+func TestPathsMustBeAbsolute(t *testing.T) {
+	dir := t.TempDir()
+	global, proj := filepath.Join(dir, "config.toml"), filepath.Join(dir, "projects", "toy.toml")
+	write(t, global, "[paths]\nlogbook_dir = \"logs\"\n")
+	write(t, proj, "[paths]\nrepo = \"~/r\"\nworktrees = \"wt\"\n")
+	_, err := Load(Input{Dir: dir, Project: "toy"})
+	wantErr(t, err,
+		global+`: paths.logbook_dir = "logs": not an absolute path`,
+		proj+`: paths.repo = "~/r": can't expand ~: HOME is unset`,
+		proj+`: paths.worktrees = "wt": not an absolute path`)
+}
+
 func TestTables(t *testing.T) {
 	dir := t.TempDir()
 	write(t, filepath.Join(dir, "config.toml"), `

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/jmmshn/bees/internal/logbook"
@@ -64,6 +65,9 @@ func TestDoneRefusesBackgroundWork(t *testing.T) {
 	useTempLogbook(t)
 	inWorkerPane(t, "test-1-1")
 	child := exec.Command("sleep", "30")
+	// Its own process group, as a tool call's background job is (Claude runs each Bash call
+	// in a new session): bs's own group is its pipeline, which the gate skips (bees-12.50).
+	child.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := child.Start(); err != nil {
 		t.Fatal(err)
 	}

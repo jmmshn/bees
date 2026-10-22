@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -95,7 +96,7 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, force bool
 
 // EndOpts are bs end's flags.
 type EndOpts struct {
-	Force      bool // waive the gate, and nothing else
+	Force      bool // waive the gate and the moved-pane refusal (stopping it where it runs), and nothing else
 	Incomplete bool // end an incomplete goal anyway; prune completes it later
 }
 
@@ -123,8 +124,14 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 	}
 	done, passed, failed, err := c.complete(ctx, sp, e)
 	switch {
+	case err != nil && !o.Incomplete:
+		return exit(ExitCantCheck, bsname.Cmd+" end "+name+" --incomplete", err, "%s: can't tell whether its goal is complete", name)
 	case err != nil:
-		return exit(ExitCantCheck, "", err, "%s: can't tell whether its goal is complete", name)
+		// --incomplete is the way out while a check can't run (motif 5); prune completes it.
+		c.warn("can't tell whether %s's goal is complete (%v): treating it as incomplete", name, err)
+		done = false
+	}
+	switch {
 	case !done && !o.Incomplete:
 		var why []string
 		for _, f := range failed {
@@ -155,6 +162,15 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 		case len(bg) > 0:
 			return exit(ExitBackground, bsname.Cmd+" end "+name+" --force", nil, "%s", background(name, bg))
 		}
+	}
+	// A pane moved out of its workspace keeps running there: closing the workspace
+	// wouldn't stop it, so only --force ends it, by its recorded process (bees-12.46).
+	switch pid, err := c.moved(ctx, sp); {
+	case err != nil:
+		return exit(ExitCantCheck, bsname.Cmd+" end "+name, err, "%s: can't tell whether its pane is still in its workspace %s; nothing closed", name, sp.Herdr.Workspace)
+	case pid != 0 && !o.Force:
+		return exit(ExitRefused, bsname.Cmd+" end "+name+" --force (stops pid "+strconv.Itoa(pid)+" wherever it runs)", nil,
+			"%s: its pane %s moved out of its workspace %s, and its process (pid %d) still runs there; nothing closed", name, sp.Herdr.Pane, sp.Herdr.Workspace, pid)
 	}
 	switch g, err := c.guests(ctx, sp); {
 	case err != nil:
@@ -220,6 +236,24 @@ func (c *Core) guests(ctx context.Context, sp logbook.Spawn) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// moved is the pid of sp's recorded process when it still runs but its recorded pane is
+// no longer in its recorded workspace (herdr pane move gives the pane a new id; a moved
+// last pane closes the workspace), else 0.
+func (c *Core) moved(ctx context.Context, sp logbook.Spawn) (int, error) {
+	panes, err := c.herdr(sp.Herdr.Session).Panes(ctx, sp.Herdr.Workspace)
+	if err != nil || slices.Contains(panes, sp.Herdr.Pane) {
+		return 0, err
+	}
+	st, ok, err := c.StartOf(ctx, sp)
+	if err != nil || !ok {
+		return 0, err
+	}
+	if alive, err := c.Proc.Alive(st.Process); err != nil || !alive {
+		return 0, err
+	}
+	return st.PID, nil
 }
 
 // recordedAs is the session whose queen entry or open spawn's start recorded pid, if any.
@@ -288,18 +322,24 @@ func (c *Core) stop(ctx context.Context, sp logbook.Spawn) error {
 	return fmt.Errorf("pid %d outlived SIGKILL", st.PID)
 }
 
-// Pruned is what bs prune did with one ended spawn's workspace.
+// Pruned is what bs prune did with one ended spawn's workspace and branch.
 type Pruned struct {
 	Name, Dir string
-	Removed   bool
-	Branch    string // the merged branch it deleted with the workspace
-	Why       string // why it was kept, or why a removed workspace's branch stays
+	Removed   bool   // its directory was removed
+	Gone      bool   // its directory was gone already
+	Branch    string // its branch, when it had one
+	Deleted   bool   // its local branch was deleted
+	Remote    string // the remote branch of the same name, left alone: remote branches are the keeper's (bees-1.34)
+	Why       string // why it, or its branch, was kept
 	Unknown   bool   // it couldn't check
 }
 
 // Prune removes each ended spawn's workspace once its frozen prune rule passes (or it is
-// discarded) and it holds no uncommitted or untracked files, completing a goal ended
-// --incomplete on the way. It names what it kept and why.
+// discarded) and it holds no uncommitted or untracked files, then its local branch once
+// that is proven merged (or discarded), completing a goal ended --incomplete on the way. A
+// workspace whose directory is already gone still has its branch pruned, so nothing is
+// kept forever (bees-12.41). It never touches a remote branch, and names what it kept and
+// why.
 func (c *Core) Prune(ctx context.Context, by string) ([]Pruned, error) {
 	sps, err := c.Logbook.LatestSpawns(ctx)
 	if err != nil {
@@ -307,19 +347,50 @@ func (c *Core) Prune(ctx context.Context, by string) ([]Pruned, error) {
 	}
 	var out []Pruned
 	for _, sp := range sps {
-		if !sp.Ended || sp.Workspace.Kind != "git_worktree" || sp.Workspace.Dir == "" {
+		ws := sp.Workspace
+		if !sp.Ended || ws.Kind != "git_worktree" || ws.Dir == "" {
 			continue
 		}
-		if _, err := os.Stat(sp.Workspace.Dir); os.IsNotExist(err) {
+		_, err := os.Stat(ws.Dir)
+		dir := err == nil
+		if err != nil && !os.IsNotExist(err) {
+			out = append(out, Pruned{Name: sp.Name, Dir: ws.Dir, Branch: ws.Branch, Unknown: true, Why: "can't tell whether its directory exists: " + err.Error()})
 			continue
 		}
-		out = append(out, c.prune(ctx, by, sp))
+		branch, err := c.hasBranch(ctx, ws)
+		switch {
+		case err != nil && dir:
+			// Its directory is still pruned; its branch waits for a lookup that works.
+			p := c.prune(ctx, by, sp, dir, false)
+			if p.Why == "" {
+				p.Unknown, p.Why = true, "can't tell whether its branch exists: "+err.Error()
+			}
+			out = append(out, p)
+		case err != nil:
+			out = append(out, Pruned{Name: sp.Name, Dir: ws.Dir, Branch: ws.Branch, Gone: true, Unknown: true, Why: "can't tell whether its branch exists: " + err.Error()})
+		case dir || branch:
+			out = append(out, c.prune(ctx, by, sp, dir, branch))
+		}
 	}
 	return out, nil
 }
 
-func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn) Pruned {
-	p := Pruned{Name: sp.Name, Dir: sp.Workspace.Dir}
+// hasBranch reports whether ws's branch exists in its repo; a workspace with no branch has
+// none.
+func (c *Core) hasBranch(ctx context.Context, ws logbook.Workspace) (bool, error) {
+	if ws.Branch == "" || ws.Repo == "" {
+		return false, nil
+	}
+	_, err := c.git(ctx, ws.Repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+ws.Branch)
+	if isExit(err, 1) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, branch bool) Pruned {
+	ws := sp.Workspace
+	p := Pruned{Name: sp.Name, Dir: ws.Dir, Branch: ws.Branch, Gone: !dir}
 	keep := func(unknown bool, format string, a ...any) Pruned {
 		p.Why, p.Unknown = fmt.Sprintf(format, a...), unknown
 		return p
@@ -349,23 +420,186 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn) Pruned {
 			}
 		}
 	}
-	if r := c.check(ctx, sp, goal.Clean, Handed{}); r.Err != "" {
-		return keep(true, "can't check for uncommitted files: %s", r.Err)
-	} else if !r.Pass {
-		return keep(false, "%s", r.Detail)
-	}
-	if _, err := c.git(ctx, sp.Workspace.Repo, "worktree", "remove", sp.Workspace.Dir); err != nil {
-		return keep(true, "git worktree remove: %v", err)
-	}
-	p.Removed = true
-	// A branch proven merged goes with its workspace, or the bead's next spawn finds it.
-	// A discarded one stays: its commits are nobody's to delete.
-	if !e.Discarded && slices.Contains(e.Prune(), goal.BranchMerged) && sp.Workspace.Branch != "" {
-		if err := c.dropBranch(ctx, sp.Workspace.Repo, sp.Workspace.Branch); err != nil {
-			p.Why = fmt.Sprintf("its branch %s stays: %v", sp.Workspace.Branch, err)
-		} else {
-			p.Branch = sp.Workspace.Branch
+	// An ended worker whose recorded process still runs (one whose start was confirmed
+	// late) may still write there.
+	if st, ok, err := c.StartOf(ctx, sp); err != nil {
+		return keep(true, "can't tell whether its worker still runs: %v", err)
+	} else if ok {
+		if alive, err := c.Proc.Alive(st.Process); err != nil {
+			return keep(true, "can't tell whether its worker still runs: %v", err)
+		} else if alive {
+			return keep(false, "its ended worker still runs (pid %d): stop it, then %s prune again", st.PID, bsname.Cmd)
 		}
 	}
+	// The remote branch is named whatever happens to the local one (bees-1.34).
+	switch _, err := c.git(ctx, ws.Repo, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+ws.Branch); {
+	case ws.Branch == "":
+	case err == nil:
+		p.Remote = "origin/" + ws.Branch
+	case !isExit(err, 1):
+		c.warn("can't tell whether origin/%s exists: %v", ws.Branch, err)
+	}
+	if dir {
+		if why, unknown := c.freeDir(ctx, sp); why != "" {
+			return keep(unknown, "%s", why)
+		}
+		p.Removed = true
+	}
+	if !branch {
+		return p
+	}
+	// The prune rule's branch_merged, when it ran and passed, is the proof: one gh call, not two.
+	proven := e.Discarded || slices.Contains(e.Prune(), goal.BranchMerged)
+	if why, err := c.pruneBranch(ctx, ws, proven); err != nil {
+		return keep(true, "%v", err)
+	} else if why != "" {
+		return keep(false, "%s", why)
+	}
+	p.Deleted = true
 	return p
+}
+
+// freeDir removes ended spawn sp's worktree, or says why it kept it (unknown: it couldn't
+// check): it is no longer a worktree of its repo, herdr has a workspace open on it or a
+// pane working in it, it has uncommitted or untracked files, its HEAD has commits on no
+// branch, or git refused the removal. Never --force (the pilot's freeWorktree).
+func (c *Core) freeDir(ctx context.Context, sp logbook.Spawn) (why string, unknown bool) {
+	ws := sp.Workspace
+	// Only a directory that is still a worktree of its repo: one taken over or remade by
+	// hand is not this spawn's to remove (the pilot's samePath guard, bees-8.4).
+	if mine, err := c.isWorktree(ctx, ws); err != nil {
+		return fmt.Sprintf("can't list %s's worktrees: %v", ws.Repo, err), true
+	} else if !mine {
+		return "it is no longer a worktree of " + ws.Repo, false
+	}
+	// Its own workspace is closed: anything herdr still has there is someone else's, or a
+	// process bs never recorded (a start never confirmed).
+	if why, err := c.inUse(ctx, sp); err != nil {
+		return "can't tell whether herdr uses it: " + err.Error(), true
+	} else if why != "" {
+		return why, false
+	}
+	if r := c.check(ctx, sp, goal.Clean, Handed{}); r.Err != "" {
+		return "can't check for uncommitted files: " + r.Err, true
+	} else if !r.Pass {
+		return r.Detail, false
+	}
+	// Commits made on a detached HEAD are on no branch: removing the worktree loses them.
+	switch out, err := c.git(ctx, ws.Dir, "rev-list", "-n1", "HEAD", "--not", "--branches", "--tags", "--remotes"); {
+	case err != nil:
+		return "can't tell whether its HEAD is on a branch: " + err.Error(), true
+	case out != "":
+		return fmt.Sprintf("its HEAD has commits on no branch (%s): git -C %s switch -c <branch> keeps them", out, ws.Dir), false
+	}
+	if _, err := c.git(ctx, ws.Repo, "worktree", "remove", ws.Dir); isExit(err, 128) {
+		// git ran and refused: a locked worktree, or one with submodules.
+		return fmt.Sprintf("git refused to remove it (%v): git worktree unlock it, or remove it by hand with git worktree remove --force", err), false
+	} else if err != nil {
+		return "git worktree remove: " + err.Error(), true
+	}
+	return "", false
+}
+
+// inUse names what herdr, in sp's session, has open on its directory: a workspace on it,
+// or a pane whose shell or foreground process works inside it (a keeper's shell, a pane
+// moved out of its workspace).
+func (c *Core) inUse(ctx context.Context, sp logbook.Spawn) (string, error) {
+	h := c.herdr(sp.Herdr.Session)
+	wss, err := h.Workspaces(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, w := range wss {
+		if w.Path != "" && samePath(w.Path, sp.Workspace.Dir) {
+			return fmt.Sprintf("herdr workspace %s (%s) is open on it", w.ID, w.Label), nil
+		}
+	}
+	panes, err := h.PaneDirs(ctx)
+	if err != nil {
+		return "", err
+	}
+	var in []string
+	for _, p := range panes {
+		if under(p.Cwd, sp.Workspace.Dir) || under(p.ForegroundCwd, sp.Workspace.Dir) {
+			in = append(in, p.ID)
+		}
+	}
+	if len(in) == 0 {
+		return "", nil
+	}
+	return fmt.Sprintf("herdr pane %s works in it", strings.Join(in, ", ")), nil
+}
+
+// under reports whether path is dir or inside it, symlinks resolved.
+func under(path, dir string) bool {
+	if path == "" {
+		return false
+	}
+	rel, err := filepath.Rel(resolved(dir), resolved(path))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
+}
+
+// pruneBranch deletes ws's local branch once it is proven merged into its base, whatever
+// the goal's prune rule (a verdict goal prunes at once, but its branch may hold commits),
+// or discarded: the keeper's recorded word that the work is wanted nowhere. proven skips
+// the proof when the caller already has it.
+// It returns why it kept the branch, or err when it couldn't check.
+func (c *Core) pruneBranch(ctx context.Context, ws logbook.Workspace, proven bool) (string, error) {
+	if !proven {
+		switch ok, why, err := c.merged(ctx, ws); {
+		case err != nil:
+			return "", fmt.Errorf("can't tell whether branch %s is merged: %w", ws.Branch, err)
+		case !ok:
+			return fmt.Sprintf("branch %s: %s; delete it by hand once that work is wanted nowhere", ws.Branch, why), nil
+		}
+	}
+	switch at, prunable, err := c.checkedOut(ctx, ws.Repo, ws.Branch); {
+	case err != nil:
+		return "", fmt.Errorf("can't tell whether a worktree has branch %s in use: %w", ws.Branch, err)
+	case at != "" && (!prunable || !samePath(at, ws.Dir)):
+		return fmt.Sprintf("branch %s is in use by the worktree %s", ws.Branch, at), nil
+	case at != "":
+		// Its own directory is gone, and git still counts the branch as checked out there:
+		// drop that one entry, never the repo's other stale ones (motif 12).
+		if _, err := c.git(ctx, ws.Repo, "worktree", "remove", at); err != nil {
+			return "", fmt.Errorf("git worktree remove %s: %w", at, err)
+		}
+	}
+	// -D: a squash or rebase merge leaves the branch unmerged to git; merged proved it.
+	if _, err := c.git(ctx, ws.Repo, "branch", "-D", ws.Branch); err != nil {
+		return "", fmt.Errorf("git branch -D %s: %w", ws.Branch, err)
+	}
+	return "", nil
+}
+
+// isWorktree reports whether ws.Dir is a worktree git lists for ws.Repo.
+func (c *Core) isWorktree(ctx context.Context, ws logbook.Workspace) (bool, error) {
+	out, err := c.git(ctx, ws.Repo, "worktree", "list", "--porcelain", "-z")
+	if err != nil {
+		return false, err
+	}
+	for f := range strings.SplitSeq(out, "\x00") {
+		if at, ok := strings.CutPrefix(f, "worktree "); ok && samePath(at, ws.Dir) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// samePath reports whether a and b name the same directory, symlinks resolved (motif 3),
+// even once it is gone: git lists a removed worktree by its resolved path (/private/var on
+// macOS), the record by the path bs was given.
+func samePath(a, b string) bool { return resolved(a) == resolved(b) }
+
+// resolved is path with symlinks resolved in its longest existing prefix.
+func resolved(path string) string {
+	path = filepath.Clean(path)
+	if r, err := filepath.EvalSymlinks(path); err == nil {
+		return r
+	}
+	dir, base := filepath.Split(path)
+	if dir = filepath.Clean(dir); dir == path {
+		return path
+	}
+	return filepath.Join(resolved(dir), base)
 }

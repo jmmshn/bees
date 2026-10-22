@@ -47,7 +47,7 @@ func TestSpawnHandoffEndPruneOnABranchGoal(t *testing.T) {
 	if _, err := os.Stat(sp.Workspace.Dir); err != nil {
 		t.Fatalf("bs end removed the workspace: %v", err)
 	}
-	must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir+" (toy-1) and its branch toy-1")
+	must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir+" and branch toy-1 (toy-1)")
 	if _, err := os.Stat(sp.Workspace.Dir); !os.IsNotExist(err) {
 		t.Fatalf("prune kept %s", sp.Workspace.Dir)
 	}

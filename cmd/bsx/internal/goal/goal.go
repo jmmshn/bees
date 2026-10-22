@@ -37,6 +37,9 @@ type Part struct {
 	Complete  []string `json:"complete"`
 	// Prune must pass before bs prune removes the workspace; none means at once.
 	Prune []string `json:"prune"`
+	// Fragment is the sha256 of its type's fragment file at spawn (both roles' parts, before
+	// {{…}} is filled: prompt.Hash); "" when its type has none yet.
+	Fragment string `json:"fragment,omitempty"`
 }
 
 // String is the part as --goal spells it.
@@ -102,6 +105,11 @@ var builtins = []string{NoBackground, PRExists, PROpen, PRNotDraft, PRWorkspaceC
 
 // IsCheck reports whether name is a built-in check.
 func IsCheck(name string) bool { return slices.Contains(builtins, name) }
+
+// BuiltinTypes is every built-in goal type a queen may give at spawn, in a fixed order.
+func BuiltinTypes() []string {
+	return []string{"pr", "push", "review", "verdict", "note", "beads", "branch"}
+}
 
 // IsType reports whether name is a built-in goal type, or one never given at spawn.
 func IsType(name string) bool {
@@ -208,6 +216,17 @@ func Parse(values []string) (Goal, error) {
 		return Goal{}, err
 	}
 	return g, nil
+}
+
+// Types is each part's type, in order, each once.
+func (g Goal) Types() []string {
+	var out []string
+	for _, p := range g.Parts {
+		if !slices.Contains(out, p.Type) {
+			out = append(out, p.Type)
+		}
+	}
+	return out
 }
 
 // Handoff is every check g's handoff runs, in order, each once, the implicit

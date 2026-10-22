@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 
@@ -71,5 +73,31 @@ func TestClientReadsHerdrsEnvelope(t *testing.T) {
 	var he *herdr.Error
 	if !errors.As(err, &he) || !errors.Is(err, herdr.ErrPaneGone) {
 		t.Fatalf("err = %#v", err)
+	}
+}
+
+// The real herdr's lists, read the way prune reads them, have this test's own pane with
+// the dir its shell works in, and a workspace with a checkout path (motif 13). Skipped
+// outside a herdr pane.
+func TestPaneDirsAndWorkspacesMatchRealHerdr(t *testing.T) {
+	pane := os.Getenv("HERDR_PANE_ID")
+	if pane == "" {
+		t.Skip("not in a herdr pane")
+	}
+	c := herdr.Client{Run: port.Exec{}}
+	panes, err := c.PaneDirs(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := slices.IndexFunc(panes, func(p herdr.PaneDir) bool { return p.ID == pane })
+	if i < 0 || panes[i].Cwd == "" || panes[i].ForegroundCwd == "" {
+		t.Fatalf("PaneDirs() = %+v; want %s with its dirs", panes, pane)
+	}
+	wss, err := c.Workspaces(context.Background())
+	if err != nil || len(wss) == 0 || wss[0].ID == "" {
+		t.Fatalf("Workspaces() = %+v, %v", wss, err)
+	}
+	if !slices.ContainsFunc(wss, func(w herdr.Workspace) bool { return w.Path != "" }) {
+		t.Fatalf("Workspaces() = %+v; want a checkout path on some workspace", wss)
 	}
 }

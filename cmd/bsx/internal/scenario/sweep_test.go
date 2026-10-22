@@ -60,7 +60,7 @@ func TestAKilledWorkerShowsNotRunning(t *testing.T) {
 	}
 	r := x.keeper("status")
 	must(t, r, 0, "toy-1")
-	if !strings.Contains(lineOf(r.out, "toy-1"), "  no  ") {
+	if cell(r.out, "toy-1", "RUNNING") != "no" {
 		t.Fatalf("status:\n%s", r)
 	}
 }
@@ -73,7 +73,7 @@ func TestPruneSaysWhyItKeepsAWorkspace(t *testing.T) {
 	must(t, x.worker("toy-1", 1, "done"), 0)
 	must(t, x.queen("end", "--incomplete", "toy-1"), 0)
 	x.write(filepath.Join(sp.Workspace.Dir, "scratch.txt"), "x")
-	must(t, x.queen("prune"), 3, "kept "+sp.Workspace.Dir, "not merged into main")
+	must(t, x.queen("prune"), 3, "kept "+sp.Workspace.Dir, "toy-1 has work not on main")
 	x.git(x.repo, "merge", "-q", "--ff-only", "toy-1")
 	must(t, x.queen("prune"), 3, "uncommitted or untracked")
 	if ld, ok, _ := x.open().LandedOf(context.Background(), sp.ID); !ok || ld.By != "prune" {
@@ -183,9 +183,6 @@ func TestPilotBug1231EndUnderNoneStopsTheWorker(t *testing.T) {
 }
 func TestPilotBug1232ANonGitQueenNeedsNoBSProject(t *testing.T) {
 	later(t, "bees-13.10", "workspace none")
-}
-func TestPilotBug1241PruneAfterEndForce(t *testing.T) {
-	later(t, "bees-13.5", "prune of a forced end, and the branch's removal")
 }
 func TestPilotBug1244DoctorAndConfigGaps(t *testing.T) {
 	later(t, "bees-13.8", "bs doctor warns of a PR goal with no remote and a stale herdr server; bs config lists guards")
@@ -316,7 +313,7 @@ INSERT INTO entries VALUES ('e%[1]s','2026-10-01T00:00:01.000Z','ended','queen-t
 	if err != nil {
 		t.Fatal(err)
 	}
-	must(t, x.queen("prune"), 3, "removed "+merged, "toy-9 is not merged into main")
+	must(t, x.queen("prune"), 3, "removed "+merged, "toy-9 has work not on main")
 	if _, err := os.Stat(open); err != nil {
 		t.Fatalf("prune removed the unmerged %s: %v", open, err)
 	}
@@ -434,6 +431,22 @@ func lineOf(s, word string) string {
 		}
 	}
 	return ""
+}
+
+// cell is column's value in worker's row of bsx status's table, read by the header's
+// column positions.
+func cell(out, worker, column string) string {
+	header := lineOf(out, "WORKER")
+	row := lineOf(out, worker+" ")
+	i := strings.Index(header, column)
+	if i < 0 || len(row) <= i {
+		return ""
+	}
+	end := len(row)
+	if j := strings.IndexFunc(header[i+len(column):], func(r rune) bool { return r != ' ' }); j >= 0 {
+		end = min(end, i+len(column)+j)
+	}
+	return strings.TrimSpace(row[i:end])
 }
 
 // A bead the tracker says doesn't exist refuses the spawn (exit 2) and names it.

@@ -70,7 +70,7 @@ func TestTheQueenIsFoundByHerPane(t *testing.T) {
 	}
 	r := x.queenRuns(1, "status")
 	must(t, r, 0)
-	if l := lineOf(r.out, "queen-toy"); !strings.Contains(l, "queen  yes") {
+	if cell(r.out, "queen-toy", "RUNNING") != "yes" {
 		t.Fatalf("status:\n%s", r)
 	}
 	files, _ := filepath.Glob(filepath.Join(x.ports.CacheDir, "queen-toy-*"))
@@ -188,8 +188,8 @@ func TestRound11AMovedPaneStaysRunningAndIsRung(t *testing.T) {
 	if _, err := x.herdr.Run(context.Background(), "", "herdr", "--session", "toy", "pane", "move", sp.Herdr.Pane, "--new-workspace"); err != nil {
 		t.Fatal(err)
 	}
-	if l := lineOf(x.keeper("status").out, "toy-1"); !strings.Contains(l, "  yes  ") {
-		t.Fatalf("status: %s", l)
+	if r := x.keeper("status"); cell(r.out, "toy-1", "RUNNING") != "yes" {
+		t.Fatalf("status:\n%s", r)
 	}
 	must(t, x.queen("send", "toy-1", "still there?"), 0, "rung toy-1")
 	must(t, x.worker("toy-1", 1, "inbox"), 0, "still there?")
@@ -208,7 +208,7 @@ func TestAMissedStartIsHealedLate(t *testing.T) {
 	sp, _, _ := x.open().LatestSpawn(context.Background(), "toy-1")
 	x.herdr.FailInfo(1000)
 	r := x.keeper("status")
-	if l := lineOf(r.out, "toy-1"); !strings.Contains(l, "unknown: can't look for toy-1's harness") {
+	if !strings.HasPrefix(cell(r.out, "toy-1", "RUNNING"), "unknown: can't look for toy-1's harness") {
 		t.Fatalf("status with herdr down:\n%s", r)
 	}
 	if _, ok, _ := x.open().LatestStart(context.Background(), sp.ID); ok {
@@ -217,7 +217,7 @@ func TestAMissedStartIsHealedLate(t *testing.T) {
 	x.herdr.FailInfo(0)
 	r = x.keeper("status")
 	must(t, r, 0, "toy-1's start was never confirmed; found it running")
-	if l := lineOf(r.out, "toy-1"); !strings.Contains(l, "yes (late)") {
+	if cell(r.out, "toy-1", "RUNNING") != "yes (late)" {
 		t.Fatalf("status:\n%s", r)
 	}
 	if st, ok, _ := x.open().LatestStart(context.Background(), sp.ID); !ok || !st.Late {
@@ -349,8 +349,8 @@ func TestRound11EndRefusesAWorkspaceHoldingAnotherWorkersPane(t *testing.T) {
 	}
 }
 
-// bees-12.46: a worker whose pane moved out of its workspace is still stopped by bs end,
-// by its recorded process.
+// bees-12.46: bs end refuses a worker whose pane moved out of its workspace, since
+// closing the workspace wouldn't stop it; --force stops it by its recorded process.
 func TestRound11EndOnAMovedWorker(t *testing.T) {
 	x := newToy(t)
 	sp := x.spawn("toy-1", "verdict")
@@ -359,7 +359,14 @@ func TestRound11EndOnAMovedWorker(t *testing.T) {
 	if fs, _ := filepath.Glob(filepath.Join(x.ports.CacheDir, "toy-1-*")); len(fs) == 0 {
 		t.Fatal("no start files to remove")
 	}
-	must(t, x.queen("end", "toy-1"), 0, "ended toy-1")
+	must(t, x.queen("end", "toy-1"), 2, "moved out of its workspace", "nothing closed", "bsx end toy-1 --force")
+	if _, ok := x.herdr.Agent("toy", "toy-1"); !ok {
+		t.Fatal("a refused end stopped toy-1")
+	}
+	if _, ok, _ := x.open().EndOf(context.Background(), sp.ID); ok {
+		t.Fatal("a refused end was recorded")
+	}
+	must(t, x.queen("end", "--force", "toy-1"), 0, "ended toy-1")
 	if _, ok := x.herdr.Agent("toy", "toy-1"); ok {
 		t.Fatal("toy-1 still runs")
 	}

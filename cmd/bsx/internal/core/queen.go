@@ -6,9 +6,10 @@ import (
 	"maps"
 
 	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
+	"github.com/jmmshn/bees/cmd/bsx/internal/goal"
 	"github.com/jmmshn/bees/cmd/bsx/internal/logbook"
 	"github.com/jmmshn/bees/cmd/bsx/internal/port"
-	"github.com/jmmshn/bees/internal/prompt"
+	"github.com/jmmshn/bees/cmd/bsx/internal/prompt"
 )
 
 // QueenReq is bs queen's caller: the pane it runs in and its own process, which exec
@@ -71,7 +72,7 @@ func (c *Core) Queen(ctx context.Context, req QueenReq) ([]string, error) {
 	case !ok:
 		return nil, twin(prev)
 	}
-	l.Files = withPrompt(l.Files, prompt.Queen, c.Project)
+	l.Files = withPrompt(l.Files, prompt.Text(prompt.Queen, c.Project, c.Kind, goal.BuiltinTypes()))
 	args, err := c.writeFiles(name, l)
 	if err != nil {
 		return nil, exit(ExitFail, bsname.Cmd+" queen", err, "couldn't write her start files (her entry names this pid, which exits: harmless)")
@@ -79,14 +80,14 @@ func (c *Core) Queen(ctx context.Context, req QueenReq) ([]string, error) {
 	return append([]string{c.Harness.Kind()}, args...), nil
 }
 
-// withPrompt is files with the role's prompt added as prompt.md, the file a Start's
-// PromptFile "{{prompt.md}}" names: core assembles the prompt, the harness only points
-// at it (ADR-0010).
-func withPrompt(files map[string]string, r prompt.Role, project string) map[string]string {
+// withPrompt is files with text, the assembled prompt, added as prompt.md, the file a
+// Start's PromptFile "{{prompt.md}}" names: core assembles the prompt, the harness only
+// points at it (ADR-0010).
+func withPrompt(files map[string]string, text string) map[string]string {
 	files = maps.Clone(files)
 	if files == nil {
 		files = map[string]string{}
 	}
-	files["prompt.md"] = prompt.Text(r, project)
+	files["prompt.md"] = text
 	return files
 }

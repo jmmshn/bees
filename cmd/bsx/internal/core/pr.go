@@ -190,7 +190,7 @@ func (k *look) one(ctx context.Context, name string, r port.Ref) (outcome, strin
 			return failed, "", err
 		}
 		if !slices.Contains(wc, v.HeadCommit) {
-			return failed, fmt.Sprintf("its head %s is no commit made in %s", short(v.HeadCommit), dir), nil
+			return failed, fmt.Sprintf("its head %s is no commit made in %s", oid(v.HeadCommit), dir), nil
 		}
 		return passed, "", nil
 	case goal.PRCurrent, goal.CIGreen:
@@ -198,7 +198,7 @@ func (k *look) one(ctx context.Context, name string, r port.Ref) (outcome, strin
 		if up, err := k.lag(ctx, v); err != nil {
 			return failed, "", err
 		} else if up != "" {
-			return pending, fmt.Sprintf("pending: %s still shows %s, not %s pushed since", c.Review.Name(), short(v.HeadCommit), short(up)), nil
+			return pending, fmt.Sprintf("pending: %s still shows %s, not %s pushed since", c.Review.Name(), oid(v.HeadCommit), oid(up)), nil
 		}
 		if name == goal.CIGreen {
 			return k.ciGreen(ctx, v)
@@ -264,14 +264,14 @@ func (k *look) unpushed(ctx context.Context, v port.Change, tip string) (outcome
 		}
 	}
 	if !ahead {
-		return failed, fmt.Sprintf("its head %s on %s has commits %s lacks (at %s): pull them, then push", short(v.HeadCommit), host, v.Head, short(tip)), nil
+		return failed, fmt.Sprintf("its head %s on %s has commits %s lacks (at %s): pull them, then push", oid(v.HeadCommit), host, v.Head, oid(tip)), nil
 	}
 	if up, err := k.lag(ctx, v); err != nil {
 		return failed, "", err
 	} else if up == tip {
-		return pending, fmt.Sprintf("pending: %s was pushed at %s, and %s still shows %s", v.Head, short(tip), host, short(v.HeadCommit)), nil
+		return pending, fmt.Sprintf("pending: %s was pushed at %s, and %s still shows %s", v.Head, oid(tip), host, oid(v.HeadCommit)), nil
 	}
-	return failed, fmt.Sprintf("%s is at %s here and at %s on %s: push it", v.Head, short(tip), short(v.HeadCommit), host), nil
+	return failed, fmt.Sprintf("%s is at %s here and at %s on %s: push it", v.Head, oid(tip), oid(v.HeadCommit), host), nil
 }
 
 // ciGreen is every CI check passing (skipped ones count). None registered is pending
@@ -350,9 +350,9 @@ func (k *look) pushMoved(ctx context.Context, v port.Change) (outcome, string, e
 	if up, err := k.lag(ctx, v); err != nil {
 		return failed, "", err
 	} else if up != "" {
-		return pending, fmt.Sprintf("pending: %s was pushed at %s, and %s still shows %s", v.Head, short(up), c.Review.Name(), short(v.HeadCommit)), nil
+		return pending, fmt.Sprintf("pending: %s was pushed at %s, and %s still shows %s", v.Head, oid(up), c.Review.Name(), oid(v.HeadCommit)), nil
 	}
-	return failed, fmt.Sprintf("its head %s descends from no commit made in %s: %s", short(v.HeadCommit), dir, c.Review.PushHint(ctx, dir, v)), nil
+	return failed, fmt.Sprintf("its head %s descends from no commit made in %s: %s", oid(v.HeadCommit), dir, c.Review.PushHint(ctx, dir, v)), nil
 }
 
 // unless is a check's outcome: why it failed, only when it did. A passing check says
@@ -372,4 +372,4 @@ func unless(ok bool, why string) (outcome, string, error) {
 	return failed, why, nil
 }
 
-func short(oid string) string { return oid[:min(len(oid), 9)] }
+func oid(id string) string { return id[:min(len(id), 9)] }

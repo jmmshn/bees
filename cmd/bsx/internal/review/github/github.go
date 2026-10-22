@@ -237,27 +237,37 @@ func (h Host) Protected(ctx context.Context, dir, repo string) (bool, error) {
 	return v.Protected, err
 }
 
-// Landed is gh pr list --state merged --head branch, asked only when dir's repo is on
-// GitHub: with no GitHub remote no pull request could have merged it.
-func (h Host) Landed(ctx context.Context, dir, branch string) ([]string, error) {
-	if _, ok, err := h.Repo(ctx, dir); err != nil || !ok {
-		return nil, err
+// Landed is gh pr list --repo <origin's> --state merged --head branch: origin's repo, never
+// the upstream gh would pick for a fork. With no origin no pull request could have merged
+// it; an origin not on github.com (an ssh alias, GitHub Enterprise) is skipped, and says so.
+func (h Host) Landed(ctx context.Context, dir, branch string) ([]string, string, error) {
+	out, err := h.Run.Run(ctx, dir, "git", "-C", dir, "config", "--get", "remote.origin.url")
+	var ee *port.ExitError
+	if errors.As(err, &ee) && ee.Code == 1 {
+		return nil, "", nil
+	} else if err != nil {
+		return nil, "", err
 	}
-	out, err := h.gh(ctx, dir, "pr", "list", "--head", branch, "--state", "merged", "--json", "headRefOid")
+	origin := strings.TrimSpace(string(out))
+	repo, ok := RepoOf(origin)
+	if !ok {
+		return nil, "origin " + origin + " is not on github.com, so no merged pull request was looked for", nil
+	}
+	out, err = h.gh(ctx, dir, "pr", "list", "--repo", repo, "--head", branch, "--state", "merged", "--json", "headRefOid")
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	var prs []struct {
 		OID string `json:"headRefOid"`
 	}
 	if err := json.Unmarshal(out, &prs); err != nil {
-		return nil, fmt.Errorf("gh pr list: %w", err)
+		return nil, "", fmt.Errorf("gh pr list: %w", err)
 	}
 	var heads []string
 	for _, p := range prs {
 		heads = append(heads, p.OID)
 	}
-	return heads, nil
+	return heads, "", nil
 }
 
 // ghs is each glob as gh, command gh or a path to gh (*/gh) starts it.

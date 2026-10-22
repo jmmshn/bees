@@ -218,6 +218,7 @@ type Recorded struct {
 	// recorded yet has none.
 	Process    Process
 	HasProcess bool
+	Repo       string // a queen's recorded repo (bees-12.43); a worker's is its spawn's
 }
 
 // InPane returns the sessions whose open entries recorded pane on herdr session session:
@@ -259,6 +260,13 @@ WHERE q.kind = 'queen' AND json_extract(q.data, '$.pane') = ?2
 				return nil, fmt.Errorf("entry of %s: %w", r.Name, err)
 			}
 			r.HasProcess = r.Process.PID > 0
+			if r.Queen {
+				var q Queen
+				if err := json.Unmarshal([]byte(data.String), &q); err != nil {
+					return nil, fmt.Errorf("entry of %s: %w", r.Name, err)
+				}
+				r.Repo = q.Repo
+			}
 		}
 		out = append(out, r)
 	}

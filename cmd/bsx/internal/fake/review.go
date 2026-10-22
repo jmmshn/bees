@@ -276,11 +276,11 @@ func (h *CLHost) Protected(context.Context, string, string) (bool, error) {
 }
 
 // Landed is the head of each merged change whose head is branch.
-func (h *CLHost) Landed(_ context.Context, _ string, branch string) ([]string, error) {
+func (h *CLHost) Landed(_ context.Context, _ string, branch string) ([]string, string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if err := h.offline(); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	var out []string
 	for _, c := range h.changes {
@@ -288,7 +288,7 @@ func (h *CLHost) Landed(_ context.Context, _ string, branch string) ([]string, e
 			out = append(out, c.HeadCommit)
 		}
 	}
-	return out, nil
+	return out, "", nil
 }
 
 // MergeDeny denies the CL tool's submit.

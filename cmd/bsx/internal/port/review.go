@@ -79,7 +79,8 @@ type Review interface {
 	Protected(ctx context.Context, dir, repo string) (bool, error)
 	// Landed is the head commit of each merged change whose head is dir's branch: the
 	// third proof that a branch landed, after a squash or rebase (none, with no repo).
-	Landed(ctx context.Context, dir, branch string) ([]string, error)
+	// skipped says why the host wasn't asked of a repo it can't read.
+	Landed(ctx context.Context, dir, branch string) (heads []string, skipped string, err error)
 	// MergeDeny is the guard globs that keep a worker from landing a change itself on this
 	// host (ADR-0010 guards: no merge); allow_merge_into lifts them.
 	MergeDeny() []string

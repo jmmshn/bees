@@ -246,7 +246,7 @@ func (c *Core) workspace(ctx context.Context, name string, detached bool) (logbo
 	case err != nil:
 		return logbook.Workspace{}, exit(ExitCantCheck, "", err, "can't tell whether branch %s exists", name)
 	case ok:
-		return logbook.Workspace{}, exit(ExitRefused, bsname.Cmd+" prune (once its work is merged), or git -C "+c.Repo+" branch -D "+name, nil,
+		return logbook.Workspace{}, exit(ExitRefused, bsname.Cmd+" prune (once its work is merged)", nil,
 			"branch %s already exists in %s", name, c.Repo)
 	}
 	return ws, nil

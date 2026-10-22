@@ -102,7 +102,7 @@ func (k *look) run(ctx context.Context, p goal.Part, name string) (outcome, stri
 		if err != nil {
 			return failed, "", err
 		}
-		out, err := c.git(ctx, ws.Dir, "rev-list", "--count", base+".."+ws.Branch)
+		out, err := c.git(ctx, ws.Dir, "rev-list", "--count", base+"..refs/heads/"+ws.Branch)
 		if err != nil {
 			return failed, "", err
 		}
@@ -111,12 +111,12 @@ func (k *look) run(ctx context.Context, p goal.Part, name string) (outcome, stri
 			return failed, "", fmt.Errorf("git rev-list --count: %q", out)
 		}
 		if n == 0 {
-			return failed, fmt.Sprintf("%s has no commit that %s lacks", ws.Branch, base), nil
+			return failed, fmt.Sprintf("%s has no commit that %s lacks", ws.Branch, short(base)), nil
 		}
 		if n == 1 {
-			return passed, "1 commit ahead of " + base, nil
+			return passed, "1 commit ahead of " + short(base), nil
 		}
-		return passed, fmt.Sprintf("%d commits ahead of %s", n, base), nil
+		return passed, fmt.Sprintf("%d commits ahead of %s", n, short(base)), nil
 	case goal.BranchMerged:
 		ok, why, err := c.merged(ctx, ws)
 		return of(ok), why, err

@@ -83,7 +83,7 @@ func load(ctx context.Context, env Env, ports Ports) (*settings, error) {
 			return s, err
 		}
 		p, ok, err := core.ScanPanes(ctx, core.ScanIn{Dir: global.Expand(global.Paths.LogbookDir), Session: session, Pane: pane,
-			Self: env.Self, Run: run, Proc: ports.Proc, Kind: harnessProgram(global.Harness)})
+			Self: env.Self, Run: run, Proc: ports.Proc, Program: harnessProgram})
 		if err != nil {
 			return s, err
 		}
@@ -106,7 +106,7 @@ func load(ctx context.Context, env Env, ports Ports) (*settings, error) {
 	if s.InPane {
 		s.Project, s.ProjectFrom = s.Pane.Project, fmt.Sprintf("herdr pane %s, recorded for %s in %s", s.Pane.Pane, s.Pane.Who.Name, s.Pane.Logbook)
 		if s.Pane.Repo != "" {
-			s.Repo, s.RepoFrom = s.Pane.Repo, "the workspace "+s.Pane.Who.Name+"'s spawn recorded"
+			s.Repo, s.RepoFrom = s.Pane.Repo, "the repo "+s.Pane.Who.Name+"'s entry recorded"
 		} else if err := s.cwdRepo(ctx, env.Dir, run); err != nil {
 			return s, err
 		}
@@ -268,7 +268,7 @@ func mainCheckout(ctx context.Context, run port.Runner, dir string) (string, err
 		return filepath.Dir(common), nil
 	}
 	return "", &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("%s is a linked worktree of %s, whose main checkout git doesn't record", top, common),
-		Next: "run " + bsname.Cmd + " in the main checkout, or outside a herdr pane with BS_PROJECT set"}
+		Next: "run " + bsname.Cmd + " in the main checkout, or outside a recorded herdr pane with BS_PROJECT set"}
 }
 
 // checkLogbook checks s names a project and that its logbook isn't the real one, which no toy may migrate before the swap.

@@ -231,7 +231,7 @@ func TestPRGoalHandoffChecks(t *testing.T) {
 		b.ci(x, 1, "pass", "fail")
 		must(t, x.worker("toy-1", 2, "done", "--pr", url), 7, "1 handoff checks failed", "ci_green", "failing: job2")
 		b.ci(x, 1, "pending")
-		must(t, x.worker("toy-1", 3, "done", "--pr", url), 10, "CI is still running", "pending: job1", "next: bs done --wait")
+		must(t, x.worker("toy-1", 3, "done", "--pr", url), 10, "still pending", "pending: job1", "next: bs done --wait")
 		b.ci(x, 1)
 		b.baseChecks(x, 2)
 		must(t, x.worker("toy-1", 4, "done", "--pr", url), 10, "no checks registered yet")
@@ -443,9 +443,9 @@ func TestDoneWaitsForCI(t *testing.T) {
 		url := b.open(x, 1, sp.Workspace.Dir, "toy-1", false)
 		b.ci(x, 1, "pending")
 		must(t, x.worker("toy-1", 1, "done", "--pr", url), 10, "next: bs done --wait")
-		must(t, x.worker("toy-1", 2, "done", "--wait", "--timeout", "1s", "--pr", url), 11, "CI still running after 1s", "pending: job1")
+		must(t, x.worker("toy-1", 2, "done", "--wait", "--timeout", "1s", "--pr", url), 11, "still pending after 1s", "pending: job1")
 		b.ciLater(x, 1, 300*time.Millisecond, "pass", "fail")
-		must(t, x.worker("toy-1", 3, "done", "--wait", "--pr", url), 7, "failing: job2", "CI still running")
+		must(t, x.worker("toy-1", 3, "done", "--wait", "--pr", url), 7, "failing: job2", "still pending (")
 		b.ci(x, 1, "pending")
 		b.ciLater(x, 1, 300*time.Millisecond, "pass")
 		must(t, x.worker("toy-1", 4, "handoff", "--wait", "--pr", url), 0, "handed off to queen-toy")
@@ -499,4 +499,26 @@ func TestAMixedGoalHoldsEveryPart(t *testing.T) {
 	must(t, x.queen("end", "toy-1"), 9, target+": open")
 	b.land(x, 5)
 	must(t, x.queen("end", "toy-1"), 0)
+}
+
+// GitHub lags a push by seconds (seen live): a branch pushed to its upstream that the PR
+// doesn't show yet is pending (exit 10, --wait rides it out), never "push it"; one never
+// pushed still is.
+func TestAPushTheHostHasntSeenYetIsPending(t *testing.T) {
+	x := newToy(t)
+	b := ghBackend{}
+	b.setup(x, true)
+	sp := x.spawn("toy-1", "pr")
+	dir := sp.Workspace.Dir
+	b.commit(x, dir)
+	url := b.open(x, 1, dir, "toy-1", false)
+	must(t, x.worker("toy-1", 1, "done", "--pr", url), 0)
+	x.gh.Edit(url, func(pr *fake.PR) { pr.Stale = true })
+	b.commit(x, dir)
+	x.git(dir, "push", "-q", "-u", "origin", "toy-1")
+	must(t, x.worker("toy-1", 2, "done", "--pr", url), 10, "pending: toy-1 was pushed at", "still shows")
+	time.AfterFunc(300*time.Millisecond, func() { x.gh.Edit(url, func(pr *fake.PR) { pr.Stale = false }) })
+	must(t, x.worker("toy-1", 3, "done", "--wait", "--pr", url), 0)
+	b.commit(x, dir)
+	must(t, x.worker("toy-1", 4, "done", "--wait", "--pr", url), 7, "push it")
 }

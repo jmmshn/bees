@@ -299,6 +299,9 @@ func (h *CLHost) Commits(_ context.Context, dir string, since time.Time) ([]stri
 // Branch: a CL host has no local branches.
 func (*CLHost) Branch(context.Context, string, string) (string, bool, error) { return "", false, nil }
 
+// Pushed: a CL host has no local branches to push.
+func (*CLHost) Pushed(context.Context, string, string) (string, bool, error) { return "", false, nil }
+
 func (h *CLHost) Has(_ context.Context, _ string, commit string) (bool, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

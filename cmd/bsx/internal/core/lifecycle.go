@@ -24,7 +24,8 @@ import (
 // dropped), then the gate, then every handoff check of the frozen goal (waivers skipped).
 // It stops at the first check that can't run (exit 6), otherwise reports every failure at
 // once (exit 7), and records the done only when all pass, with landed when the goal
-// completes at handoff. CI still running, with nothing else failing, is exit 10; with
+// completes at handoff. Only pending left (CI still running, or the host not yet showing
+// a push), is exit 10; with
 // o.Wait, bs asks the review host again every Timing.CIPoll until CI finishes, then hands
 // off or names what failed, and exit 11 past o.Wait (it runs in the caller's foreground:
 // no background job of the harness's). o.Force waives the gate and nothing else.
@@ -86,9 +87,9 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 		}
 		left := time.Until(deadline)
 		if left <= 0 {
-			return d, exit(ExitWaited, "bs done --wait again, or ask the queen", nil, "bs done --wait: CI still running after %s:\n  %s", o.Wait, strings.Join(pendingLines(rs), "\n  "))
+			return d, exit(ExitWaited, "bs done --wait again, or ask the queen", nil, "bs done --wait: still pending after %s:\n  %s", o.Wait, strings.Join(pendingLines(rs), "\n  "))
 		}
-		c.warn("CI still running (%s); asking again in %s", strings.Join(pendingLines(rs), "; "), min(c.timing().CIPoll, left).Round(time.Second))
+		c.warn("still pending (%s); asking again in %s", strings.Join(pendingLines(rs), "; "), min(c.timing().CIPoll, left).Round(time.Second))
 		if err := sleep(ctx, min(c.timing().CIPoll, left)); err != nil {
 			return d, err
 		}
@@ -106,7 +107,7 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 	}
 	d.Checks = append(d.Checks, rs...)
 	if pendingOnly(rs) {
-		return d, exit(ExitPending, "bs done --wait (bs waits for CI, then hands off or names what failed)", nil, "bs done: CI is still running, and nothing else failed:\n  %s", strings.Join(failed, "\n  "))
+		return d, exit(ExitPending, "bs done --wait (bs waits for CI, then hands off or names what failed)", nil, "bs done: still pending (CI running, or the host not yet showing a push), and nothing else failed:\n  %s", strings.Join(failed, "\n  "))
 	}
 	if len(failed) > 0 {
 		return d, exit(ExitHandoff, "fix it, then bs done again", nil, "bs done: %d handoff checks failed:\n  %s", len(failed), strings.Join(failed, "\n  "))
@@ -123,7 +124,7 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 // DoneOpts are bs done's flags.
 type DoneOpts struct {
 	Force bool          // waive the gate, and nothing else
-	Wait  time.Duration // wait this long for CI still running; 0 doesn't wait
+	Wait  time.Duration // wait this long while only pending is left; 0 doesn't wait
 }
 
 // pendingLines is each pending result of rs, as bs prints it.
@@ -137,7 +138,7 @@ func pendingLines(rs []logbook.CheckResult) []string {
 	return out
 }
 
-// pendingOnly reports whether rs failed, and only on CI still running.
+// pendingOnly reports whether rs failed, and only on something still pending.
 func pendingOnly(rs []logbook.CheckResult) bool {
 	failed := slices.DeleteFunc(slices.Clone(rs), func(r logbook.CheckResult) bool { return r.Pass })
 	return len(failed) > 0 && !slices.ContainsFunc(failed, func(r logbook.CheckResult) bool { return !r.Pending })

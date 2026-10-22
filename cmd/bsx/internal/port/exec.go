@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"syscall"
@@ -19,6 +20,10 @@ const ExecTimeout = 60 * time.Second
 type Exec struct{}
 
 func (Exec) Run(ctx context.Context, dir string, argv ...string) ([]byte, error) {
+	if _, err := os.Stat(dir); dir != "" && err != nil {
+		// exec reports a missing cwd as the program missing (bees-13.6, live).
+		return nil, fmt.Errorf("%s: can't run in %s: %w", argv[0], dir, err)
+	}
 	ctx, cancel := context.WithTimeout(ctx, ExecTimeout)
 	defer cancel()
 	var stdout, stderr bytes.Buffer

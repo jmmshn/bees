@@ -74,6 +74,19 @@ func (v VCS) Branch(ctx context.Context, dir, name string) (string, bool, error)
 	return tip, err == nil, err
 }
 
+// Pushed is the tip of name's upstream remote-tracking branch, which a git push updates.
+func (v VCS) Pushed(ctx context.Context, dir, name string) (string, bool, error) {
+	up, err := v.git(ctx, dir, "for-each-ref", "--format=%(upstream)", "refs/heads/"+name)
+	if err != nil || up == "" {
+		return "", false, err
+	}
+	tip, err := v.git(ctx, dir, "rev-parse", "--verify", "--quiet", up)
+	if exited(err, 1) {
+		return "", false, nil // its upstream was never fetched or pushed
+	}
+	return tip, err == nil, err
+}
+
 // Has: git cat-file -e says a missing object with exit 128 and "Not a valid object
 // name"; any other failure is an error, never "missing".
 func (v VCS) Has(ctx context.Context, dir, commit string) (bool, error) {

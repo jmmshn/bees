@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"os"
 	"os/exec"
 	"slices"
 	"strconv"
@@ -26,6 +27,10 @@ type Commands struct {
 }
 
 func (c Commands) Run(ctx context.Context, dir string, argv ...string) ([]byte, error) {
+	if _, err := os.Stat(dir); dir != "" && err != nil && len(argv) > 0 {
+		// A real program can't start in a cwd that is gone: neither can a fake one (motif 13).
+		return nil, fmt.Errorf("%s: can't run in %s: %w", argv[0], dir, err)
+	}
 	switch {
 	case len(argv) == 0:
 		return nil, fmt.Errorf("fake: empty argv")
@@ -56,6 +61,9 @@ type PR struct {
 	MaintainerCanModify              bool
 	Commits                          []string
 	Behind                           int
+	// Stale keeps the head GitHub last saw: it lags a push by a few seconds (probed live,
+	// bees-13.6).
+	Stale bool
 }
 
 // Check is one CI check of a PR.
@@ -109,7 +117,7 @@ func (g *GH) refresh(pr *PR) error {
 	if g.Git == "" {
 		return nil
 	}
-	if oid, err := g.git("rev-parse", "--verify", "--quiet", "refs/heads/"+pr.Head); err == nil && pr.State == "OPEN" {
+	if oid, err := g.git("rev-parse", "--verify", "--quiet", "refs/heads/"+pr.Head); err == nil && pr.State == "OPEN" && !pr.Stale {
 		pr.HeadOID = oid
 	}
 	if pr.HeadOID == "" {

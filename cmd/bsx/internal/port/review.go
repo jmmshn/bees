@@ -81,6 +81,9 @@ type VCS interface {
 	Commits(ctx context.Context, dir string, since time.Time) ([]string, error)
 	// Branch is the tip of dir's local branch name; ok false when there is none.
 	Branch(ctx context.Context, dir, name string) (tip string, ok bool, err error)
+	// Pushed is where dir's local branch name was last pushed to (its upstream's tip as
+	// the checkout last saw it); ok false when it has none.
+	Pushed(ctx context.Context, dir, name string) (tip string, ok bool, err error)
 	// Has reports whether dir's checkout has commit.
 	Has(ctx context.Context, dir, commit string) (bool, error)
 	// Descends reports whether commit is ancestor or descends from it.

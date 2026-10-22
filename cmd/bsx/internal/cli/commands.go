@@ -96,7 +96,7 @@ func (r *run) done(fs *flag.FlagSet, args []string) error {
 	answer := fs.String("answer", "", "a verdict goal's answer: yes or no")
 	report := fs.String("report", "", "a verdict goal's report, or - to read it from stdin")
 	force := fs.Bool("force", false, "hand off while background work runs (waives that gate only)")
-	wait := fs.Bool("wait", false, "while CI is still running, wait for it (up to --timeout), then hand off or name what failed")
+	wait := fs.Bool("wait", false, "while CI is still running (or the host hasn't shown a push yet), wait for it (up to --timeout), then hand off or name what failed")
 	timeout := fs.Duration("timeout", 8*time.Minute, "how long --wait waits (under the 10 min a harness's shell call may take)")
 	as := fs.String("as", "", "the worker, outside a herdr pane")
 	if err := fs.Parse(args); err != nil {

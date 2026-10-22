@@ -1,6 +1,7 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -46,6 +47,10 @@ func (c *Core) look(sp logbook.Spawn, h Handed) *look {
 	return &look{c: c, sp: sp, h: h, views: map[string]port.Change{}, errs: map[string]error{}}
 }
 
+// at is where the review host is asked: the project's checkout, which outlives a
+// workspace prune has just removed.
+func (k *look) at() string { return cmp.Or(k.sp.Workspace.Repo, k.sp.Workspace.Dir) }
+
 func (k *look) view(ctx context.Context, r port.Ref) (port.Change, error) {
 	if v, ok := k.views[r.URL]; ok {
 		return v, nil
@@ -53,7 +58,7 @@ func (k *look) view(ctx context.Context, r port.Ref) (port.Change, error) {
 	if err, ok := k.errs[r.URL]; ok {
 		return port.Change{}, err
 	}
-	v, err := k.c.Review.View(ctx, k.sp.Workspace.Dir, r)
+	v, err := k.c.Review.View(ctx, k.at(), r)
 	if err != nil {
 		k.errs[r.URL] = err
 		return port.Change{}, err
@@ -164,6 +169,13 @@ func (k *look) one(ctx context.Context, name string, r port.Ref) (bool, string, 
 		case err != nil:
 			return false, "", err
 		case ok && tip != v.HeadCommit:
+			// Pushed already, and the host hasn't caught up yet: pending, never "push it".
+			if up, pushed, err := c.VCS.Pushed(ctx, dir, v.Head); err != nil {
+				return false, "", err
+			} else if pushed && up == tip {
+				k.pending = true
+				return false, fmt.Sprintf("pending: %s was pushed at %s, and %s still shows %s", v.Head, short(tip), c.Review.Name(), short(v.HeadCommit)), nil
+			}
 			return false, fmt.Sprintf("%s is at %s here and at %s on %s: push it", v.Head, short(tip), short(v.HeadCommit), c.Review.Name()), nil
 		case ok:
 			return true, "", nil
@@ -179,7 +191,7 @@ func (k *look) one(ctx context.Context, name string, r port.Ref) (bool, string, 
 		}
 		return true, "", nil
 	case goal.PRCurrent:
-		n, err := c.Review.Behind(ctx, dir, v)
+		n, err := c.Review.Behind(ctx, k.at(), v)
 		if err != nil {
 			return false, "", err
 		}
@@ -202,13 +214,12 @@ func (k *look) one(ctx context.Context, name string, r port.Ref) (bool, string, 
 // while the base's tip has checks, since CI hasn't picked the change up yet; with none
 // there either it passes vacuously, and says so.
 func (k *look) ciGreen(ctx context.Context, v port.Change) (bool, string, error) {
-	dir := k.sp.Workspace.Dir
-	cs, err := k.c.Review.CI(ctx, dir, v)
+	cs, err := k.c.Review.CI(ctx, k.at(), v)
 	if err != nil {
 		return false, "", err
 	}
 	if len(cs) == 0 {
-		n, err := k.c.Review.BaseCI(ctx, dir, v)
+		n, err := k.c.Review.BaseCI(ctx, k.at(), v)
 		if err != nil {
 			return false, "", err
 		}

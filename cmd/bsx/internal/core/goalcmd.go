@@ -47,7 +47,7 @@ func (c *Core) Check(ctx context.Context, name string, self int) ([]logbook.Chec
 		return append(rs, *cant), exit(ExitCantCheck, "", errors.New(cant.Err), "bs check %s: %s couldn't run", name, cant.Name)
 	}
 	if pendingOnly(rs) {
-		return rs, exit(ExitPending, "bs check "+name+" again once CI finishes", nil, "bs check %s: CI is still running, and nothing else failed", name)
+		return rs, exit(ExitPending, "bs check "+name+" again once CI finishes", nil, "bs check %s: still pending (CI running, or the host not yet showing a push), and nothing else failed", name)
 	}
 	if slices.ContainsFunc(rs, func(r logbook.CheckResult) bool { return !r.Pass }) {
 		return rs, exit(ExitHandoff, "", nil, "bs check %s: its handoff doesn't hold", name)

@@ -57,9 +57,12 @@ type Spawn struct {
 	Path      []string          `json:"path,omitempty"`   // dirs first on the worker's PATH
 	// At is the bead as spawn found it, for the note and beads checks; nil on a spawn
 	// recorded before bs froze it.
-	At    *BeadAt `json:"bead_at,omitempty"`
-	Ended bool    `json:"-"`
-	Read  bool    `json:"-"` // the worker has read a message since this spawn, so it has a conversation
+	At *BeadAt `json:"bead_at,omitempty"`
+	// PruneIgnore is prune.ignore at spawn: the ignored files prune lets go with the
+	// workspace. None on a spawn recorded before bs froze it, so prune keeps every one.
+	PruneIgnore []string `json:"prune_ignore,omitempty"`
+	Ended       bool     `json:"-"`
+	Read        bool     `json:"-"` // the worker has read a message since this spawn, so it has a conversation
 }
 
 // BeadAt is a spawn's bead as spawn found it: every spawn freezes it, so a goal amended

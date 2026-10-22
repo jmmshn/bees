@@ -56,9 +56,9 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 	} else if ok {
 		d.PRs = prev.PRs // handed-off PRs accumulate across bs done calls
 	}
-	if !slices.Contains(e.Types(), "verdict") && (h.Answer != "" || h.Report != "") {
+	if !slices.ContainsFunc(e.Parts, goal.Part.TakesReport) && (h.Answer != "" || h.Report != "") {
 		where := bsname.Cmd + " send " + sp.By + " \"...\""
-		if slices.Contains(e.Types(), "note") {
+		if slices.ContainsFunc(e.Parts, func(p goal.Part) bool { return p.Type == "note" }) {
 			where = "bd update " + sp.Bead + " --append-notes \"...\", then " + bsname.Cmd + " done"
 		}
 		return d, exit(ExitRefused, where, nil, "--goal %s takes no --answer or --report", e.Goal)
@@ -572,7 +572,7 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 		}
 		// git status hides ignored files, and a report in an ignored scratch/ is how five
 		// pilot reports were lost (bees-13.7): never remove what nobody has looked at.
-		if ign, err := c.ignored(ctx, ws.Dir); err != nil {
+		if ign, err := c.ignored(ctx, ws.Dir, sp.PruneIgnore); err != nil {
 			return keep(true, "can't list ignored files: %v", err)
 		} else if ign != "" {
 			return keep(false, "ignored files in %s: %s; look at them, remove what is wanted nowhere, then %s prune again", ws.Dir, ign, bsname.Cmd)
@@ -613,30 +613,43 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 	return p
 }
 
-// ignored names the ignored files in dir that prune.ignore doesn't let go, or "".
-func (c *Core) ignored(ctx context.Context, dir string) (string, error) {
-	b, err := c.Run.Run(ctx, dir, "git", "-C", dir, "status", "--porcelain", "--ignored")
+// ignored names the ignored files in dir that none of let (the spawn's prune.ignore)
+// covers, or "". -uall lists each file, never a wholly ignored directory, and -z leaves
+// paths unquoted.
+func (c *Core) ignored(ctx context.Context, dir string, let []string) (string, error) {
+	b, err := c.Run.Run(ctx, dir, "git", "-C", dir, "status", "--porcelain", "--ignored", "-uall", "-z")
 	if err != nil {
 		return "", err
 	}
 	var kept []string
-	for line := range strings.Lines(string(b)) {
-		if p, ok := strings.CutPrefix(strings.TrimRight(line, "\n"), "!! "); ok && !slices.ContainsFunc(c.PruneIgnore, func(pat string) bool { return ignoredBy(pat, p) }) {
+	for f := range strings.SplitSeq(string(b), "\x00") {
+		if p, ok := strings.CutPrefix(f, "!! "); ok && !slices.ContainsFunc(let, func(pat string) bool { return ignoredBy(pat, p) }) {
 			kept = append(kept, p)
 		}
 	}
 	return firstTen(kept), nil
 }
 
-// ignoredBy reports whether prune.ignore's pat covers p, an ignored path git status
-// listed (a wholly ignored directory as one path ending in /): pat ending in / covers that
-// directory and all under it, any other pat is a glob over the whole path.
+// ignoredBy reports whether pat covers file p, as .gitignore reads it: a pat ending in
+// / names a directory, covering all under it; one with no other / matches at any depth,
+// one with an inner / from the top. The config loader refused a pat path.Match can't read.
 func ignoredBy(pat, p string) bool {
-	if strings.HasSuffix(pat, "/") {
-		return strings.HasPrefix(p, pat)
+	dir := strings.HasSuffix(pat, "/")
+	pat = strings.TrimSuffix(pat, "/")
+	parts := strings.Split(p, "/")
+	if dir {
+		parts = parts[:len(parts)-1] // p is a file, never the directory
 	}
-	ok, _ := path.Match(pat, p)
-	return ok
+	n := strings.Count(pat, "/") + 1
+	for i := 0; i+n <= len(parts); i++ {
+		if ok, _ := path.Match(pat, strings.Join(parts[i:i+n], "/")); ok {
+			return true
+		}
+		if n > 1 {
+			break
+		}
+	}
+	return false
 }
 
 // heldByChange is the URL of one of prs, handed off under a pr goal, that holds sp's

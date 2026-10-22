@@ -16,6 +16,7 @@ import (
 	"github.com/jmmshn/bees/internal/bsname"
 	"github.com/jmmshn/bees/internal/config"
 	"github.com/jmmshn/bees/internal/core"
+	"github.com/jmmshn/bees/internal/goal"
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/port"
 )
@@ -66,17 +67,43 @@ func (r *run) queen(fs *flag.FlagSet, args []string) error {
 	return nil
 }
 
-func (r *run) spawn(fs *flag.FlagSet, args []string) error {
-	var goals list
-	fs.Var(&goals, "goal", "what the worker hands off (repeatable)")
-	label := fs.String("label", "", "its herdr label (default: the bead's title)")
-	as := fs.String("as", "", "the queen, outside a recorded herdr pane")
+// spawnArgs is bs spawn's arguments.
+type spawnArgs struct {
+	goals     list
+	label, as string
+	bead      string
+}
+
+// spawnArgs parses bs spawn's arguments and, when the project has no logbook yet, checks
+// its bead exists, before the logbook is opened or made (bees-13.9 review S3).
+func (r *run) spawnArgs(fs *flag.FlagSet, args []string) error {
+	a := &r.spawnReq
+	fs.Var(&a.goals, "goal", "what the worker hands off (repeatable)")
+	fs.StringVar(&a.label, "label", "", "its herdr label (default: the bead's title)")
+	fs.StringVar(&a.as, "as", "", "the queen, outside a recorded herdr pane")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
 		return fmt.Errorf("%w: "+bsname.Cmd+" spawn --goal <goal> <bead>", errUsage)
 	}
+	a.bead = fs.Arg(0)
+	if _, err := goal.Parse(a.goals); err != nil { // Spawn says the same; here before a logbook is made
+		return &core.Exit{Code: core.ExitRefused, Msg: a.bead, Err: err}
+	}
+	if _, err := os.Stat(r.s.Logbook); errors.Is(err, os.ErrNotExist) && r.ports.Beads != nil {
+		if _, err := r.ports.Beads.Show(r.ctx, a.bead); errors.Is(err, port.ErrNoBead) {
+			return &core.Exit{Code: core.ExitRefused, Msg: "no bead " + a.bead + "; no logbook was made", Next: "bd show " + a.bead}
+		} else if err != nil {
+			return &core.Exit{Code: core.ExitCantCheck, Msg: "can't read bead " + a.bead + "; no logbook was made", Err: err}
+		}
+	}
+	return nil
+}
+
+func (r *run) spawn(_ *flag.FlagSet, _ []string) error {
+	a := r.spawnReq
+	goals, label, as := a.goals, &a.label, &a.as
 	if err := r.s.unpinned("spawn"); err != nil {
 		return err
 	}
@@ -96,7 +123,7 @@ func (r *run) spawn(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	sp, resumed, err := r.c.Spawn(r.ctx, core.SpawnReq{By: w.Name, Session: cmp.Or(core.Getenv(r.env.Vars, "HERDR_SESSION"), logbook.DefaultSession),
-		Bead: fs.Arg(0), Label: *label, Goals: goals})
+		Bead: a.bead, Label: *label, Goals: goals})
 	if err != nil {
 		return err
 	}

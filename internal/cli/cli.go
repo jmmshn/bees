@@ -113,6 +113,28 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 		return core.ExitRefused
 	}
 	r := &run{ctx: ctx, name: args[0], env: env, s: s, ports: ports, out: stdout, err: stderr}
+	fs := flag.NewFlagSet(bsname.Cmd+" "+args[0], flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	badFlag := false // flag calls Usage on a flag it can't parse: a refusal, never exit 1
+	fs.Usage = func() { badFlag = true; fs.PrintDefaults() }
+	// done says how a command ended: a bad flag is a refusal, never exit 1.
+	done := func(err error) int {
+		switch {
+		case errors.Is(err, flag.ErrHelp):
+			return 0
+		case badFlag && err != nil:
+			fmt.Fprintf(stderr, "%s %s: %v\n", bsname.Cmd, args[0], err)
+			return core.ExitRefused
+		}
+		return report(stderr, args[0], err)
+	}
+	rest := args[1:]
+	if p := pre[args[0]]; p != nil { // its arguments are checked before any logbook is opened, or made
+		if err := p(r, fs, rest); err != nil {
+			return done(err)
+		}
+		rest = nil
+	}
 	if cmd.logbook {
 		if err := s.checkLogbook(env); err != nil {
 			return report(stderr, args[0], err)
@@ -157,19 +179,11 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 			Warn: func(msg string) { fmt.Fprintf(stderr, bsname.Cmd+" %s: warning: %s\n", args[0], msg) },
 		}
 	}
-	fs := flag.NewFlagSet(bsname.Cmd+" "+args[0], flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	badFlag := false // flag calls Usage on a flag it can't parse: a refusal, never exit 1
-	fs.Usage = func() { badFlag = true; fs.PrintDefaults() }
-	err = cmd.run(r, fs, args[1:])
-	switch {
-	case errors.Is(err, flag.ErrHelp):
-		return 0
-	case badFlag && err != nil:
-		fmt.Fprintf(stderr, "%s %s: %v\n", bsname.Cmd, args[0], err)
-		return core.ExitRefused
+	err = cmd.run(r, fs, rest)
+	if err == nil && r.created {
+		fmt.Fprintf(stderr, "%s %s: new logbook for project %s at %s\n", bsname.Cmd, args[0], s.Project, s.Logbook)
 	}
-	return report(stderr, args[0], err)
+	return done(err)
 }
 
 // report prints err for command name and returns its exit code: an *Exit's own, 2 for
@@ -204,9 +218,7 @@ func (r *run) openLogbook() (*logbook.Logbook, error) {
 		return lb, err
 	}
 	lb, created, err := logbook.Create(r.ctx, r.s.Logbook)
-	if created {
-		fmt.Fprintf(r.err, "%s %s: new empty logbook for project %s at %s\n", bsname.Cmd, r.name, r.s.Project, r.s.Logbook)
-	}
+	r.created = created && err == nil // said once the command succeeds
 	return lb, err
 }
 
@@ -266,6 +278,8 @@ type run struct {
 	ports    Ports
 	c        *core.Core // nil for a command that opens no logbook
 	out, err io.Writer
+	created  bool      // this command made the logbook
+	spawnReq spawnArgs // bs spawn's arguments, checked before the logbook is opened
 }
 
 // list is a repeatable flag.
@@ -306,6 +320,12 @@ func (r *run) who(as string) (core.Who, error) {
 type command struct {
 	run     func(r *run, fs *flag.FlagSet, args []string) error
 	logbook bool
+}
+
+// pre parses and checks a command's arguments before any logbook is opened or made, and
+// its run gets none: a spawn refused for its arguments makes no logbook.
+var pre = map[string]func(r *run, fs *flag.FlagSet, args []string) error{
+	"spawn": (*run).spawnArgs,
 }
 
 var commands = map[string]command{

@@ -220,8 +220,8 @@ func TestSpawnRequiresAGoalAndNamesEveryBadOne(t *testing.T) {
 	x.bead("toy-1", "x")
 	must(t, x.queen("spawn", "toy-1"), 2, "--goal is required")
 	must(t, x.queen("spawn", "--goal", "prr", "--goal", "push", "toy-1"), 2, `"prr"`, `"push"`)
-	if _, ok, _ := x.open().LatestSpawn(context.Background(), "toy-1"); ok {
-		t.Fatal("a refused spawn was recorded")
+	if _, err := os.Stat(x.logbook); !os.IsNotExist(err) { // refused before even a logbook was made
+		t.Fatalf("a refused spawn made the logbook: %v", err)
 	}
 }
 
@@ -369,9 +369,19 @@ func TestOnlyQueenAndSpawnStartALogbook(t *testing.T) {
 			t.Fatalf("%v created the logbook: %v", args, err)
 		}
 	}
+	// A spawn refused for its arguments or bead makes no logbook (bees-13.9 review S3).
+	for _, args := range [][]string{{"spawn"}, {"spawn", "--goal", "branch"}, {"spawn", "--goal", "branch", "toy-404"}, {"spawn", "--bogus", "toy-1"}} {
+		r := x.queen(args...)
+		if r.code == 0 || strings.Contains(r.String(), "new") {
+			t.Fatalf("%v: exit %d\n%s", args, r.code, r)
+		}
+		if _, err := os.Stat(x.logbook); !os.IsNotExist(err) {
+			t.Fatalf("%v created the logbook: %v", args, err)
+		}
+	}
 	x.bead("toy-1", "work")
-	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 0, "new empty logbook for project toy at "+x.logbook)
-	if r := x.keeper("status"); r.code != 0 || strings.Contains(r.String(), "new empty logbook") {
+	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 0, "new logbook for project toy at "+x.logbook)
+	if r := x.keeper("status"); r.code != 0 || strings.Contains(r.String(), "new logbook") {
 		t.Fatalf("status once it exists:\n%s", r)
 	}
 }

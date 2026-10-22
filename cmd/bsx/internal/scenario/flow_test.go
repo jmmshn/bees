@@ -57,6 +57,7 @@ func TestSpawnHandoffEndPruneOnABranchGoal(t *testing.T) {
 func TestTheGateRefusesBackgroundWork(t *testing.T) {
 	x := newToy(t)
 	sp := x.spawn("toy-1", "branch")
+	x.dumpOnFailure(sp)
 	x.commit(sp.Workspace.Dir, "work.txt")
 	x.harness.Step(t, "toy-1", "child", "server")
 	kid := x.harness.Await(t, "toy-1", 1).PID

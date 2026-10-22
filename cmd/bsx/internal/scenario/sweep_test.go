@@ -95,7 +95,7 @@ func TestRound11AFreshAgentSetsUpFromSetupAgentMD(t *testing.T) {
 }
 func TestRound11Doctor(t *testing.T) { later(t, "bees-13.8", "bs doctor") }
 func TestRound11TeardownLeavesNoLeaks(t *testing.T) {
-	later(t, "bees-13.3", "the live rig's leak check")
+	later(t, "bees-13.29", "a scripted self-test of the live rig's leak check")
 }
 
 // Pilot bugs.
@@ -134,10 +134,36 @@ func TestBSVariablesAreIgnoredInsideARecordedPane(t *testing.T) {
 // refuses a token herdr would cut.
 
 // The live-test and docs bugs belong to the rig and setup beads.
-func TestPilotBugsOfTheLiveRig(t *testing.T) {
-	later(t, "bees-13.3", "the rig: 12.19, 12.22, 12.24, 12.26, 12.30, 12.34, 12.35, 12.40")
+func TestPilotBug1219AToyHasItsOwnConfigBeforeItsQueen(t *testing.T) {
+	later(t, "bees-13.29", "a scripted self-test of the rig: 12.19")
 }
-func TestPilotBugsOfSetupDocs(t *testing.T) { later(t, "bees-13.8", "SETUP-AGENT.md: 12.42, 12.48") }
+func TestPilotBug1222ToysDontLoadTheKeepersClaudeMD(t *testing.T) {
+	later(t, "bees-13.29", "a scripted self-test of the rig: 12.22")
+}
+func TestPilotBug1224AToyQueenSpawnsOnTheBuildUnderTest(t *testing.T) {
+	later(t, "bees-13.29", "a scripted self-test of the rig: 12.24")
+}
+func TestPilotBug1226ToyWorkersReadTheToysConfig(t *testing.T) {
+	later(t, "bees-13.29", "a scripted self-test of the rig: 12.26")
+}
+func TestPilotBug1230TeardownFindsEveryLeak(t *testing.T) {
+	later(t, "bees-13.29", "a scripted self-test of the rig: 12.30")
+}
+func TestPilotBug1234SetupTakesAGitToysConfig(t *testing.T) {
+	later(t, "bees-13.29", "a scripted self-test of the rig: 12.34")
+}
+func TestPilotBug1235ANonGitToyStartsAQueen(t *testing.T) {
+	later(t, "bees-13.29", "a scripted self-test of the rig: 12.35")
+}
+func TestPilotBug1240TeardownOfANestedWorkspace(t *testing.T) {
+	later(t, "bees-13.29", "a scripted self-test of the rig: 12.40")
+}
+func TestPilotBug1242SetupAgentDocGaps(t *testing.T) {
+	later(t, "bees-13.8", "SETUP-AGENT.md: 12.42")
+}
+func TestPilotBug1248SetupAgentRound11Notes(t *testing.T) {
+	later(t, "bees-13.8", "SETUP-AGENT.md: 12.48")
+}
 func TestPilotBug1251PromptFriction(t *testing.T) {
 	later(t, "bees-13.9", "the role prompts rewritten (12.51); positional bs done is TestDoneRefusesAPositionalReport")
 }
@@ -161,7 +187,20 @@ func TestPilotBug1232ANonGitQueenNeedsNoBSProject(t *testing.T) {
 func TestPilotBug1244DoctorAndConfigGaps(t *testing.T) {
 	later(t, "bees-13.8", "bs doctor warns of a PR goal with no remote and a stale herdr server; bs config lists guards")
 }
-func TestPilotBug1245DoctorNamesAStrayBSProject(t *testing.T) { later(t, "bees-13.8", "bs doctor") }
+
+// bees-12.45: doctor names a BS_PROJECT that leaked into a worker's pane, and says it is
+// ignored there; outside a pane, one naming another project is refused and named.
+func TestPilotBug1245DoctorNamesAStrayBSProject(t *testing.T) {
+	x := newToy(t)
+	x.herdr.Env = append(x.herdr.Env, "BS_PROJECT=elsewhere")
+	x.spawn("toy-1", "verdict")
+	r := x.worker("toy-1", 1, "doctor")
+	if !strings.Contains(r.String(), "WARN env: BS_PROJECT is set, and ignored in this herdr pane") {
+		t.Fatalf("doctor in the pane:\n%s", r)
+	}
+	x.env = append(x.env, "BS_PROJECT=elsewhere")
+	must(t, x.keeper("doctor"), 2, "BS_PROJECT=elsewhere names another project", "next: env -u BS_PROJECT")
+}
 
 // bees-12.50, 12.52: bs done's own pipeline (bs done | tail) is the call, not background
 // work: the gate skips the caller's process group. A reply-wait loop running bs is one of
@@ -238,10 +277,13 @@ INSERT INTO entries VALUES ('s1','2026-10-01T00:00:00.000Z','spawned','queen-toy
 		t.Fatal(err)
 	}
 	r := x.keeper("status")
-	must(t, r, 0, "--goal legacy")
+	must(t, r, 0, "--goal legacy", "no start recorded (legacy)")
 	if _, err := os.Stat(x.logbook + ".pre-2"); err != nil {
 		t.Fatalf("no copy aside: %v", err)
 	}
+	// Its pane and pid are on herdr's default session, bs's until the swap: bsx never
+	// closes a workspace there or signals a process it recorded.
+	must(t, x.queen("end", "--incomplete", "toy-9"), 2, "herdr's default session", "bees-13.9")
 }
 
 // A legacy worktree prunes on proof 1 against the repo's default branch: its recorded
@@ -354,9 +396,27 @@ func TestASpawnThatCantBeRecordedLeavesNoWorktree(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(filepath.Dir(x.repo), "toy-WT", "toy-1")); !os.IsNotExist(err) {
 		t.Fatalf("worktree left behind: %v", err)
 	}
+	if x.hasBranch("toy-1") {
+		t.Fatal("branch toy-1 left behind")
+	}
+}
+
+// A branch already named for the worker refuses the spawn before anything is made
+// (exit 2), naming how to clear it: herdr would fail on it after the checks.
+func TestSpawnRefusesABranchThatAlreadyExists(t *testing.T) {
+	x := newToy(t)
+	x.git(x.repo, "branch", "toy-1")
+	x.bead("toy-1", "x")
+	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 2, "already has a branch toy-1", "next: bsx prune", "branch -d toy-1")
+	if _, ok, err := x.open().LatestSpawn(context.Background(), "toy-1"); err != nil || ok {
+		t.Fatalf("a refused spawn was recorded: %v, %v", ok, err)
+	}
 }
 
 func TestSpawnRefusesAPRGoalWithoutARemote(t *testing.T) { later(t, "bees-13.6", "remote refusals") }
+func TestSpawnRefusesABranchGoalInAWorkspaceWithNoBranch(t *testing.T) {
+	later(t, "bees-13.10", "workspace none: a branch goal there has no branch to check")
+}
 func TestSpawnRefusesACustomArgv0NotOnPath(t *testing.T) { later(t, "bees-13.11", "cmd: checks") }
 func TestSpawnRefusesACommandKindWithoutClean(t *testing.T) {
 	later(t, "bees-13.11", "[workspace.command]")
@@ -395,11 +455,25 @@ func TestSpawnOfNoSuchBeadIsRefused(t *testing.T) {
 	must(t, x.queen("spawn", "--goal", "verdict", "toy-404"), 2, "no bead toy-404", "next: bd show toy-404")
 }
 
-// With no harness adapter (bsx's main until bees-13.3), mail to a running worker is
+// With no harness adapter (bsx's main until bees-13.4), mail to a running worker is
 // stored and says it wasn't rung, never a panic.
 func TestSendWithNoHarnessStoresAndSaysNotRung(t *testing.T) {
 	x := newToy(t)
 	x.spawn("toy-1", "verdict")
 	x.ports.Harness = nil
 	must(t, x.queen("send", "toy-1", "hi"), 0, "not rung", "has no ring")
+}
+
+// A bad flag is a usage refusal (exit 2), never a failure.
+func TestABadFlagIsRefused(t *testing.T) {
+	x := newToy(t)
+	must(t, x.queen("end", "--bogus", "toy-1"), 2, "flag provided but not defined: -bogus")
+}
+
+// Mail to a bead id reaches its worker: the id names the session (ADR-0006, motif 3).
+func TestSendToABeadIDReachesItsWorker(t *testing.T) {
+	x := newToy(t)
+	x.spawn("toy-1.2", "verdict")
+	must(t, x.queen("send", "toy-1.2", "hi"), 0, " to toy-1-2", "rung toy-1-2")
+	must(t, x.worker("toy-1-2", 1, "inbox"), 0, "from queen-toy", "hi")
 }

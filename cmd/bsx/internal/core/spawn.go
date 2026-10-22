@@ -86,6 +86,9 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 	sp.Record = launch.Record
 	if sp.ID, err = c.Logbook.RecordSpawn(ctx, req.By, sp, brief(bead, g)); err != nil {
 		err = errors.Join(err, c.unmake(context.WithoutCancel(ctx), session, hw.ID, ws))
+		if errors.Is(err, logbook.ErrAlreadySpawned) {
+			return logbook.Spawn{}, exit(ExitRefused, bsname.Cmd+" end "+name, err, "another spawn of %s was recorded first", name)
+		}
 		return logbook.Spawn{}, exit(ExitFail, "", err, "%s: couldn't record the spawn", name)
 	}
 	if err := c.launch(ctx, sp, launch); err != nil {
@@ -150,7 +153,7 @@ func (c *Core) workspace(ctx context.Context, name string) (logbook.Workspace, e
 	}
 	base, err := c.git(ctx, c.Repo, "symbolic-ref", "--short", "HEAD")
 	if err != nil {
-		return logbook.Workspace{}, exit(ExitRefused, "git -C "+c.Repo+" switch main", err, "%s has no branch checked out to cut from", c.Repo)
+		return logbook.Workspace{}, refusedOrCant(err, "git -C "+c.Repo+" switch main", "%s has no branch checked out to cut from", c.Repo)
 	}
 	dir := filepath.Join(c.Worktrees, name)
 	if _, err := os.Stat(dir); err == nil {
@@ -163,8 +166,9 @@ func (c *Core) workspace(ctx context.Context, name string) (logbook.Workspace, e
 	case err != nil:
 		return logbook.Workspace{}, exit(ExitCantCheck, "", err, "can't tell whether branch %s exists", name)
 	case ok:
-		return logbook.Workspace{}, exit(ExitRefused, bsname.Cmd+" prune (once its work is merged)", nil,
-			"branch %s already exists in %s", name, c.Repo)
+		// -d, not -D: git refuses to delete a branch whose work isn't merged.
+		return logbook.Workspace{}, exit(ExitRefused, bsname.Cmd+" prune (it deletes a merged worker's branch), or git -C "+c.Repo+" branch -d "+name, nil,
+			"%s already has a branch %s", c.Repo, name)
 	}
 	return ws, nil
 }

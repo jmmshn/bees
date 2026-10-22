@@ -7,7 +7,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -94,13 +93,13 @@ type Role struct {
 
 // Worker holds every worker's harness tables and bs spawn's own settings.
 type Worker struct {
-	Path       []string   `toml:"path" scope:"project" path:"dir" unread:"" doc:"dirs put first on every worker's PATH (a live test's build under test)"`
+	Path       []string   `toml:"path" scope:"project" path:"dir" doc:"dirs put first on every worker's PATH (a live test's build under test)"`
 	ClaudeCode ClaudeCode `toml:"claude_code"`
 }
 
 // ClaudeCode holds the settings bs passes to Claude Code.
 type ClaudeCode struct {
-	Model string `toml:"model" scope:"both" unread:"" doc:"the model Claude Code starts on (claude --model); empty: Claude Code's default"`
+	Model string `toml:"model" scope:"both" doc:"the model Claude Code starts on (claude --model); empty: Claude Code's default"`
 }
 
 // The workspace kinds.
@@ -110,19 +109,19 @@ const (
 	CommandKind = "command"
 )
 
-// Kind is the workspace kind, worked out (Rule D), and why: the override, else command
-// when [workspace.command] is set, else git_worktree when the project dir is the top level
-// of a git checkout, else none.
-func (l *Loaded) Kind(gitTop bool) (kind, why string) {
+// Kind is the workspace kind and why: the override, else command when
+// [workspace.command] is set (both chosen by the config), else worked out (Rule D):
+// git_worktree when the project dir is the top level of a git checkout, else none.
+func (l *Loaded) Kind(gitTop bool) (kind, why string, chosen bool) {
 	switch {
 	case l.Workspace.Kind != "":
-		return l.Workspace.Kind, "workspace.kind, " + l.Sources["workspace.kind"].String()
+		return l.Workspace.Kind, "workspace.kind, " + l.Sources["workspace.kind"].String(), true
 	case l.Workspace.Command != nil:
-		return CommandKind, "[workspace.command] is set, " + l.Sources["workspace.command"].String()
+		return CommandKind, "[workspace.command] is set, " + l.Sources["workspace.command"].String(), true
 	case gitTop:
-		return GitWorktree, "worked out: the repo is a git checkout's top level"
+		return GitWorktree, "worked out: the repo is a git checkout's top level", false
 	}
-	return NoWorkspace, "worked out: no repo that is a git checkout's top level"
+	return NoWorkspace, "worked out: no repo that is a git checkout's top level", false
 }
 
 // check checks only what config can know. A missing argv or dir is refused where it
@@ -166,10 +165,7 @@ func (g GoalType) check(name string, checks map[string]Check) error {
 			}
 		}
 	}
-	if g.Fragment != "" && !filepath.IsAbs(g.Fragment) && !strings.HasPrefix(g.Fragment, "~/") {
-		errs = append(errs, fmt.Errorf("fragment = %q: not an absolute path (only ~ is expanded)", g.Fragment))
-	}
-	return errors.Join(errs...)
+	return errors.Join(errs...) // fragment is a path: Load checks it as every path is
 }
 
 func (c Check) check() error {

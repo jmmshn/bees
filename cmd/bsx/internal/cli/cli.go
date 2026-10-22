@@ -114,7 +114,7 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 			}
 			return nil
 		}
-		kind, why := s.Kind(s.GitTop)
+		kind, why, _ := s.Kind(s.GitTop)
 		r.c = &core.Core{
 			Logbook: lb, Project: s.Project, Run: ports.Run, Harness: h, HarnessOf: other, HarnessName: s.Harness,
 			Proc: ports.Proc, Beads: ports.Beads, Repo: s.Repo, Worktrees: s.Worktrees, Kind: kind, KindWhy: why,
@@ -148,6 +148,16 @@ func report(stderr io.Writer, name string, err error) int {
 }
 
 var errUsage = errors.New("usage")
+
+// parse parses args into fs: a bad flag is a usage refusal (exit 2), -h is help.
+func parse(fs *flag.FlagSet, args []string) error {
+	if err := fs.Parse(args); err != nil && !errors.Is(err, flag.ErrHelp) {
+		return fmt.Errorf("%w: %v", errUsage, err)
+	} else if err != nil {
+		return err
+	}
+	return nil
+}
 
 type run struct {
 	ctx      context.Context

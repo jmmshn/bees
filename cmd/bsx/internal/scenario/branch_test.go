@@ -142,12 +142,14 @@ func TestAMergedPullRequestProvesTheBranch(t *testing.T) {
 	must(t, x.queen("end", "toy-1"), 0, "ended toy-1")
 }
 
-// Rule G at spawn: a branch left by an earlier spawn is refused before anything is made.
+// Rule G at spawn: a branch left by an earlier spawn is refused before anything is made,
+// whatever the goal (TestSpawnRefusesABranchThatAlreadyExists has --goal branch): prune
+// may delete the branch later, so it must be the spawn's own.
 func TestSpawnRefusesABranchThatExists(t *testing.T) {
 	x := newToy(t)
 	x.bead("toy-1", "x")
 	x.git(x.repo, "branch", "toy-1")
-	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 2, "branch toy-1 already exists", "next: bsx prune")
+	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 2, "already has a branch toy-1", "next: bsx prune")
 	if _, ok, _ := x.open().LatestSpawn(context.Background(), "toy-1"); ok {
 		t.Fatal("a refused spawn was recorded")
 	}

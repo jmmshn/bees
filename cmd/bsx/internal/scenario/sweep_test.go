@@ -230,7 +230,6 @@ INSERT INTO entries VALUES ('s1','2026-10-01T00:00:00.000Z','spawned','queen-toy
 	}
 }
 
-func TestNoteAndBeadsGoals(t *testing.T) { later(t, "bees-13.7", "note and beads goals") }
 func TestCustomGoalsAreFrozenAtSpawn(t *testing.T) {
 	later(t, "bees-13.11", "[goal.<name>] and cmd: checks frozen in spawned")
 }

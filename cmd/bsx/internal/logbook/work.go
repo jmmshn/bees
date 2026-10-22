@@ -115,6 +115,12 @@ func (d Done) Text() string {
 	if d.Report != "" {
 		s += "\n" + d.Report
 	}
+	for _, c := range d.Checks {
+		// Where a note or beads handoff put its work: the queen reads it there.
+		if c.Pass && c.Detail != "" && (c.Name == goal.NoteChanged || c.Name == goal.BeadCreated) {
+			s += "\n" + c.Detail
+		}
+	}
 	if len(d.Background) > 0 {
 		s += "\n(reported with bs done --force while it still ran background work:"
 		for _, b := range d.Background {

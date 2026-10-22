@@ -15,9 +15,9 @@ var gitWords = regexp.MustCompile(`(?i)\b(git|branch(es)?|commits?|worktrees?|me
 // workspace with a goal that isn't git's reads no git wording (bees-12.29).
 func TestANonGitWorkerReadsNoGitWording(t *testing.T) {
 	for _, r := range []prompt.Role{prompt.Worker, prompt.Queen} {
-		got := prompt.Text(r, "web2", "none", []string{"verdict"})
+		got := prompt.Text(r, "web2", "none", []string{"verdict", "note", "beads"})
 		if m := gitWords.FindAllString(got, -1); m != nil {
-			t.Errorf("%s prompt under none with --goal verdict says %q:\n%s", r, m, got)
+			t.Errorf("%s prompt under none with --goal verdict, note, beads says %q:\n%s", r, m, got)
 		}
 	}
 }
@@ -54,8 +54,23 @@ func TestFragmentsSplitPerRole(t *testing.T) {
 
 // A goal type with no fragment yet still names how to hand it off; each type appears once.
 func TestAGoalWithNoFragmentStillSaysBsDone(t *testing.T) {
-	got := prompt.Text(prompt.Worker, "web2", "git_worktree", []string{"verdict", "branch", "branch"})
-	if !strings.Contains(got, "`--goal verdict`: `bs done` checks it") || strings.Count(got, "`--goal branch`:") != 1 {
+	got := prompt.Text(prompt.Worker, "web2", "git_worktree", []string{"cl", "branch", "branch"})
+	if !strings.Contains(got, "`--goal cl`: `bs done` checks it") || strings.Count(got, "`--goal branch`:") != 1 {
 		t.Fatalf("prompt:\n%s", got)
+	}
+}
+
+// A non-PR goal's worker is told where its report goes, never a file (bees-13.7: five
+// reports left in scratch/ were lost).
+func TestNonPRGoalsSayWhereTheReportGoes(t *testing.T) {
+	for g, want := range map[string]string{
+		"verdict": "bs done --answer yes|no --report",
+		"note":    "bd update <bead> --append-notes",
+		"beads":   "bs bead new --parent <bead>",
+	} {
+		got := prompt.Text(prompt.Worker, "web2", "none", []string{g})
+		if !strings.Contains(got, want) || g != "beads" && !strings.Contains(got, "never leave") && !strings.Contains(got, "Never leave") {
+			t.Errorf("--goal %s worker prompt lacks %q or the scratch warning:\n%s", g, want, got)
+		}
 	}
 }

@@ -1,98 +1,250 @@
 package cli
 
 import (
+	"cmp"
+	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
-	"github.com/BurntSushi/toml"
-
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
+	"github.com/jmmshn/bees/cmd/bsx/internal/config"
 	"github.com/jmmshn/bees/cmd/bsx/internal/core"
+	"github.com/jmmshn/bees/cmd/bsx/internal/port"
 )
-
-// Config is the skeleton's slice of ADR-0010's config, read from config.toml in the
-// session's config dir; the full surface arrives with bees-13.3.
-type Config struct {
-	Dir     string `toml:"-"` // the config dir it was read from
-	Project string `toml:"project"`
-	Harness string `toml:"harness"`
-	Paths   struct {
-		LogbookDir string `toml:"logbook_dir"`
-		Repo       string `toml:"repo"`
-		Worktrees  string `toml:"worktrees"`
-	} `toml:"paths"`
-}
 
 // ErrDefaultConfig is bsx run where the shared bs runs: until the swap (bees-13.9) bsx
 // works only inside a herdr --session toy, on that session's config and logbooks.
 var ErrDefaultConfig = errors.New("bsx refuses the default config dir until the swap (bees-13.9)")
 
-// configDir is the config dir of a caller with env: <config>/bees/sessions/<HERDR_SESSION>
-// (ADR-0010 live rig). The default session's dir, <config>/bees, is bs's own: refused.
-func configDir(env []string) (string, error) {
-	base := core.Getenv(env, "XDG_CONFIG_HOME")
-	if base == "" {
-		home := core.Getenv(env, "HOME")
-		if home == "" {
-			return "", errors.New("neither XDG_CONFIG_HOME nor HOME is set")
-		}
-		base = filepath.Join(home, ".config")
-	}
-	session := core.Getenv(env, "HERDR_SESSION")
-	if session == "" || session == "default" {
-		return "", fmt.Errorf("%w: run it on a herdr --session server, whose config lives in %s",
-			ErrDefaultConfig, filepath.Join(base, "bees", "sessions", "<session>"))
-	}
-	if strings.ContainsAny(session, "/\x00") || session == "." || session == ".." {
-		return "", fmt.Errorf("HERDR_SESSION %q can't name a config dir", session)
-	}
-	return filepath.Join(base, "bees", "sessions", session), nil
+// errNoConfigDir is a session whose config dir is missing (Rule G): every command that
+// opens a logbook refuses, since the defaults would name the real one; config and doctor
+// run on the defaults, warning.
+var errNoConfigDir = errors.New("no config dir for this herdr session")
+
+// settings is what a command runs on: the config and everything bs worked out around it.
+type settings struct {
+	*config.Loaded
+	Dir, Session string
+	Missing      bool   // the session's config dir doesn't exist
+	InPane       bool   // run inside a herdr pane, where BS_* is ignored
+	Project      string // "" when bs can't tell: config and doctor still run
+	ProjectFrom  string // how bs found it
+	Repo         string // the project's main checkout, "" if unknown
+	RepoFrom     string
+	RepoMissing  bool   // paths.repo or paths.repos named a dir that doesn't exist
+	GitTop       bool   // Repo is a git checkout's top level
+	Logbook      string // the logbook file
+	Worktrees    string // paths.worktrees with {repo} and ~ resolved
+	Warnings     []string
 }
 
-// loadConfig reads env's config. A missing config dir is refused: a toy's session must be
-// set up before bsx writes anything (ADR-0010). The default logbook dir is refused too,
-// so no toy ever migrates the real logbooks before the swap.
-func loadConfig(env []string) (Config, error) {
-	dir, err := configDir(env)
+// envKeys are the BS_* variables bs reads outside a herdr pane. Inside one it reads none,
+// and warns of every BS_* set, the old bs's pins included:
+// a pane's identity and config come from the pane (ADR-0010), and an inherited pin from
+// some other session's env is exactly what bees-12.47 and bees-13.1's probe saw leak.
+var envKeys = []string{"BS_PROJECT", "BS_LOGBOOK_DIR", "BS_REPOS"}
+
+// load works out env's settings: its config dir (per herdr session), its project (the
+// git repo bs runs in, else BS_PROJECT outside a pane), the files, the repo and the
+// logbook. It fails only on what no command can run past: a broken file, a refused dir,
+// a file or dir it couldn't read (exit 6). The settings come back with the error, for
+// the warnings found before it.
+func load(ctx context.Context, env Env, run port.Runner) (*settings, error) {
+	dir, session, err := config.Dir(func(k string) string { return core.Getenv(env.Vars, k) })
 	if err != nil {
-		return Config{}, err
+		return nil, err
 	}
-	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
-		return Config{}, fmt.Errorf("no config dir %s for this herdr session: make it, with a config.toml, first", dir)
+	if session == config.DefaultSession {
+		return nil, fmt.Errorf("%w: run it on a herdr --session server, whose config lives in %s",
+			ErrDefaultConfig, filepath.Join(dir, "sessions", "<session>"))
 	}
-	var c Config
-	if _, err := toml.DecodeFile(filepath.Join(dir, "config.toml"), &c); err != nil {
-		return Config{}, fmt.Errorf("config %s: %w", filepath.Join(dir, "config.toml"), err)
+	s := &settings{Dir: dir, Session: session}
+	if fi, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
+		s.Missing = true
+		s.Warnings = append(s.Warnings, fmt.Sprintf("%v %s: %s is missing, so only config and doctor run, on the defaults\n  next: mkdir -p %s and write its config.toml (the live-test skill's setup.sh does)",
+			errNoConfigDir, session, dir, dir))
+	} else if err != nil {
+		return s, cantRead(err)
+	} else if !fi.IsDir() {
+		return s, fmt.Errorf("config dir %s is not a directory", dir)
 	}
-	c.Dir = dir
-	if c.Paths.LogbookDir == "" {
-		return Config{}, fmt.Errorf("%s: paths.logbook_dir is required until the swap (bees-13.9)", filepath.Join(dir, "config.toml"))
-	}
-	for _, real := range realLogbookDirs(env) {
-		if samePath(c.Paths.LogbookDir, real) {
-			return Config{}, fmt.Errorf("%w: paths.logbook_dir is the real logbooks' dir, %s", ErrDefaultConfig, c.Paths.LogbookDir)
+	s.InPane = core.Getenv(env.Vars, "HERDR_PANE_ID") != ""
+	overrides := map[string]string{}
+	for _, kv := range env.Vars {
+		k, v, _ := strings.Cut(kv, "=")
+		switch {
+		case !strings.HasPrefix(k, "BS_") || v == "":
+		case s.InPane:
+			s.Warnings = append(s.Warnings, fmt.Sprintf("ignoring %s inside a herdr pane: the pane decides", k))
+		case slices.Contains(envKeys, k):
+			overrides[k] = v
 		}
 	}
-	if c.Project == "" && c.Paths.Repo != "" {
-		c.Project = projectName(filepath.Base(c.Paths.Repo))
+	if err := s.findProject(ctx, env.Dir, run, overrides["BS_PROJECT"]); err != nil {
+		return s, err
 	}
-	if c.Project == "" {
-		return Config{}, fmt.Errorf("%s: set project or paths.repo", filepath.Join(dir, "config.toml"))
+	home := core.Getenv(env.Vars, "HOME")
+	l, err := config.Load(config.Input{Dir: dir, Project: s.Project, Home: home, Env: overrides})
+	if err != nil {
+		return s, cantRead(err)
 	}
-	if c.Paths.Worktrees == "" && c.Paths.Repo != "" {
-		c.Paths.Worktrees = c.Paths.Repo + "-WT"
+	s.Loaded = l
+	if err := s.findRepo(ctx, run); err != nil {
+		return s, err
 	}
-	if c.Harness == "" {
-		c.Harness = "claude_code"
+	if s.Project != "" {
+		s.Logbook = filepath.Join(l.Expand(l.Paths.LogbookDir), s.Project+".db")
 	}
-	return c, nil
+	if wt, ok := strings.CutPrefix(l.Paths.Worktrees, config.RepoPlaceholder); !ok {
+		s.Worktrees = l.Expand(wt)
+	} else if s.Repo != "" {
+		s.Worktrees = s.Repo + wt
+	}
+	return s, nil
 }
 
-// projectName is a repo's project name: lowercased, - and _ dropped.
-func projectName(repo string) string {
-	return strings.NewReplacer("-", "", "_", "").Replace(strings.ToLower(repo))
+// findProject names the project from the git repo bs runs in, else BS_PROJECT. Both set
+// and different is refused (bees-12.47): a pin from another session must never silently
+// beat the repo you are in.
+func (s *settings) findProject(ctx context.Context, cwd string, run port.Runner, pinned string) error {
+	if cwd != "" {
+		main, err := mainCheckout(ctx, run, cwd)
+		switch {
+		case errors.Is(err, errNotGit):
+		case errors.As(err, new(*core.Exit)):
+			return err
+		case err != nil: // "couldn't look" is never "no project" (Rule G)
+			return &core.Exit{Code: core.ExitCantCheck, Msg: "bs can't tell which project " + cwd + " is in", Err: err}
+		default:
+			s.Project, s.ProjectFrom, s.Repo, s.RepoFrom = config.Normalise(filepath.Base(main)), "the git repo at "+main, main, "the git repo bs runs in"
+		}
+	}
+	switch p := config.Normalise(pinned); {
+	case p == "":
+	case s.Project == "":
+		s.Project, s.ProjectFrom = p, "env BS_PROJECT"
+	case p != s.Project:
+		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("BS_PROJECT=%s names another project than the repo you are in (%s)", pinned, s.Project),
+			Next: "env -u BS_PROJECT " + bsname.Cmd + " ..., or run it from " + p + "'s repo"}
+	}
+	return nil
+}
+
+// findRepo is ADR-0008's repo chain: the git repo bs runs in when it is the project's,
+// else paths.repo, else the project's dir under paths.repos.
+func (s *settings) findRepo(ctx context.Context, run port.Runner) error {
+	switch {
+	case s.Repo != "":
+	case s.Paths.Repo != "":
+		s.Repo, s.RepoFrom = s.Expand(s.Paths.Repo), "paths.repo, "+s.Sources["paths.repo"].String()
+	case s.Paths.Repos != "" && s.Project != "":
+		dir := s.Expand(s.Paths.Repos)
+		es, err := os.ReadDir(dir)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return cantRead(fmt.Errorf("paths.repos %s: %w", dir, err))
+		}
+		for _, e := range es {
+			if e.IsDir() && config.Normalise(e.Name()) == s.Project {
+				s.Repo, s.RepoFrom = filepath.Join(dir, e.Name()), "paths.repos, "+s.Sources["paths.repos"].String()
+				break
+			}
+		}
+	}
+	if s.Repo == "" {
+		return nil
+	}
+	if _, err := os.Stat(s.Repo); errors.Is(err, os.ErrNotExist) { // git can't even start in it
+		s.RepoMissing = true
+		s.Warnings = append(s.Warnings, fmt.Sprintf("the repo %s (%s) doesn't exist, so bsx spawn refuses", s.Repo, s.RepoFrom))
+		return nil
+	} else if err != nil {
+		return cantRead(err)
+	}
+	top, err := run.Run(ctx, s.Repo, "git", "-C", s.Repo, "rev-parse", "--show-toplevel")
+	switch err := notGit(err); {
+	case errors.Is(err, errNotGit):
+	case err != nil: // a failing git must not quietly make the kind none
+		return &core.Exit{Code: core.ExitCantCheck, Msg: "bs can't tell whether " + s.Repo + " is a git checkout", Err: err}
+	default:
+		s.GitTop = samePath(strings.TrimSpace(string(top)), s.Repo)
+	}
+	return nil
+}
+
+// cantRead is err as exit 6 when bs couldn't read a file or dir in it (Rule G: "couldn't
+// look" is not "refused"); a broken file stays a refusal.
+func cantRead(err error) error {
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		return &core.Exit{Code: core.ExitCantCheck, Msg: "bs couldn't read its config", Err: err}
+	}
+	return err
+}
+
+// errNotGit is a dir git says is in no repo, or a dir that doesn't exist: an answer, not
+// a failure to look.
+var errNotGit = errors.New("not in a git repo")
+
+// notGit is err as errNotGit when git's answer was "not a git repository" (or no such
+// dir); any other failure, git missing included, stays as it is.
+func notGit(err error) error {
+	var ee *port.ExitError
+	if errors.As(err, &ee) && (strings.Contains(string(ee.Stderr), "not a git repository") || strings.Contains(string(ee.Stderr), "No such file or directory")) {
+		return errNotGit
+	}
+	return err
+}
+
+// mainCheckout is the main checkout of the git repo holding dir: its own top level in
+// the main checkout (whatever the git dir is called), the parent of a .git common dir in a
+// linked worktree. A linked worktree of a bare repo or a separate git dir has a main
+// checkout git doesn't record: refused, as is a bare repo.
+func mainCheckout(ctx context.Context, run port.Runner, dir string) (string, error) {
+	out, err := run.Run(ctx, dir, "git", "-C", dir, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir")
+	var ee *port.ExitError
+	if errors.As(err, &ee) && strings.Contains(string(ee.Stderr), "must be run in a work tree") {
+		return "", &core.Exit{Code: core.ExitRefused, Msg: dir + " is in a bare repo, which has no checkout to name a project by", Next: "cd into a checkout of it"}
+	}
+	if err != nil {
+		return "", notGit(err)
+	}
+	f := strings.Fields(string(out))
+	if len(f) != 3 {
+		return "", fmt.Errorf("git rev-parse in %s: unexpected output %q", dir, out)
+	}
+	top, gitDir, common := f[0], f[1], f[2]
+	switch {
+	case gitDir == common:
+		return top, nil
+	case filepath.Base(common) == ".git":
+		return filepath.Dir(common), nil
+	}
+	return "", &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("%s is a linked worktree of %s, whose main checkout git doesn't record", top, common),
+		Next: "run " + bsname.Cmd + " in the main checkout, or outside a herdr pane with BS_PROJECT set"}
+}
+
+// checkLogbook checks s names a project and that its logbook isn't the real one, which no toy may migrate before the swap.
+func (s *settings) checkLogbook(env Env) error {
+	if s.Project == "" {
+		why := "BS_PROJECT is unset"
+		if s.InPane {
+			why = "BS_PROJECT is ignored inside a herdr pane (a cwd gone from the repo: bees-13.15)"
+		}
+		return &core.Exit{Code: core.ExitRefused, Msg: "no project: bs isn't in a git repo and " + why,
+			Next: "cd into the project's repo"}
+	}
+	for _, real := range realLogbookDirs(env.Vars) {
+		if samePath(filepath.Dir(s.Logbook), real) {
+			return fmt.Errorf("%w: paths.logbook_dir is the real logbooks' dir, %s (%s)", ErrDefaultConfig,
+				s.Paths.LogbookDir, s.Sources["paths.logbook_dir"])
+		}
+	}
+	return nil
 }
 
 // realLogbookDirs are where the real logbooks may be: bs's default, ~/.local/share/bees
@@ -116,4 +268,9 @@ func samePath(a, b string) bool {
 	ra, errA := filepath.EvalSymlinks(a)
 	rb, errB := filepath.EvalSymlinks(b)
 	return errA == nil && errB == nil && ra == rb
+}
+
+// harnessProgram is the program a config harness name starts.
+func harnessProgram(name string) string {
+	return cmp.Or(map[string]string{"claude_code": "claude"}[name], name)
 }

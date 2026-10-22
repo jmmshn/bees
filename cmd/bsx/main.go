@@ -23,8 +23,9 @@ func main() {
 		Proc:     proc.System{},
 		Beads:    port.BeadsCLI{R: port.Exec{}},
 		CacheDir: filepath.Join(cache, "bees", "bsx"),
-		// Harness: none until the claude_code adapter (bees-13.3); spawn refuses.
+		// Harness: none until the claude_code adapter (bees-13.4); spawn refuses.
 	}
-	env := cli.Env{Vars: os.Environ(), Self: os.Getpid(), Stdin: os.Stdin}
+	dir, _ := os.Getwd() // "" when gone: bs then knows the project only from BS_PROJECT
+	env := cli.Env{Vars: os.Environ(), Dir: dir, Self: os.Getpid(), Stdin: os.Stdin}
 	os.Exit(cli.Run(context.Background(), env, ports, os.Args[1:], os.Stdout, os.Stderr))
 }

@@ -91,7 +91,7 @@ func TestRound11ADeliveryFragmentForACLFlow(t *testing.T) {
 }
 func TestRound11StaticGuards(t *testing.T) { later(t, "bees-13.6", "the guards matrix") }
 func TestRound11WorkersRunTheBuildUnderTest(t *testing.T) {
-	later(t, "bees-13.3", "worker.path and the live rig")
+	later(t, "bees-13.4", "worker.path, wired with the claude_code adapter")
 }
 func TestRound11AMovedPaneStaysRunningAndIsRung(t *testing.T) {
 	later(t, "bees-13.4", "identity and rings of a moved pane")
@@ -110,7 +110,7 @@ func TestRound11AFreshAgentSetsUpFromSetupAgentMD(t *testing.T) {
 }
 func TestRound11Doctor(t *testing.T) { later(t, "bees-13.8", "bs doctor") }
 func TestRound11TeardownLeavesNoLeaks(t *testing.T) {
-	later(t, "bees-13.3", "the live rig's leak check")
+	later(t, "bees-13.29", "a scripted self-test of the live rig's leak check")
 }
 
 // Pilot bugs.
@@ -150,28 +150,28 @@ func TestBSVariablesAreIgnoredInsideARecordedPane(t *testing.T) {
 
 // The live-test and docs bugs belong to the rig and setup beads.
 func TestPilotBug1219AToyHasItsOwnConfigBeforeItsQueen(t *testing.T) {
-	later(t, "bees-13.3", "the rig: 12.19")
+	later(t, "bees-13.29", "a scripted self-test of the rig: 12.19")
 }
 func TestPilotBug1222ToysDontLoadTheKeepersClaudeMD(t *testing.T) {
-	later(t, "bees-13.3", "the rig: 12.22")
+	later(t, "bees-13.29", "a scripted self-test of the rig: 12.22")
 }
 func TestPilotBug1224AToyQueenSpawnsOnTheBuildUnderTest(t *testing.T) {
-	later(t, "bees-13.3", "the rig: 12.24")
+	later(t, "bees-13.29", "a scripted self-test of the rig: 12.24")
 }
 func TestPilotBug1226ToyWorkersReadTheToysConfig(t *testing.T) {
-	later(t, "bees-13.3", "the rig: 12.26")
+	later(t, "bees-13.29", "a scripted self-test of the rig: 12.26")
 }
 func TestPilotBug1230TeardownFindsEveryLeak(t *testing.T) {
-	later(t, "bees-13.3", "the rig: 12.30")
+	later(t, "bees-13.29", "a scripted self-test of the rig: 12.30")
 }
 func TestPilotBug1234SetupTakesAGitToysConfig(t *testing.T) {
-	later(t, "bees-13.3", "the rig: 12.34")
+	later(t, "bees-13.29", "a scripted self-test of the rig: 12.34")
 }
 func TestPilotBug1235ANonGitToyStartsAQueen(t *testing.T) {
-	later(t, "bees-13.3", "the rig: 12.35")
+	later(t, "bees-13.29", "a scripted self-test of the rig: 12.35")
 }
 func TestPilotBug1240TeardownOfANestedWorkspace(t *testing.T) {
-	later(t, "bees-13.3", "the rig: 12.40")
+	later(t, "bees-13.29", "a scripted self-test of the rig: 12.40")
 }
 func TestPilotBug1242SetupAgentDocGaps(t *testing.T) {
 	later(t, "bees-13.8", "SETUP-AGENT.md: 12.42")
@@ -208,7 +208,20 @@ func TestPilotBug1243APaneActsOnItsOwnProject(t *testing.T) {
 func TestPilotBug1244DoctorAndConfigGaps(t *testing.T) {
 	later(t, "bees-13.8", "bs doctor warns of a PR goal with no remote and a stale herdr server; bs config lists guards")
 }
-func TestPilotBug1245DoctorNamesAStrayBSProject(t *testing.T) { later(t, "bees-13.8", "bs doctor") }
+
+// bees-12.45: doctor names a BS_PROJECT that leaked into a worker's pane, and says it is
+// ignored there; outside a pane, one naming another project is refused and named.
+func TestPilotBug1245DoctorNamesAStrayBSProject(t *testing.T) {
+	x := newToy(t)
+	x.herdr.Env = append(x.herdr.Env, "BS_PROJECT=elsewhere")
+	x.spawn("toy-1", "verdict")
+	r := x.worker("toy-1", 1, "doctor")
+	if !strings.Contains(r.String(), "WARN env: BS_PROJECT is set, and ignored in this herdr pane") {
+		t.Fatalf("doctor in the pane:\n%s", r)
+	}
+	x.env = append(x.env, "BS_PROJECT=elsewhere")
+	must(t, x.keeper("doctor"), 2, "BS_PROJECT=elsewhere names another project", "next: env -u BS_PROJECT")
+}
 
 // bees-12.50, 12.52: bs done's own pipeline (bs done | tail) is the call, not background
 // work: the gate skips the caller's process group. A reply-wait loop running bs is one of
@@ -251,6 +264,17 @@ func TestEndIncompleteNeedsAHandoff(t *testing.T) {
 
 // A check that can't run stops bs done at exit 6, never a fail.
 func TestDoneStopsAtACheckThatCantRun(t *testing.T) {
+	x := newToy(t)
+	sp := x.spawn("toy-1", "branch")
+	// The base gone, git rev-list can't run; the workspace still names the project.
+	x.git(x.repo, "update-ref", "-d", "refs/heads/"+sp.Workspace.Base)
+	must(t, x.worker("toy-1", 1, "done"), 6, "couldn't run")
+}
+
+// The worktree's .git gone, the worker's cwd is in no repo, so bs can't find its project.
+// It should still run the check and stop at exit 6 (bees-13.15).
+func TestDoneWithTheWorktreesGitGone(t *testing.T) {
+	t.Skip("bees-13.15: bsx finds a pane's project only from its cwd")
 	x := newToy(t)
 	sp := x.spawn("toy-1", "branch")
 	if err := os.RemoveAll(filepath.Join(sp.Workspace.Dir, ".git")); err != nil {
@@ -348,7 +372,23 @@ func TestBsxRefusesTheDefaultConfigDirAndAMissingSessionDir(t *testing.T) {
 	x.env = append(x.env, "HERDR_SESSION=")
 	must(t, x.keeper("status"), 2, "refuses the default config dir")
 	x.env = append(x.env, "HERDR_SESSION=nosuch")
-	must(t, x.keeper("status"), 2, "no config dir")
+	must(t, x.keeper("status"), 2, "warning: no config dir for this herdr session nosuch")
+}
+
+// Rule G inside a pane: with the session's config dir gone, a worker's commands are
+// refused (exit 2) and touch no logbook, warning.
+func TestAMissingSessionDirRefusesAWorkersWrites(t *testing.T) {
+	x := newToy(t)
+	x.spawn("toy-1", "branch")
+	if err := os.RemoveAll(x.config); err != nil {
+		t.Fatal(err)
+	}
+	must(t, x.worker("toy-1", 1, "send", "queen-toy", "hi"), 2, "warning: no config dir for this herdr session toy", "refused", "nothing was read or written")
+	must(t, x.worker("toy-1", 2, "inbox"), 2, "refused")
+	must(t, x.worker("toy-1", 3, "status"), 2, "warning: no config dir", "won't guess a logbook")
+	if ms, err := x.open().Unread(context.Background(), "queen-toy"); err != nil || len(ms) != 0 {
+		t.Fatalf("queen's unread = %v, %v", ms, err)
+	}
 }
 
 // A start bs can't confirm is exit 8, says what to run next, and bs end clears it.
@@ -425,7 +465,7 @@ func TestSpawnOfNoSuchBeadIsRefused(t *testing.T) {
 	must(t, x.queen("spawn", "--goal", "verdict", "toy-404"), 2, "no bead toy-404", "next: bd show toy-404")
 }
 
-// With no harness adapter (bsx's main until bees-13.3), mail to a running worker is
+// With no harness adapter (bsx's main until bees-13.4), mail to a running worker is
 // stored and says it wasn't rung, never a panic.
 func TestSendWithNoHarnessStoresAndSaysNotRung(t *testing.T) {
 	x := newToy(t)

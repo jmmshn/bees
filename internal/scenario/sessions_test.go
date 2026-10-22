@@ -16,6 +16,7 @@ import (
 
 	"github.com/jmmshn/bees/internal/core"
 	"github.com/jmmshn/bees/internal/fake"
+	"github.com/jmmshn/bees/internal/goal"
 	"github.com/jmmshn/bees/internal/herdr"
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/port"
@@ -705,4 +706,29 @@ func TestSendAcrossProjectsToAnUnreadableLogbook(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(other, 0o600) })
 	must(t, x.queen("send", "--project", "other", "queen-other", "hi"), 6, "can't read", "nothing stored", "next: bs doctor")
+}
+
+// A dead worker recorded on another harness than this bs starts is refused, never resumed
+// on one that can't take its conversation (ADR-0010's switch refusal; bees-13.9 re-review 7).
+func TestAResumeOnAnotherHarnessIsRefused(t *testing.T) {
+	x := newToy(t)
+	x.start()
+	x.bead("toy-5", "work")
+	g, err := goal.Parse([]string{"branch"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lb, _, err := logbook.Create(context.Background(), x.logbook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = lb.RecordSpawn(context.Background(), "queen-toy", logbook.Spawn{Name: "toy-5", Bead: "toy-5", Harness: "omp", Goal: g,
+		Herdr:     logbook.Pane{Session: x.session, Workspace: "w9", Pane: "w9:p1"},
+		Workspace: logbook.Workspace{Kind: "git_worktree", Dir: filepath.Join(x.repo+"-WT", "toy-5"), Repo: x.repo, Branch: "toy-5", Base: "main"}}, "brief")
+	lb.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	must(t, x.queen("spawn", "--goal", "branch", "toy-5"), 2, "toy-5 was spawned on harness omp, and this bs starts claude_code; nothing started",
+		"next: bs end --incomplete toy-5, then bs spawn --goal branch toy-5")
 }

@@ -2,6 +2,10 @@
 # run.sh <out dir>: one whole take of demo 2, off screen: setup.sh, take.sh, teardown.sh, then
 # edit.py. Leaves <out>/demo.gif and <out>/demo.mp4. Teardown runs even if the take fails.
 set -uo pipefail
+# demo2 drives the old bs (bs status --project … --json, bs end --project); the new bs
+# reads a herdr --session's own config, which setup.sh doesn't write yet (bees-13.33).
+echo "run.sh: demo2 isn't ported to the new bs yet (bees-13.33); nothing was done" >&2
+exit 1
 here=$(cd "$(dirname "$0")" && pwd)
 out=${1:?usage: run.sh <out dir>}
 mkdir -p "$out" && out=$(cd "$out" && pwd)

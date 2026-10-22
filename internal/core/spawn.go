@@ -175,17 +175,17 @@ func (c *Core) resume(ctx context.Context, sp logbook.Spawn, bead port.Bead, req
 			return exit(ExitCantCheck, "", err, "%s: can't tell whether pid %d still runs; nothing started", sp.Name, st.PID)
 		}
 	}
-	if _, err := c.herdr(sp.Herdr.Session).ProcessInfo(ctx, sp.Herdr.Pane); errors.Is(err, herdr.ErrPaneGone) {
-		return exit(ExitRefused, bsname.Cmd+" end --incomplete "+sp.Name+", then "+bsname.Cmd+" spawn", nil,
-			"%s: its pane %s is gone from herdr session %s, so there is nowhere to resume it; nothing started", sp.Name, sp.Herdr.Pane, sp.Herdr.Session)
-	} else if err != nil {
-		return exit(ExitCantCheck, "", err, "%s: can't look at its pane %s; nothing started", sp.Name, sp.Herdr.Pane)
-	}
 	// launch starts the configured harness: a spawn recorded on another is refused, never
 	// restarted on a harness that can't resume its conversation (ADR-0010's switch refusal).
 	if sp.Harness != c.HarnessName {
-		return exit(ExitRefused, bsname.Cmd+" end --incomplete "+sp.Name+", then "+bsname.Cmd+" spawn", nil,
+		return exit(ExitRefused, bsname.Cmd+" end --incomplete "+sp.Name+", then "+bsname.Cmd+" spawn "+goalFlags(e.Parts)+" "+bead.ID, nil,
 			"%s was spawned on harness %s, and this bs starts %s; nothing started", sp.Name, sp.Harness, c.HarnessName)
+	}
+	if _, err := c.herdr(sp.Herdr.Session).ProcessInfo(ctx, sp.Herdr.Pane); errors.Is(err, herdr.ErrPaneGone) {
+		return exit(ExitRefused, bsname.Cmd+" end --incomplete "+sp.Name+", then "+bsname.Cmd+" spawn "+goalFlags(e.Parts)+" "+bead.ID, nil,
+			"%s: its pane %s is gone from herdr session %s, so there is nowhere to resume it; nothing started", sp.Name, sp.Herdr.Pane, sp.Herdr.Session)
+	} else if err != nil {
+		return exit(ExitCantCheck, "", err, "%s: can't look at its pane %s; nothing started", sp.Name, sp.Herdr.Pane)
 	}
 	deny, err := c.deny(ctx)
 	if err != nil {
@@ -230,6 +230,15 @@ func (c *Core) kept(ctx context.Context, ended *logbook.Spawn, dir string) (bool
 		return false, err
 	}
 	return head == ended.Workspace.Branch, nil
+}
+
+// goalFlags is "--goal <part>" for each part: a next: that spawns again names the goal.
+func goalFlags(parts []goal.Part) string {
+	var f []string
+	for _, p := range parts {
+		f = append(f, "--goal "+p.String())
+	}
+	return strings.Join(f, " ")
 }
 
 // workerStart is the start of worker name in dir that every launch of it prepares, a first

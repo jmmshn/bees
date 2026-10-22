@@ -65,6 +65,12 @@ func (l *Logbook) Goal(ctx context.Context, sp Spawn) (Effective, error) {
 	return e, rows.Err()
 }
 
+// Where reports whether c passed saying where the handoff put its work (a note, new
+// beads): the queen's inbox shows it with the done.
+func (c CheckResult) Where() bool {
+	return c.Pass && c.Detail != "" && (c.Name == goal.NoteChanged || c.Name == goal.BeadCreated)
+}
+
 // CheckResult is one check's outcome. A check that couldn't run has Err set and is
 // neither pass nor fail ("couldn't look" is never "no", Rule G).
 type CheckResult struct {
@@ -116,8 +122,7 @@ func (d Done) Text() string {
 		s += "\n" + d.Report
 	}
 	for _, c := range d.Checks {
-		// Where a note or beads handoff put its work: the queen reads it there.
-		if c.Pass && c.Detail != "" && (c.Name == goal.NoteChanged || c.Name == goal.BeadCreated) {
+		if c.Where() {
 			s += "\n" + c.Detail
 		}
 	}

@@ -15,7 +15,6 @@ import (
 
 	"github.com/jmmshn/bees/cmd/bsx/internal/config"
 	"github.com/jmmshn/bees/cmd/bsx/internal/core"
-	"github.com/jmmshn/bees/cmd/bsx/internal/goal"
 	"github.com/jmmshn/bees/cmd/bsx/internal/logbook"
 	"github.com/jmmshn/bees/cmd/bsx/internal/port"
 )
@@ -129,7 +128,7 @@ func (r *run) done(fs *flag.FlagSet, args []string) error {
 	}
 	fmt.Fprintf(r.out, "handed off to %s:\n%s\n", d.Queen, d.Text())
 	for _, c := range d.Checks {
-		if c.Detail != "" && c.Name != goal.NoteChanged && c.Name != goal.BeadCreated { // a vacuous CI pass among them: said, never silent (Rule G); Text has the rest
+		if c.Detail != "" && !c.Where() { // a vacuous CI pass among them: said, never silent (Rule G); Text has the rest
 			fmt.Fprintf(r.out, "  %s: %s\n", c.Name, c.Detail)
 		}
 	}

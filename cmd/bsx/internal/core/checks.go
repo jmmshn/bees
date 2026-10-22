@@ -73,12 +73,14 @@ func (k *look) run(ctx context.Context, p goal.Part, name string) (bool, string,
 		switch {
 		case h.Answer != "yes" && h.Answer != "no":
 			return false, "--answer yes|no is missing", nil
-		case h.Report == "":
+		case strings.TrimSpace(h.Report) == "":
 			return false, "--report <text>|- is missing", nil
 		}
 		return true, "", nil
-	case goal.NoteChanged, goal.BeadCreated:
-		return k.beadCheck(ctx, name)
+	case goal.NoteChanged:
+		return k.noteChanged(ctx)
+	case goal.BeadCreated:
+		return k.beadCreated(ctx)
 	case goal.Clean:
 		// Not c.git: trimming would cut the first line's status column.
 		b, err := c.Run.Run(ctx, ws.Dir, "git", "-C", ws.Dir, "status", "--porcelain")
@@ -111,31 +113,46 @@ func (k *look) run(ctx context.Context, p goal.Part, name string) (bool, string,
 	return false, "", fmt.Errorf("no check %s", name)
 }
 
-// beadCheck runs note_changed or bead_created against the bead as spawn froze it.
-func (k *look) beadCheck(ctx context.Context, name string) (bool, string, error) {
-	c, sp := k.c, k.sp
-	if sp.At == nil {
-		return false, "", fmt.Errorf("%s was spawned before bs froze its bead", sp.Name)
+// frozen is the bead as spawn froze it; an error on a spawn recorded before bs froze it.
+func (k *look) frozen() (*logbook.BeadAt, error) {
+	if k.sp.At == nil {
+		return nil, fmt.Errorf("%s was spawned before bs froze its bead: bs end it, then bs spawn it again", k.sp.Name)
 	}
-	if name == goal.NoteChanged {
-		b, err := c.Beads.Show(ctx, sp.Bead)
-		if err != nil {
-			return false, "", err
-		}
-		if noteHash(b) == sp.At.Note {
-			return false, fmt.Sprintf("%s's notes and design are as they were at spawn (a label or status change doesn't count): bd update %s --notes \"<text>\"", sp.Bead, sp.Bead), nil
-		}
-		return true, fmt.Sprintf("%s's notes or design changed: bd show %s", sp.Bead, sp.Bead), nil
-	}
-	kids, err := c.Beads.Children(ctx, sp.Bead)
+	return k.sp.At, nil
+}
+
+// noteChanged reports whether the bead's notes or design differ from spawn's hash.
+func (k *look) noteChanged(ctx context.Context) (bool, string, error) {
+	at, err := k.frozen()
 	if err != nil {
 		return false, "", err
 	}
-	kids = slices.DeleteFunc(kids, func(id string) bool { return slices.Contains(sp.At.Children, id) })
-	if len(kids) == 0 {
-		return false, fmt.Sprintf("no bead was created under %s since spawn", sp.Bead), nil
+	id := k.sp.Bead
+	b, err := k.c.Beads.Show(ctx, id)
+	if err != nil {
+		return false, "", err
 	}
-	return true, "created under " + sp.Bead + ": " + strings.Join(kids, ", "), nil
+	if noteHash(b) == at.Note {
+		return false, fmt.Sprintf("%s's notes and design are as they were at spawn (a label or status change doesn't count): bd update %s --append-notes \"<text>\"", id, id), nil
+	}
+	return true, fmt.Sprintf("%s's notes or design changed: bd show %s", id, id), nil
+}
+
+// beadCreated reports whether a bead under the bead isn't among those spawn found there.
+func (k *look) beadCreated(ctx context.Context) (bool, string, error) {
+	at, err := k.frozen()
+	if err != nil {
+		return false, "", err
+	}
+	kids, err := k.c.Beads.Children(ctx, k.sp.Bead)
+	if err != nil {
+		return false, "", err
+	}
+	kids = slices.DeleteFunc(kids, func(id string) bool { return slices.Contains(at.Children, id) })
+	if len(kids) == 0 {
+		return false, fmt.Sprintf("no bead was created under %s since spawn", k.sp.Bead), nil
+	}
+	return true, "created under " + k.sp.Bead + ": " + strings.Join(kids, ", "), nil
 }
 
 // porcelainPaths is the paths git status --porcelain listed, the first ten of them.

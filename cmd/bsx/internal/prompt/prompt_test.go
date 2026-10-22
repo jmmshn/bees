@@ -60,8 +60,8 @@ func TestAGoalWithNoFragmentStillSaysBsDone(t *testing.T) {
 	}
 }
 
-// A non-PR goal's worker is told where its report goes, never a file (bees-13.7: five
-// reports left in scratch/ were lost).
+// A verdict or note worker is told where its report goes, never a file (bees-13.7: five
+// reports left in scratch/ were lost). A beads worker writes no report: its beads are it.
 func TestNonPRGoalsSayWhereTheReportGoes(t *testing.T) {
 	for g, want := range map[string]string{
 		"verdict": "bs done --answer yes|no --report",

@@ -51,15 +51,15 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 	} else if ok {
 		d.PRs = prev.PRs // handed-off PRs accumulate across bs done calls
 	}
-	if d.PRs, err = c.handedPRs(e.Goal, d.PRs, h); err != nil {
-		return d, err
-	}
-	if !slices.ContainsFunc(e.Parts, func(p goal.Part) bool { return p.Type == "verdict" }) && h.Answer+h.Report != "" {
+	if !slices.Contains(e.Types(), "verdict") && (h.Answer != "" || h.Report != "") {
 		where := "bs send " + sp.By + " \"...\""
-		if slices.ContainsFunc(e.Parts, func(p goal.Part) bool { return p.Type == "note" }) {
-			where = "bd update " + sp.Bead + " --notes \"...\", then bs done"
+		if slices.Contains(e.Types(), "note") {
+			where = "bd update " + sp.Bead + " --append-notes \"...\", then bs done"
 		}
 		return d, exit(ExitRefused, where, nil, "bs done: --goal %s takes no --answer or --report", e.Goal)
+	}
+	if d.PRs, err = c.handedPRs(e.Goal, d.PRs, h); err != nil {
+		return d, err
 	}
 	var failed []string
 	// The gate first: no_background, implicit in every handoff; again after a --wait,

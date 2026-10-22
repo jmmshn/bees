@@ -2,6 +2,7 @@ package scenario_test
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -19,9 +20,15 @@ func TestAVerdictReachesTheQueensInbox(t *testing.T) {
 	must(t, x.worker("toy-1", 1, "done", "--report", "it holds"), 7, "--answer yes|no is missing")
 	must(t, x.worker("toy-1", 2, "done", "--answer", "yes", "--report", "-"), 2, "stdin was empty")
 	must(t, x.worker("toy-1", 3, "done", "--answer", "no"), 7, "--report <text>|- is missing")
-	must(t, x.worker("toy-1", 4, "done", "--answer", "no", "--report", "the cache is never read"), 0)
+	must(t, x.worker("toy-1", 4, "done", "--answer", "no", "--report", "  "), 7, "--report <text>|- is missing")
+	must(t, x.worker("toy-1", 5, "done", "--answer", "no", "--report", "the cache is never read"), 0)
 	must(t, x.queen("inbox"), 0, "done: toy-1 answer no", "the cache is never read")
 	must(t, x.queen("end", "toy-1"), 0)
+	x.write(filepath.Join(sp.Workspace.Dir, "verdict.md"), "draft")
+	must(t, x.queen("prune"), 3, "kept", "verdict.md")
+	if err := os.Remove(filepath.Join(sp.Workspace.Dir, "verdict.md")); err != nil {
+		t.Fatal(err)
+	}
 	must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir)
 }
 
@@ -30,7 +37,7 @@ func TestAVerdictReachesTheQueensInbox(t *testing.T) {
 func TestOnlyAVerdictTakesAReport(t *testing.T) {
 	x := newToy(t)
 	x.spawn("toy-1", "note")
-	must(t, x.worker("toy-1", 1, "done", "--report", "see scratch/report.md"), 2, "takes no --answer or --report", "bd update toy-1 --notes")
+	must(t, x.worker("toy-1", 1, "done", "--report", "see scratch/report.md"), 2, "takes no --answer or --report", "bd update toy-1 --append-notes")
 	x.spawn("toy-2", "branch")
 	must(t, x.worker("toy-2", 1, "done", "--answer", "yes"), 2, "takes no --answer or --report", "bs send queen-toy")
 }
@@ -41,7 +48,7 @@ func TestANoteGoalNeedsTheBeadsNotesChanged(t *testing.T) {
 	x := newToy(t)
 	sp := x.spawn("toy-1", "note")
 	x.write(filepath.Join(sp.Workspace.Dir, "report.md"), "the findings")
-	must(t, x.worker("toy-1", 1, "done"), 7, "note_changed", "as they were at spawn", "bd update toy-1 --notes")
+	must(t, x.worker("toy-1", 1, "done"), 7, "note_changed", "as they were at spawn", "bd update toy-1 --append-notes")
 	x.beads.Add(port.Bead{ID: "toy-1", Title: "work on toy-1", Description: "do work on toy-1", Notes: "the findings"})
 	must(t, x.worker("toy-1", 2, "done"), 0, "notes or design changed: bd show toy-1")
 	must(t, x.queen("inbox"), 0, "done: toy-1", "bd show toy-1")

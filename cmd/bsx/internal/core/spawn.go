@@ -45,16 +45,16 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 	if err != nil {
 		return logbook.Spawn{}, refusedOrCant(err, "bs bead ls", "bs spawn: can't read bead %s", req.Bead)
 	}
-	at, err := c.beadAt(ctx, bead)
-	if err != nil {
-		return logbook.Spawn{}, err
-	}
 	name := Name(bead.ID)
 	switch prev, ok, err := c.Logbook.LatestSpawn(ctx, name); {
 	case err != nil:
 		return logbook.Spawn{}, err
 	case ok && !prev.Ended:
 		return logbook.Spawn{}, exit(ExitRefused, "bs end "+name, nil, "bs spawn: %s is already spawned and not ended", name)
+	}
+	at, err := c.beadAt(ctx, bead)
+	if err != nil {
+		return logbook.Spawn{}, err
 	}
 	target, err := c.resolveReview(ctx, &g, "bs spawn")
 	if err != nil {
@@ -116,7 +116,7 @@ func (c *Core) refuse(g goal.Goal, ws logbook.Workspace, at *logbook.BeadAt, cmd
 			}
 		case "note", "beads":
 			if at == nil {
-				return exit(ExitRefused, "", nil, "%s --goal %s: it was spawned before bs froze its bead, so there is nothing to tell a change from", cmd, p)
+				return exit(ExitRefused, "bs end the worker, then bs spawn --goal "+p.String()+" again", nil, "%s --goal %s: it was spawned before bs froze its bead, so there is nothing to tell a change from", cmd, p)
 			}
 		}
 	}

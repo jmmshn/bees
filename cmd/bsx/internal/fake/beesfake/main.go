@@ -73,13 +73,14 @@ func main() {
 			for {
 				time.Sleep(time.Hour)
 			}
-		case "listen": // idle, listening on a TCP port
+		case "listen": // idle, listening on a TCP port; says "bound" once it is
 			ln, err := net.Listen("tcp", "127.0.0.1:0")
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
 			defer ln.Close()
+			fmt.Println("bound")
 			for {
 				time.Sleep(time.Hour)
 			}
@@ -232,9 +233,17 @@ func run(state string, step []string, kids map[string]int) Result {
 	case "listen":
 		c := exec.Command(self(), "listen")
 		c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		if err := c.Start(); err != nil {
+		out, err := c.StdoutPipe()
+		if err == nil {
+			err = c.Start()
+		}
+		if err != nil {
 			r.Code, r.Err = -1, err.Error()
 			break
+		}
+		// The step's result waits for the port: a gate checked after it sees it bound.
+		if _, err := bufio.NewReader(out).ReadString('\n'); err != nil {
+			r.Code, r.Err = -1, "listen: "+err.Error()
 		}
 		go func() { _ = c.Wait() }()
 		kids[tag], r.PID = c.Process.Pid, c.Process.Pid

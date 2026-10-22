@@ -60,14 +60,17 @@ func (r *run) queen(fs *flag.FlagSet, args []string) error {
 	}
 	argv[0] = exe
 	fmt.Fprintf(r.out, "%s recorded in pane %s on herdr session %s; starting %s\n", core.Queen(r.s.Project), core.Getenv(r.env.Vars, "HERDR_PANE_ID"), r.s.Session, exe)
-	return r.ports.Exec(r.s.Repo, env, argv)
+	if err := r.ports.Exec(r.s.Repo, env, argv); err != nil {
+		return &core.Exit{Code: core.ExitFail, Msg: fmt.Sprintf("couldn't start %s (her entry names this pid, which exits: harmless)", exe), Err: err, Next: bsname.Cmd + " doctor"}
+	}
+	return nil
 }
 
 func (r *run) spawn(fs *flag.FlagSet, args []string) error {
 	var goals list
 	fs.Var(&goals, "goal", "what the worker hands off (repeatable)")
 	label := fs.String("label", "", "its herdr label (default: the bead's title)")
-	as := fs.String("as", "", "the queen, outside a herdr pane")
+	as := fs.String("as", "", "the queen, outside a recorded herdr pane")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -107,16 +110,16 @@ func (r *run) done(fs *flag.FlagSet, args []string) error {
 	report := fs.String("report", "", "a verdict goal's report, or - to read it from stdin")
 	force := fs.Bool("force", false, "hand off while background work runs (waives that gate only)")
 	wait := fs.Bool("wait", r.name == "handoff", "while CI is still running (or the host hasn't shown a push yet), wait for it (up to --timeout), then hand off or name what failed")
-	timeout := fs.Duration("timeout", 8*time.Minute, "how long --wait waits, at most 9m (a harness's shell call may run 10)")
-	as := fs.String("as", "", "the worker, outside a herdr pane")
+	timeout := fs.Duration("timeout", 8*time.Minute, "how long --wait waits, at most 9m (bs gives a worker's shell calls 10)")
+	as := fs.String("as", "", "the worker, outside a recorded herdr pane")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("%w: "+bsname.Cmd+" done takes no arguments; say it with --report (got %q)", errUsage, strings.Join(fs.Args(), " "))
 	}
-	if *timeout > maxWait {
-		return fmt.Errorf("%w: --timeout %s: at most %s, so bs answers before a harness's 10-minute shell call is cut", errUsage, *timeout, maxWait)
+	if *timeout > core.MaxWait {
+		return fmt.Errorf("%w: --timeout %s: at most %s, so bs answers before the worker's %s shell call is cut", errUsage, *timeout, core.MaxWait, core.ShellTimeout)
 	}
 	if *report == "-" {
 		b, err := io.ReadAll(r.env.Stdin)
@@ -160,6 +163,8 @@ func (r *run) check(fs *flag.FlagSet, args []string) error {
 		switch {
 		case c.Err != "":
 			mark = "??  "
+		case c.Pending:
+			mark = "WAIT"
 		case !c.Pass:
 			mark = "FAIL"
 		}
@@ -210,9 +215,6 @@ func (r *run) goal(fs *flag.FlagSet, args []string) error {
 	return nil
 }
 
-// maxWait bounds bs done --timeout.
-const maxWait = 9 * time.Minute
-
 // waitFor is how long bs done waits for CI: --timeout with --wait, else not at all.
 func waitFor(wait bool, timeout time.Duration) time.Duration {
 	if !wait {
@@ -224,7 +226,7 @@ func waitFor(wait bool, timeout time.Duration) time.Duration {
 func (r *run) end(fs *flag.FlagSet, args []string) error {
 	force := fs.Bool("force", false, "end while background work runs (waives that gate only)")
 	incomplete := fs.Bool("incomplete", false, "end an incomplete goal; prune completes it later")
-	as := fs.String("as", "", "the queen, outside a herdr pane")
+	as := fs.String("as", "", "the queen, outside a recorded herdr pane")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -244,7 +246,7 @@ func (r *run) end(fs *flag.FlagSet, args []string) error {
 }
 
 func (r *run) prune(fs *flag.FlagSet, args []string) error {
-	as := fs.String("as", "", "the queen, outside a herdr pane")
+	as := fs.String("as", "", "the queen, outside a recorded herdr pane")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -321,9 +323,11 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 		// Cross-project mail (T11): written into p's logbook, recording the sender's project
 		// so the reply needs no project read back out of a name (motif 3).
 		path := filepath.Join(filepath.Dir(r.s.Logbook), p+".db")
-		if _, err := os.Stat(path); err != nil {
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf(bsname.Cmd+" send --project %s: no logbook at %s; nothing stored", p, path), Err: err,
-				Next: "check the project name: " + bsname.Cmd + " bead ls names it, and its queen starts its logbook"}
+				Next: "check the project name against the logbooks: ls " + filepath.Dir(path)}
+		} else if err != nil {
+			return &core.Exit{Code: core.ExitCantCheck, Msg: fmt.Sprintf(bsname.Cmd+" send --project %s: can't read %s; nothing stored", p, path), Err: err, Next: bsname.Cmd + " doctor"}
 		}
 		lb, err := logbook.Open(r.ctx, path)
 		if err != nil {
@@ -362,9 +366,7 @@ func (r *run) ring(c *core.Core, from, to string, p port.Priority) {
 	switch err := c.Ring(r.ctx, from, to, p); {
 	case err == nil:
 		fmt.Fprintf(r.out, "rung %s\n", to)
-	case errors.Is(err, port.ErrNotRunning):
-		fmt.Fprintf(r.out, "stored, not rung (%v): %s reads it at its next "+bsname.Cmd+" inbox\n", err, to)
-	case errors.Is(err, port.ErrNoRing):
+	case errors.Is(err, port.ErrNotRunning), errors.Is(err, port.ErrNoRing):
 		fmt.Fprintf(r.out, "stored, not rung (%v): %s reads it at its next "+bsname.Cmd+" inbox\n", err, to)
 	case errors.Is(err, core.ErrEnded):
 		fmt.Fprintf(r.out, "stored, not rung: %v, so nobody reads it unless it is spawned again\n", err)
@@ -435,12 +437,13 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 				state += " --incomplete"
 			}
 		}
-		handoff := "-"
-		if d, ok, err := r.c.Logbook.LatestDone(r.ctx, sp.ID); err != nil {
-			errs = append(errs, err)
+		handoff, handed := "-", false
+		d, ok, derr := r.c.Logbook.LatestDone(r.ctx, sp.ID)
+		if derr != nil {
+			errs = append(errs, derr)
 			handoff = "unknown"
 		} else if ok {
-			handoff = "done " + d.TS.Local().Format("01-02 15:04")
+			handoff, handed = "done "+d.TS.Local().Format("01-02 15:04"), d.Passed()
 		}
 		complete := "no"
 		ld, landed, lerr := r.c.Logbook.LandedOf(r.ctx, sp.ID)
@@ -458,8 +461,9 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 			running = r.running(sp)
 		}
 		g, discarded := sp.Goal.String(), false
-		if e, err := r.c.Logbook.Goal(r.ctx, sp); err != nil { // the newest amend, not the spawn's goal
-			errs = append(errs, err)
+		e, gerr := r.c.Logbook.Goal(r.ctx, sp) // the newest amend, not the spawn's goal
+		if gerr != nil {
+			errs = append(errs, gerr)
 		} else {
 			g, discarded = e.String(), e.Discarded
 			if e.Discarded {
@@ -468,7 +472,6 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 		}
 		fmt.Fprintf(tw, "%s\t--goal %s\t%s\t%s\t%s\t%s\t%s\n", sp.Name, g, state, handoff, complete, running, sp.Workspace.Dir)
 		switch {
-		case lerr != nil: // couldn't read whether it landed: never read as "no" (Rule G)
 		case running == "unconfirmed":
 			stuck = append(stuck, fmt.Sprintf("%s: its start was never confirmed → %s end %s --incomplete", sp.Name, bsname.Cmd, sp.Name))
 		case strings.HasPrefix(running, "no"):
@@ -477,6 +480,10 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 				next += " (--incomplete if its goal isn't complete)"
 			}
 			stuck = append(stuck, fmt.Sprintf("%s: its process is gone but it isn't ended → %s", sp.Name, next))
+		case lerr != nil || gerr != nil || derr != nil: // couldn't read it: never read as "no" (Rule G)
+		case sp.Ended && !landed && !sp.Legacy() && !discarded && !handed:
+			// Completion needs a passing handoff, and an ended worker hands nothing off.
+			stuck = append(stuck, fmt.Sprintf("%s: ended with nothing handed off, so its goal can't complete → the keeper discards it (%s goal %s discard, bees-13.6)", sp.Name, bsname.Cmd, sp.Name))
 		case sp.Ended && !landed && !sp.Legacy() && !discarded:
 			stuck = append(stuck, fmt.Sprintf("%s: ended with its goal incomplete → %s prune completes it once --goal %s holds", sp.Name, bsname.Cmd, g))
 		}

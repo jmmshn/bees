@@ -35,7 +35,7 @@ type Pane struct {
 	Project       string // the logbook's file name without .db
 	Logbook       string
 	Who           Who
-	Repo          string // a worker's recorded workspace repo; "" for a queen
+	Repo          string // the recorded repo: a worker's workspace's, a queen's own
 	Unconfirmed   bool   // a worker with no start yet, whose harness runs above bs: Identify heals it
 }
 
@@ -46,7 +46,7 @@ type ScanIn struct {
 	Self          int
 	Run           port.Runner
 	Proc          port.Proc
-	Kind          string // the harness's process name; "" skips the heal probe
+	Program       func(harness string) string // a recorded harness's process name; nil skips the heal probe
 }
 
 // ScanPanes finds the open entry that recorded the calling pane (ADR-0010 identity),
@@ -84,7 +84,7 @@ func ScanPanes(ctx context.Context, in ScanIn) (Pane, bool, error) {
 			p := Pane{Session: in.Session, Pane: in.Pane, Project: project, Logbook: path,
 				Who: Who{Name: r.Name, Queen: r.Queen, Spawn: r.Spawn, Process: r.Process}, Repo: r.Repo}
 			if !r.HasProcess {
-				if r.Queen || in.Kind == "" {
+				if r.Queen || in.Program == nil {
 					continue
 				}
 				if probe == nil {
@@ -95,7 +95,7 @@ func ScanPanes(ctx context.Context, in ScanIn) (Pane, bool, error) {
 					probe = &pi
 				}
 				i := slices.IndexFunc(probe.Foreground, func(f herdr.PaneProcess) bool {
-					return f.Name == in.Kind && named(f.Argv, r.Name) && slices.Contains(up, f.PID)
+					return isOwn(f, in.Program(r.Harness), r.Name) && slices.Contains(up, f.PID)
 				})
 				if i < 0 {
 					continue
@@ -147,6 +147,7 @@ func inPane(ctx context.Context, path, session, pane string) ([]recorded, error)
 	for i, r := range recs {
 		out[i].Recorded = r
 		if r.Queen {
+			out[i].Repo = r.Repo
 			continue
 		}
 		sp, err := lb.Spawn(ctx, r.Spawn)

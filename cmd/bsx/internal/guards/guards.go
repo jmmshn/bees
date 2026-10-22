@@ -175,13 +175,22 @@ func pushes(branches []string) []string {
 	return compact(deny)
 }
 
-// force denies a force push: --force (and --force-with-lease), -f, or a + refspec, for
-// every workspace that denies anything (bees-12.21: manual allowed it).
+// shortForce is -f alone and bunched with one other short option of git push's (-uf, -fq):
+// a glob can't say "a word of letters holding f" without denying every word with an f in
+// it (git push -u origin feature). ponytail: longer bunches (-uqf) pass; a deny hook that
+// parses the command line would replace these globs.
+var shortForce = []string{"-f", "-uf", "-fu", "-qf", "-fq", "-vf", "-fv", "-nf", "-fn"}
+
+// force denies a force push: --force (and --force-with-lease, --force-if-includes), -f
+// (shortForce), or a + refspec, for every workspace that denies anything (bees-12.21:
+// manual allowed it).
 func force() []string {
 	var deny []string
 	for _, push := range gitPushes() {
 		deny = append(deny, push+" --force*", push+" * --force*")
-		deny = append(deny, word(push, "-f")...)
+		for _, f := range shortForce {
+			deny = append(deny, word(push, f)...)
+		}
 		deny = append(deny, push+" +*", push+" * +*")
 	}
 	return compact(deny)

@@ -124,6 +124,9 @@ type view struct {
 	} `json:"reviews"`
 }
 
+// ponytail: gh pr view may read only one GraphQL page (100) of commits, comments and
+// reviews (not probed); past that pr_workspace_commit and review_comment may miss one. gh api --paginate on
+// pulls/<n>/commits, issues/<n>/comments and pulls/<n>/reviews would replace it.
 const fields = "url,state,isDraft,headRefName,headRefOid,baseRefName,isCrossRepository,maintainerCanModify,headRepository,commits,comments,reviews"
 
 // gh runs gh in dir. gh saying the PR doesn't exist is port.ErrNoChange; any other
@@ -169,10 +172,11 @@ func (h Host) View(ctx context.Context, dir string, r port.Ref) (port.Change, er
 	return c, nil
 }
 
-// CI is gh pr checks; "no checks reported" is none.
+// CI is gh pr checks --required; "No required checks reported on the '<head>' branch"
+// (probed on gh 2.102) is none.
 func (h Host) CI(ctx context.Context, dir string, c port.Change) ([]port.CICheck, error) {
-	out, err := h.gh(ctx, dir, "pr", "checks", c.URL, "--json", "name,bucket")
-	if said(err, "no checks reported") {
+	out, err := h.gh(ctx, dir, "pr", "checks", c.URL, "--required", "--json", "name,bucket")
+	if said(err, "equired checks reported") || said(err, "no checks reported") {
 		return nil, nil
 	} else if err != nil {
 		return nil, err
@@ -194,21 +198,6 @@ func (h Host) api(ctx context.Context, dir, path string, v any) error {
 		return fmt.Errorf("gh api %s: %w", path, err)
 	}
 	return nil
-}
-
-// BaseCI is the check runs and commit statuses on the tip of c's base.
-func (h Host) BaseCI(ctx context.Context, dir string, c port.Change) (int, error) {
-	n := 0
-	for _, what := range []string{"check-runs", "status"} {
-		var v struct {
-			Total int `json:"total_count"`
-		}
-		if err := h.api(ctx, dir, "repos/"+c.Repo+"/commits/"+url.PathEscape(c.Base)+"/"+what, &v); err != nil {
-			return 0, err
-		}
-		n += v.Total
-	}
-	return n, nil
 }
 
 func (h Host) Behind(ctx context.Context, dir string, c port.Change) (int, error) {
@@ -234,37 +223,67 @@ func (h Host) Protected(ctx context.Context, dir, repo string) (bool, error) {
 	return v.Protected, err
 }
 
-// Landed is gh pr list --state merged --head branch, asked only when dir's repo is on
-// GitHub: with no GitHub remote no pull request could have merged it.
-func (h Host) Landed(ctx context.Context, dir, branch string) ([]string, error) {
-	if _, ok, err := h.Repo(ctx, dir); err != nil || !ok {
-		return nil, err
+// Landed is gh pr list --repo <origin's> --state merged --head branch: origin's repo, never
+// the upstream gh would pick for a fork. With no origin no pull request could have merged
+// it; an origin not on github.com (an ssh alias, GitHub Enterprise) is skipped, and says so.
+func (h Host) Landed(ctx context.Context, dir, branch string) ([]string, string, error) {
+	out, err := h.Run.Run(ctx, dir, "git", "-C", dir, "config", "--get", "remote.origin.url")
+	var ee *port.ExitError
+	if errors.As(err, &ee) && ee.Code == 1 {
+		return nil, "", nil
+	} else if err != nil {
+		return nil, "", err
 	}
-	out, err := h.gh(ctx, dir, "pr", "list", "--head", branch, "--state", "merged", "--json", "headRefOid")
+	origin := strings.TrimSpace(string(out))
+	repo, ok := RepoOf(origin)
+	if !ok {
+		return nil, "origin " + origin + " is not on github.com, so no merged pull request was looked for", nil
+	}
+	out, err = h.gh(ctx, dir, "pr", "list", "--repo", repo, "--head", branch, "--state", "merged", "--json", "headRefOid")
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	var prs []struct {
 		OID string `json:"headRefOid"`
 	}
 	if err := json.Unmarshal(out, &prs); err != nil {
-		return nil, fmt.Errorf("gh pr list: %w", err)
+		return nil, "", fmt.Errorf("gh pr list: %w", err)
 	}
 	var heads []string
 	for _, p := range prs {
 		heads = append(heads, p.OID)
 	}
-	return heads, nil
+	return heads, "", nil
 }
 
-// MergeDeny denies gh's merge, whatever the spelling: gh pr merge, gh -R o/r pr merge,
-// and the API's merge endpoint.
-func (Host) MergeDeny() []string { return []string{"gh pr merge*", "gh * pr merge*", "gh api *merge*"} }
+// ghs is each glob as gh, command gh or a path to gh (*/gh) starts it.
+func ghs(globs ...string) []string {
+	var out []string
+	for _, gh := range []string{"gh", "command gh", "*/gh"} {
+		for _, g := range globs {
+			out = append(out, gh+" "+g)
+		}
+	}
+	return out
+}
 
-// ApproveDeny denies an approving review: on a repo that requires one, the merge's other
-// half.
+// MergeDeny denies gh's merge, whatever the spelling: gh pr merge (--auto too), gh -R o/r
+// pr merge, the REST merge endpoint and GraphQL's merge mutations; never a read such as
+// gh api …/pulls/41 --jq .mergeable. ponytail: a request body from a file (--input) passes;
+// a deny hook that parses the command line would catch it.
+func (Host) MergeDeny() []string {
+	return ghs("pr merge*", "* pr merge*", "api *pulls/*/merge*", "api *merges*", "api graphql*mergePullRequest*", "api graphql*AutoMerge*")
+}
+
+// ApproveDeny denies an approving review, gh -R o/r spelled too: on a repo that requires
+// one, the merge's other half. The API's: an event=APPROVE field on a reviews call, or
+// GraphQL's (ponytail: the same --input gap as MergeDeny).
 func (Host) ApproveDeny() []string {
-	return []string{"gh pr review* --approve*", "gh pr review* -a *", "gh pr review* -a"}
+	var deny []string
+	for _, review := range []string{"pr review*", "* pr review*"} {
+		deny = append(deny, review+" --approve*", review+" -a *", review+" -a")
+	}
+	return ghs(append(deny, "api *reviews*APPROVE*", "api *APPROVE*reviews*", "api graphql*APPROVE*")...)
 }
 
 // Fetch fetches refs/pull/<n>/head from the remote of c's repo, writing no ref.

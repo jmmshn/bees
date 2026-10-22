@@ -2,6 +2,7 @@ package scenario_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -518,4 +519,39 @@ func TestSendToANameWithNoOpenSpawnWarns(t *testing.T) {
 	if strings.Contains(r.String(), "early") {
 		t.Fatalf("the spawn read mail sent before it:\n%s", r)
 	}
+}
+
+// The rollout's in-flight workers (bees-13.9 review SPEC1): the old bs's end removed the
+// worktree and kept the branch. A spawn of the bead adopts that branch, recorded by its
+// ended spawn, in a worktree made again where it was, so the work goes on; never "branch
+// already exists" with prune keeping the unmerged branch forever (motif 5).
+func TestSpawnAdoptsTheBranchAnEndedSpawnRecorded(t *testing.T) {
+	x := newToy(t)
+	dir := filepath.Join(x.repo+"-WT", "toy-9")
+	x.git(x.repo, "worktree", "add", "-q", "-b", "toy-9", dir)
+	x.commit(dir, "old.txt")
+	x.git(x.repo, "worktree", "remove", dir) // the old bs end: worktree gone, branch kept
+	if err := os.MkdirAll(filepath.Dir(x.logbook), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", x.logbook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`CREATE TABLE entries (id TEXT PRIMARY KEY, ts TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('message','received','rang','spawned','ended')),
+  actor TEXT NOT NULL, subject TEXT, ref TEXT REFERENCES entries(id),
+  data TEXT CHECK (data IS NULL OR json_valid(data))) STRICT;
+INSERT INTO entries VALUES ('s1','2026-10-01T00:00:00.000Z','spawned','queen-toy','toy-9',NULL,json_object('bead','toy-9','workspace','w9','pane','w9:p1','worktree',?1,'branch','toy-9','repo',?2,'base',?2));
+INSERT INTO entries VALUES ('e1','2026-10-01T00:01:00.000Z','ended','queen-toy','toy-9','s1',NULL);`, dir, x.repo)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	x.bead("toy-9", "go on")
+	must(t, x.queen("spawn", "--goal", "branch", "toy-9"), 0, "spawned toy-9", "branch toy-9 its last spawn left")
+	if _, err := os.Stat(filepath.Join(dir, "old.txt")); err != nil {
+		t.Fatalf("the adopted branch's work isn't in the worktree: %v", err)
+	}
+	must(t, x.worker("toy-9", 1, "done"), 0, "branch_ahead: 1 commit ahead of main")
 }

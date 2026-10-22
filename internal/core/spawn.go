@@ -92,18 +92,39 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	label := cmp.Or(req.Label, bead.Title)
 	session := cmp.Or(req.Session, logbook.DefaultSession)
 	var hw herdr.Workspace
+	remade := false // a reused branch whose worktree was gone, checked out again here
 	if reused {
+		if _, err := os.Stat(ws.Dir); errors.Is(err, os.ErrNotExist) {
+			if _, err := c.git(ctx, ws.Repo, "worktree", "add", ws.Dir, ws.Branch); err != nil {
+				return logbook.Spawn{}, false, exit(ExitFail, "", err, "%s: couldn't check out branch %s again at %s; nothing was recorded", name, ws.Branch, ws.Dir)
+			}
+			remade = true
+		}
 		if hw, err = c.herdr(session).CreateWorkspace(ctx, ws.Dir, c.Project+" · "+label); err != nil {
+			if remade {
+				_, rerr := c.git(context.WithoutCancel(ctx), ws.Repo, "worktree", "remove", ws.Dir)
+				err = errors.Join(err, rerr)
+			}
 			return logbook.Spawn{}, false, exit(ExitFail, "", err, "%s: herdr couldn't open a workspace on its kept worktree; nothing was recorded", name)
 		}
-		c.warn("%s: on its kept worktree and branch %s, with the work its last spawn left there", name, ws.Branch)
+		if remade {
+			c.warn("%s: on branch %s its last spawn left, checked out again at %s", name, ws.Branch, ws.Dir)
+		} else {
+			c.warn("%s: on its kept worktree and branch %s, with the work its last spawn left there", name, ws.Branch)
+		}
 	} else if hw, err = c.makeWorkspace(ctx, session, &ws, target, c.Project+" · "+label); err != nil {
 		return logbook.Spawn{}, false, err
 	}
-	// undo takes back what this spawn made: a reused worktree stays, only its herdr workspace goes.
+	// undo takes back what this spawn made: a reused branch stays, and its worktree unless
+	// this spawn checked it out again.
 	undo := func() error {
 		if reused {
-			return c.herdr(session).CloseWorkspace(context.WithoutCancel(ctx), hw.ID)
+			err := c.herdr(session).CloseWorkspace(context.WithoutCancel(ctx), hw.ID)
+			if remade {
+				_, rerr := c.git(context.WithoutCancel(ctx), ws.Repo, "worktree", "remove", ws.Dir)
+				err = errors.Join(err, rerr)
+			}
+			return err
 		}
 		return c.unmake(context.WithoutCancel(ctx), session, hw.ID, ws)
 	}
@@ -185,20 +206,25 @@ func (c *Core) resume(ctx context.Context, sp logbook.Spawn, bead port.Bead, req
 	return c.launch(ctx, sp, launch, replaces)
 }
 
-// kept reports whether ended, a worker's last spawn, left dir as its git_worktree, still
-// checked out on its recorded branch.
+// kept reports whether ended, a worker's last spawn, left its git_worktree branch for a
+// new spawn to build on: dir still checked out on it, or dir gone and the branch kept (the
+// old bs's end removed the worktree and kept the branch: the rollout's in-flight workers).
+// A git probe that couldn't run is an error, never "not kept" (Rule G).
 func (c *Core) kept(ctx context.Context, ended *logbook.Spawn, dir string) (bool, error) {
 	if ended == nil || ended.Workspace.Kind != config.GitWorktree || ended.Workspace.Branch == "" || ended.Workspace.Dir != dir {
 		return false, nil
 	}
 	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
-		return false, nil
+		return c.hasBranch(ctx, ended.Workspace)
 	} else if err != nil {
 		return false, err
 	}
 	head, err := c.git(ctx, dir, "symbolic-ref", "--short", "HEAD")
-	if err != nil {
+	var ee *port.ExitError
+	if errors.As(err, &ee) {
 		return false, nil // not a worktree on a branch any more: the plain refusals say what
+	} else if err != nil {
+		return false, err
 	}
 	return head == ended.Workspace.Branch, nil
 }

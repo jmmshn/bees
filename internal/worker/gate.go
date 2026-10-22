@@ -35,11 +35,16 @@ type BackgroundError struct {
 	Procs []proc.Background
 }
 
+// A loop or server the worker left running in the background (a wait for a reply with
+// &, a dev server) is background work and counts: the gate can't tell one the worker
+// still wants from one it forgot. A foreground loop that runs bs done is one of bs's
+// ancestors, and bs's own pipeline is its process group: neither counts (bees-12.50).
 func (e *BackgroundError) Error() string {
 	lines := []string{fmt.Sprintf("%s %s", e.Name, ErrBackground)}
 	for _, b := range e.Procs {
 		lines = append(lines, "  "+b.String())
 	}
+	lines = append(lines, "  (a helper you left running in the background counts, a reply-wait loop too: stop it and run this again)")
 	return strings.Join(lines, "\n")
 }
 
@@ -97,14 +102,32 @@ func checkBackground(ctx context.Context, lb *logbook.Logbook, ps Procs, sp logb
 	if err != nil {
 		return nil, bad("%w", err)
 	}
+	// This bs's own process group is its pipeline (bs done 2>&1 | tail -3): its siblings
+	// are the call itself, not work left running (bees-12.50).
+	mine, err := ps.Group(os.Getpid())
+	if err != nil {
+		return nil, bad("%w", err)
+	}
 	fresh := func() ([]proc.Process, error) {
 		ds, err := ps.Descendants(st.PID)
 		if err == nil {
 			err = ctx.Err()
 		}
-		return slices.DeleteFunc(ds, func(p proc.Process) bool {
-			return slices.Contains(st.Baseline, p) || slices.Contains(skip, p.PID)
-		}), err
+		var out []proc.Process
+		for _, p := range ds {
+			if slices.Contains(st.Baseline, p) || slices.Contains(skip, p.PID) {
+				continue
+			}
+			g, gerr := ps.Group(p.PID)
+			if errors.Is(gerr, proc.ErrGone) || gerr == nil && g == mine {
+				continue
+			}
+			if gerr != nil && err == nil {
+				err = gerr
+			}
+			out = append(out, p)
+		}
+		return out, err
 	}
 	first, err := fresh()
 	if err != nil {

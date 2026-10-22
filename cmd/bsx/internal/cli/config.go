@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 	"github.com/jmmshn/bees/cmd/bsx/internal/config"
 	"github.com/jmmshn/bees/cmd/bsx/internal/core"
 	"github.com/jmmshn/bees/cmd/bsx/internal/port"
@@ -126,7 +127,7 @@ func (s *settings) findProject(ctx context.Context, cwd string, run port.Runner,
 		s.Project, s.ProjectFrom = p, "env BS_PROJECT"
 	case p != s.Project:
 		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("BS_PROJECT=%s names another project than the repo you are in (%s)", pinned, s.Project),
-			Next: "env -u BS_PROJECT bsx ..., or run it from " + p + "'s repo"}
+			Next: "env -u BS_PROJECT " + bsname.Cmd + " ..., or run it from " + p + "'s repo"}
 	}
 	return nil
 }
@@ -214,7 +215,7 @@ func mainCheckout(ctx context.Context, run port.Runner, dir string) (string, err
 		return filepath.Dir(common), nil
 	}
 	return "", &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("%s is a linked worktree of %s, whose main checkout git doesn't record", top, common),
-		Next: "run bsx in the main checkout, or outside a herdr pane with BS_PROJECT set"}
+		Next: "run " + bsname.Cmd + " in the main checkout, or outside a herdr pane with BS_PROJECT set"}
 }
 
 // checkLogbook checks s names a project and that its logbook isn't the real one, which no toy may migrate before the swap.

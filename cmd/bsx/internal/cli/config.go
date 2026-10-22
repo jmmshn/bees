@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
@@ -35,13 +36,15 @@ type settings struct {
 	ProjectFrom  string // how bs found it
 	Repo         string // the project's main checkout, "" if unknown
 	RepoFrom     string
+	RepoMissing  bool   // paths.repo or paths.repos named a dir that doesn't exist
 	GitTop       bool   // Repo is a git checkout's top level
 	Logbook      string // the logbook file
 	Worktrees    string // paths.worktrees with {repo} and ~ resolved
 	Warnings     []string
 }
 
-// envKeys are the BS_* variables bs reads outside a herdr pane. Inside one it reads none:
+// envKeys are the BS_* variables bs reads outside a herdr pane. Inside one it reads none,
+// and warns of every BS_* set, the old bs's pins included:
 // a pane's identity and config come from the pane (ADR-0010), and an inherited pin from
 // some other session's env is exactly what bees-12.47 and bees-13.1's probe saw leak.
 var envKeys = []string{"BS_PROJECT", "BS_LOGBOOK_DIR", "BS_REPOS"}
@@ -72,13 +75,13 @@ func load(ctx context.Context, env Env, run port.Runner) (*settings, error) {
 	}
 	s.InPane = core.Getenv(env.Vars, "HERDR_PANE_ID") != ""
 	overrides := map[string]string{}
-	for _, k := range envKeys {
-		v := core.Getenv(env.Vars, k)
+	for _, kv := range env.Vars {
+		k, v, _ := strings.Cut(kv, "=")
 		switch {
-		case v == "":
+		case !strings.HasPrefix(k, "BS_") || v == "":
 		case s.InPane:
 			s.Warnings = append(s.Warnings, fmt.Sprintf("ignoring %s inside a herdr pane: the pane decides", k))
-		default:
+		case slices.Contains(envKeys, k):
 			overrides[k] = v
 		}
 	}
@@ -154,6 +157,13 @@ func (s *settings) findRepo(ctx context.Context, run port.Runner) error {
 	}
 	if s.Repo == "" {
 		return nil
+	}
+	if _, err := os.Stat(s.Repo); errors.Is(err, os.ErrNotExist) { // git can't even start in it
+		s.RepoMissing = true
+		s.Warnings = append(s.Warnings, fmt.Sprintf("the repo %s (%s) doesn't exist, so bsx spawn refuses", s.Repo, s.RepoFrom))
+		return nil
+	} else if err != nil {
+		return cantRead(err)
 	}
 	top, err := run.Run(ctx, s.Repo, "git", "-C", s.Repo, "rev-parse", "--show-toplevel")
 	switch err := notGit(err); {

@@ -19,6 +19,10 @@ toy=$(basename "$run")
 repo=$run/$toy # never read from live.json
 [[ $HOME == /* ]] || { echo "HOME=$HOME is not absolute" >&2; exit 1; }
 config=${XDG_CONFIG_HOME:-$HOME/.config}/bees/sessions/$toy # never read from live.json
+# ...but checked against it: a teardown run with another XDG_CONFIG_HOME than setup's would
+# delete and leak-check a dir that was never the toy's, and miss the real one.
+recorded=$(jq -r '.config // empty' "$run/live.json" 2>/dev/null)
+[ -z "$recorded" ] || [ "$recorded" = "$config" ] || { echo "setup wrote $toy's config to $recorded, but this shell's XDG_CONFIG_HOME names $config: run teardown with setup's environment" >&2; exit 1; }
 store=$HOME/.local/share/bees
 if [ "$(uname)" = Darwin ]; then cache=$HOME/Library/Caches/bees; else cache=${XDG_CACHE_HOME:-$HOME/.cache}/bees; fi
 projects=$HOME/.claude/projects enc=$(sed 's/[^A-Za-z0-9]/-/g' <<<"$run") # Claude's name for a project dir

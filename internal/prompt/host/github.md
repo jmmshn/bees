@@ -6,3 +6,4 @@ Review host: GitHub (`review.host = "github"`). A change is a pull request, its 
 <!-- queen -->
 
 - Merge a PR with `gh pr merge <url>` (run `{{bs}} check <worker>` first), once the keeper says to land it.
+- Deleting a stacked PR's base branch closes the PR above it: retarget that one first (`gh pr edit <n> --base <default branch>`).

@@ -33,7 +33,7 @@ func TestFragmentsSplitPerRole(t *testing.T) {
 	}{
 		{w, []string{"bs send queen-web2", "## Workspace", "its own git worktree", "Commit everything you hand off", "## Goal\n", "`--goal branch`", "Your goal is your branch"},
 			[]string{"## Goals", "bs prune` removes", "merge it into its base"}},
-		{q, []string{"queen-web2", "bs spawn --goal", "## Workspace", "its own git worktree", "bs prune` removes", "## Goals", "merge it into its base", "`--goal pr`:", "`--goal verdict`:"},
+		{q, []string{"queen-web2", "When the keeper says \"merge it\"", "3. `bs prune`", "bs spawn --goal", "## Workspace", "its own git worktree", "bs prune` removes", "## Goals", "merge it into its base", "`--goal pr`:", "`--goal verdict`:"},
 			[]string{"Commit everything you hand off", "Your goal is your branch"}},
 	} {
 		for _, h := range c.has {

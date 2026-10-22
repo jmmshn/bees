@@ -135,9 +135,20 @@ func (d Done) prs() []string {
 }
 
 // RecordDone records done d of the worker whose spawned entry is d.Spawn, addressed to
-// d.Queen.
-func (l *Logbook) RecordDone(ctx context.Context, d Done) (ID, error) {
-	return insert(ctx, l.db, entry{kind: "done", actor: d.Name, subject: d.Queen, ref: d.Spawn, data: d})
+// d.Queen, and, in the same transaction, landed when the goal completes at handoff (nil
+// otherwise): a passed done is never left with its goal unlanded, nor retried into a
+// second done.
+func (l *Logbook) RecordDone(ctx context.Context, d Done, landed *Landed) (ID, error) {
+	var id ID
+	err := l.write(ctx, func(tx *sql.Tx) error {
+		var err error
+		if id, err = insert(ctx, tx, entry{kind: "done", actor: d.Name, subject: d.Queen, ref: d.Spawn, data: d}); err != nil || landed == nil {
+			return err
+		}
+		_, err = insert(ctx, tx, landedEntry(d.Spawn, d.Name, d.Name, *landed))
+		return err
+	})
+	return id, err
 }
 
 // LatestDone returns the newest done recorded for spawn; ok is false when there is none.
@@ -170,11 +181,15 @@ type Landed struct {
 // RecordLanded records that spawn's goal is complete. A spawn lands once: a second call
 // is a no-op.
 func (l *Logbook) RecordLanded(ctx context.Context, spawn ID, name, actor string, ld Landed) error {
+	_, err := insert(ctx, l.db, landedEntry(spawn, name, actor, ld))
+	return err
+}
+
+func landedEntry(spawn ID, name, actor string, ld Landed) entry {
 	if ld.Checks == nil {
 		ld.Checks = []string{}
 	}
-	_, err := insert(ctx, l.db, entry{id: "land:" + string(spawn), kind: "landed", actor: actor, subject: name, ref: spawn, data: ld})
-	return err
+	return entry{id: "land:" + string(spawn), kind: "landed", actor: actor, subject: name, ref: spawn, data: ld}
 }
 
 // LandedOf returns spawn's landed entry; ok is false while its goal isn't complete.

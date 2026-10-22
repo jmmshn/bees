@@ -86,6 +86,9 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 		} else if rerr := c.dropBranch(rctx, ws.Repo, ws.Branch); rerr != nil {
 			err = errors.Join(err, fmt.Errorf("and its branch %s stays: %w", ws.Branch, rerr))
 		}
+		if errors.Is(err, logbook.ErrAlreadySpawned) {
+			return logbook.Spawn{}, exit(ExitRefused, bsname.Cmd+" end "+name, err, bsname.Cmd+" spawn: another spawn of %s was recorded first", name)
+		}
 		return logbook.Spawn{}, exit(ExitFail, "", err, bsname.Cmd+" spawn %s: couldn't record the spawn", name)
 	}
 	if err := c.launch(ctx, sp, launch); err != nil {

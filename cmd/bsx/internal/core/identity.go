@@ -65,7 +65,7 @@ func (c *Core) Identify(ctx context.Context, env []string, self int) (Who, error
 	case len(found) > 1:
 		return Who{}, exit(ExitFail, "", nil, "pane %s on herdr session %s is recorded by %d live sessions", pane, session, len(found))
 	case len(unconfirmed) > 0:
-		return Who{}, exit(ExitStart, bsname.Cmd+" end "+unconfirmed[0], nil, "pane %s holds %s, whose start was never confirmed (the heal arrives with bees-13.4)", pane, strings.Join(unconfirmed, ", "))
+		return Who{}, exit(ExitStart, bsname.Cmd+" end "+unconfirmed[0]+" --incomplete", nil, "pane %s holds %s, whose start was never confirmed (the heal arrives with bees-13.4)", pane, strings.Join(unconfirmed, ", "))
 	}
 	return Who{}, exit(ExitRefused, "", nil, "no live session of project %s is recorded in pane %s on herdr session %s", c.Project, pane, session)
 }

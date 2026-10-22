@@ -132,7 +132,7 @@ func (r *run) done(fs *flag.FlagSet, args []string) error {
 			return err
 		}
 		if *report = strings.TrimSpace(string(b)); *report == "" {
-			return fmt.Errorf("%w: "+bsname.Cmd+" done --report -: stdin was empty", errUsage)
+			return fmt.Errorf("%w: %s done --report -: stdin was empty", errUsage, bsname.Cmd)
 		}
 	}
 	w, err := r.who(*as)

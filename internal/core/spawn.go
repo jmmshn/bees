@@ -115,7 +115,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	sp = logbook.Spawn{
 		Name: name, By: req.By, Bead: bead.ID, Label: label, Harness: c.HarnessName,
 		Herdr: logbook.Pane{Session: session, Workspace: hw.ID, Pane: hw.Pane}, Workspace: ws,
-		Goal: g, ConfigDir: c.ConfigDir, At: at,
+		Goal: g, ConfigDir: c.ConfigDir, At: at, PruneIgnore: c.PruneIgnore,
 	}
 	sp.Record = launch.Record
 	if sp.ID, err = c.Logbook.RecordSpawn(ctx, req.By, sp, brief(bead, g, target, c.Guards.AllowMergeInto)); err != nil {

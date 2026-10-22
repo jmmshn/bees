@@ -69,7 +69,7 @@ func TestNonPRGoalsSayWhereTheReportGoes(t *testing.T) {
 		"beads":   "bd create --force --parent <bead>",
 	} {
 		got := prompt.Text(prompt.Worker, "web2", "none", []string{g})
-		if !strings.Contains(got, want) || g != "beads" && !strings.Contains(got, "never leave") && !strings.Contains(got, "Never leave") {
+		if !strings.Contains(got, want) || (g != "beads" && !strings.Contains(got, "never leave") && !strings.Contains(got, "Never leave")) {
 			t.Errorf("--goal %s worker prompt lacks %q or the scratch warning:\n%s", g, want, got)
 		}
 	}

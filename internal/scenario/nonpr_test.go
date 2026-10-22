@@ -65,9 +65,11 @@ func TestABeadsGoalNeedsANewChild(t *testing.T) {
 	x.beads.Add(port.Bead{ID: "toy-1.1", Title: "older", Parent: "toy-1"})
 	sp := x.spawn("toy-1", "beads")
 	must(t, x.worker("toy-1", 1, "done"), 7, "bead_created", "no bead was created under toy-1 since spawn")
-	x.beads.Add(port.Bead{ID: "toy-1.2", Title: "split", Parent: "toy-1"})
+	for _, id := range []string{"toy-1.3", "toy-1.2", "toy-1.4"} { // the fake, like bd, lists them in no fixed order
+		x.beads.Add(port.Bead{ID: id, Title: "split", Parent: "toy-1"})
+	}
 	must(t, x.worker("toy-1", 2, "done"), 0)
-	must(t, x.queen("inbox"), 0, "created under toy-1: toy-1.2")
+	must(t, x.queen("inbox"), 0, "created under toy-1: toy-1.2, toy-1.3, toy-1.4")
 	if ld, ok, _ := x.open().LandedOf(context.Background(), sp.ID); !ok || ld.By != "done" {
 		t.Fatalf("landed = %+v, %v", ld, ok)
 	}
@@ -117,7 +119,12 @@ func TestPruneKeepsIgnoredFilesButBuildOutput(t *testing.T) {
 		must(t, x.worker(n, 1, "done", "--answer", "yes", "--report", "see scratch/report.md"), 0)
 		must(t, x.queen("end", n), 0)
 	}
+	// prune reads prune.ignore as spawn froze it, never the config now.
+	x.write(filepath.Join(x.config, "config.toml"), readFile(t, filepath.Join(x.config, "config.toml"))+"\n[prune]\nignore = []\n")
 	kept, _, _ := x.open().LatestSpawn(context.Background(), "toy-2")
+	if strings.Join(kept.PruneIgnore, ",") != "bin/" {
+		t.Fatalf("spawned froze prune.ignore %q, want [bin/]", kept.PruneIgnore)
+	}
 	if err := os.MkdirAll(filepath.Join(kept.Workspace.Dir, "scratch"), 0o755); err != nil {
 		t.Fatal(err)
 	}

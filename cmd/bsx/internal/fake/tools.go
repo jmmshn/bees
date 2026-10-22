@@ -1,9 +1,11 @@
 package fake
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -73,8 +75,11 @@ func (g *GH) Run(_ context.Context, _ string, argv ...string) ([]byte, error) {
 	if g.Offline {
 		return nil, ghFail(argv, "error connecting to api.github.com")
 	}
+	if len(argv) >= 3 && argv[1] == "pr" && argv[2] == "list" {
+		return g.list(argv)
+	}
 	if len(argv) < 4 || argv[1] != "pr" {
-		return nil, ghFail(argv, "fake gh: only pr view and pr checks")
+		return nil, ghFail(argv, "fake gh: only pr view, pr checks and pr list")
 	}
 	pr := g.PRs[argv[3]]
 	if pr == nil {
@@ -115,6 +120,28 @@ func (g *GH) Run(_ context.Context, _ string, argv ...string) ([]byte, error) {
 		return json.Marshal(out)
 	}
 	return nil, ghFail(argv, "fake gh: no pr "+argv[2])
+}
+
+// list is gh pr list --head <branch> --state <state> --json headRefOid: the PRs whose head
+// branch is branch, in state (open, merged, closed, all).
+func (g *GH) list(argv []string) ([]byte, error) {
+	flag := func(name string) string {
+		if i := slices.Index(argv, name); i >= 0 && i+1 < len(argv) {
+			return argv[i+1]
+		}
+		return ""
+	}
+	if f := flag("--json"); f != "headRefOid" {
+		return nil, ghFail(argv, "fake gh: pr list --json headRefOid only")
+	}
+	head, state := flag("--head"), strings.ToUpper(cmp.Or(flag("--state"), "open"))
+	out := []map[string]string{}
+	for _, url := range slices.Sorted(maps.Keys(g.PRs)) {
+		if pr := g.PRs[url]; pr.Head == head && (state == "ALL" || pr.State == state) {
+			out = append(out, map[string]string{"headRefOid": pr.HeadOID})
+		}
+	}
+	return json.Marshal(out)
 }
 
 // CL is a fake CL tool for a CL-shaped workspace (ADR-0010 command kind): cl upload

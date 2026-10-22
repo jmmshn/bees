@@ -154,14 +154,30 @@ func (r *run) prune(fs *flag.FlagSet, args []string) error {
 	}
 	code := 0
 	for _, p := range ps {
+		var did []string
+		if p.Removed {
+			did = append(did, p.Dir)
+		}
+		if p.Deleted {
+			did = append(did, "branch "+p.Branch)
+		}
+		if len(did) > 0 {
+			fmt.Fprintf(r.out, "removed %s (%s)\n", strings.Join(did, " and "), p.Name)
+		}
+		if p.Remote != "" {
+			fmt.Fprintf(r.out, "  left %s: bs never touches a remote branch; it is the keeper's\n", p.Remote)
+		}
+		what := p.Dir
+		if p.Removed {
+			what = "branch " + p.Branch
+		}
 		switch {
-		case p.Removed:
-			fmt.Fprintf(r.out, "removed %s (%s)\n", p.Dir, p.Name)
+		case p.Why == "":
 		case p.Unknown:
-			fmt.Fprintf(r.out, "kept %s (%s): couldn't check: %s\n", p.Dir, p.Name, p.Why)
+			fmt.Fprintf(r.out, "kept %s (%s): couldn't check: %s\n", what, p.Name, p.Why)
 			code = core.ExitUnknown
 		default:
-			fmt.Fprintf(r.out, "kept %s (%s): %s\n", p.Dir, p.Name, p.Why)
+			fmt.Fprintf(r.out, "kept %s (%s): %s\n", what, p.Name, p.Why)
 			code = max(code, core.ExitKept)
 		}
 	}
@@ -276,8 +292,12 @@ func (r *run) inbox(fs *flag.FlagSet, args []string) error {
 	return r.c.Logbook.RecordReceipts(r.ctx, w.Name, ids)
 }
 
-// status lists each worker's latest spawn: its goal, whether it landed or ended, and
-// whether its recorded process runs. A spawn from before goals reads --goal legacy.
+// status lists each worker's latest spawn: its goal, whether it ended, its handoff,
+// whether its goal is complete (landed, and by what), and whether its recorded process
+// runs; then a stuck: line with the next command for each worker that can't move on its
+// own (Rule G). It reads the record and the process table, never a check: a goal
+// complete but not yet landed shows "no" until bs end or bs prune finds it. A spawn from
+// before goals reads --goal legacy.
 func (r *run) status(fs *flag.FlagSet, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -287,23 +307,42 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	tw := tabwriter.NewWriter(r.out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "WORKER\tGOAL\tSTATE\tRUNNING\tWORKSPACE")
+	fmt.Fprintln(tw, "WORKER\tGOAL\tSTATE\tHANDOFF\tCOMPLETE\tRUNNING\tWORKSPACE")
 	var errs []error
+	var stuck []string
 	queen := core.Queen(r.s.Project)
 	if q, ok, err := r.c.Logbook.LatestQueen(r.ctx, queen); err != nil {
 		errs = append(errs, err)
 	} else if ok {
-		fmt.Fprintf(tw, "%s\t-\tqueen\t%s\tpane %s on herdr session %s\n", queen, alive(r.c.Proc.Alive(q.Process)), q.Pane, q.Session)
+		fmt.Fprintf(tw, "%s\t-\tqueen\t-\t-\t%s\tpane %s on herdr session %s\n", queen, alive(r.c.Proc.Alive(q.Process)), q.Pane, q.Session)
 	}
 	for _, sp := range sps {
 		state := "live"
 		if sp.Ended {
 			state = "ended"
+			if e, _, err := r.c.Logbook.EndOf(r.ctx, sp.ID); err != nil {
+				errs = append(errs, err)
+			} else if e.Incomplete {
+				state += " --incomplete"
+			}
 		}
-		if _, landed, err := r.c.Logbook.LandedOf(r.ctx, sp.ID); err != nil {
+		handoff := "-"
+		if d, ok, err := r.c.Logbook.LatestDone(r.ctx, sp.ID); err != nil {
 			errs = append(errs, err)
-		} else if landed {
-			state += ",landed"
+			handoff = "unknown"
+		} else if ok {
+			handoff = "done " + d.TS.Local().Format("01-02 15:04")
+		}
+		complete := "no"
+		ld, landed, err := r.c.Logbook.LandedOf(r.ctx, sp.ID)
+		switch {
+		case err != nil:
+			errs = append(errs, err)
+			complete = "unknown"
+		case landed:
+			complete = "yes (" + ld.By + ")"
+		case sp.Legacy():
+			complete = "-"
 		}
 		running := "-"
 		if !sp.Ended {
@@ -318,10 +357,25 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 				g += " (discarded)"
 			}
 		}
-		fmt.Fprintf(tw, "%s\t--goal %s\t%s\t%s\t%s\n", sp.Name, g, state, running, sp.Workspace.Dir)
+		fmt.Fprintf(tw, "%s\t--goal %s\t%s\t%s\t%s\t%s\t%s\n", sp.Name, g, state, handoff, complete, running, sp.Workspace.Dir)
+		switch {
+		case running == "unconfirmed":
+			stuck = append(stuck, fmt.Sprintf("%s: its start was never confirmed → bsx end %s --incomplete", sp.Name, sp.Name))
+		case strings.HasPrefix(running, "no"):
+			next := "bsx end " + sp.Name
+			if !landed {
+				next += " (--incomplete if its goal isn't complete)"
+			}
+			stuck = append(stuck, fmt.Sprintf("%s: its process is gone but it isn't ended → %s", sp.Name, next))
+		case sp.Ended && !landed && !sp.Legacy():
+			stuck = append(stuck, fmt.Sprintf("%s: ended with its goal incomplete → bsx prune completes it once --goal %s holds", sp.Name, g))
+		}
 	}
 	if err := tw.Flush(); err != nil {
 		return err
+	}
+	for _, s := range stuck {
+		fmt.Fprintln(r.out, "stuck: "+s)
 	}
 	return errors.Join(errs...)
 }

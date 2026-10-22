@@ -1,0 +1,191 @@
+package scenario_test
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/jmmshn/bees/cmd/bsx/internal/fake"
+	"github.com/jmmshn/bees/cmd/bsx/internal/goal"
+)
+
+// bees-13.5's live script on fakes: a refused handoff names the uncommitted file; the
+// queen squash-merges; bs end proves it by content and lands it; prune removes the
+// worktree and the branch; status shows each step.
+func TestASquashMergedBranchLandsAndPrunes(t *testing.T) {
+	x := newToy(t)
+	ctx := context.Background()
+	sp := x.spawn("toy-1", "branch")
+	x.commit(sp.Workspace.Dir, "work.txt")
+	x.write(filepath.Join(sp.Workspace.Dir, "notes.txt"), "draft")
+	must(t, x.worker("toy-1", 1, "done"), 7, "1 handoff checks failed", goal.Clean, "notes.txt")
+	if r := x.keeper("status"); cell(r.out, "toy-1", "HANDOFF") != "-" || cell(r.out, "toy-1", "COMPLETE") != "no" || cell(r.out, "toy-1", "STATE") != "live" {
+		t.Fatalf("status before the handoff:\n%s", r)
+	}
+	os.Remove(filepath.Join(sp.Workspace.Dir, "notes.txt"))
+	must(t, x.worker("toy-1", 2, "done"), 0, "handed off to queen-toy")
+	if r := x.keeper("status"); !strings.HasPrefix(cell(r.out, "toy-1", "HANDOFF"), "done ") || cell(r.out, "toy-1", "COMPLETE") != "no" {
+		t.Fatalf("status after the handoff:\n%s", r)
+	}
+	must(t, x.queen("end", "toy-1"), 9, "toy-1 has work not on main")
+	x.git(x.repo, "merge", "-q", "--squash", "toy-1")
+	x.git(x.repo, "commit", "-qm", "squash toy-1")
+	must(t, x.queen("end", "toy-1"), 0, "ended toy-1")
+	if ld, ok, _ := x.open().LandedOf(ctx, sp.ID); !ok || ld.By != "end" || ld.Checks[0] != goal.BranchMerged {
+		t.Fatalf("landed = %+v, %v", ld, ok)
+	}
+	if r := x.keeper("status"); cell(r.out, "toy-1", "STATE") != "ended" || cell(r.out, "toy-1", "COMPLETE") != "yes (end)" || strings.Contains(r.out, "stuck:") {
+		t.Fatalf("status after the end:\n%s", r)
+	}
+	must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir+" and branch toy-1 (toy-1)")
+	if _, err := os.Stat(sp.Workspace.Dir); !os.IsNotExist(err) {
+		t.Fatalf("prune kept %s", sp.Workspace.Dir)
+	}
+	if out := x.git(x.repo, "branch", "--list", "toy-1"); out != "" {
+		t.Fatalf("prune kept the branch: %q", out)
+	}
+	must(t, x.queen("prune"), 0) // nothing left: says nothing, exits 0
+}
+
+// bees-12.41: a worker ended with --force (its gate waived) still has its worktree and
+// branch pruned once merged; so does one whose worktree was deleted by hand, which git
+// still counts as having the branch checked out.
+func TestPilotBug1241PruneAfterEndForce(t *testing.T) {
+	x := newToy(t)
+	sp1 := x.spawn("toy-1", "branch")
+	sp2 := x.spawn("toy-2", "branch")
+	for _, sp := range []string{sp1.Workspace.Dir, sp2.Workspace.Dir} {
+		x.commit(sp, "work-"+filepath.Base(sp)+".txt")
+	}
+	must(t, x.worker("toy-1", 1, "done"), 0)
+	must(t, x.worker("toy-2", 1, "done"), 0)
+	x.git(x.repo, "merge", "-q", "toy-1", "toy-2")
+	x.harness.Step(t, "toy-1", "child", "server")
+	x.harness.Await(t, "toy-1", 2)
+	must(t, x.queen("end", "toy-1"), 5, "background work")
+	must(t, x.queen("end", "--force", "toy-1"), 0, "ended toy-1")
+	must(t, x.queen("end", "toy-2"), 0)
+	if err := os.RemoveAll(sp2.Workspace.Dir); err != nil {
+		t.Fatal(err)
+	}
+	r := x.queen("prune")
+	must(t, r, 0, "removed "+sp1.Workspace.Dir+" and branch toy-1", "removed branch toy-2 (toy-2)")
+	if out := x.git(x.repo, "branch", "--list", "toy-*"); out != "" {
+		t.Fatalf("branches left: %q", out)
+	}
+}
+
+// Prune deletes no branch another worktree has in use (the pilot's checkedOut guard): it
+// removes the workspace, keeps the branch and says where it is in use (exit 3).
+func TestPruneKeepsABranchInUseElsewhere(t *testing.T) {
+	x := newToy(t)
+	sp := x.spawn("toy-1", "branch")
+	x.commit(sp.Workspace.Dir, "work.txt")
+	must(t, x.worker("toy-1", 1, "done"), 0)
+	x.git(x.repo, "merge", "-q", "toy-1")
+	must(t, x.queen("end", "toy-1"), 0)
+	x.git(sp.Workspace.Dir, "checkout", "-q", "--detach")
+	other := filepath.Join(filepath.Dir(x.repo), "other")
+	x.git(x.repo, "worktree", "add", "-q", other, "toy-1")
+	must(t, x.queen("prune"), 3, "removed "+sp.Workspace.Dir+" (toy-1)", "kept branch toy-1 (toy-1): branch toy-1 is in use by the worktree "+other)
+	x.git(x.repo, "worktree", "remove", other)
+	must(t, x.queen("prune"), 0, "removed branch toy-1 (toy-1)")
+}
+
+// bees-1.34: prune never touches a remote branch, and says when one of the same name is
+// left.
+func TestPruneLeavesTheRemoteBranchAndSaysSo(t *testing.T) {
+	x := newToy(t)
+	x.git(x.repo, "remote", "add", "origin", filepath.Join(filepath.Dir(x.repo), "origin.git"))
+	sp := x.spawn("toy-1", "branch")
+	x.commit(sp.Workspace.Dir, "work.txt")
+	x.git(x.repo, "update-ref", "refs/remotes/origin/toy-1", "toy-1")
+	must(t, x.worker("toy-1", 1, "done"), 0)
+	x.git(x.repo, "merge", "-q", "toy-1")
+	must(t, x.queen("end", "toy-1"), 0)
+	must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir+" and branch toy-1", "left origin/toy-1: bs never touches a remote branch")
+	if x.git(x.repo, "rev-parse", "--verify", "refs/remotes/origin/toy-1") == "" {
+		t.Fatal("prune touched origin/toy-1")
+	}
+}
+
+// The third proof: a merged GitHub pull request whose head is the branch tip, asked of gh
+// only when the local proofs fail and origin is on GitHub. gh offline then is "can't
+// tell" (exit 6), never "not merged".
+func TestAMergedPullRequestProvesTheBranch(t *testing.T) {
+	x := newToy(t)
+	x.git(x.repo, "remote", "add", "origin", "https://github.com/x/toy.git")
+	sp := x.spawn("toy-1", "branch")
+	x.commit(sp.Workspace.Dir, "work.txt")
+	must(t, x.worker("toy-1", 1, "done"), 0)
+	x.gh.Offline = true
+	must(t, x.queen("end", "toy-1"), 6, "GitHub couldn't be asked", "error connecting")
+	x.gh.Offline = false
+	must(t, x.queen("end", "toy-1"), 9, "toy-1 has work not on main")
+	x.gh.PRs["https://github.com/x/toy/pull/1"] = &fake.PR{URL: "https://github.com/x/toy/pull/1", Head: "toy-1",
+		HeadOID: x.git(x.repo, "rev-parse", "toy-1"), Base: "main", State: "MERGED"}
+	must(t, x.queen("end", "toy-1"), 0, "ended toy-1")
+}
+
+// Rule G at spawn: a branch left by an earlier spawn is refused before anything is made.
+func TestSpawnRefusesABranchThatExists(t *testing.T) {
+	x := newToy(t)
+	x.bead("toy-1", "x")
+	x.git(x.repo, "branch", "toy-1")
+	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 2, "branch toy-1 already exists", "next: bs prune")
+	if _, ok, _ := x.open().LatestSpawn(context.Background(), "toy-1"); ok {
+		t.Fatal("a refused spawn was recorded")
+	}
+}
+
+// The spawned workspace carries the worker= tag and the project in its label.
+func TestTheWorkspaceIsTaggedWithItsWorker(t *testing.T) {
+	x := newToy(t)
+	x.spawn("toy-1", "branch")
+	out, err := x.herdr.Run(context.Background(), "", "herdr", "--session", "toy", "workspace", "list")
+	if err != nil || !strings.Contains(string(out), `"worker":"toy-1"`) {
+		t.Fatalf("workspace list: %s, %v", out, err)
+	}
+}
+
+// The worker's prompt carries the git_worktree and branch fragments' worker parts, and no
+// queen part.
+func TestTheWorkerPromptHasItsWorkspaceAndGoal(t *testing.T) {
+	x := newToy(t)
+	x.spawn("toy-1", "branch")
+	fs, _ := filepath.Glob(filepath.Join(x.ports.CacheDir, "toy-1-prompt-*.md"))
+	if len(fs) != 1 {
+		t.Fatalf("prompt files: %v", fs)
+	}
+	b, err := os.ReadFile(fs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := string(b)
+	for _, want := range []string{"## Workspace", "its own git worktree", "Commit everything you hand off", "## Goal", "Your goal is your branch", "bs done"} {
+		if !strings.Contains(p, want) {
+			t.Fatalf("worker prompt lacks %q:\n%s", want, p)
+		}
+	}
+	for _, not := range []string{"## Goals", "merge it into its base", "bs prune removes"} {
+		if strings.Contains(p, not) {
+			t.Fatalf("worker prompt has the queen's %q:\n%s", not, p)
+		}
+	}
+}
+
+// Stuck states are printed with the next command (Rule G).
+func TestStatusSaysWhatIsStuck(t *testing.T) {
+	x := newToy(t)
+	sp := x.spawn("toy-1", "branch")
+	x.commit(sp.Workspace.Dir, "work.txt")
+	must(t, x.worker("toy-1", 1, "done"), 0)
+	must(t, x.queen("end", "--incomplete", "toy-1"), 0)
+	r := x.keeper("status")
+	must(t, r, 0, "stuck: toy-1: ended with its goal incomplete → bsx prune completes it once --goal branch holds")
+	if cell(r.out, "toy-1", "STATE") != "ended --incomplete" {
+		t.Fatalf("status:\n%s", r)
+	}
+}

@@ -203,6 +203,17 @@ func Parse(values []string) (Goal, error) {
 	return g, nil
 }
 
+// Types is each part's type, in order, each once.
+func (g Goal) Types() []string {
+	var out []string
+	for _, p := range g.Parts {
+		if !slices.Contains(out, p.Type) {
+			out = append(out, p.Type)
+		}
+	}
+	return out
+}
+
 // Handoff is every check g's handoff runs, in order, each once, the implicit
 // no_background gate first.
 func (g Goal) Handoff() []string {

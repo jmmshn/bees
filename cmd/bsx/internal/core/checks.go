@@ -2,13 +2,12 @@ package core
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/jmmshn/bees/cmd/bsx/internal/goal"
 	"github.com/jmmshn/bees/cmd/bsx/internal/logbook"
-	"github.com/jmmshn/bees/cmd/bsx/internal/port"
 )
 
 // Handed is what a handoff gives besides the record: the worker's only freedom at exit,
@@ -58,12 +57,13 @@ func (c *Core) run(ctx context.Context, sp logbook.Spawn, name string, h Handed)
 		}
 		return true, "", nil
 	case goal.Clean:
-		out, err := c.git(ctx, ws.Dir, "status", "--porcelain")
+		// Not c.git: trimming would cut the first line's status column.
+		b, err := c.Run.Run(ctx, ws.Dir, "git", "-C", ws.Dir, "status", "--porcelain")
 		if err != nil {
 			return false, "", err
 		}
-		if out != "" {
-			return false, "uncommitted or untracked files in " + ws.Dir, nil
+		if out := string(b); out != "" {
+			return false, "uncommitted or untracked files in " + ws.Dir + ": " + porcelainPaths(out), nil
 		}
 		return true, "", nil
 	case goal.BranchAhead:
@@ -80,19 +80,23 @@ func (c *Core) run(ctx context.Context, sp logbook.Spawn, name string, h Handed)
 		}
 		return true, fmt.Sprintf("%d commits ahead of %s", n, ws.Base), nil
 	case goal.BranchMerged:
-		// Proof 1 of the pilot's three: the branch tip is in the base. Squash and rebase
-		// merges (proofs 2 and 3) arrive with bees-13.5.
-		_, err := c.git(ctx, ws.Repo, "merge-base", "--is-ancestor", ws.Branch, ws.Base)
-		var ee *port.ExitError
-		if errors.As(err, &ee) && ee.Code == 1 {
-			return false, fmt.Sprintf("%s is not merged into %s", ws.Branch, ws.Base), nil
-		}
-		if err != nil {
-			return false, "", err
-		}
-		return true, "merged into " + ws.Base, nil
+		return c.merged(ctx, ws)
 	}
 	return false, "", fmt.Errorf("no check %s", name)
+}
+
+// porcelainPaths is the paths git status --porcelain listed, the first ten of them.
+func porcelainPaths(out string) string {
+	var paths []string
+	for line := range strings.Lines(out) {
+		if len(line) > 3 {
+			paths = append(paths, strings.TrimSpace(line[3:]))
+		}
+	}
+	if len(paths) > 10 {
+		return strings.Join(paths[:10], ", ") + fmt.Sprintf(" and %d more", len(paths)-10)
+	}
+	return strings.Join(paths, ", ")
 }
 
 // complete reports whether sp's goal is complete now, with the complete checks that

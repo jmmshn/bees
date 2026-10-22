@@ -36,6 +36,7 @@ type toy struct {
 	repo    string
 	env     []string // the keeper's shell: outside any pane
 	herdr   *fake.Herdr
+	gh      *fake.GH
 	harness fake.Harness
 	beads   *fake.Beads
 	ports   cli.Ports
@@ -79,7 +80,8 @@ worktrees = "`+filepath.Join(root, "toy-WT")+`"
 	pane := append(slices.Clone(base), "PATH="+filepath.Dir(fake.Beesfake(t))+":"+os.Getenv("PATH"), "BEESFAKE_RELAY="+relay)
 	x.herdr = &fake.Herdr{Home: home, Programs: map[string]string{"claude": fake.Beesfake(t)}, Env: pane}
 	t.Cleanup(x.herdr.Close)
-	x.ports = cli.Ports{Run: fake.Commands{Herdr: x.herdr, Real: port.Exec{}}, Harness: x.harness, Proc: x.herdr, Beads: x.beads,
+	x.gh = &fake.GH{PRs: map[string]*fake.PR{}}
+	x.ports = cli.Ports{Run: fake.Commands{Herdr: x.herdr, GH: x.gh, Real: port.Exec{}}, Harness: x.harness, Proc: x.herdr, Beads: x.beads,
 		CacheDir: filepath.Join(root, "cache"),
 		Timing:   core.Timing{Confirm: 10 * time.Second, Poll: 20 * time.Millisecond, SecondLook: 100 * time.Millisecond, Stop: time.Second}}
 	// A bs call a pane's beesfake makes runs here, as that process: its env, its pid.

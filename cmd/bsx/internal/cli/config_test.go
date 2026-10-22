@@ -177,7 +177,7 @@ func TestBSProject(t *testing.T) {
 	}
 	wantIn(t, out, "FAIL project: BS_PROJECT=bees names another project than the repo you are in (mytoy)", "the checks below run on the global file alone", "next: env -u BS_PROJECT", "WARN env: BS_PROJECT is set in this shell")
 	_, out, _ = r.run(r.repo, []string{"BS_LOGBOOK=/x"}, "doctor")
-	wantIn(t, out, "WARN env: BS_LOGBOOK is set, and bs reads no such variable")
+	wantIn(t, out, "WARN env: BS_LOGBOOK is set: bsx doesn't read it (the shared bs may)")
 	code, out, _ = r.run("/", []string{"BS_PROJECT=other"}, "config")
 	if code != 0 {
 		t.Errorf("outside any repo: exit %d", code)

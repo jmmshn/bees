@@ -49,12 +49,18 @@ func (Adapter) Modes(home string) (string, error) {
 			if json.Unmarshal(b, &r) != nil || r.MessagingSocketPath == "" {
 				continue // no ring endpoint to check
 			}
+			checked := true
 			for _, p := range []string{filepath.Dir(r.MessagingSocketPath), r.MessagingSocketPath} {
-				if err := proc.Private(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+				switch err := proc.Private(p); {
+				case errors.Is(err, os.ErrNotExist): // the session exited since the listing
+					checked = false
+				case err != nil:
 					return "", err
 				}
 			}
-			sockets++
+			if checked {
+				sockets++
+			}
 		}
 	}
 	return fmt.Sprintf("%s, %d ring sockets and their dirs, %d key files: none open to group or others", dir, sockets, keys), nil

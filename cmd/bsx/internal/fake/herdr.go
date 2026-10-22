@@ -45,8 +45,9 @@ type Herdr struct {
 	// Version is the client's version, ServerVersion the running server's (both 0.9.5
 	// when unset); Socket is the path status names for the server's socket.
 	Version, ServerVersion, Socket string
-	// Incompatible: the server's endpoint protocol isn't the client's.
-	Incompatible bool
+	// Incompatible: the server's endpoint and private protocols aren't the client's;
+	// RestartNeeded: status says update.restart_needed: yes.
+	Incompatible, RestartNeeded bool
 	// RefuseNext makes the next call of this command ("workspace report-metadata") fail
 	// with herdr's error envelope, as a server-side failure would.
 	RefuseNext string
@@ -148,10 +149,10 @@ func (h *Herdr) status(session string) []byte {
 	if !h.Down {
 		sv := cmp.Or(h.ServerVersion, v)
 		compatible := map[bool]string{true: "no", false: "yes"}[h.Incompatible]
-		server = fmt.Sprintf("  status: running\n  version: %s\n  endpoint_compatible: %s\n", sv, compatible)
+		server = fmt.Sprintf("  status: running\n  version: %s\n  endpoint_compatible: %s\n  private_protocol: 22\n  private_protocol_compatible: %s\n", sv, compatible, compatible)
 	}
-	return []byte(fmt.Sprintf("client:\n  version: %s\n  channel: stable\n\nserver:\n%s  socket: %s\n\nupdate:\n  restart_needed: no\n  server_binary_stale: %s\n",
-		v, server, h.Socket, map[bool]string{true: "no", false: "yes"}[h.ServerVersion == "" || h.ServerVersion == v]))
+	return []byte(fmt.Sprintf("client:\n  version: %s\n  channel: stable\n  protocol: 22\n  endpoint_protocol_generation: 1\n\nserver:\n%s  socket: %s\n\nupdate:\n  restart_needed: %s\n  server_binary_stale: %s\n",
+		v, server, h.Socket, map[bool]string{true: "yes", false: "no"}[h.RestartNeeded], map[bool]string{true: "no", false: "yes"}[h.ServerVersion == "" || h.ServerVersion == v]))
 }
 
 // flags is a parsed herdr command line: positionals, repeatable --flags, and what

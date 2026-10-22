@@ -90,7 +90,7 @@ func (r *run) configInit(fs *flag.FlagSet, args []string) error {
 		{"repos", "paths.repos", "paths.repos (global file): a directory of repos"},
 		{"worktrees", "paths.worktrees", "paths.worktrees: where git_worktree workspaces go"},
 		{"workspace", "workspace.kind", "workspace.kind: git_worktree | none | command (default: worked out)"},
-		{"repo", "paths.repo", "paths.repo (project file): the project's directory, when bs isn't run in it"},
+		{"repo", "paths.repo", "paths.repo (project file): the project's directory, when " + bsname.Cmd + " isn't run in it"},
 	} {
 		fs.Func(f.name, f.usage, func(v string) error { set[f.key] = v; return nil })
 	}
@@ -98,12 +98,12 @@ func (r *run) configInit(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("%w: bsx config init [--project] [--harness H] [--logbook-dir D] [--repos D] [--worktrees D] [--workspace K] [--repo D]", errUsage)
+		return fmt.Errorf("%w: %s config init [--project] [--harness H] [--logbook-dir D] [--repos D] [--worktrees D] [--workspace K] [--repo D]", errUsage, bsname.Cmd)
 	}
 	scope, path := "global", filepath.Join(r.s.Dir, "config.toml")
 	if *project {
 		if r.s.Project == "" {
-			return &core.Exit{Code: core.ExitRefused, Msg: "bsx config init --project: no project: bs isn't in a git repo and BS_PROJECT is unset",
+			return &core.Exit{Code: core.ExitRefused, Msg: bsname.Cmd + " config init --project: no project: it isn't run in a git repo and BS_PROJECT is unset",
 				Next: "run it in the project's repo, or with BS_PROJECT=<project> outside any repo"}
 		}
 		scope, path = "project", filepath.Join(r.s.Dir, "projects", r.s.Project+".toml")
@@ -137,7 +137,7 @@ func (r *run) configInit(fs *flag.FlagSet, args []string) error {
 	} else if err != nil {
 		return err
 	}
-	fmt.Fprintf(r.out, "wrote %s; bsx config shows what bs reads\n", path)
+	fmt.Fprintf(r.out, "wrote %s; %s config shows what it reads\n", path, bsname.Cmd)
 	return nil
 }
 
@@ -172,22 +172,22 @@ func (r *run) initRefusals(scope string, set map[string]string, text string) err
 	}
 	l, err := config.Load(in)
 	if err != nil {
-		return &core.Exit{Code: core.ExitRefused, Msg: "bsx config init: nothing was written", Err: errors.New(strings.ReplaceAll(err.Error(), dir, r.s.Dir))}
+		return &core.Exit{Code: core.ExitRefused, Msg: bsname.Cmd + " config init: nothing was written", Err: errors.New(strings.ReplaceAll(err.Error(), dir, r.s.Dir))}
 	}
 	if repo := set["paths.repo"]; repo != "" {
 		switch fi, err := os.Stat(l.Expand(repo)); {
 		case errors.Is(err, os.ErrNotExist) || err == nil && !fi.IsDir():
-			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bsx config init: --repo %s: no such directory; nothing was written", repo), Next: "make it first: bs never does"}
+			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("%s config init: --repo %s: no such directory; nothing was written", bsname.Cmd, repo), Next: "make it first: " + bsname.Cmd + " never does"}
 		case err != nil:
-			return &core.Exit{Code: core.ExitCantCheck, Msg: "bsx config init: can't look at --repo " + repo + "; nothing was written", Err: err}
+			return &core.Exit{Code: core.ExitCantCheck, Msg: bsname.Cmd + " config init: can't look at --repo " + repo + "; nothing was written", Err: err}
 		}
 	}
 	if scope == "global" {
 		lb := l.Expand(l.Paths.LogbookDir)
 		for _, real := range realLogbookDirs(r.env.Vars) {
 			if samePath(lb, real) {
-				return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bsx config init: paths.logbook_dir would be the real logbooks' dir, %s, which bsx refuses until the swap (bees-13.9); nothing was written", lb),
-					Next: "bsx config init --logbook-dir <a dir of this session's own>"}
+				return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("%s config init: paths.logbook_dir would be the real logbooks' dir, %s, which %s refuses until the swap (bees-13.9); nothing was written", bsname.Cmd, lb, bsname.Cmd),
+					Next: bsname.Cmd + " config init --logbook-dir <a dir of this session's own>"}
 			}
 		}
 	}
@@ -203,7 +203,7 @@ func (r *run) doctor(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("%w: bsx doctor takes no arguments", errUsage)
+		return fmt.Errorf("%w: %s doctor takes no arguments", errUsage, bsname.Cmd)
 	}
 	d := &doctor{r: r, path: core.Getenv(r.env.Vars, "PATH")}
 	s := r.s
@@ -213,7 +213,7 @@ func (r *run) doctor(fs *flag.FlagSet, args []string) error {
 	case s.Broken != nil:
 		d.line("FAIL", "project", "%s; the checks below run on the global file alone", strings.ReplaceAll(s.Broken.Error(), "\n", "\n     "))
 	case s.Missing:
-		d.line("FAIL", "config dir", "%s is missing for herdr session %s: bsx config init writes it", s.Dir, s.Session)
+		d.line("FAIL", "config dir", "%s is missing for herdr session %s: %s config init writes it", s.Dir, s.Session, bsname.Cmd)
 	default:
 		var files []string
 		for _, f := range s.Files {
@@ -227,6 +227,8 @@ func (r *run) doctor(fs *flag.FlagSet, args []string) error {
 	}
 	if s.Broken == nil {
 		d.project()
+	} else {
+		d.line("skip", "project", "project, workspace and logbook dir: bs can't work out the project (above)")
 	}
 	d.harness()
 	d.herdr()
@@ -235,17 +237,19 @@ func (r *run) doctor(fs *flag.FlagSet, args []string) error {
 		d.review()
 		d.commands()
 		d.unread()
+	} else {
+		d.line("skip", "project", "gh and the GitHub remote, the config's argv, keys bsx doesn't read yet: they need the project (above)")
 	}
 	for _, kv := range r.env.Vars {
 		k, _, _ := strings.Cut(kv, "=")
 		switch {
 		case !strings.HasPrefix(k, "BS_"):
 		case !slices.Contains(envKeys, k):
-			d.line("WARN", "env", "%s is set, and bs reads no such variable: a leftover from an older bs; unset it", k)
+			d.line("WARN", "env", "%s is set: %s doesn't read it (the shared bs may); it does nothing here", k, bsname.Cmd)
 		case s.Pane != nil:
-			d.line("WARN", "env", "%s is set in %s's pane, where bs ignores it: bs sets no BS_* in a session's env, so it leaked from the shell that started herdr; unset it there", k, s.Pane.Who.Name)
+			d.line("WARN", "env", "%s is set in %s's pane, where %s ignores it: %s sets no BS_* in a session's env, so it leaked from the shell that started herdr", k, s.Pane.Who.Name, bsname.Cmd, bsname.Cmd)
 		default:
-			d.line("WARN", "env", "%s is set in this shell and applies to every bs command run from it: unset it unless you meant it (bs sets no BS_* itself)", k)
+			d.line("WARN", "env", "%s is set in this shell and applies to every %s command run from it: unset it here unless you meant it", k, bsname.Cmd)
 		}
 	}
 	if d.failed > 0 {
@@ -291,7 +295,7 @@ func (d *doctor) version(program string) (at, v string, err error) {
 		return at, "", fmt.Errorf("%s --version printed no version: %s", at, strings.TrimSpace(string(out)))
 	}
 	if min, ok := minVersion[program]; ok && older(v, min) {
-		return at, v, fmt.Errorf("%s %s is older than %s, the oldest bs works with: upgrade it (docs/SETUP-AGENT.md, step 3)", at, v, min)
+		return at, v, fmt.Errorf("%s %s is older than %s, the oldest bees works with: upgrade it (docs/SETUP-AGENT.md, step 3)", at, v, min)
 	}
 	return at, v, nil
 }
@@ -326,11 +330,17 @@ func (d *doctor) project() {
 		kind, why := s.Kind(s.GitTop)
 		d.line("ok", "project", "%s (%s), repo %s, workspace %s (%s)", s.Project, s.ProjectFrom, s.Repo, kind, why)
 	}
-	if kind, _ := s.Kind(s.GitTop); kind == config.NoWorkspace && s.GitTop {
-		d.line("WARN", "workspace", "workspace.kind = none over a git checkout: workers share %s with no branch of their own (bees-12.28); drop the override for git_worktree", s.Repo)
-	}
-	if c := s.Workspace.Command; c != nil && len(c.Missing()) > 0 {
-		d.line("FAIL", "workspace.command", "%s unset: spawn refuses a command workspace without them", strings.Join(c.Missing(), ", "))
+	// Until bees-13.10 and 13.11, spawn makes only git_worktree workspaces: any other kind
+	// is a spawn refused, said here first.
+	switch kind, why := s.Kind(s.GitTop); {
+	case kind == config.GitWorktree:
+	case s.Repo == "":
+	case kind == config.NoWorkspace && s.GitTop:
+		d.line("FAIL", "workspace", "workspace.kind = none over a git checkout (%s): %s spawn refuses it, and workers would share %s with no branch of their own (bees-12.28); drop the override for git_worktree", why, bsname.Cmd, s.Repo)
+	case kind == config.NoWorkspace:
+		d.line("FAIL", "workspace", "none (%s): %s spawn makes only git_worktree workspaces until bees-13.10; make the project a git checkout, or wait for none", why, bsname.Cmd)
+	default:
+		d.line("FAIL", "workspace", "%s (%s): %s spawn makes only git_worktree workspaces until bees-13.11; drop [workspace.command] and workspace.kind", kind, why, bsname.Cmd)
 	}
 	dir := filepath.Dir(s.Logbook)
 	switch err := s.checkLogbook(d.r.env); {
@@ -382,7 +392,7 @@ func (d *doctor) herdr() {
 	s := d.r.s
 	name := "herdr session " + s.Session
 	if at, ok := lookPath(d.path, "herdr"); !ok {
-		d.line("FAIL", "herdr", "herdr is not on PATH")
+		d.line("FAIL", "herdr", "herdr is not on PATH: install it (docs/SETUP-AGENT.md, step 3)")
 		return
 	} else {
 		d.line("ok", "herdr", "%s", at)
@@ -401,12 +411,16 @@ func (d *doctor) herdr() {
 	st := herdrStatus(string(out))
 	switch {
 	case st["server.status"] != "running":
-		d.line("FAIL", name, "server %s (socket %s): start it with herdr --session %s, then run bs in one of its panes", cmp.Or(st["server.status"], "status unknown"), st["server.socket"], s.Session)
+		self, _ := os.Executable()
+		d.line("FAIL", name, "server %s (socket %s): start it with this build first on its PATH, PATH=%s:$PATH herdr --session %s, then run %s in one of its panes",
+			cmp.Or(st["server.status"], "status unknown"), st["server.socket"], filepath.Dir(self), s.Session, bsname.Cmd)
 		return
-	case st["server.endpoint_compatible"] == "no":
+	case st["server.endpoint_compatible"] == "no" || st["server.private_protocol_compatible"] == "no":
 		d.line("FAIL", name, "client %s can't talk to server %s: restart the server (herdr --session %s server stop, then start it again)", st["client.version"], st["server.version"], s.Session)
 	case semver.MatchString(st["server.version"]) && semver.MatchString(st["client.version"]) && older(st["server.version"], st["client.version"]):
-		d.line("WARN", name, "server %s is older than client %s, still running the binary it started from: restart it (herdr --session %s server stop, then start it again) when no session you need runs; bs's herdr probes ran on the client's version", st["server.version"], st["client.version"], s.Session)
+		d.line("WARN", name, "server %s is older than client %s, still running the binary it started from: restart it (herdr --session %s server stop, then start it again) when no session you need runs; bees' herdr probes ran on the client's version", st["server.version"], st["client.version"], s.Session)
+	case st["update.restart_needed"] == "yes":
+		d.line("WARN", name, "herdr says its server needs a restart (update.restart_needed): herdr --session %s server stop, then start it again, when no session you need runs", s.Session)
 	default:
 		d.line("ok", name, "server %s running, client %s", st["server.version"], st["client.version"])
 	}
@@ -498,7 +512,7 @@ func (d *doctor) review() {
 	case err != nil:
 		d.line("FAIL", "remote", "can't read %s's git remotes: %v", s.Repo, err)
 	case !ok:
-		d.line("WARN", "remote", "%s has no GitHub remote: bs spawn refuses --goal pr, push= and review= here (branch, verdict, note and beads work); add one with git remote add origin <url>", s.Repo)
+		d.line("WARN", "remote", "%s has no GitHub remote: %s spawn refuses --goal pr, push= and review= here (branch, verdict, note and beads work); add one with git remote add origin <url>", s.Repo, bsname.Cmd)
 	default:
 		d.line("ok", "remote", "%s for pr goals", repo)
 	}
@@ -509,7 +523,8 @@ func (d *doctor) review() {
 func (d *doctor) unread() {
 	unread := map[string][]string{}
 	for _, f := range d.r.s.Fields() {
-		if f.Unread != "" && f.Source.Kind != "default" {
+		// [workspace.command] is not ignored: spawn refuses it (the workspace line).
+		if f.Unread != "" && f.Source.Kind != "default" && !strings.HasPrefix(f.Key, "workspace.command") {
 			unread[f.Unread] = append(unread[f.Unread], f.Key)
 		}
 	}

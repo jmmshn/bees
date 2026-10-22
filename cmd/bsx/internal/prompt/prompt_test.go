@@ -31,9 +31,9 @@ func TestFragmentsSplitPerRole(t *testing.T) {
 		has  []string
 		not  []string
 	}{
-		{w, []string{"bs send queen-web2", "## Workspace", "its own git worktree", "Commit everything you hand off", "## Goal\n", "`--goal branch`", "Your goal is your branch"},
-			[]string{"## Goals", "bs prune` removes", "merge it into its base"}},
-		{q, []string{"queen-web2", "bs spawn --goal", "## Workspace", "its own git worktree", "bs prune` removes", "## Goals", "merge it into its base", "`--goal pr`:", "`--goal verdict`:"},
+		{w, []string{"bsx send queen-web2", "## Workspace", "its own git worktree", "Commit everything you hand off", "## Goal\n", "`--goal branch`", "Your goal is your branch"},
+			[]string{"## Goals", "bsx prune` removes", "merge it into its base"}},
+		{q, []string{"queen-web2", "bsx spawn --goal", "## Workspace", "its own git worktree", "bsx prune` removes", "## Goals", "merge it into its base", "`--goal pr`:", "`--goal verdict`:"},
 			[]string{"Commit everything you hand off", "Your goal is your branch"}},
 	} {
 		for _, h := range c.has {
@@ -55,7 +55,7 @@ func TestFragmentsSplitPerRole(t *testing.T) {
 // A goal type with no fragment yet still names how to hand it off; each type appears once.
 func TestAGoalWithNoFragmentStillSaysBsDone(t *testing.T) {
 	got := prompt.Text(prompt.Worker, "web2", "git_worktree", []string{"verdict", "branch", "branch"})
-	if !strings.Contains(got, "`--goal verdict`: `bs done` checks it") || strings.Count(got, "`--goal branch`:") != 1 {
+	if !strings.Contains(got, "`--goal verdict`: `bsx done` checks it") || strings.Count(got, "`--goal branch`:") != 1 {
 		t.Fatalf("prompt:\n%s", got)
 	}
 }

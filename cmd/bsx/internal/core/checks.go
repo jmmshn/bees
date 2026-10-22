@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 	"github.com/jmmshn/bees/cmd/bsx/internal/goal"
 	"github.com/jmmshn/bees/cmd/bsx/internal/logbook"
 )
@@ -98,7 +99,11 @@ func (k *look) run(ctx context.Context, p goal.Part, name string) (bool, string,
 		}
 		return true, "", nil
 	case goal.BranchAhead:
-		out, err := c.git(ctx, ws.Dir, "rev-list", "--count", ws.Base+".."+ws.Branch)
+		base, err := c.base(ctx, ws)
+		if err != nil {
+			return false, "", err
+		}
+		out, err := c.git(ctx, ws.Dir, "rev-list", "--count", base+".."+ws.Branch)
 		if err != nil {
 			return false, "", err
 		}
@@ -107,12 +112,12 @@ func (k *look) run(ctx context.Context, p goal.Part, name string) (bool, string,
 			return false, "", fmt.Errorf("git rev-list --count: %q", out)
 		}
 		if n == 0 {
-			return false, fmt.Sprintf("%s has no commit that %s lacks", ws.Branch, ws.Base), nil
+			return false, fmt.Sprintf("%s has no commit that %s lacks", ws.Branch, base), nil
 		}
 		if n == 1 {
-			return true, "1 commit ahead of " + ws.Base, nil
+			return true, "1 commit ahead of " + base, nil
 		}
-		return true, fmt.Sprintf("%d commits ahead of %s", n, ws.Base), nil
+		return true, fmt.Sprintf("%d commits ahead of %s", n, base), nil
 	case goal.BranchMerged:
 		return c.merged(ctx, ws)
 	}
@@ -151,7 +156,7 @@ func (c *Core) complete(ctx context.Context, sp logbook.Spawn, e logbook.Effecti
 		return false, nil, nil, err
 	}
 	if !ok || !d.Passed() {
-		return false, nil, []logbook.CheckResult{{Name: "handoff", Detail: "no bs done that passed its checks"}}, nil
+		return false, nil, []logbook.CheckResult{{Name: "handoff", Detail: "no " + bsname.Cmd + " done that passed its checks"}}, nil
 	}
 	rs, cant := c.look(sp, Handed{PRs: d.PRs}).stage(ctx, e, func(p goal.Part) []string {
 		if p.AtHandoff {

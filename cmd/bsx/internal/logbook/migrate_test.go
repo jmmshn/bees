@@ -119,7 +119,7 @@ func TestOpenMigratesAVersion0Logbook(t *testing.T) {
 	want := logbook.Spawn{
 		Bead: "bees-8", Label: "logbook", Harness: "claude_code", By: "queen-bees",
 		Herdr:     logbook.Pane{Session: "default", Workspace: "w2F", Pane: "w2F:p1"},
-		Workspace: logbook.Workspace{Kind: "git_worktree", Dir: "/r/bees-WT/bees-8", Repo: "/r/bees", Branch: "bees-8", Base: "/r/bees"},
+		Workspace: logbook.Workspace{Kind: "git_worktree", Dir: "/r/bees-WT/bees-8", Repo: "/r/bees", Branch: "bees-8"},
 	}
 	if !sp.Legacy() || sp.Bead != want.Bead || sp.Label != want.Label || sp.Harness != want.Harness || sp.By != want.By ||
 		sp.Herdr != want.Herdr || sp.Workspace != want.Workspace {

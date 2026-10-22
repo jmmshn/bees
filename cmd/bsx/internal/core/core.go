@@ -21,9 +21,10 @@ import (
 type Core struct {
 	Logbook     *logbook.Logbook
 	Project     string
-	Run         port.Runner // herdr, git, gh
-	Harness     port.Harness
-	HarnessName string // the config name entries record: claude_code
+	Run         port.Runner                    // herdr, git, gh
+	Harness     port.Harness                   // the configured harness: what spawn and queen start
+	HarnessOf   func(name string) port.Harness // the adapter of another harness an entry recorded; nil when none
+	HarnessName string                         // the config name entries record: claude_code
 	Proc        port.Proc
 	Beads       port.Beads
 	Repo        string   // paths.repo: the project's checkout
@@ -38,6 +39,28 @@ type Core struct {
 	VCS         port.VCS    // the workspace's version control, as the goal checks read it
 	Timing      Timing
 	Warn        func(msg string) // prints a fallback bs took (Rule G); nil drops it
+}
+
+// harnessOf is the adapter of harness name, as an entry recorded it: ringing, start
+// lookups and teardown use the recorded harness, not the configured one (ADR-0010). nil
+// when this machine has no adapter for it.
+func (c *Core) harnessOf(name string) port.Harness {
+	if name == "" || name == c.HarnessName {
+		return c.Harness
+	}
+	if c.HarnessOf != nil {
+		return c.HarnessOf(name)
+	}
+	return nil
+}
+
+// kindOf is the process name of sp's recorded harness.
+func (c *Core) kindOf(sp logbook.Spawn) (string, error) {
+	h := c.harnessOf(sp.Harness)
+	if h == nil {
+		return "", fmt.Errorf("%s was started on harness %s, which this bs has no adapter for", sp.Name, sp.Harness)
+	}
+	return h.Kind(), nil
 }
 
 // warn says a fallback bs took.

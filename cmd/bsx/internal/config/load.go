@@ -286,36 +286,43 @@ func (l *Loaded) Expand(path string) string {
 type Field struct {
 	Key, Value, Scope string
 	Source            Source
+	Unread            string // "" when bsx acts on the key, else why it doesn't yet
 }
 
 // Fields lists every setting in declaration order, map entries by name.
 func (l *Loaded) Fields() []Field {
 	var out []Field
 	for _, f := range leaves(reflect.ValueOf(&l.Config).Elem(), "") {
-		scope := f.tag.Get("scope")
+		scope, unread := f.tag.Get("scope"), ""
+		if bead, ok := f.tag.Lookup("unread"); ok {
+			unread = "not read by bsx yet"
+			if bead != "" {
+				unread += " (" + bead + ")"
+			}
+		}
 		switch f.v.Kind() {
 		case reflect.Map:
 			keys := f.v.MapKeys()
 			slices.SortFunc(keys, func(a, b reflect.Value) int { return strings.Compare(a.String(), b.String()) })
 			for _, k := range keys {
 				key := f.key + "." + k.String()
-				out = append(out, tableFields(key, f.v.MapIndex(k), scope, l.Sources[key])...)
+				out = append(out, tableFields(key, f.v.MapIndex(k), scope, unread, l.Sources[key])...)
 			}
 		case reflect.Pointer:
 			if !f.v.IsNil() {
-				out = append(out, tableFields(f.key, f.v.Elem(), scope, l.Sources[f.key])...)
+				out = append(out, tableFields(f.key, f.v.Elem(), scope, unread, l.Sources[f.key])...)
 			}
 		default:
-			out = append(out, Field{Key: f.key, Value: render(f.v), Scope: scope, Source: l.Sources[f.key]})
+			out = append(out, Field{Key: f.key, Value: render(f.v), Scope: scope, Source: l.Sources[f.key], Unread: unread})
 		}
 	}
 	return out
 }
 
-func tableFields(key string, v reflect.Value, scope string, src Source) []Field {
+func tableFields(key string, v reflect.Value, scope, unread string, src Source) []Field {
 	var out []Field
 	for i := range v.NumField() {
-		out = append(out, Field{Key: key + "." + v.Type().Field(i).Tag.Get("toml"), Value: render(v.Field(i)), Scope: scope, Source: src})
+		out = append(out, Field{Key: key + "." + v.Type().Field(i).Tag.Get("toml"), Value: render(v.Field(i)), Scope: scope, Source: src, Unread: unread})
 	}
 	return out
 }

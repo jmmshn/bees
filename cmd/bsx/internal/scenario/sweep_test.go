@@ -3,6 +3,7 @@ package scenario_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,7 +26,7 @@ func TestWorkersMailEachOtherAndAreRung(t *testing.T) {
 	must(t, x.worker("toy-1", 1, "send", "toy-2", "rebase on mine"), 0, "to toy-2", "rung toy-2")
 	r := x.worker("toy-2", 1, "inbox")
 	must(t, r, 0, "from toy-1", "rebase on mine")
-	if rings := x.harness.Rings("toy-2"); len(rings) == 0 || !strings.Contains(rings[len(rings)-1], `2 unread (queen-toy, toy-1) — run: bs inbox   (reply with: bs send toy-1 "...")`) {
+	if rings := x.harness.Rings("toy-2"); len(rings) == 0 || !strings.Contains(rings[len(rings)-1], `2 unread (queen-toy, toy-1) — run: bsx inbox   (reply with: bsx send toy-1 "...")`) {
 		t.Fatalf("toy-2's rings: %q", rings)
 	}
 }
@@ -87,12 +88,6 @@ func TestRound11NoneOnANonGitDirectory(t *testing.T) {
 }
 func TestRound11ADeliveryFragmentForACLFlow(t *testing.T) {
 	later(t, "bees-13.11", "command workspaces and custom goals")
-}
-func TestRound11WorkersRunTheBuildUnderTest(t *testing.T) {
-	later(t, "bees-13.3", "worker.path and the live rig")
-}
-func TestRound11CrossProjectSendAndReply(t *testing.T) {
-	later(t, "bees-13.8", "cross-project mail (bees-12.38)")
 }
 func TestRound11AFreshAgentSetsUpFromSetupAgentMD(t *testing.T) {
 	later(t, "bees-13.8", "SETUP-AGENT.md")
@@ -158,6 +153,9 @@ func TestPilotBug1231EndUnderNoneStopsTheWorker(t *testing.T) {
 func TestPilotBug1232ANonGitQueenNeedsNoBSProject(t *testing.T) {
 	later(t, "bees-13.10", "workspace none")
 }
+func TestPilotBug1244DoctorAndConfigGaps(t *testing.T) {
+	later(t, "bees-13.8", "bs doctor warns of a PR goal with no remote and a stale herdr server; bs config lists guards")
+}
 func TestPilotBug1245DoctorNamesAStrayBSProject(t *testing.T) { later(t, "bees-13.8", "bs doctor") }
 
 // bees-12.50, 12.52: bs done's own pipeline (bs done | tail) is the call, not background
@@ -204,6 +202,18 @@ func TestDoneStopsAtACheckThatCantRun(t *testing.T) {
 	must(t, x.worker("toy-1", 1, "done"), 6, "couldn't run")
 }
 
+// The worktree's .git gone, the worker's cwd is in no repo, so bs can't find its project.
+// It should still run the check and stop at exit 6 (bees-13.15).
+func TestDoneWithTheWorktreesGitGone(t *testing.T) {
+	t.Skip("bees-13.15: bsx finds a pane's project only from its cwd")
+	x := newToy(t)
+	sp := x.spawn("toy-1", "branch")
+	if err := os.RemoveAll(filepath.Join(sp.Workspace.Dir, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	must(t, x.worker("toy-1", 1, "done"), 6, "couldn't run")
+}
+
 // A spawn written before goals reads as --goal legacy.
 func TestALegacySpawnReadsAsLegacy(t *testing.T) {
 	x := newToy(t)
@@ -230,6 +240,39 @@ INSERT INTO entries VALUES ('s1','2026-10-01T00:00:00.000Z','spawned','queen-toy
 	}
 }
 
+// A legacy worktree prunes on proof 1 against the repo's default branch: its recorded
+// base was a checkout path, never a ref (bees-11.3), so merge-base can't be given it.
+func TestPruneTakesALegacyWorktreeOnTheDefaultBranch(t *testing.T) {
+	x := newToy(t)
+	merged, open := filepath.Join(x.repo+"-WT", "toy-8"), filepath.Join(x.repo+"-WT", "toy-9")
+	x.git(x.repo, "worktree", "add", "-q", "-b", "toy-8", merged, "main")
+	x.git(x.repo, "worktree", "add", "-q", "-b", "toy-9", open, "main")
+	x.commit(open, "work.txt")
+	if err := os.MkdirAll(filepath.Dir(x.logbook), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", x.logbook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := func(id, name, dir string) string {
+		return fmt.Sprintf(`INSERT INTO entries VALUES ('%[1]s','2026-10-01T00:00:00.000Z','spawned','queen-toy','%[2]s',NULL,'{"bead":"%[2]s","workspace":"w2","pane":"w2:p1","worktree":"%[3]s","branch":"%[2]s","repo":"%[4]s","base":"%[4]s"}');
+INSERT INTO entries VALUES ('e%[1]s','2026-10-01T00:00:01.000Z','ended','queen-toy','%[2]s','%[1]s',NULL);`, id, name, dir, x.repo)
+	}
+	_, err = db.Exec(`CREATE TABLE entries (id TEXT PRIMARY KEY, ts TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('message','received','rang','spawned','ended')),
+  actor TEXT NOT NULL, subject TEXT, ref TEXT REFERENCES entries(id),
+  data TEXT CHECK (data IS NULL OR json_valid(data))) STRICT;` + row("s1", "toy-8", merged) + row("s2", "toy-9", open))
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	must(t, x.queen("prune"), 3, "removed "+merged, "toy-9 has work not on main")
+	if _, err := os.Stat(open); err != nil {
+		t.Fatalf("prune removed the unmerged %s: %v", open, err)
+	}
+}
+
 func TestNoteAndBeadsGoals(t *testing.T) { later(t, "bees-13.7", "note and beads goals") }
 func TestCustomGoalsAreFrozenAtSpawn(t *testing.T) {
 	later(t, "bees-13.11", "[goal.<name>] and cmd: checks frozen in spawned")
@@ -246,17 +289,17 @@ func TestBsxRefusesTheDefaultConfigDirAndAMissingSessionDir(t *testing.T) {
 	must(t, x.keeper("status"), 2, "warning: no config dir for this herdr session nosuch")
 }
 
-// Rule G inside a pane: with the session's config dir gone, a worker's writes are refused
-// (exit 2) and write nothing; status runs, warning.
+// Rule G inside a pane: with the session's config dir gone, a worker's commands are
+// refused (exit 2) and touch no logbook, warning.
 func TestAMissingSessionDirRefusesAWorkersWrites(t *testing.T) {
 	x := newToy(t)
 	x.spawn("toy-1", "branch")
 	if err := os.RemoveAll(x.config); err != nil {
 		t.Fatal(err)
 	}
-	must(t, x.worker("toy-1", 1, "send", "queen-toy", "hi"), 2, "warning: no config dir for this herdr session toy", "refused", "nothing was written")
+	must(t, x.worker("toy-1", 1, "send", "queen-toy", "hi"), 2, "warning: no config dir for this herdr session toy", "refused", "nothing was read or written")
 	must(t, x.worker("toy-1", 2, "inbox"), 2, "refused")
-	must(t, x.worker("toy-1", 3, "status"), 2, "warning: no config dir", "refuses the default config dir")
+	must(t, x.worker("toy-1", 3, "status"), 2, "warning: no config dir", "won't guess a logbook")
 	if ms, err := x.open().Unread(context.Background(), "queen-toy"); err != nil || len(ms) != 0 {
 		t.Fatalf("queen's unread = %v, %v", ms, err)
 	}
@@ -268,7 +311,7 @@ func TestAnUnconfirmedStartIsExit8AndEndClearsIt(t *testing.T) {
 	x.herdr.Programs["claude"] = "/bin/true"
 	x.ports.Timing.Confirm = 300 * time.Millisecond
 	x.bead("toy-1", "x")
-	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 8, "start unconfirmed", "next: bs end toy-1 --incomplete")
+	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 8, "start unconfirmed", "next: bsx end toy-1 --incomplete")
 	must(t, x.queen("end", "toy-1"), 9)                                // a verdict never handed off is incomplete
 	must(t, x.queen("end", "--incomplete", "toy-1"), 0, "ended toy-1") // the abort of a spawn that never ran (motif 5)
 	sp, _, _ := x.open().LatestSpawn(context.Background(), "toy-1")
@@ -325,4 +368,19 @@ func cell(out, worker, column string) string {
 		end = min(end, i+len(column)+j)
 	}
 	return strings.TrimSpace(row[i:end])
+}
+
+// A bead the tracker says doesn't exist refuses the spawn (exit 2) and names it.
+func TestSpawnOfNoSuchBeadIsRefused(t *testing.T) {
+	x := newToy(t)
+	must(t, x.queen("spawn", "--goal", "verdict", "toy-404"), 2, "no bead toy-404", "next: bd show toy-404")
+}
+
+// With no harness adapter (bsx's main until bees-13.3), mail to a running worker is
+// stored and says it wasn't rung, never a panic.
+func TestSendWithNoHarnessStoresAndSaysNotRung(t *testing.T) {
+	x := newToy(t)
+	x.spawn("toy-1", "verdict")
+	x.ports.Harness = nil
+	must(t, x.queen("send", "toy-1", "hi"), 0, "not rung", "has no ring")
 }

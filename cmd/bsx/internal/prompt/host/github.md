@@ -5,4 +5,4 @@ Review host: GitHub (`review.host = "github"`). A change is a pull request, its 
 - A review: `gh pr review <url> --comment --body "..."` or `gh pr comment <url> --body "..."`.
 <!-- queen -->
 
-- Merge a PR with `gh pr merge <url>` (run `bs check <worker>` first), once the keeper says to land it.
+- Merge a PR with `gh pr merge <url>` (run `{{bs}} check <worker>` first), once the keeper says to land it.

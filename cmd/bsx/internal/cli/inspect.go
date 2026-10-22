@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/jmmshn/bees/cmd/bsx/internal/bsname"
 	"github.com/jmmshn/bees/cmd/bsx/internal/config"
 	"github.com/jmmshn/bees/cmd/bsx/internal/core"
 	"github.com/jmmshn/bees/cmd/bsx/internal/herdr"
@@ -23,12 +24,12 @@ func (r *run) config(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("%w: bsx config takes no arguments", errUsage)
+		return fmt.Errorf("%w: "+bsname.Cmd+" config takes no arguments", errUsage)
 	}
 	s, w := r.s, r.out
 	missing := ""
 	if s.Missing {
-		missing = " (missing: writing commands refuse)"
+		missing = " (missing: every command but config and doctor refuses)"
 	}
 	fmt.Fprintf(w, "# config dir: %s, herdr session %s%s\n", s.Dir, s.Session, missing)
 	for _, f := range s.Files {
@@ -52,11 +53,14 @@ func (r *run) config(fs *flag.FlagSet, args []string) error {
 	fmt.Fprintf(w, "# workspace kind: %s (%s)\n", kind, why)
 	fmt.Fprintf(w, "# cache: %s\n", r.ports.CacheDir)
 	for _, f := range s.Fields() {
-		limit := ""
+		note := ""
 		if f.Scope != "both" {
-			limit = "; " + f.Scope + " file only"
+			note = "; " + f.Scope + " file only"
 		}
-		fmt.Fprintf(w, "%s = %s  # %s%s\n", f.Key, f.Value, f.Source, limit)
+		if f.Unread != "" {
+			note += "; " + f.Unread
+		}
+		fmt.Fprintf(w, "%s = %s  # %s%s\n", f.Key, f.Value, f.Source, note)
 	}
 	return nil
 }
@@ -120,6 +124,17 @@ func (r *run) doctor(fs *flag.FlagSet, args []string) error {
 	}
 	if c := s.Workspace.Command; c != nil && len(c.Missing()) > 0 {
 		line("FAIL", "workspace.command", "%s unset: spawn refuses a command workspace without them", strings.Join(c.Missing(), ", "))
+	}
+	// A key a file sets that bsx doesn't act on yet: guards.deny set and ignored is a
+	// guard the keeper thinks is on.
+	unread := map[string][]string{}
+	for _, f := range s.Fields() {
+		if f.Unread != "" && f.Source.Kind != "default" {
+			unread[f.Unread] = append(unread[f.Unread], f.Key)
+		}
+	}
+	for _, why := range slices.Sorted(maps.Keys(unread)) {
+		line("WARN", "config", "%s set, but %s: bsx ignores it", strings.Join(unread[why], ", "), why)
 	}
 	for _, a := range s.argvs() {
 		if _, ok := lookPath(path, a[1]); !ok {

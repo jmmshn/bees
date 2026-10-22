@@ -147,6 +147,10 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 			return report(stderr, args[0], err)
 		}
 		defer lb.Close()
+		if lb.KeptCopy != "" { // the migration's copy aside found one there and kept it
+			fmt.Fprintf(stderr, "%s %s: warning: migrated %s, keeping the %s already there, which may be of an older state: this migration's own copy wasn't made\n",
+				bsname.Cmd, args[0], s.Logbook, lb.KeptCopy)
+		}
 		h := ports.Harness
 		if h == nil && ports.NewHarness != nil {
 			model := s.Worker.ClaudeCode.Model

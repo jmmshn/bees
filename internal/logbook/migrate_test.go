@@ -335,3 +335,22 @@ func TestOpenRefusesAMissingFileAndCreateMakesIt(t *testing.T) {
 		lb.Close()
 	}
 }
+
+// A migration that finds a .pre-2 already there keeps it, and says so: that copy may be
+// of another state than the one just migrated (bees-13.9 review SPEC6).
+func TestAMigrationSaysWhenItKeptAnEarlierCopy(t *testing.T) {
+	path := write(t, v0)
+	if err := os.WriteFile(path+".pre-2", []byte("earlier"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lb := open(t, path)
+	if lb.KeptCopy != path+".pre-2" {
+		t.Fatalf("KeptCopy = %q", lb.KeptCopy)
+	}
+	if b, _ := os.ReadFile(path + ".pre-2"); string(b) != "earlier" {
+		t.Fatalf("the earlier copy changed: %q", b)
+	}
+	if again := open(t, path); again.KeptCopy != "" {
+		t.Fatalf("a logbook already migrated reports a kept copy: %q", again.KeptCopy)
+	}
+}

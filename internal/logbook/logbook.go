@@ -16,8 +16,12 @@ import (
 // ID identifies an entry. Message ids sort by creation time.
 type ID string
 
-// Logbook is an open logbook file.
-type Logbook struct{ db *sql.DB }
+// Logbook is an open logbook file. KeptCopy, set by the Open that migrated it, is a
+// <path>.pre-2 that was already there and kept, so this migration's state wasn't copied.
+type Logbook struct {
+	db       *sql.DB
+	KeptCopy string
+}
 
 // Close closes the logbook.
 func (l *Logbook) Close() error { return l.db.Close() }

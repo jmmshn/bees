@@ -91,7 +91,8 @@ func open(ctx context.Context, path string) (*Logbook, error) {
 	// Two first opens of a new file race on the WAL switch, which SQLite can refuse with
 	// SQLITE_BUSY without waiting on busy_timeout (bees-12.23): retry, for a bounded time.
 	deadline := time.Now().Add(openWait)
-	for err = migrate(ctx, db, abs); busy(err) && time.Now().Before(deadline); err = migrate(ctx, db, abs) {
+	var kept string
+	for kept, err = migrate(ctx, db, abs); busy(err) && time.Now().Before(deadline); kept, err = migrate(ctx, db, abs) {
 		select {
 		case <-ctx.Done():
 			err = errors.Join(err, ctx.Err())
@@ -104,7 +105,7 @@ func open(ctx context.Context, path string) (*Logbook, error) {
 		db.Close()
 		return nil, fmt.Errorf("open logbook %s: %w", path, err)
 	}
-	return &Logbook{db: db}, nil
+	return &Logbook{db: db, KeptCopy: kept}, nil
 }
 
 // openWait bounds when Open starts a retry on SQLITE_BUSY; one attempt may also wait out
@@ -122,39 +123,45 @@ func busy(err error) bool {
 // once with the wider kind CHECK, which SQLite can't alter in place: inside BEGIN
 // IMMEDIATE, the write lock every writer takes, so a concurrent Open waits and then finds
 // the work done. Rows move verbatim: an old spawn's data is mapped when it is read
-// (Spawn.decode), never rewritten. An older bs keeps working on the rebuilt table: its
-// reads select by kind and its writes satisfy the wider CHECK.
-func migrate(ctx context.Context, db *sql.DB, path string) error {
+// (Spawn.decode), never rewritten. An older bs can read and write the rebuilt table only
+// until this bs writes a spawn: its decoder takes a spawn's workspace for a string, and
+// this bs writes an object. kept is a copy already there, which was kept.
+func migrate(ctx context.Context, db *sql.DB, path string) (kept string, err error) {
 	var v int
 	if err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&v); err != nil {
-		return err
+		return "", err
 	}
 	if v >= Version {
-		return nil
+		return "", nil
 	}
 	old, err := hasEntries(ctx, db)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if old {
-		if err := copyAside(ctx, db, fmt.Sprintf("%s.pre-%d", path, Version)); err != nil {
-			return fmt.Errorf("copy the logbook aside before migrating it: %w", err)
+		aside := fmt.Sprintf("%s.pre-%d", path, Version)
+		existed, err := copyAside(ctx, db, aside)
+		if err != nil {
+			return "", fmt.Errorf("copy the logbook aside before migrating it: %w", err)
+		}
+		if existed {
+			kept = aside
 		}
 	}
 	// One connection: foreign_keys is per connection and can't change inside a transaction,
 	// and the rebuild drops the table its own rows' ref points into.
 	c, err := db.Conn(ctx)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer c.Close()
 	if _, err := c.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
-		return err
+		return "", err
 	}
 	err = rebuild(ctx, c)
 	// The connection goes back to the pool: a failed reset fails Open, which closes it.
 	_, onErr := c.ExecContext(context.WithoutCancel(ctx), `PRAGMA foreign_keys = ON`)
-	return errors.Join(err, onErr)
+	return kept, errors.Join(err, onErr)
 }
 
 // hasEntries reports whether db has an entries table.
@@ -200,27 +207,29 @@ func rebuild(ctx context.Context, c *sql.Conn) error {
 	return tx.Commit()
 }
 
-// copyAside writes a consistent copy of db to path, keeping an earlier copy there: a
-// concurrent Open may have made one already.
-func copyAside(ctx context.Context, db *sql.DB, path string) error {
+// copyAside writes a consistent copy of db to path, keeping an earlier copy there (existed
+// true): a concurrent Open may have made one already, or an earlier migration.
+func copyAside(ctx context.Context, db *sql.DB, path string) (existed bool, err error) {
 	tmp := fmt.Sprintf("%s.%s.tmp", path, newID(time.Now()))
 	defer os.Remove(tmp) // a failed VACUUM may leave part of it
 	if _, err := db.ExecContext(ctx, `VACUUM INTO ?`, tmp); err != nil {
-		return err
+		return false, err
 	}
 	if err := os.Chmod(tmp, 0o600); err != nil {
-		return err
+		return false, err
 	}
 	switch err := os.Link(tmp, path); {
-	case err == nil, errors.Is(err, os.ErrExist):
-		return nil
+	case err == nil:
+		return false, nil
+	case errors.Is(err, os.ErrExist):
+		return true, nil
 	case errors.Is(err, os.ErrPermission), errors.Is(err, errors.ErrUnsupported):
 		if _, err := os.Lstat(path); err == nil { // a file system without hard links
-			return nil
+			return true, nil
 		}
-		return os.Rename(tmp, path)
+		return false, os.Rename(tmp, path)
 	default:
-		return err
+		return false, err
 	}
 }
 

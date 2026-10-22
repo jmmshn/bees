@@ -64,8 +64,10 @@ func main() {
 		switch os.Args[1] {
 		case "call":
 			os.Exit(call(os.Args[2:]))
-		case "idle":
-			select {}
+		case "idle": // a bare select{} is a deadlock to the runtime, which kills it on macOS
+			for {
+				time.Sleep(time.Hour)
+			}
 		case "detach":
 			c := exec.Command(self(), "idle")
 			c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}

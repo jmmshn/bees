@@ -103,20 +103,21 @@ func TestRefusesTheRealLogbookDir(t *testing.T) {
 	}
 }
 
-// Rule G: with the session's config dir missing, every writing command refuses (exit 2)
-// and writes nothing; status, config and doctor run, warning each call.
+// Rule G: with the session's config dir missing, every command that opens a logbook
+// refuses (exit 2) and touches none, since the defaults would name the real one
+// (bees-12.26); config and doctor run, warning each call.
 func TestMissingSessionDir(t *testing.T) {
 	r := newRig(t)
 	if err := os.RemoveAll(r.session); err != nil {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{{"spawn", "--goal", "branch", "toy-1"}, {"send", "--as", "x", "y", "hi"}, {"inbox", "--as", "x"},
-		{"end", "--as", "queen-toy", "toy-1"}, {"prune", "--as", "queen-toy"}, {"done", "--as", "toy-1"}} {
+		{"end", "--as", "queen-toy", "toy-1"}, {"prune", "--as", "queen-toy"}, {"done", "--as", "toy-1"}, {"status"}} {
 		code, out, stderr := r.run(r.repo, nil, args...)
 		if code != 2 || out != "" {
 			t.Errorf("%v: exit %d, out %q", args, code, out)
 		}
-		wantIn(t, stderr, "warning: no config dir for this herdr session toy", "refused", "nothing was written")
+		wantIn(t, stderr, "warning: no config dir for this herdr session toy", "refused", "won't guess a logbook; nothing was read or written")
 	}
 	if _, err := os.Stat(r.logbook); !os.IsNotExist(err) {
 		t.Errorf("a refused command made the logbook dir: %v", err)
@@ -127,13 +128,6 @@ func TestMissingSessionDir(t *testing.T) {
 	}
 	wantIn(t, stderr, "warning: no config dir")
 	wantIn(t, out, r.session+", herdr session toy (missing", `paths.logbook_dir = "~/.local/share/bees"  # default; global file only`)
-	// status runs, warns, and then meets the pre-swap refusal: the default logbook dir is
-	// the real one.
-	code, _, stderr = r.run(r.repo, nil, "status")
-	if code != 2 {
-		t.Errorf("status: exit %d", code)
-	}
-	wantIn(t, stderr, "warning: no config dir", "refuses the default config dir")
 	code, out, _ = r.run(r.repo, nil, "doctor")
 	if code != 1 {
 		t.Errorf("doctor: exit %d", code)
@@ -181,7 +175,43 @@ func TestBSProject(t *testing.T) {
 		t.Errorf("outside any repo: exit %d", code)
 	}
 	wantIn(t, out, "# project: other (env BS_PROJECT)")
+	_, out, _ = r.run("/", []string{"BS_PROJECT=other", "HERDR_PANE_ID=w1:p1"}, "config")
+	wantIn(t, out, "# project: other (env BS_PROJECT)") // an unrecorded pane is outside one (bees-13.14)
 }
+
+// A key bsx doesn't act on yet says so in bsx config, and doctor warns when a file sets
+// one: a guards.deny that does nothing is a guard the keeper thinks is on.
+func TestUnreadKeysAreMarked(t *testing.T) {
+	r := newRig(t)
+	r.write("projects/mytoy.toml", "[guards]\ndeny = [\"git push*\"]\n")
+	_, out, _ := r.run(r.repo, nil, "config")
+	wantIn(t, out, `guards.deny = ["git push*"]  # project `, "; not read by bsx yet (bees-13.6)\n",
+		`worker.claude_code.model = ""  # default; not read by bsx yet`+"\n")
+	_, out, _ = r.run(r.repo, nil, "doctor")
+	wantIn(t, out, "WARN config: guards.deny set, but not read by bsx yet (bees-13.6): bsx ignores it")
+	if strings.Contains(out, "model set") {
+		t.Errorf("doctor warns of a key nothing set:\n%s", out)
+	}
+}
+
+// A workspace kind the config chooses and bsx can't make yet refuses the spawn: it never
+// becomes a git_worktree behind the config's back.
+func TestSpawnRefusesAKindItCantMake(t *testing.T) {
+	r := newRig(t)
+	for _, body := range []string{"[workspace]\nkind = \"none\"\n", "[workspace.command]\ncreate = [\"mk\"]\n"} {
+		r.write("projects/mytoy.toml", body)
+		var out, errb bytes.Buffer
+		ports := Ports{Run: port.Exec{}, Harness: noHarness{}, CacheDir: filepath.Join(r.home, "cache")}
+		code := Run(context.Background(), Env{Vars: r.env, Dir: r.repo, Self: os.Getpid()}, ports, []string{"spawn", "--as", "queen-mytoy", "--goal", "branch", "mytoy-1"}, &out, &errb)
+		if code != 2 {
+			t.Errorf("%q: exit %d %s", body, code, errb.String())
+		}
+		wantIn(t, errb.String(), "bsx makes only git_worktree workspaces yet")
+	}
+}
+
+// noHarness is a harness spawn never reaches.
+type noHarness struct{ port.Harness }
 
 func TestBrokenFileRefusesEveryCommand(t *testing.T) {
 	r := newRig(t)
@@ -190,6 +220,54 @@ func TestBrokenFileRefusesEveryCommand(t *testing.T) {
 		code, _, stderr := r.run(r.repo, nil, cmd)
 		if code != 2 || !strings.Contains(stderr, "paths.repo belongs in the project file") {
 			t.Errorf("%s: exit %d %s", cmd, code, stderr)
+		}
+	}
+}
+
+// Rule G: an unreadable file is "couldn't look" (exit 6). The only warning load gives
+// before it is a recorded pane's BS_* (TestBSVariablesAreIgnoredInsideARecordedPane).
+func TestAnUnreadableFileIsExit6(t *testing.T) {
+	r := newRig(t)
+	r.write("projects/mytoy.toml", "")
+	if err := os.Chmod(filepath.Join(r.session, "projects", "mytoy.toml"), 0); err != nil {
+		t.Fatal(err)
+	}
+	if os.Getuid() == 0 {
+		t.Skip("root reads a mode-0 file")
+	}
+	code, _, stderr := r.run(r.repo, nil, "config")
+	if code != 6 {
+		t.Errorf("exit %d, want 6: %s", code, stderr)
+	}
+	wantIn(t, stderr, "couldn't read its config")
+}
+
+// The project is the repo's main checkout however git keeps it: a separate git dir too.
+// A linked worktree whose main checkout git doesn't record (a separate git dir's, a bare
+// repo's) and a bare repo name no project: refused (exit 2), not "couldn't look".
+func TestTheProjectFromAnyCheckout(t *testing.T) {
+	r := newRig(t)
+	root := filepath.Dir(r.repo)
+	git := func(args ...string) {
+		t.Helper()
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	main := filepath.Join(root, "sep")
+	git("init", "-q", "--separate-git-dir", filepath.Join(root, "sep.gitdir"), main)
+	git("-C", main, "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "x")
+	if code, out, stderr := r.run(main, nil, "config"); code != 0 || !strings.Contains(out, "# project: sep (the git repo at "+main+")") {
+		t.Errorf("a separate git dir: exit %d %s %s", code, out, stderr)
+	}
+	bare := filepath.Join(root, "bare.git")
+	git("-C", main, "worktree", "add", "-q", filepath.Join(root, "sep-wt"))
+	git("clone", "-q", "--bare", main, bare)
+	git("-C", bare, "worktree", "add", "-q", filepath.Join(root, "bare-wt"))
+	for dir, want := range map[string]string{filepath.Join(root, "sep-wt"): "whose main checkout git doesn't record",
+		filepath.Join(root, "bare-wt"): "whose main checkout git doesn't record", bare: "a bare repo"} {
+		if code, _, stderr := r.run(dir, nil, "config"); code != 2 || !strings.Contains(stderr, want) {
+			t.Errorf("%s: exit %d %s", dir, code, stderr)
 		}
 	}
 }

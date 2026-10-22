@@ -206,6 +206,18 @@ func TestDoneStopsAtACheckThatCantRun(t *testing.T) {
 	must(t, x.worker("toy-1", 1, "done"), 6, "couldn't run")
 }
 
+// The worktree's .git gone, the worker's cwd is in no repo, so bs can't find its project.
+// It should still run the check and stop at exit 6 (bees-13.15).
+func TestDoneWithTheWorktreesGitGone(t *testing.T) {
+	t.Skip("bees-13.15: bsx finds a pane's project only from its cwd")
+	x := newToy(t)
+	sp := x.spawn("toy-1", "branch")
+	if err := os.RemoveAll(filepath.Join(sp.Workspace.Dir, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	must(t, x.worker("toy-1", 1, "done"), 6, "couldn't run")
+}
+
 // A spawn written before goals reads as --goal legacy.
 func TestALegacySpawnReadsAsLegacy(t *testing.T) {
 	x := newToy(t)
@@ -262,17 +274,17 @@ func TestBsxRefusesTheDefaultConfigDirAndAMissingSessionDir(t *testing.T) {
 	must(t, x.keeper("status"), 2, "warning: no config dir for this herdr session nosuch")
 }
 
-// Rule G inside a pane: with the session's config dir gone, a worker's writes are refused
-// (exit 2) and write nothing; status runs, warning.
+// Rule G inside a pane: with the session's config dir gone, a worker's commands are
+// refused (exit 2) and touch no logbook, warning.
 func TestAMissingSessionDirRefusesAWorkersWrites(t *testing.T) {
 	x := newToy(t)
 	x.spawn("toy-1", "branch")
 	if err := os.RemoveAll(x.config); err != nil {
 		t.Fatal(err)
 	}
-	must(t, x.worker("toy-1", 1, "send", "queen-toy", "hi"), 2, "warning: no config dir for this herdr session toy", "refused", "nothing was written")
+	must(t, x.worker("toy-1", 1, "send", "queen-toy", "hi"), 2, "warning: no config dir for this herdr session toy", "refused", "nothing was read or written")
 	must(t, x.worker("toy-1", 2, "inbox"), 2, "refused")
-	must(t, x.worker("toy-1", 3, "status"), 2, "warning: no config dir", "refuses the default config dir")
+	must(t, x.worker("toy-1", 3, "status"), 2, "warning: no config dir", "won't guess a logbook")
 	if ms, err := x.open().Unread(context.Background(), "queen-toy"); err != nil || len(ms) != 0 {
 		t.Fatalf("queen's unread = %v, %v", ms, err)
 	}

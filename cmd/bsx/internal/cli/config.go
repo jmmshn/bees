@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,8 +19,9 @@ import (
 // works only inside a herdr --session toy, on that session's config and logbooks.
 var ErrDefaultConfig = errors.New("bsx refuses the default config dir until the swap (bees-13.9)")
 
-// errNoConfigDir is a session whose config dir is missing (Rule G): writing commands
-// refuse; status, config and doctor run on the defaults, warning.
+// errNoConfigDir is a session whose config dir is missing (Rule G): every command that
+// opens a logbook refuses, since the defaults would name the real one; config and doctor
+// run on the defaults, warning.
 var errNoConfigDir = errors.New("no config dir for this herdr session")
 
 // settings is what a command runs on: the config and everything bs worked out around it.
@@ -27,6 +29,7 @@ type settings struct {
 	*config.Loaded
 	Dir, Session string
 	Missing      bool   // the session's config dir doesn't exist
+	InPane       bool   // run inside a recorded herdr pane, where BS_* is ignored
 	Project      string // "" when bs can't tell: config and doctor still run
 	ProjectFrom  string // how bs found it
 	Repo         string // the project's main checkout, "" if unknown
@@ -49,8 +52,9 @@ var envKeys = []string{"BS_PROJECT", "BS_LOGBOOK_DIR", "BS_REPOS"}
 // load works out env's settings: its config dir (per herdr session), its project (the
 // logbook whose entry recorded the herdr pane bs runs in; outside a recorded pane, the
 // git repo bs runs in, else BS_PROJECT), the files, the repo and the logbook. It fails
-// only on what no command can run past: a broken file, a refused dir, a pane bs can't
-// tell the session of.
+// only on what no command can run past: a broken file, a refused dir, a file or dir it
+// couldn't read (exit 6), a pane bs can't tell the session of. The settings come back
+// with the error, for the warnings found before it.
 func load(ctx context.Context, env Env, ports Ports) (*settings, error) {
 	run := ports.Run
 	dir, session, err := config.Dir(func(k string) string { return core.Getenv(env.Vars, k) })
@@ -64,49 +68,49 @@ func load(ctx context.Context, env Env, ports Ports) (*settings, error) {
 	s := &settings{Dir: dir, Session: session}
 	if fi, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
 		s.Missing = true
-		s.Warnings = append(s.Warnings, fmt.Sprintf("%v %s: %s is missing, so only status, config and doctor run, on the defaults\n  next: mkdir -p %s and write its config.toml (the live-test skill's setup.sh does)",
+		s.Warnings = append(s.Warnings, fmt.Sprintf("%v %s: %s is missing, so only config and doctor run, on the defaults\n  next: mkdir -p %s and write its config.toml (the live-test skill's setup.sh does)",
 			errNoConfigDir, session, dir, dir))
 	} else if err != nil {
-		return nil, err
+		return s, cantRead(err)
 	} else if !fi.IsDir() {
-		return nil, fmt.Errorf("config dir %s is not a directory", dir)
+		return s, fmt.Errorf("config dir %s is not a directory", dir)
 	}
 	home := core.Getenv(env.Vars, "HOME")
 	if pane := core.Getenv(env.Vars, "HERDR_PANE_ID"); pane != "" {
 		global, err := config.Load(config.Input{Dir: dir, Home: home})
 		if err != nil {
-			return nil, err
+			return s, err
 		}
 		p, ok, err := core.ScanPanes(ctx, core.ScanIn{Dir: global.Expand(global.Paths.LogbookDir), Session: session, Pane: pane,
 			Self: env.Self, Run: run, Proc: ports.Proc, Kind: harnessProgram(global.Harness)})
 		if err != nil {
-			return nil, err
+			return s, err
 		}
 		if ok {
 			s.Pane = &p
 		}
 	}
-	inPane := s.Pane != nil
+	s.InPane = s.Pane != nil
 	overrides := map[string]string{}
 	for _, k := range envKeys {
 		v := core.Getenv(env.Vars, k)
 		switch {
 		case v == "":
-		case inPane:
+		case s.InPane:
 			s.Warnings = append(s.Warnings, fmt.Sprintf("ignoring %s inside %s's recorded herdr pane: the pane decides", k, s.Pane.Who.Name))
 		default:
 			overrides[k] = v
 		}
 	}
-	if inPane {
+	if s.InPane {
 		s.Project, s.ProjectFrom = s.Pane.Project, fmt.Sprintf("herdr pane %s, recorded for %s in %s", s.Pane.Pane, s.Pane.Who.Name, s.Pane.Logbook)
 		if s.Pane.Repo != "" {
 			s.Repo, s.RepoFrom = s.Pane.Repo, "the workspace "+s.Pane.Who.Name+"'s spawn recorded"
 		} else if err := s.cwdRepo(ctx, env.Dir, run); err != nil {
-			return nil, err
+			return s, err
 		}
 	} else if err := s.findProject(ctx, env.Dir, run, overrides["BS_PROJECT"]); err != nil {
-		return nil, err
+		return s, err
 	}
 	if pin := overrides["BS_LOGBOOK_DIR"]; pin != "" {
 		unpinned, err := config.Load(config.Input{Dir: dir, Project: s.Project, Home: home})
@@ -119,11 +123,11 @@ func load(ctx context.Context, env Env, ports Ports) (*settings, error) {
 	}
 	l, err := config.Load(config.Input{Dir: dir, Project: s.Project, Home: home, Env: overrides})
 	if err != nil {
-		return nil, err
+		return s, cantRead(err)
 	}
 	s.Loaded = l
 	if err := s.findRepo(ctx, run); err != nil {
-		return nil, err
+		return s, err
 	}
 	if s.Project != "" {
 		s.Logbook = filepath.Join(l.Expand(l.Paths.LogbookDir), s.Project+".db")
@@ -144,6 +148,8 @@ func (s *settings) findProject(ctx context.Context, cwd string, run port.Runner,
 		main, err := mainCheckout(ctx, run, cwd)
 		switch {
 		case errors.Is(err, errNotGit):
+		case errors.As(err, new(*core.Exit)):
+			return err
 		case err != nil: // "couldn't look" is never "no project" (Rule G)
 			return &core.Exit{Code: core.ExitCantCheck, Msg: "bs can't tell which project " + cwd + " is in", Err: err}
 		default:
@@ -189,7 +195,7 @@ func (s *settings) findRepo(ctx context.Context, run port.Runner) error {
 		dir := s.Expand(s.Paths.Repos)
 		es, err := os.ReadDir(dir)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("paths.repos %s: %w", dir, err)
+			return cantRead(fmt.Errorf("paths.repos %s: %w", dir, err))
 		}
 		for _, e := range es {
 			if e.IsDir() && config.Normalise(e.Name()) == s.Project {
@@ -212,6 +218,16 @@ func (s *settings) findRepo(ctx context.Context, run port.Runner) error {
 	return nil
 }
 
+// cantRead is err as exit 6 when bs couldn't read a file or dir in it (Rule G: "couldn't
+// look" is not "refused"); a broken file stays a refusal.
+func cantRead(err error) error {
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		return &core.Exit{Code: core.ExitCantCheck, Msg: "bs couldn't read its config", Err: err}
+	}
+	return err
+}
+
 // errNotGit is a dir git says is in no repo, or a dir that doesn't exist: an answer, not
 // a failure to look.
 var errNotGit = errors.New("not in a git repo")
@@ -226,23 +242,38 @@ func notGit(err error) error {
 	return err
 }
 
-// mainCheckout is the main checkout of the git repo holding dir: a linked worktree names
-// its main repo.
+// mainCheckout is the main checkout of the git repo holding dir: its own top level in
+// the main checkout (whatever the git dir is called), the parent of a .git common dir in a
+// linked worktree. A linked worktree of a bare repo or a separate git dir has a main
+// checkout git doesn't record: refused, as is a bare repo.
 func mainCheckout(ctx context.Context, run port.Runner, dir string) (string, error) {
-	out, err := run.Run(ctx, dir, "git", "-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	out, err := run.Run(ctx, dir, "git", "-C", dir, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir")
+	var ee *port.ExitError
+	if errors.As(err, &ee) && strings.Contains(string(ee.Stderr), "must be run in a work tree") {
+		return "", &core.Exit{Code: core.ExitRefused, Msg: dir + " is in a bare repo, which has no checkout to name a project by", Next: "cd into a checkout of it"}
+	}
 	if err != nil {
 		return "", notGit(err)
 	}
-	common := strings.TrimSpace(string(out))
-	if filepath.Base(common) != ".git" {
-		return "", fmt.Errorf("%s: a bare repo", common)
+	f := strings.Fields(string(out))
+	if len(f) != 3 {
+		return "", fmt.Errorf("git rev-parse in %s: unexpected output %q", dir, out)
 	}
-	return filepath.Dir(common), nil
+	top, gitDir, common := f[0], f[1], f[2]
+	switch {
+	case gitDir == common:
+		return top, nil
+	case filepath.Base(common) == ".git":
+		return filepath.Dir(common), nil
+	}
+	return "", &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("%s is a linked worktree of %s, whose main checkout git doesn't record", top, common),
+		Next: "run bsx in the main checkout, or outside a herdr pane with BS_PROJECT set"}
 }
 
 // checkLogbook checks s names a project and that its logbook isn't the real one, which no toy may migrate before the swap.
 func (s *settings) checkLogbook(env Env) error {
 	if s.Project == "" {
+		// A recorded pane always names its project (bees-13.15): this is outside one.
 		return &core.Exit{Code: core.ExitRefused, Msg: "no project: bs isn't in a git repo and BS_PROJECT is unset",
 			Next: "cd into the project's repo"}
 	}

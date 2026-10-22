@@ -208,9 +208,6 @@ func (c *Core) workspace(ctx context.Context, name string, detached bool) (logbo
 	if c.Repo == "" {
 		return logbook.Workspace{}, exit(ExitRefused, "", nil, "bs spawn: project %s has no repo: run it in the repo, or set paths.repo", c.Project)
 	}
-	if c.Kind != "" && c.Kind != "git_worktree" {
-		return logbook.Workspace{}, exit(ExitRefused, "bsx config", nil, "bs spawn: workspace kind %s isn't built yet (none: bees-13.10, command: bees-13.11)", c.Kind)
-	}
 	top, err := c.git(ctx, c.Repo, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return logbook.Workspace{}, refusedOrCant(err, "", "bs spawn: %s is not a git checkout (workspace none arrives with bees-13.10)", c.Repo)
@@ -221,6 +218,11 @@ func (c *Core) workspace(ctx context.Context, name string, detached bool) (logbo
 	}
 	if top != c.Repo && top != real {
 		return logbook.Workspace{}, exit(ExitRefused, "", nil, "bs spawn: %s is inside the checkout %s, not its top level; set paths.repo to it", c.Repo, top)
+	}
+	// The checks above say what to fix when the kind was worked out as none; this one
+	// names a kind set by hand.
+	if c.Kind != "" && c.Kind != "git_worktree" {
+		return logbook.Workspace{}, exit(ExitRefused, "bs config", nil, "bs spawn: workspace kind %s (%s) isn't built yet (none: bees-13.10, command: bees-13.11)", c.Kind, c.KindWhy)
 	}
 	base, err := c.git(ctx, c.Repo, "symbolic-ref", "--short", "HEAD")
 	if err != nil {

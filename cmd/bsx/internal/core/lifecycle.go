@@ -210,7 +210,7 @@ func (c *Core) handedPRs(g goal.Goal, prev []string, h Handed) ([]string, error)
 
 // EndOpts are bs end's flags.
 type EndOpts struct {
-	Force      bool // waive the gate, and nothing else
+	Force      bool // waive the gate and the moved-pane refusal (stopping it where it runs), and nothing else
 	Incomplete bool // end an incomplete goal anyway; prune completes it later
 }
 
@@ -442,9 +442,9 @@ type Pruned struct {
 	Unknown   bool   // it couldn't check
 }
 
-// Prune removes each ended spawn's workspace, then its local branch, once its frozen prune
-// rule passes (or it is discarded: the branch then stays) and the workspace holds no
-// uncommitted or untracked files, completing a goal ended --incomplete on the way. A
+// Prune removes each ended spawn's workspace once its frozen prune rule passes (or it is
+// discarded) and it holds no uncommitted or untracked files, then its local branch once
+// that is proven merged (or discarded), completing a goal ended --incomplete on the way. A
 // workspace whose directory is already gone still has its branch pruned, so nothing is
 // kept forever (bees-12.41). It never touches a remote branch, and names what it kept and
 // why.
@@ -557,7 +557,9 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 	if !branch {
 		return p
 	}
-	release := e.Discarded
+	// The prune rule's branch_merged, when it ran and passed, is the proof: one gh call,
+	// not two. A merged (or closed draft) handed-off change holding the tip is another.
+	release := e.Discarded || slices.Contains(e.Prune(), goal.BranchMerged)
 	if !release && slices.ContainsFunc(e.Parts, func(p goal.Part) bool { return p.Type == "pr" }) {
 		d, _, err := c.Logbook.LatestDone(ctx, sp.ID)
 		if err != nil {
@@ -614,10 +616,10 @@ func (c *Core) heldByChange(ctx context.Context, sp logbook.Spawn, prs []string,
 
 // pruneBranch deletes ws's local branch once it is proven merged into its base, whatever
 // the goal's prune rule (a verdict goal prunes at once, but its branch may hold commits),
-// or released: discarded, or held by a merged (or closed draft) change.
+// or released: discarded (the keeper's recorded word that the work is wanted nowhere),
+// proven by the prune rule's branch_merged, or held by a merged (or closed draft) change.
 // It returns why it kept the branch, or err when it couldn't check.
 func (c *Core) pruneBranch(ctx context.Context, ws logbook.Workspace, released bool) (string, error) {
-	// A discard is the keeper's recorded word that the work is wanted nowhere.
 	if !released {
 		switch ok, why, err := c.merged(ctx, ws); {
 		case err != nil:

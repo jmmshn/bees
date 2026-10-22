@@ -56,11 +56,23 @@ func (c *Core) merged(ctx context.Context, ws logbook.Workspace) (bool, string, 
 
 // bases is where ws's branch lands: its recorded base and, when it has one, the base's
 // upstream (where a hosted merge is pulled). A spawn from before goals recorded no base
-// ref (main's v0) or the repo's path in its place (the pilot's v1): its bases are the
-// pilot's default branches, origin's default branch and the local one of the same name,
-// or main.
+// ref (main's v0) or the repo's path in its place (the pilot's v1), and a base branch can
+// be deleted since: then its bases are the pilot's default branches, origin's default
+// branch and the local one of the same name, or main.
 func (c *Core) bases(ctx context.Context, ws logbook.Workspace) ([]string, error) {
+	gone := false
 	if ws.Base != "" && !filepath.IsAbs(ws.Base) {
+		// A base deleted since (a stacked base merged and removed) lands where it landed:
+		// the default branches, never "can't check" forever (motif 5).
+		_, err := c.git(ctx, ws.Repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+ws.Base)
+		switch {
+		case isExit(err, 1):
+			gone = true
+		case err != nil:
+			return nil, err
+		}
+	}
+	if ws.Base != "" && !filepath.IsAbs(ws.Base) && !gone {
 		up, err := c.git(ctx, ws.Repo, "for-each-ref", "--format=%(upstream:short)", "refs/heads/"+ws.Base)
 		if err != nil || up == "" {
 			return []string{ws.Base}, err
@@ -106,7 +118,10 @@ func (c *Core) sameContent(ctx context.Context, repo, base, branch string) (bool
 	if err != nil {
 		return false, err
 	}
-	names, err := c.git(ctx, repo, "diff", "--name-only", "-z", "--no-renames", fork, branch)
+	// Not c.git: trimming would cut a path's leading space, and the trimmed path, absent
+	// on both sides, would compare identical (and the branch be deleted unmerged).
+	out, err := c.Run.Run(ctx, repo, "git", "-C", repo, "diff", "--name-only", "-z", "--no-renames", fork, branch)
+	names := string(out)
 	if err != nil || names == "" {
 		return false, err
 	}

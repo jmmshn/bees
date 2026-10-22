@@ -23,12 +23,6 @@ func (l *Logbook) Send(ctx context.Context, from, to, body string) (ID, error) {
 	return l.SendFrom(ctx, from, "", to, body)
 }
 
-// SendAbout is Send of a message about spawn: like its brief, it stops being unread once
-// that spawn ends, so a later spawn of the same name never reads it.
-func (l *Logbook) SendAbout(ctx context.Context, from, to string, spawn ID, body string) (ID, error) {
-	return insert(ctx, l.db, entry{kind: "message", actor: from, subject: to, ref: spawn, data: map[string]string{"body": body}})
-}
-
 // SendFrom is Send from a session of project fromProject, writing into another project's
 // logbook: the entry records it, so the reply needs no project read back out of a name
 // (motif 3). "" is the logbook's own project.
@@ -40,14 +34,23 @@ func (l *Logbook) SendFrom(ctx context.Context, from, fromProject, to, body stri
 	return insert(ctx, l.db, entry{kind: "message", actor: from, subject: to, data: d})
 }
 
+// forOpenSpawn scopes a message m to its recipient's open spawn, at read time (bees-13.9):
+// a name ever spawned reads only what was stored after its latest spawn, while that spawn
+// is open, so mail for an earlier spawn, or sent between spawns, never reaches a later one
+// (migrated mail too); a name never spawned (a queen) reads all of its own.
+const forOpenSpawn = `
+  (NOT EXISTS (SELECT 1 FROM entries x WHERE x.kind = 'spawned' AND x.subject = m.subject)
+   OR EXISTS (SELECT 1 FROM entries s WHERE s.kind = 'spawned' AND s.subject = m.subject AND s.rowid < m.rowid
+              AND s.rowid = (SELECT MAX(x.rowid) FROM entries x WHERE x.kind = 'spawned' AND x.subject = m.subject)
+              AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = s.id)))`
+
 // unread is the anti-join over receipts (ADR-0002): messages and done entries addressed
-// to ?1 with no receipt from it, leaving out the briefs of ended spawns. A done stays
-// unread after its worker has ended.
+// to ?1 with no receipt from it, scoped to its open spawn.
 const unread = `
 FROM entries m
 WHERE m.kind IN ('message', 'done') AND m.subject = ?1
   AND NOT EXISTS (SELECT 1 FROM entries r WHERE r.kind = 'received' AND r.ref = m.id AND r.actor = ?1)
-  AND (m.kind = 'done' OR NOT EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = m.ref))`
+  AND` + forOpenSpawn
 
 // Unread returns session's unread messages and done entries in the order they were stored.
 func (l *Logbook) Unread(ctx context.Context, session string) ([]Message, error) {
@@ -103,8 +106,7 @@ SELECT name, SUM(unread) FROM (
   UNION ALL SELECT subject, 0 FROM entries WHERE kind = 'spawned'
   UNION ALL SELECT m.subject, NOT EXISTS (SELECT 1 FROM entries r
                                          WHERE r.kind = 'received' AND r.ref = m.id AND r.actor = m.subject)
-            FROM entries m WHERE m.kind IN ('message', 'done')
-              AND (m.kind = 'done' OR NOT EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = m.ref))
+            FROM entries m WHERE m.kind IN ('message', 'done') AND`+forOpenSpawn+`
 ) GROUP BY name`)
 	if err != nil {
 		return nil, err

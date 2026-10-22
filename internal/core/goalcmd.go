@@ -180,7 +180,7 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 	case change.Waive != "":
 		body = fmt.Sprintf("%s waived the %s check of your goal (--goal %s)", req.By, change.Waive, e.Goal)
 	}
-	_, err = c.Logbook.SendAbout(ctx, req.By, sp.Name, sp.ID, body)
+	_, err = c.Logbook.Send(ctx, req.By, sp.Name, body) // read only by this spawn: mail is scoped to the open spawn
 	return e, err
 }
 

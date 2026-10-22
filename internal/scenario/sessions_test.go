@@ -482,3 +482,18 @@ func TestAWorkerRestartedByHandIsHealed(t *testing.T) {
 	must(t, x.queen("send", "toy-1", "still there?"), 0, "rung toy-1")
 	must(t, x.worker("toy-1", 1, "inbox"), 0, "still there?")
 }
+
+// Mail to a worker name with no open spawn is stored with a warning that a later spawn
+// won't read it (bees-13.9, B: mail is scoped to the open spawn); a spawn then reads its
+// brief alone.
+func TestSendToANameWithNoOpenSpawnWarns(t *testing.T) {
+	x := newToy(t)
+	x.start()
+	must(t, x.queen("send", "toy-1", "early"), 0, "warning: toy-1 is neither queen-toy nor a worker spawned", "a worker spawned as toy-1 later reads only mail sent after its spawn")
+	x.spawn("toy-1", "branch")
+	r := x.worker("toy-1", 1, "inbox")
+	must(t, r, 0, "work on toy-1")
+	if strings.Contains(r.String(), "early") {
+		t.Fatalf("the spawn read mail sent before it:\n%s", r)
+	}
+}

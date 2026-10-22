@@ -352,8 +352,8 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 	}
 	fmt.Fprintf(r.out, "sent %s to %s\n", id, to)
 	if stranger {
-		fmt.Fprintf(r.err, bsname.Cmd+" send: warning: %s is neither %s nor a worker spawned in project %s: stored, not rung; it reads it only as a session of %s\n",
-			to, core.Queen(c.Project), c.Project, c.Project)
+		fmt.Fprintf(r.err, bsname.Cmd+" send: warning: %s is neither %s nor a worker spawned in project %s: stored, not rung; it reads it only as a session of %s, and a worker spawned as %s later reads only mail sent after its spawn\n",
+			to, core.Queen(c.Project), c.Project, c.Project, to)
 		return nil
 	}
 	priority := port.Next
@@ -391,7 +391,7 @@ func (r *run) ring(c *core.Core, from, to string, p port.Priority) {
 	case errors.Is(err, port.ErrNoRing):
 		fmt.Fprintf(r.out, "stored, not rung (%v): %s reads it at its next "+bsname.Cmd+" inbox\n", err, to)
 	case errors.Is(err, core.ErrEnded):
-		fmt.Fprintf(r.out, "stored, not rung: %v, so nobody reads it unless it is spawned again\n", err)
+		fmt.Fprintf(r.out, "stored, not rung: %v, so nobody reads it (a later spawn reads only mail sent after it)\n", err)
 	default:
 		fmt.Fprintf(r.err, bsname.Cmd+" %s: couldn't ring %s (the message is stored): %v\n", r.name, to, err)
 	}

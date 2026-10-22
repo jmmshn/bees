@@ -3,6 +3,7 @@ package logbook_test
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -156,5 +157,49 @@ func TestDoneLandedAndEnded(t *testing.T) {
 	// The brief of an ended spawn is no longer unread.
 	if unread, _ := lb.Unread(ctx, "toy-1"); len(unread) != 0 {
 		t.Fatalf("worker's unread after end = %+v", unread)
+	}
+}
+
+// A worker's mail is scoped at read time to its open spawn (bees-13.9, B): what was sent
+// while it ran or was down is unread; what was sent to an earlier spawn, or between
+// spawns, never reaches a later one, plain messages and migrated mail included. A name
+// never spawned (a queen) reads all of its mail. Unread and UnreadCounts agree.
+func TestMailIsScopedToTheOpenSpawn(t *testing.T) {
+	ctx := context.Background()
+	lb := open(t, filepath.Join(t.TempDir(), "bees.db"))
+	if _, err := lb.Send(ctx, "queen-toy", "toy-1", "before any spawn"); err != nil {
+		t.Fatal(err)
+	}
+	s := spawn(t, lb, "toy-1", "toy", "w1:p1", "branch")
+	if _, err := lb.Send(ctx, "queen-toy", "toy-1", "while it runs"); err != nil {
+		t.Fatal(err)
+	}
+	want := func(step string, bodies ...string) {
+		t.Helper()
+		ms, err := lb.Unread(ctx, "toy-1")
+		var got []string
+		for _, m := range ms {
+			got = append(got, m.Body)
+		}
+		counts, cerr := lb.UnreadCounts(ctx)
+		if err != nil || cerr != nil || !slices.Equal(got, bodies) || counts["toy-1"] != len(bodies) {
+			t.Fatalf("%s: unread %q (count %d), want %q; %v %v", step, got, counts["toy-1"], bodies, err, cerr)
+		}
+	}
+	want("open", "brief for toy-1", "while it runs")
+	if err := lb.RecordEnd(ctx, "queen-toy", s.ID, logbook.Ended{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lb.Send(ctx, "queen-toy", "toy-1", "after it ended"); err != nil {
+		t.Fatal(err)
+	}
+	want("ended")
+	spawn(t, lb, "toy-1", "toy", "w2:p1", "branch")
+	want("respawned", "brief for toy-1")
+	if _, err := lb.Send(ctx, "toy-1", "queen-toy", "hi"); err != nil {
+		t.Fatal(err)
+	}
+	if ms, _ := lb.Unread(ctx, "queen-toy"); len(ms) != 1 {
+		t.Fatalf("the queen's unread: %+v", ms)
 	}
 }

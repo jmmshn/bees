@@ -500,8 +500,8 @@ func TestSpawnRefusesABranchThatAlreadyExists(t *testing.T) {
 	x.git(x.repo, "branch", "toy-1")
 	x.bead("toy-1", "x")
 	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 2, "already has a branch toy-1", "next: bs prune", "branch -d toy-1")
-	if _, ok, err := x.open().LatestSpawn(context.Background(), "toy-1"); err != nil || ok {
-		t.Fatalf("a refused spawn was recorded: %v, %v", ok, err)
+	if _, err := os.Stat(x.logbook); !os.IsNotExist(err) { // a refused spawn leaves no logbook it made
+		t.Fatalf("a refused spawn left a logbook: %v", err)
 	}
 }
 

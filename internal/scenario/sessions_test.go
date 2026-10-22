@@ -685,3 +685,24 @@ func TestTheResumeHintRunsAsPrinted(t *testing.T) {
 		t.Fatalf("a discarded goal's resume hint:\n%s", r)
 	}
 }
+
+// An unreadable target logbook on send --project is exit 6, nothing stored, with a next:
+// (bees-13.9 re-review 2).
+func TestSendAcrossProjectsToAnUnreadableLogbook(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root reads a 0000 file")
+	}
+	x := newToy(t)
+	x.start()
+	other := filepath.Join(filepath.Dir(x.logbook), "other.db")
+	lb, _, err := logbook.Create(context.Background(), other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lb.Close()
+	if err := os.Chmod(other, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(other, 0o600) })
+	must(t, x.queen("send", "--project", "other", "queen-other", "hi"), 6, "can't read", "nothing stored", "next: bs doctor")
+}

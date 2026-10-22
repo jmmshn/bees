@@ -15,7 +15,7 @@ type Change struct {
 	URL        string // the one spelling bs records (motif 3)
 	Repo       string // the host repo it belongs to
 	Number     int
-	State      string // open, merged or closed
+	State      string // Open, Merged or Closed
 	Draft      bool
 	Head       string // the branch its commits are pushed to; "" when the host has none
 	HeadCommit string
@@ -28,14 +28,29 @@ type Change struct {
 	Notes       []Note // comments and reviews
 }
 
+// A change's states.
+const (
+	Open   = "open"
+	Merged = "merged"
+	Closed = "closed"
+)
+
 // Note is one comment or review on a change.
 type Note struct {
 	Body string
 	At   time.Time
 }
 
-// CICheck is one CI check of a change. Bucket is pass, fail, pending, skipping or cancel.
+// CICheck is one CI check of a change. Bucket is one of the CI buckets below; any other
+// (gh's fail, cancel) is a failure.
 type CICheck struct{ Name, Bucket string }
+
+// The CI buckets bs reads: gh pr checks' own words.
+const (
+	CIPass     = "pass"
+	CISkipping = "skipping"
+	CIPending  = "pending"
+)
 
 // Ref is a change URL as its host reads it.
 type Ref struct {
@@ -84,8 +99,8 @@ type VCS interface {
 	Commits(ctx context.Context, dir string, since time.Time) ([]string, error)
 	// Branch is the tip of dir's local branch name; ok false when there is none.
 	Branch(ctx context.Context, dir, name string) (tip string, ok bool, err error)
-	// Pushed is where dir's local branch name was last pushed to (its upstream's tip as
-	// the checkout last saw it); ok false when it has none.
+	// Pushed is where dir's checkout last pushed branch name to, local or not (a push
+	// from a detached HEAD too), as the checkout last saw it; ok false when it can't say.
 	Pushed(ctx context.Context, dir, name string) (tip string, ok bool, err error)
 	// Has reports whether dir's checkout has commit.
 	Has(ctx context.Context, dir, commit string) (bool, error)

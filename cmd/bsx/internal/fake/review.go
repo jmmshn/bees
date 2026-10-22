@@ -20,8 +20,9 @@ import (
 // checks: CL-shaped changes (https://cl.test/<repo>/<n>) and a commit graph, all in
 // memory. A workspace's commits are what Commit made there; uploading a workspace points
 // a change at its head. It shows the goal checks need neither git nor GitHub (keeper,
-// bees-13.6). The workspace itself is still git_worktree's (command arrives with
-// bees-13.11): Detach makes a plain git worktree, and prune removes it with git.
+// bees-13.6). ponytail: the workspace itself is still git_worktree's: Detach makes a plain
+// git worktree, and prune removes it with git; the command workspace kind (bees-13.11)
+// replaces it.
 type CLHost struct {
 	mu       sync.Mutex
 	RepoName string // the repo every checkout belongs to; "" is none
@@ -131,7 +132,7 @@ func (h *CLHost) Upload(dir string, n int, draft bool) string {
 	c := h.changes[n]
 	if c == nil {
 		c = &clChange{Change: port.Change{URL: fmt.Sprintf("https://cl.test/%s/%d", h.RepoName, n), Repo: h.RepoName, Number: n,
-			State: "open", Base: "trunk", Editable: true, Head: fmt.Sprintf("cl%d", n)}}
+			State: port.Open, Base: "trunk", Editable: true, Head: fmt.Sprintf("cl%d", n)}}
 		h.changes[n] = c
 	}
 	c.Draft, c.HeadCommit = draft, h.head(dir)
@@ -152,7 +153,7 @@ func (h *CLHost) Land(n int) {
 	defer h.mu.Unlock()
 	c := h.changes[n]
 	h.trunk = h.newCommit(h.trunk, c.HeadCommit)
-	c.State, c.landed = "merged", h.trunk
+	c.State, c.landed = port.Merged, h.trunk
 }
 
 // ancestors is every commit reachable from c, c included.
@@ -283,7 +284,7 @@ func (h *CLHost) Landed(_ context.Context, _ string, branch string) ([]string, e
 	}
 	var out []string
 	for _, c := range h.changes {
-		if c.State == "merged" && c.Head == branch {
+		if c.State == port.Merged && c.Head == branch {
 			out = append(out, c.HeadCommit)
 		}
 	}
@@ -322,16 +323,25 @@ func (h *CLHost) Commits(_ context.Context, dir string, since time.Time) ([]stri
 }
 
 // Branch is the head of the workspace named name: a worker's workspace is the only
-// "branch" a CL-shaped checkout has, and the change it uploads holds its commits.
+// "branch" a CL-shaped checkout has, and the change it uploads holds its commits. Two
+// workspaces of that name is an error, never the first one found.
 func (h *CLHost) Branch(_ context.Context, _ string, name string) (string, bool, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	for dir, head := range h.heads {
+	var dirs []string
+	for dir := range h.heads {
 		if filepath.Base(dir) == name {
-			return head, true, nil
+			dirs = append(dirs, dir)
 		}
 	}
-	return "", false, nil
+	switch len(dirs) {
+	case 0:
+		return "", false, nil
+	case 1:
+		return h.heads[dirs[0]], true, nil
+	}
+	slices.Sort(dirs)
+	return "", false, fmt.Errorf("cl: workspace %s is ambiguous: %s", name, strings.Join(dirs, ", "))
 }
 
 // Pushed: a CL host has no local branches to push.

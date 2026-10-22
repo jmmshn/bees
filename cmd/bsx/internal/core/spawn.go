@@ -71,7 +71,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (logbook.Spawn, error) {
 		return logbook.Spawn{}, err
 	}
 	// Prepare is pure, so it runs before anything is made: a refused launch leaves nothing.
-	launch, err := c.Harness.Prepare(port.Start{Role: port.Worker, Name: name, Dir: ws.Dir, PromptFile: "{{prompt.md}}", Doorbell: doorbell(name, bead.ID, req.By), Path: c.WorkerPath, Deny: deny})
+	launch, err := c.Harness.Prepare(port.Start{Role: port.Worker, Name: name, Dir: ws.Dir, PromptFile: "{{prompt.md}}", Doorbell: doorbell(name, bead.ID, req.By), Path: c.WorkerPath, Deny: deny, ShellTimeout: ShellTimeout})
 	if err != nil {
 		return logbook.Spawn{}, exit(ExitRefused, "", err, "%s: its harness refused the launch; nothing was made", name)
 	}
@@ -171,7 +171,7 @@ func (c *Core) resolveReview(ctx context.Context, g *goal.Goal) (*target, error)
 			return nil, exit(ExitRefused, "", nil, "--goal %s: %s has no such change", p, repo)
 		case err != nil:
 			return nil, exit(ExitCantCheck, "", err, "--goal %s: can't ask %s about it", p, c.Review.Name())
-		case v.State != "open":
+		case v.State != port.Open:
 			return nil, exit(ExitRefused, "", nil, "--goal %s: it is %s, not open", p, v.State)
 		case p.Type == "push" && !v.Editable:
 			return nil, exit(ExitRefused, "ask its author to allow edits by maintainers", nil,

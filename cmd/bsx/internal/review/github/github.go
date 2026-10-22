@@ -124,6 +124,9 @@ type view struct {
 	} `json:"reviews"`
 }
 
+// ponytail: gh pr view may read only one GraphQL page (100) of commits, comments and
+// reviews (not probed); past that pr_workspace_commit and review_comment may miss one. gh api --paginate on
+// pulls/<n>/commits, issues/<n>/comments and pulls/<n>/reviews would replace it.
 const fields = "url,state,isDraft,headRefName,headRefOid,baseRefName,isCrossRepository,maintainerCanModify,headRepository,commits,comments,reviews"
 
 // gh runs gh in dir. gh saying the PR doesn't exist is port.ErrNoChange; any other
@@ -257,14 +260,34 @@ func (h Host) Landed(ctx context.Context, dir, branch string) ([]string, error) 
 	return heads, nil
 }
 
-// MergeDeny denies gh's merge, whatever the spelling: gh pr merge, gh -R o/r pr merge,
-// and the API's merge endpoint.
-func (Host) MergeDeny() []string { return []string{"gh pr merge*", "gh * pr merge*", "gh api *merge*"} }
+// ghs is each glob as gh, command gh or a path to gh (*/gh) starts it.
+func ghs(globs ...string) []string {
+	var out []string
+	for _, gh := range []string{"gh", "command gh", "*/gh"} {
+		for _, g := range globs {
+			out = append(out, gh+" "+g)
+		}
+	}
+	return out
+}
 
-// ApproveDeny denies an approving review: on a repo that requires one, the merge's other
-// half.
+// MergeDeny denies gh's merge, whatever the spelling: gh pr merge (--auto too), gh -R o/r
+// pr merge, the REST merge endpoint and GraphQL's merge mutations; never a read such as
+// gh api …/pulls/41 --jq .mergeable. ponytail: a request body from a file (--input) passes;
+// a deny hook that parses the command line would catch it.
+func (Host) MergeDeny() []string {
+	return ghs("pr merge*", "* pr merge*", "api *pulls/*/merge*", "api *merges*", "api graphql*mergePullRequest*", "api graphql*AutoMerge*")
+}
+
+// ApproveDeny denies an approving review, gh -R o/r spelled too: on a repo that requires
+// one, the merge's other half. The API's: an event=APPROVE field on a reviews call, or
+// GraphQL's (ponytail: the same --input gap as MergeDeny).
 func (Host) ApproveDeny() []string {
-	return []string{"gh pr review* --approve*", "gh pr review* -a *", "gh pr review* -a"}
+	var deny []string
+	for _, review := range []string{"pr review*", "* pr review*"} {
+		deny = append(deny, review+" --approve*", review+" -a *", review+" -a")
+	}
+	return ghs(append(deny, "api *reviews*APPROVE*", "api *APPROVE*reviews*", "api graphql*APPROVE*")...)
 }
 
 // Fetch fetches refs/pull/<n>/head from the remote of c's repo, writing no ref.

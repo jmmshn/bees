@@ -17,6 +17,7 @@ import (
 	"github.com/jmmshn/bees/cmd/bsx/internal/goal"
 	"github.com/jmmshn/bees/cmd/bsx/internal/herdr"
 	"github.com/jmmshn/bees/cmd/bsx/internal/logbook"
+	"github.com/jmmshn/bees/cmd/bsx/internal/port"
 	"github.com/jmmshn/bees/cmd/bsx/internal/proc"
 )
 
@@ -32,6 +33,15 @@ import (
 // no background job of the harness's). o.Force waives the gate and nothing else.
 func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts) (logbook.Done, error) {
 	force := o.Force
+	// With o.Wait every look is bounded from here, the last included, so bs answers before
+	// the caller's shell call is cut (motif 15); recording a handoff that passed is not.
+	deadline, waited := time.Now().Add(o.Wait), false
+	lookCtx := ctx
+	if o.Wait > 0 {
+		var cancel context.CancelFunc
+		lookCtx, cancel = context.WithDeadline(ctx, deadline.Add(c.timing().WaitGrace))
+		defer cancel()
+	}
 	if who.Queen {
 		return logbook.Done{}, exit(ExitRefused, "", nil, bsname.Cmd+" done is a worker's handoff; %s is a queen", who.Name)
 	}
@@ -64,7 +74,7 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 	// its result recorded as waived.
 	gate := func() (logbook.CheckResult, error) {
 		r := logbook.CheckResult{Name: goal.NoBackground, Pass: true}
-		switch bg, err := c.Background(ctx, sp, self); {
+		switch bg, err := c.Background(lookCtx, sp, self); {
 		case err != nil && force:
 			d.Unchecked = err.Error()
 			r = logbook.CheckResult{Name: goal.NoBackground, Err: err.Error(), Waived: true}
@@ -83,20 +93,12 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 		return d, err
 	}
 	d.Checks = append(d.Checks, r)
-	deadline, waited := time.Now().Add(o.Wait), false
-	lookCtx := ctx
-	if o.Wait > 0 {
-		// The looks are bounded, the last included, so bs answers before the caller's
-		// shell call is cut (motif 15); recording a handoff that passed is not.
-		var cancel context.CancelFunc
-		lookCtx, cancel = context.WithDeadline(ctx, deadline.Add(waitGrace))
-		defer cancel()
-	}
 	var rs []logbook.CheckResult
 	for {
 		var cant *logbook.CheckResult
 		rs, cant = c.look(sp, Handed{PRs: d.PRs, Answer: h.Answer, Report: h.Report}).stage(lookCtx, e, func(p goal.Part) []string { return p.Handoff })
-		if cant != nil && o.Wait > 0 && lookCtx.Err() != nil {
+		// Out of time after waiting is still pending; a first look that couldn't run is 6.
+		if cant != nil && waited && lookCtx.Err() != nil {
 			return d, exit(ExitWaited, bsname.Cmd+" done --wait again, or ask the queen", nil, "still pending after %s (%s ran out of time)", o.Wait, cant.Name)
 		}
 		if cant != nil {
@@ -140,9 +142,6 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 	}
 	return d, err
 }
-
-// waitGrace is how long the last look of a bs done --wait may run past its deadline.
-const waitGrace = 45 * time.Second
 
 // DoneOpts are bs done's flags.
 type DoneOpts struct {
@@ -619,7 +618,7 @@ func (c *Core) heldByChange(ctx context.Context, sp logbook.Spawn, prs []string,
 		if err != nil {
 			return "", err
 		}
-		done := v.State == "merged" || closed && v.State == "closed"
+		done := v.State == port.Merged || closed && v.State == port.Closed
 		if done && (v.HeadCommit == tip || slices.Contains(v.Commits, tip)) {
 			return v.URL, nil
 		}

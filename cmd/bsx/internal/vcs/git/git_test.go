@@ -58,3 +58,49 @@ func TestCommitsAreOnlyThoseMadeThere(t *testing.T) {
 		t.Fatalf("commits since later = %q", late)
 	}
 }
+
+// A pull's rebase replays the workspace's own commits, whatever the pull's spelling (probed
+// on git 2.4x: the reflog says the command line, "pull -q --rebase origin main (pick)", or
+// "pull -q (pick)" with pull.rebase set); the commits it pulled are never the workspace's.
+func TestPullRebasePicksAreCommitsMadeThere(t *testing.T) {
+	root := t.TempDir()
+	up, wt := filepath.Join(root, "up"), filepath.Join(root, "w")
+	run(t, root, "init", "-q", "-b", "main", up)
+	run(t, up, "commit", "-q", "--allow-empty", "-m", "init")
+	run(t, root, "clone", "-q", up, wt)
+	since := time.Now().Add(-time.Second)
+	var pulled []string
+	for i, pull := range [][]string{
+		{"pull", "-q", "--rebase", "origin", "main"},
+		{"-c", "pull.rebase=true", "pull", "-q"},
+		{"pull", "-q", "--rebase=merges"},
+		{"pull", "--rebase"},
+	} {
+		run(t, up, "commit", "-q", "--allow-empty", "-m", "up")
+		pulled = append(pulled, run(t, up, "rev-parse", "HEAD"))
+		f := filepath.Join(wt, "f"+string(rune('a'+i)))
+		if err := os.WriteFile(f, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		run(t, wt, "add", f)
+		run(t, wt, "commit", "-q", "-m", "mine")
+		run(t, wt, pull...)
+	}
+	got, err := git.VCS{Run: port.Exec{}}.Commits(context.Background(), wt, since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := run(t, wt, "rev-parse", "HEAD")
+	if !slices.Contains(got, head) {
+		t.Errorf("commits = %q: the last pull's pick %s is missing", got, head)
+	}
+	for _, p := range pulled {
+		if slices.Contains(got, p) {
+			t.Errorf("commits = %q hold %s, which was pulled", got, p)
+		}
+	}
+	// 4 commits, then 1+2+3+4 picks.
+	if len(got) != 14 {
+		t.Errorf("commits = %d, want 14: %q", len(got), got)
+	}
+}

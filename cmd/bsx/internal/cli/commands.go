@@ -107,7 +107,7 @@ func (r *run) done(fs *flag.FlagSet, args []string) error {
 	report := fs.String("report", "", "a verdict goal's report, or - to read it from stdin")
 	force := fs.Bool("force", false, "hand off while background work runs (waives that gate only)")
 	wait := fs.Bool("wait", r.name == "handoff", "while CI is still running (or the host hasn't shown a push yet), wait for it (up to --timeout), then hand off or name what failed")
-	timeout := fs.Duration("timeout", 8*time.Minute, "how long --wait waits, at most 9m (a harness's shell call may run 10)")
+	timeout := fs.Duration("timeout", 8*time.Minute, "how long --wait waits, at most 9m (bs gives a worker's shell calls 10)")
 	as := fs.String("as", "", "the worker, outside a herdr pane")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -115,8 +115,8 @@ func (r *run) done(fs *flag.FlagSet, args []string) error {
 	if fs.NArg() != 0 {
 		return fmt.Errorf("%w: "+bsname.Cmd+" done takes no arguments; say it with --report (got %q)", errUsage, strings.Join(fs.Args(), " "))
 	}
-	if *timeout > maxWait {
-		return fmt.Errorf("%w: --timeout %s: at most %s, so bs answers before a harness's 10-minute shell call is cut", errUsage, *timeout, maxWait)
+	if *timeout > core.MaxWait {
+		return fmt.Errorf("%w: --timeout %s: at most %s, so bs answers before the worker's %s shell call is cut", errUsage, *timeout, core.MaxWait, core.ShellTimeout)
 	}
 	if *report == "-" {
 		b, err := io.ReadAll(r.env.Stdin)
@@ -158,6 +158,8 @@ func (r *run) check(fs *flag.FlagSet, args []string) error {
 		switch {
 		case c.Err != "":
 			mark = "??  "
+		case c.Pending:
+			mark = "WAIT"
 		case !c.Pass:
 			mark = "FAIL"
 		}
@@ -207,9 +209,6 @@ func (r *run) goal(fs *flag.FlagSet, args []string) error {
 	fmt.Fprintf(r.out, "%s: %s\n", name, g)
 	return nil
 }
-
-// maxWait bounds bs done --timeout.
-const maxWait = 9 * time.Minute
 
 // waitFor is how long bs done waits for CI: --timeout with --wait, else not at all.
 func waitFor(wait bool, timeout time.Duration) time.Duration {

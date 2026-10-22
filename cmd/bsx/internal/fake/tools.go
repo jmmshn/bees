@@ -90,6 +90,9 @@ type GH struct {
 	mu      sync.Mutex
 	PRs     map[string]*PR
 	Offline bool
+	// Hang makes every call hang until its context ends, as gh does on a network that
+	// drops packets.
+	Hang bool
 	// Git is a bare repo standing for GitHub's copy of the repo; "" answers from the PRs'
 	// own fields. Each view writes refs/pull/<n>/head there, as GitHub keeps it.
 	Git        string
@@ -139,8 +142,13 @@ func (g *GH) refresh(pr *PR) error {
 	return nil
 }
 
-func (g *GH) Run(_ context.Context, _ string, argv ...string) ([]byte, error) {
+func (g *GH) Run(ctx context.Context, _ string, argv ...string) ([]byte, error) {
 	g.mu.Lock()
+	if g.Hang {
+		g.mu.Unlock()
+		<-ctx.Done()
+		return nil, fmt.Errorf("%s: %w", strings.Join(argv, " "), ctx.Err())
+	}
 	defer g.mu.Unlock()
 	if g.Offline {
 		return nil, ghFail(argv, "error connecting to api.github.com")

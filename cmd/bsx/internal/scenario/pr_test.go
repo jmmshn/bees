@@ -463,8 +463,21 @@ func TestDoneWaitsForCI(t *testing.T) {
 		b.ciLater(x, 1, "pass")
 		must(t, x.worker("toy-1", 5, "handoff", "--pr", url), 0, "handed off to queen-toy") // handoff is done --wait
 		b.ci(x, 1, "pending")
-		must(t, x.keeper("check", "toy-1"), 10, "FAIL ci_green", "pending: job1")
+		must(t, x.keeper("check", "toy-1"), 10, "WAIT ci_green", "pending: job1")
 	})
+}
+
+// A host that hangs is a check that couldn't run (exit 6), even under --wait: exit 11 is
+// only for pending that outlived the wait (eng-review of #108).
+func TestAHungHostIsCantCheckNotPending(t *testing.T) {
+	x := newToy(t)
+	b := ghBackend{}
+	b.setup(x, true)
+	sp := x.spawn("toy-1", "pr")
+	b.commit(x, sp.Workspace.Dir)
+	url := b.open(x, 1, sp.Workspace.Dir, "toy-1", false)
+	x.gh.Hang = true
+	must(t, x.worker("toy-1", 1, "done", "--wait", "--timeout", "1s", "--pr", url), 6, "couldn't run")
 }
 
 // A waiver holds at end and prune as at handoff; an amend re-runs the spawn refusals on
@@ -549,4 +562,39 @@ func TestAPushTheHostHasntSeenYetIsPending(t *testing.T) {
 	b.commit(x, other)
 	x.push(other, "toy-1")
 	must(t, x.worker("toy-1", 5, "done", "--wait", "--timeout", "1s", "--pr", url), 7, "has commits toy-1 lacks", "pull them, then push")
+}
+
+// While the host still shows the old head of a pushed branch, what it says of that head
+// (CI red, behind) is about a commit the worker has moved past: pr_current and ci_green are
+// pending too, so a fix pushed after red CI waits (exit 10), never fails at once on the
+// old run (eng-review of #108). A push= target the host lags on is pending the same way.
+func TestTheOldHeadsCIIsPendingWhileTheHostLags(t *testing.T) {
+	x := newToy(t)
+	b := ghBackend{}
+	b.setup(x, true)
+	sp := x.spawn("toy-1", "pr")
+	dir := sp.Workspace.Dir
+	b.commit(x, dir)
+	url := b.open(x, 1, dir, "toy-1", false)
+	b.ci(x, 1, "fail")
+	must(t, x.worker("toy-1", 1, "done", "--pr", url), 7, "failing: job1")
+	x.gh.Edit(url, func(pr *fake.PR) { pr.Stale = true })
+	b.behind(x)
+	b.commit(x, dir)
+	x.git(dir, "push", "-q", "-u", "origin", "toy-1")
+	must(t, x.worker("toy-1", 2, "done", "--pr", url), 10, "pending: toy-1 was pushed at", "ci_green", "pr_current")
+
+	other := filepath.Join(filepath.Dir(x.repo), "theirs")
+	x.git(x.repo, "worktree", "add", "-q", "-b", "feature", other)
+	b.commit(x, other)
+	target := b.open(x, 5, other, "feature", false)
+	b.ci(x, 5, "pass")
+	sp = x.spawn("toy-2", "push="+target)
+	dir = sp.Workspace.Dir
+	b.commit(x, dir)
+	x.gh.Edit(target, func(pr *fake.PR) { pr.Stale = true })
+	b.update(x, 5, dir)
+	must(t, x.worker("toy-2", 1, "done"), 10, "push_moved", "pending: feature was pushed at")
+	time.AfterFunc(300*time.Millisecond, func() { x.gh.Edit(target, func(pr *fake.PR) { pr.Stale = false }) })
+	must(t, x.worker("toy-2", 2, "done", "--wait"), 0)
 }

@@ -153,3 +153,54 @@ func TestAllowMergeInto(t *testing.T) {
 		t.Error("allow_merge_into accepted for a workspace with no branch")
 	}
 }
+
+// Real command lines a worker types, each spelling of what it must never run against what
+// it runs every day (eng-review of #108: bunched -uf, gh -R review --approve, the API's
+// approve, command gh and a path to gh slipped through; gh api … --jq .mergeable didn't).
+func TestRealCommandLines(t *testing.T) {
+	deny := build(t, config.Guards{}, worktree)
+	for _, tc := range []struct {
+		cmd    string
+		denied bool
+	}{
+		{"git push -uf origin web2-3", true},
+		{"git push -fu origin web2-3", true},
+		{"git push -qf origin HEAD:web2-3", true},
+		{"git push --force-if-includes --force-with-lease origin web2-3", true},
+		{"git -C /wt/web2-3 push -f", true},
+		{"/opt/homebrew/bin/git push origin +HEAD:web2-3", true},
+		{"git push -u origin web2-3", false},
+		{"git push -uq origin web2-3", false},
+		{"git push -u origin feature-fix", false},
+		{"git push origin HEAD:refs/heads/fix-f", false},
+
+		{"gh pr merge 41 --squash --delete-branch", true},
+		{"gh pr merge --auto --merge 41", true},
+		{"command gh pr merge 41", true},
+		{"/usr/local/bin/gh -R o/r pr merge 41", true},
+		{"gh api -X PUT repos/o/r/pulls/41/merge -f merge_method=squash", true},
+		{"gh api repos/o/r/merges -f base=develop -f head=web2-3", true},
+		{`gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: "x"}) { clientMutationId } }'`, true},
+		{"gh api repos/o/r/pulls/41 --jq .mergeable", false},
+		{"gh pr view 41 --json mergeable,mergeStateStatus", false},
+
+		{"gh pr review 41 --approve", true},
+		{"gh -R o/r pr review 41 --approve -b lgtm", true},
+		{"gh pr review -a 41", true},
+		{"command gh pr review 41 --approve", true},
+		{"gh api repos/o/r/pulls/41/reviews -f event=APPROVE", true},
+		{"gh api -f event=APPROVE repos/o/r/pulls/41/reviews", true},
+		{"gh pr review 41 --comment -b 'one nit'", false},
+		{"gh pr review 41 --request-changes -b 'see above'", false},
+		{"gh api repos/o/r/pulls/41/reviews -f event=COMMENT -f body=nit", false},
+		{"gh api repos/o/r/pulls/41/reviews", false},
+	} {
+		g, got := guards.Denies(deny, tc.cmd)
+		if got != tc.denied {
+			t.Errorf("%q: denied %v (by %q), want %v", tc.cmd, got, g, tc.denied)
+		}
+		if denied(deny, tc.cmd) != got {
+			t.Errorf("%q: Denies and the oracle disagree", tc.cmd)
+		}
+	}
+}

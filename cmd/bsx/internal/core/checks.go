@@ -36,9 +36,8 @@ func (c *Core) check(ctx context.Context, sp logbook.Spawn, name string, h Hande
 // check runs check name of part p. The gate is run by its callers, who know self.
 func (k *look) check(ctx context.Context, p goal.Part, name string) logbook.CheckResult {
 	r := logbook.CheckResult{Name: name}
-	k.pending = false
-	pass, detail, err := k.run(ctx, p, name)
-	r.Pass, r.Detail, r.Pending = pass && err == nil, detail, !pass && err == nil && k.pending
+	o, detail, err := k.run(ctx, p, name)
+	r.Pass, r.Detail, r.Pending = o == passed && err == nil, detail, o == pending && err == nil
 	if err != nil {
 		r.Err = err.Error()
 	}
@@ -71,10 +70,10 @@ func (k *look) stage(ctx context.Context, e logbook.Effective, of func(goal.Part
 	return out, nil
 }
 
-func (k *look) run(ctx context.Context, p goal.Part, name string) (bool, string, error) {
+func (k *look) run(ctx context.Context, p goal.Part, name string) (outcome, string, error) {
 	c, ws, h := k.c, k.sp.Workspace, k.h
 	if b, ok := notBuilt[name]; ok {
-		return false, "", errNotBuilt(b)
+		return failed, "", errNotBuilt(b)
 	}
 	if isPRCheck(name) {
 		return k.prCheck(ctx, p, name)
@@ -83,45 +82,46 @@ func (k *look) run(ctx context.Context, p goal.Part, name string) (bool, string,
 	case goal.VerdictGiven:
 		switch {
 		case h.Answer != "yes" && h.Answer != "no":
-			return false, "--answer yes|no is missing", nil
+			return failed, "--answer yes|no is missing", nil
 		case h.Report == "":
-			return false, "--report <text>|- is missing", nil
+			return failed, "--report <text>|- is missing", nil
 		}
-		return true, "", nil
+		return passed, "", nil
 	case goal.Clean:
 		// Not c.git: trimming would cut the first line's status column.
 		b, err := c.Run.Run(ctx, ws.Dir, "git", "-C", ws.Dir, "status", "--porcelain")
 		if err != nil {
-			return false, "", err
+			return failed, "", err
 		}
 		if out := string(b); out != "" {
-			return false, "uncommitted or untracked files in " + ws.Dir + ": " + porcelainPaths(out), nil
+			return failed, "uncommitted or untracked files in " + ws.Dir + ": " + porcelainPaths(out), nil
 		}
-		return true, "", nil
+		return passed, "", nil
 	case goal.BranchAhead:
 		base, err := c.base(ctx, ws)
 		if err != nil {
-			return false, "", err
+			return failed, "", err
 		}
 		out, err := c.git(ctx, ws.Dir, "rev-list", "--count", base+".."+ws.Branch)
 		if err != nil {
-			return false, "", err
+			return failed, "", err
 		}
 		n, err := strconv.Atoi(out)
 		if err != nil {
-			return false, "", fmt.Errorf("git rev-list --count: %q", out)
+			return failed, "", fmt.Errorf("git rev-list --count: %q", out)
 		}
 		if n == 0 {
-			return false, fmt.Sprintf("%s has no commit that %s lacks", ws.Branch, base), nil
+			return failed, fmt.Sprintf("%s has no commit that %s lacks", ws.Branch, base), nil
 		}
 		if n == 1 {
-			return true, "1 commit ahead of " + base, nil
+			return passed, "1 commit ahead of " + base, nil
 		}
-		return true, fmt.Sprintf("%d commits ahead of %s", n, base), nil
+		return passed, fmt.Sprintf("%d commits ahead of %s", n, base), nil
 	case goal.BranchMerged:
-		return c.merged(ctx, ws)
+		ok, why, err := c.merged(ctx, ws)
+		return of(ok), why, err
 	}
-	return false, "", fmt.Errorf("no check %s", name)
+	return failed, "", fmt.Errorf("no check %s", name)
 }
 
 // porcelainPaths is the paths git status --porcelain listed, the first ten of them.

@@ -79,13 +79,21 @@ type Timing struct {
 	AfterErr   time.Duration // after herdr's start erred: how long to look for the harness anyway (bees-12.49)
 	Busy       time.Duration // how long agent_pane_busy is retried (bees-12.33)
 	CIPoll     time.Duration // bs done --wait: how often it asks the review host again
+	WaitGrace  time.Duration // bs done --wait: how long its last look may run past --timeout
 	Stop       time.Duration // SIGTERM before SIGKILL
 }
 
 // DefaultTiming is ADR-0010's: confirmation polled every 250 ms within 20 s, 5 s after a
 // herdr error, agent_pane_busy retried for 8 s.
-var DefaultTiming = Timing{CIPoll: 20 * time.Second, Confirm: 20 * time.Second, Poll: 250 * time.Millisecond, SecondLook: time.Second, Stop: 3 * time.Second,
+var DefaultTiming = Timing{CIPoll: 20 * time.Second, WaitGrace: 45 * time.Second, Confirm: 20 * time.Second, Poll: 250 * time.Millisecond, SecondLook: time.Second, Stop: 3 * time.Second,
 	Gate: 5 * time.Second, AfterErr: 5 * time.Second, Busy: 8 * time.Second}
+
+// MaxWait bounds bs done --wait's --timeout, and ShellTimeout is the shell call a worker's
+// harness gives it: the wait and its last look (Timing.WaitGrace) end inside it (motif 15).
+const (
+	MaxWait      = 9 * time.Minute
+	ShellTimeout = 10 * time.Minute
+)
 
 func (c *Core) timing() Timing {
 	t, d := c.Timing, DefaultTiming
@@ -94,7 +102,7 @@ func (c *Core) timing() Timing {
 	}
 	t.Poll, t.SecondLook, t.Stop = cmp.Or(t.Poll, d.Poll), cmp.Or(t.SecondLook, d.SecondLook), cmp.Or(t.Stop, d.Stop)
 	t.Gate, t.AfterErr, t.Busy = cmp.Or(t.Gate, d.Gate), cmp.Or(t.AfterErr, d.AfterErr), cmp.Or(t.Busy, d.Busy)
-	t.CIPoll = cmp.Or(t.CIPoll, d.CIPoll)
+	t.CIPoll, t.WaitGrace = cmp.Or(t.CIPoll, d.CIPoll), cmp.Or(t.WaitGrace, d.WaitGrace)
 	return t
 }
 

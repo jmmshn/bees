@@ -17,7 +17,7 @@ What a worker owes the queen, fixed at spawn (`--goal pr`, `pr:draft`, `review=<
 _Avoid_: contract, output type, out, deliverable, done kind
 
 **Handoff**:
-A worker's `bs done`: it names its PRs (or gives a verdict) and bs checks them against its goal.
+A worker's `bs done`: it names its PRs (or gives a verdict) and bs checks them against its goal; for a note or beads goal, bs finds the change on the bead itself.
 _Avoid_: done report, delivery
 
 **Complete**:

@@ -390,6 +390,5 @@ func (f *Beads) Children(_ context.Context, parent string) ([]string, error) {
 			out = append(out, id)
 		}
 	}
-	slices.Sort(out)
-	return out, nil
+	return out, nil // map order: bd lists them in no fixed order either
 }

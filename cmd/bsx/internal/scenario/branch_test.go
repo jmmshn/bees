@@ -360,5 +360,5 @@ func TestPruneKeepsADirThatIsNoLongerAWorktree(t *testing.T) {
 	if err := os.MkdirAll(sp.Workspace.Dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	must(t, x.queen("prune"), 3, "it is no longer a worktree of "+x.repo)
+	must(t, x.queen("prune"), 3, "kept "+sp.Workspace.Dir, "it is no longer a worktree of ") // the repo, resolved on macOS
 }

@@ -215,11 +215,11 @@ c amend-pr-draft 0 '--goal pr:draft' -- bs goal --as "$queen" "$A" pr:draft
 c amend-mailed 0 'changed your goal: it is now --goal pr:draft' -- lb "SELECT data FROM entries WHERE kind = 'message' AND subject = ?" "$A"
 c amend-waive 0 'waived: pr_pushed' -- bs goal --as "$queen" "$A" --waive pr_pushed
 c amend-two-values 2 'one goal per spawn' -- bs goal --as "$queen" "$A" verdict note
-c amend-as-worker 2 'worker' xfail=T1 -- bs goal --as "$A" "$A" verdict
+c amend-as-worker 2 'worker' -- bs goal --as "$A" "$A" verdict
 c amend-after-landed 2 '' -- bs goal --as "$queen" "$V" note
-c discard-as-queen 2 'only the keeper discards' xfail=T1 -- bs goal --as "$queen" "$A" discard
+c discard-as-queen 2 'only the keeper discards' -- bs goal --as "$queen" "$A" discard
 undiscarded() { ! lb "SELECT data FROM entries WHERE kind = 'goal' AND subject = ? ORDER BY rowid DESC LIMIT 1" "$1" | grep -q '"discard":true'; }
-c discard-as-queen-by 0 '' xfail=T1 -- undiscarded "$A"
+c discard-as-queen-by 0 '' -- undiscarded "$A"
 c discard-keeper 0 'discarded' -- bs goal "$D" discard
 c discard-keeper-by 0 '"by":"keeper"' -- lb "SELECT data FROM entries WHERE kind = 'goal' AND subject = ? ORDER BY rowid DESC LIMIT 1" "$D"
 git remote remove origin
@@ -255,10 +255,10 @@ echo "== identity, from $I's pane"
 c ident-goal-self 2 'a worker never changes a goal' -- inpane ident "bs goal $I note"
 c ident-bs-project 0 'warning: ignoring BS_PROJECT && WORKER' -- inpane ident "BS_PROJECT=other bs status"
 c ident-goal 2 '' -- inpane ident "bs goal $S1 note"
-c ident-end-sibling 2 'runs this as a worker' xfail=T1 -- inpane ident "bs end $S1"
-c ident-end-incomplete-sibling 2 'runs this as a worker' xfail=T1 -- inpane ident "bs end --incomplete $S2"
-c ident-prune 2 'runs this as a worker' xfail=T1 -- inpane ident "bs prune"
-c ident-as-other 2 '--as' xfail=T1 -- inpane ident "bs status --as $S1"
+c ident-end-sibling 2 'runs this as a worker' -- inpane ident "bs end $S1"
+c ident-end-incomplete-sibling 2 'runs this as a worker' -- inpane ident "bs end --incomplete $S2"
+c ident-prune 2 'runs this as a worker' -- inpane ident "bs prune"
+c ident-as-other 2 '--as' -- inpane ident "bs status --as $S1"
 
 echo "== resume ($I)"
 kill "$(pid "$I")"

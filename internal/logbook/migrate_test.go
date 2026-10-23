@@ -356,3 +356,69 @@ func TestAMigrationSaysWhenItKeptAnEarlierCopy(t *testing.T) {
 		t.Fatalf("a logbook already migrated reports a kept copy: %q", again.KeptCopy)
 	}
 }
+
+// A logbook opened AtFirstWrite reads empty and makes no file until its first write, which
+// makes it once: of parallel first writers exactly one created it (bees-13.59, OQ-K1).
+func TestALogbookIsMadeAtItsFirstWrite(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "sub", "bees.db")
+	lb, err := logbook.AtFirstWrite(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sps, err := lb.LatestSpawns(ctx); err != nil || len(sps) != 0 {
+		t.Fatalf("an unmade logbook reads %v, %v; want none", sps, err)
+	}
+	lb.Close()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("a logbook nothing wrote to was made: %v", err)
+	}
+	const n = 8
+	created := make([]bool, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			lb, err := logbook.AtFirstWrite(ctx, path)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer lb.Close()
+			if _, err := lb.Send(ctx, "keeper", "queen-toy", "hi"); err != nil {
+				t.Error(err)
+			}
+			created[i] = lb.Created()
+		}()
+	}
+	wg.Wait()
+	if c := len(slices.DeleteFunc(created, func(b bool) bool { return !b })); c != 1 {
+		t.Fatalf("%d writers made the logbook, want 1", c)
+	}
+	ro, err := logbook.OpenReadOnly(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ro.Close()
+	if ms, err := ro.Unread(ctx, "queen-toy"); err != nil || len(ms) != n {
+		t.Fatalf("%d messages, %v; want %d", len(ms), err, n)
+	}
+}
+
+// A file with no entries table (an older bs mid-creation) reads as an empty logbook.
+func TestATablelessFileReadsEmpty(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "bees.db")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lb, err := logbook.OpenReadOnly(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lb.Close()
+	if sps, err := lb.LatestSpawns(ctx); err != nil || len(sps) != 0 {
+		t.Fatalf("LatestSpawns = %v, %v", sps, err)
+	}
+}

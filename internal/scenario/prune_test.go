@@ -78,7 +78,7 @@ func TestPruneKeepsAnEndedWorkerThatStillRuns(t *testing.T) {
 	x.herdr.Programs["claude"] = "/bin/true" // the start is never confirmed
 	x.ports.Timing.Confirm = 300 * time.Millisecond
 	x.bead("toy-1", "x")
-	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 8)
+	must(t, x.queen("spawn", "--label", "x", "--goal", "verdict", "toy-1"), 8)
 	must(t, x.queen("end", "--incomplete", "toy-1"), 0)
 	// It started after all, late: a process bs recorded and couldn't stop.
 	cmd := exec.Command("sleep", "30")
@@ -117,7 +117,7 @@ func TestStatusPointsAnUnhandedGoalAtDiscard(t *testing.T) {
 	x.herdr.Programs["claude"] = "/bin/true"
 	x.ports.Timing.Confirm = 300 * time.Millisecond
 	x.bead("toy-1", "x")
-	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 8)
+	must(t, x.queen("spawn", "--label", "x", "--goal", "branch", "toy-1"), 8)
 	must(t, x.queen("end", "--incomplete", "toy-1"), 0)
 	x.herdr.Programs["claude"] = fake.Beesfake(t)
 	must(t, x.queen("prune"), 0)

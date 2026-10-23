@@ -36,7 +36,7 @@ func TestHerdrLabelsAreTheLabel(t *testing.T) {
 	x := newToy(t)
 	x.spawn("toy-1", "branch")
 	out, err := x.herdr.Run(context.Background(), "", "herdr", "--session", "toy", "workspace", "list")
-	if err != nil || !strings.Contains(string(out), `"label":"work on toy-1"`) {
+	if err != nil || !strings.Contains(string(out), `"label":"toy 1"`) {
 		t.Fatalf("workspace list: %s, %v", out, err)
 	}
 }
@@ -372,7 +372,7 @@ func TestOnlyQueenAndSpawnStartALogbook(t *testing.T) {
 		}
 	}
 	// A spawn refused for its arguments or bead makes no logbook (bees-13.9 review S3).
-	for _, args := range [][]string{{"spawn"}, {"spawn", "--goal", "branch"}, {"spawn", "--goal", "branch", "toy-404"}, {"spawn", "--bogus", "toy-1"}} {
+	for _, args := range [][]string{{"spawn"}, {"spawn", "--goal", "branch"}, {"spawn", "--goal", "branch", "toy-404"}, {"spawn", "--bogus", "toy-1"}, {"spawn", "--goal", "branch", "--label", "Fix-Bug.", "toy-1"}} {
 		r := x.queen(args...)
 		if r.code == 0 || strings.Contains(r.String(), "new") {
 			t.Fatalf("%v: exit %d\n%s", args, r.code, r)
@@ -382,7 +382,12 @@ func TestOnlyQueenAndSpawnStartALogbook(t *testing.T) {
 		}
 	}
 	x.bead("toy-1", "work")
-	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 0, "new logbook for project toy at "+x.logbook)
+	// A first spawn names its label: never the bead's title (bees-13.73.2).
+	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 2, "a first spawn needs --label", `next: bs spawn --goal branch --label "<words>" toy-1`, "1-4 lowercase words")
+	if _, err := os.Stat(x.logbook); !os.IsNotExist(err) {
+		t.Fatalf("a spawn with no label created the logbook: %v", err)
+	}
+	must(t, x.queen("spawn", "--label", "x", "--goal", "branch", "toy-1"), 0, "new logbook for project toy at "+x.logbook)
 	if r := x.keeper("status"); r.code != 0 || strings.Contains(r.String(), "new logbook") {
 		t.Fatalf("status once it exists:\n%s", r)
 	}
@@ -462,7 +467,7 @@ func TestAnUnconfirmedStartIsExit8AndEndClearsIt(t *testing.T) {
 	x.herdr.Programs["claude"] = "/bin/true"
 	x.ports.Timing.Confirm = 300 * time.Millisecond
 	x.bead("toy-1", "x")
-	r := x.queen("spawn", "--goal", "verdict", "toy-1")
+	r := x.queen("spawn", "--label", "x", "--goal", "verdict", "toy-1")
 	must(t, r, 8, "start unconfirmed", "next: bs end --incomplete toy-1")
 	must(t, x.queen("end", "toy-1"), 9)         // a verdict never handed off is incomplete
 	must(t, x.stuck("toy-1"), 0, "ended toy-1") // the abort of a spawn that never ran (motif 5), as status says
@@ -484,7 +489,7 @@ func TestASpawnThatCantBeRecordedLeavesNoWorktree(t *testing.T) {
 		t.Fatal(err)
 	}
 	x.bead("toy-1", "x")
-	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 1, "couldn't record the spawn")
+	must(t, x.queen("spawn", "--label", "x", "--goal", "verdict", "toy-1"), 1, "couldn't record the spawn")
 	if _, err := os.Stat(filepath.Join(filepath.Dir(x.repo), "toy-WT", "toy-1")); !os.IsNotExist(err) {
 		t.Fatalf("worktree left behind: %v", err)
 	}
@@ -499,7 +504,7 @@ func TestSpawnRefusesABranchThatAlreadyExists(t *testing.T) {
 	x := newToy(t)
 	x.git(x.repo, "branch", "toy-1")
 	x.bead("toy-1", "x")
-	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 2, "already has a branch toy-1", "next: bs prune", "branch -d toy-1")
+	must(t, x.queen("spawn", "--label", "x", "--goal", "branch", "toy-1"), 2, "already has a branch toy-1", "next: bs prune", "branch -d toy-1")
 	if _, err := os.Stat(x.logbook); !os.IsNotExist(err) { // a refused spawn leaves no logbook it made
 		t.Fatalf("a refused spawn left a logbook: %v", err)
 	}

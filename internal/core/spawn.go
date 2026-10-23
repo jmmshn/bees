@@ -26,7 +26,7 @@ type SpawnReq struct {
 	By      string // the queen
 	Session string // the herdr session the spawn opens on: the queen's
 	Bead    string
-	Label   string // "" is the bead's title
+	Label   string // "" is the last spawn's recorded label; a first spawn needs one
 	Goal    string // --goal, required
 }
 
@@ -41,6 +41,11 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 		return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s", req.Bead)
 	}
 	g.Fragment = prompt.Hash(g.Type)
+	if req.Label != "" {
+		if err := CheckLabel(req.Label); err != nil {
+			return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s: --label", req.Bead)
+		}
+	}
 	// Another project's bead would make a worker named for that project, which this
 	// queen's mail can't reach (motif 3): its queen spawns it.
 	if owner := BeadOwner(req.Bead); owner != c.Project {
@@ -66,9 +71,22 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	case err != nil:
 		return logbook.Spawn{}, false, err
 	case ok && !prev.Ended:
+		if req.Label != "" && req.Label != prev.Label {
+			return logbook.Spawn{}, false, exit(ExitRefused, bsname.Cmd+" spawn --goal "+req.Goal+" "+bead.ID, nil,
+				"%s is spawned and not ended, labelled %q, not %q; a resume keeps its label, so leave --label off", name, prev.Label, req.Label)
+		}
 		return prev, true, c.resume(ctx, prev, bead, req)
 	case ok:
 		ended = &prev
+	}
+	// An ended worker comes back under its recorded label (bees-2.8); a first spawn names one.
+	label := req.Label
+	if label == "" && ended != nil {
+		label = ended.Label
+	}
+	if label == "" {
+		return logbook.Spawn{}, false, exit(ExitRefused, bsname.Cmd+` spawn --goal `+req.Goal+` --label "<words>" `+bead.ID, nil,
+			"%s: a first spawn needs --label; nothing was made\n%s", name, LabelRules)
 	}
 	at, err := c.beadAt(ctx, bead)
 	if err != nil {
@@ -104,7 +122,6 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	if err := herdr.CheckAgentArgs(c.worstArgs(name, launch)); err != nil {
 		return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s: the launch can't be typed into a pane; nothing was made", name)
 	}
-	label := cmp.Or(req.Label, bead.Title)
 	session := cmp.Or(req.Session, logbook.DefaultSession)
 	var hw herdr.Workspace
 	remade := false // a reused branch whose worktree was gone, checked out again here

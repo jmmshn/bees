@@ -77,7 +77,7 @@ func TestStatusWorksWithHerdrDown(t *testing.T) {
 		t.Fatalf("status with herdr down:\n%s", r)
 	}
 	x.bead("toy-2", "work on toy-2")
-	must(t, x.queen("spawn", "--goal", "verdict", "toy-2"), 1, "nothing was recorded", "server_not_running")
+	must(t, x.queen("spawn", "--label", "x", "--goal", "verdict", "toy-2"), 1, "nothing was recorded", "server_not_running")
 }
 
 // Status shows each worker's label and every session's unread mail (bees-13.73.1): a
@@ -86,7 +86,7 @@ func TestStatusShowsLabelAndUnread(t *testing.T) {
 	x := newToy(t)
 	x.spawn("toy-1", "verdict")
 	r := x.keeper("status")
-	if cell(r.out, "toy-1", "LABEL") != "work on toy-1" || cell(r.out, "toy-1", "UNREAD") != "1" {
+	if cell(r.out, "toy-1", "LABEL") != "toy 1" || cell(r.out, "toy-1", "UNREAD") != "1" {
 		t.Fatalf("an unread brief:\n%s", r)
 	}
 	must(t, x.worker("toy-1", 1, "inbox"), 0)
@@ -133,7 +133,7 @@ func TestMailAcrossProjects(t *testing.T) {
 	must(t, x.queenRuns(3, "inbox", "--project", "other"), 2, "flag provided but not defined: -project")
 	must(t, x.queenRuns(4, "send", "--as", "queen-other", "--project", "other", "queen-other", "spoof"), 2, "--as queen-other: this bs runs under queen-toy")
 	x.bead("toy-1", "work on toy-1")
-	must(t, x.queenRuns(5, "spawn", "--goal", "verdict", "toy-1"), 0)
+	must(t, x.queenRuns(5, "spawn", "--label", "x", "--goal", "verdict", "toy-1"), 0)
 	must(t, x.worker("toy-1", 1, "done", "--project", "other", "--answer", "yes", "--report", "ok"), 2, "flag provided but not defined: -project")
 	must(t, x.keeper("inbox", "--as", "queen-toy", "--project", "other"), 2, "flag provided but not defined: -project")
 }

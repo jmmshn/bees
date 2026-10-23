@@ -55,6 +55,14 @@ var ErrNotRunning = errors.New("not running")
 // the session's next bs inbox.
 var ErrNoRing = errors.New("its harness has no ring")
 
+// Truster is a harness that only starts in a folder it was told to trust, exact path:
+// spawn trusts the worktree it just made, and prune untrusts it once removed. Both
+// are no-ops when already so. A harness whose trust is the keeper's (claude) has none.
+type Truster interface {
+	Trust(dir string) error
+	Untrust(dir string) error
+}
+
 // Priority is when the receiving session acts on a ring.
 type Priority string
 

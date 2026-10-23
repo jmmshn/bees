@@ -43,11 +43,13 @@ const Conversation = "conversation"
 const envConversation = "ANTIGRAVITY_CONVERSATION_ID"
 
 // Adapter is the agy harness for one role: its [<role>.agy] model, the agy binary (""
-// is agy on PATH) and the bs its hook runs, an absolute path.
+// is agy on PATH), the bs its hook runs, an absolute path, and agy's settings.json, which
+// holds its trusted folders ("" is ~/.gemini/antigravity-cli/settings.json).
 type Adapter struct {
-	Model string
-	Bin   string
-	Bs    string
+	Model    string
+	Bin      string
+	Bs       string
+	Settings string
 }
 
 var _ port.Harness = Adapter{}

@@ -3,15 +3,19 @@ package scenario_test
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jmmshn/bees/internal/cli"
 	"github.com/jmmshn/bees/internal/fake"
 	"github.com/jmmshn/bees/internal/logbook"
+	"github.com/jmmshn/bees/internal/port"
 	"github.com/jmmshn/bees/internal/proc"
 )
 
@@ -214,5 +218,31 @@ func TestSpawnTrustsItsWorktreeAndPruneUntrustsIt(t *testing.T) {
 	must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir)
 	if got := h.all(); len(got) > 0 {
 		t.Fatalf("trusted after prune: %v", got)
+	}
+}
+
+// agy.settings, ~ expanded, reaches the adapter bs builds (bees-14.1 wired by bees-13.13.5).
+func TestAgySettingsReachTheAdapter(t *testing.T) {
+	x := newToy(t)
+	b, err := os.ReadFile(filepath.Join(x.config, "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	x.write(filepath.Join(x.config, "config.toml"), "[agy]\nsettings = \"~/agy/settings.json\"\n"+string(b))
+	var mu sync.Mutex
+	var got []string
+	x.ports.Harness = nil
+	x.ports.NewHarness = func(name string, o cli.HarnessOpts) port.Harness {
+		mu.Lock()
+		got = append(got, o.Settings)
+		mu.Unlock()
+		return x.harness
+	}
+	x.spawn("toy-1", "branch")
+	mu.Lock()
+	defer mu.Unlock()
+	home := filepath.Join(filepath.Dir(x.repo), "home")
+	if len(got) == 0 || got[0] != filepath.Join(home, "agy", "settings.json") {
+		t.Fatalf("settings the adapter got: %v", got)
 	}
 }

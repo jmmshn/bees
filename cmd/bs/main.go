@@ -26,12 +26,12 @@ func main() {
 		Run:   port.Exec{},
 		Proc:  proc.System{},
 		Beads: port.BeadsCLI{R: port.Exec{}},
-		NewHarness: func(name, model string) port.Harness {
+		NewHarness: func(name string, o cli.HarnessOpts) port.Harness {
 			switch name {
 			case claude.Name:
-				return claude.Adapter{Model: model}
+				return claude.Adapter{Model: o.Model}
 			case agy.Name:
-				return agy.Adapter{Model: model, Bs: exe} // its guard hook runs this bs
+				return agy.Adapter{Model: o.Model, Bs: exe, Settings: o.Settings} // its guard hook runs this bs
 			}
 			return nil
 		},

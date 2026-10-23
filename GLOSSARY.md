@@ -5,7 +5,7 @@ bees coordinates several harness sessions (Claude Code today) working on one cod
 ## Work
 
 **Project**:
-The codebase a queen and its workers work on, named in one word (`pymatgen-analysis-defects` → `pymatgenanalysisdefects`).
+The codebase a queen and its workers work on, named in one word (`pymatgen-analysis-defects` → `pymatgenanalysisdefects`). Every bs call acts in one project: the repo it runs in. A session belongs to the project that spawned it, wherever it runs (ADR-0010 Amendment 4).
 _Avoid_: repo, rig, workspace
 
 **Workspace**:
@@ -13,11 +13,11 @@ The directory a worker works in and the herdr workspace opened on it: its own gi
 _Avoid_: sandbox, clone. Not the project's own repo (see Project)
 
 **Goal**:
-What a worker owes the queen, fixed at spawn (`--goal pr`, `pr:draft`, `review=<url>`, `verdict`, …): what it hands off, and the state that completes it (ADR-0010).
+What a worker owes the queen, fixed at spawn, one per spawn (`--goal pr`, `pr:draft`, `pr=<url>` stacked on another change, `review=<url>`, `verdict`, …): what it hands off, and the state that completes it (ADR-0010, Amendment 4).
 _Avoid_: contract, output type, out, deliverable, done kind
 
 **Handoff**:
-A worker's `bs done`: it names its PRs (or gives a verdict) and bs checks them against its goal; for a note or beads goal, bs finds the change on the bead itself.
+A worker's `bs done`: bs finds the worker's change from its workspace and checks it against its goal; the worker names nothing but a verdict's or review's answer and report. For a note or beads goal, bs finds the change on the bead itself (ADR-0010 Amendment 4).
 _Avoid_: done report, delivery
 
 **Complete**:
@@ -29,7 +29,7 @@ Where a project's changes (pull requests, CLs) are reviewed and land, set by `re
 _Avoid_: forge, remote, GitHub (for the general idea)
 
 **Workspace commit**:
-A commit made in a worker's workspace since it was first spawned there: one the worker wrote there, as its VCS records it (git: the HEAD reflog's commit, amend, merge-commit and revert entries; never a pull, checkout, reset, fast-forward, cherry-pick or rebase), or a rebased copy of one, matched by patch-id (a pull --rebase, a rebase -i, the host's "Update branch"). Work pulled in is never one. A handed-off change must hold one.
+A commit on a worker's branch past where the branch started at spawn. A handed-off change's head is the branch's tip, ahead of that start (narrowed by ADR-0010 Amendment 4: with bs finding the change, a worker has nothing to name that isn't its own).
 _Avoid_: own commit, worker commit
 
 **Pending**:
@@ -39,6 +39,10 @@ _Avoid_: waiting, in progress
 **Stuck, kept, waived, discarded, late**:
 The labels of `bs status`'s lines under its table, each naming the next command. Stuck: a worker that can't move on its own (its process gone, its start unconfirmed, or ended with its goal incomplete). Kept: complete or discarded, its workspace still on disk. Waived: a check its goal no longer runs. Discarded: the keeper's word that the work is wanted nowhere. Late: a start recorded after confirmation missed it.
 _Avoid_: blocked (a worker messages the queen for that), dead, orphaned
+
+**Toy**:
+A throwaway project the live rig makes to test bs, with its own herdr session and logbooks; torn down after the check.
+_Avoid_: sandbox, test project
 
 **Bead**:
 One unit of work in the shared tracker, named `<project>-N[.M…]`.
@@ -55,7 +59,7 @@ The program a session runs in (Claude Code, omp, agy). One per machine, picked b
 _Avoid_: agent, model, runtime
 
 **Keeper**:
-The human who directs the work and talks to the queen; tends the hive and harvests its work. Replaces the earlier term "captain".
+The human who directs the work and talks to the queen; tends the hive and harvests its work. To bs, the keeper is any caller no session started; the session that made a toy is that toy's keeper. Replaces the earlier term "captain".
 _Avoid_: captain, beekeeper, user, operator, admin
 
 **Queen**:
@@ -63,11 +67,11 @@ The one coordinating session that assigns work to workers and reports to the kee
 _Avoid_: orchestrator, manager, lead, coordinator
 
 **Worker**:
-A session the queen starts to own one workspace and one bead. Replaces the earlier term "bee"; the tool keeps the name bees (worker bees).
+A session the queen starts to own one workspace and one bead: one branch, and at most one open change from it at a time (on a CL host, the workspace's chain). Dependent work is another worker, stacked on its change. Replaces the earlier term "bee"; the tool keeps the name bees (worker bees).
 _Avoid_: bee (as a role), agent, subagent, crew member
 
 **Session**:
-One running harness process, known by its name (`queen-<project>`, or for a worker its bead id with `.` → `-`: `bees-2-1`).
+One running harness process, known by its name (`queen-<project>`, or for a worker its bead id with `.` → `-`: `bees-2-1`). bs knows the caller's session by the process the logbook recorded among its ancestors, never by a name it is told. In another project a session may only message that project's queen.
 _Avoid_: pane, agent, instance
 
 ## The logbook

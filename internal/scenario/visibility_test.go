@@ -118,5 +118,5 @@ func TestMailAcrossProjects(t *testing.T) {
 	x.bead("toy-1", "work on toy-1")
 	must(t, x.queenRuns(5, "spawn", "--goal", "verdict", "toy-1"), 0)
 	must(t, x.worker("toy-1", 1, "done", "--project", "other", "--answer", "yes", "--report", "ok"), 2, "flag provided but not defined: -project")
-	must(t, x.keeper("inbox", "--as", "queen-toy", "--project", "other"), 2, "this shell is in project toy", "next: run it from other's repo")
+	must(t, x.keeper("inbox", "--as", "queen-toy", "--project", "other"), 2, "flag provided but not defined: -project")
 }

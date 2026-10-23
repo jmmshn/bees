@@ -525,9 +525,9 @@ func (c *Core) Prune(ctx context.Context, by string) ([]Pruned, error) {
 }
 
 // hasBranch reports whether ws's branch exists in its repo; a workspace with no branch has
-// none.
+// none, and a command workspace's is its VCS's, which its remove takes with it.
 func (c *Core) hasBranch(ctx context.Context, ws logbook.Workspace) (bool, error) {
-	if ws.Branch == "" || ws.Repo == "" {
+	if ws.Branch == "" || ws.Repo == "" || ws.Kind == config.CommandKind {
 		return false, nil
 	}
 	_, err := c.git(ctx, ws.Repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+ws.Branch)
@@ -594,13 +594,15 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 	if err := c.removeFiles(sp.Name); err != nil {
 		c.warn("couldn't remove %s's start files: %v", sp.Name, err)
 	}
-	// The remote branch is named whatever happens to the local one (bees-1.34).
-	switch _, err := c.git(ctx, ws.Repo, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+ws.Branch); {
-	case ws.Branch == "":
-	case err == nil:
-		p.Remote = "origin/" + ws.Branch
-	case !isExit(err, 1):
-		c.warn("can't tell whether origin/%s exists: %v", ws.Branch, err)
+	// The remote branch is named whatever happens to the local one (bees-1.34); a command
+	// workspace's branch is no git one.
+	if ws.Branch != "" && ws.Kind != config.CommandKind {
+		switch _, err := c.git(ctx, ws.Repo, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+ws.Branch); {
+		case err == nil:
+			p.Remote = "origin/" + ws.Branch
+		case !isExit(err, 1):
+			c.warn("can't tell whether origin/%s exists: %v", ws.Branch, err)
+		}
 	}
 	free := c.freeDir
 	if ws.Kind == config.CommandKind {
@@ -746,7 +748,7 @@ func (c *Core) stackedOn(ctx context.Context, l logbook.Spawn, e logbook.Effecti
 // merged's local proofs miss.
 func (c *Core) heldByChange(ctx context.Context, sp logbook.Spawn, prs []string, closed bool) (string, error) {
 	ws := sp.Workspace
-	tip, ok, err := c.VCS.Branch(ctx, ws.Repo, ws.Branch)
+	tip, ok, err := c.vcs(ws).Branch(ctx, ws.Repo, ws.Branch)
 	if err != nil || !ok {
 		return "", err
 	}

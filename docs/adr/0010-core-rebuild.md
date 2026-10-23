@@ -105,6 +105,7 @@ The types come from 151 `done` messages in the five real logbooks: about 110 sin
 |---|---|---|
 | `harness` | global | which program starts in the pane |
 | `review.host` | both | where pr, push and review goals' changes are reviewed and land: `github`, the default and only value yet (Amendment 1) |
+| `review.fragment` | both | a markdown file that is the review host's prompt section in place of the built-in `prompt/host/<host>.md` (`<!-- worker -->` / `<!-- queen -->` split it by role): a command host's upload, revise and handoff steps live in the keeper's config, never in bs (bees-14.5); unreadable or blank, a reviewed goal's spawn, resume and amend refuse |
 | `paths.logbook_dir`, `paths.repos` | global | where logbooks live; where other projects' repos are |
 | `paths.repo`, `paths.worktrees` | project / both | the project dir; `<worktrees>/<name>` |
 | `workspace.kind` (override), `[workspace.command]` | both | tab above |

@@ -19,8 +19,8 @@ import (
 // memory. A workspace's commits are what Commit made there; uploading a workspace points
 // a change at its head. It shows the goal checks need neither git nor GitHub (keeper,
 // bees-13.6). ponytail: the workspace itself is still git_worktree's, cut by herdr at git's
-// base, so a target's head (a commit only this host has) can't be cut at: pr= and push=
-// on a CL host wait for a command workspace's VCS port (bees-14.4).
+// base, so a target's head (a commit only this host has) can't be cut at. A command
+// workspace, whose VCS is the keeper's argv, refuses pr= and push= (bees-14.4).
 type CLHost struct {
 	mu       sync.Mutex
 	RepoName string // the repo every checkout belongs to; "" is none

@@ -100,7 +100,7 @@ func TestQueenAndWorkerMailBothWays(t *testing.T) {
 	x := newToy(t)
 	x.startQueen()
 	x.bead("toy-1", "work on toy-1")
-	must(t, x.queenRuns(1, "spawn", "--goal", "branch", "toy-1"), 0, "spawned toy-1")
+	must(t, x.queenRuns(1, "spawn", "--label", "x", "--goal", "branch", "toy-1"), 0, "spawned toy-1")
 	must(t, x.worker("toy-1", 1, "inbox"), 0, "from queen-toy", "You own toy-1")
 	must(t, x.worker("toy-1", 2, "send", "queen-toy", "which base?"), 0, "rung queen-toy")
 	if rings := x.harness.Rings("queen-toy"); len(rings) != 1 || !strings.Contains(rings[0], `1 unread (toy-1) — run: bs inbox   (reply with: bs send toy-1 "...")`) {
@@ -154,7 +154,7 @@ func TestASessionActsInTheRepoItRunsIn(t *testing.T) {
 	x.startQueen()
 	x.bead("toy-2", "work on toy-2")
 	x.harness.Step(t, "queen-toy", "cd", os.TempDir())
-	must(t, x.queenRuns(2, "spawn", "--goal", "verdict", "toy-2"), 0, "spawned toy-2")
+	must(t, x.queenRuns(2, "spawn", "--label", "x", "--goal", "verdict", "toy-2"), 0, "spawned toy-2")
 }
 
 // bees-12.43 across logbooks: the pane scan reads every <project>.db read-only, skips a
@@ -219,7 +219,7 @@ func TestAMissedStartIsHealedLate(t *testing.T) {
 	x.ports.Timing.Confirm, x.ports.Timing.AfterErr = 300*time.Millisecond, 300*time.Millisecond
 	x.bead("toy-1", "work on toy-1")
 	x.herdr.FailStarts(errors.New("ps: can't read the table"))
-	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 6, "can't look for its harness", "can't read the table")
+	must(t, x.queen("spawn", "--label", "x", "--goal", "verdict", "toy-1"), 6, "can't look for its harness", "can't read the table")
 	x.herdr.FailStarts(nil)
 	sp, _, _ := x.open().LatestSpawn(context.Background(), "toy-1")
 	x.herdr.FailInfo(1000)
@@ -248,7 +248,7 @@ func TestAWorkersFirstCallHealsItsStart(t *testing.T) {
 	x.ports.Timing.Confirm, x.ports.Timing.AfterErr = 300*time.Millisecond, 300*time.Millisecond
 	x.bead("toy-1", "work on toy-1")
 	x.herdr.FailStarts(errors.New("ps: can't read the table"))
-	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 6)
+	must(t, x.queen("spawn", "--label", "x", "--goal", "verdict", "toy-1"), 6)
 	x.herdr.FailStarts(nil)
 	must(t, x.worker("toy-1", 1, "inbox"), 0, "You own toy-1", "recorded late")
 }
@@ -260,7 +260,7 @@ func TestAStartHealedLateFailsTheGateClosed(t *testing.T) {
 	x.ports.Timing.Confirm, x.ports.Timing.AfterErr = 300*time.Millisecond, 300*time.Millisecond
 	x.bead("toy-1", "work on toy-1")
 	x.herdr.FailStarts(errors.New("ps: can't read the table"))
-	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 6)
+	must(t, x.queen("spawn", "--label", "x", "--goal", "verdict", "toy-1"), 6)
 	x.herdr.FailStarts(nil)
 	x.harness.Step(t, "toy-1", "listen", "server")
 	x.harness.Await(t, "toy-1", 1)
@@ -403,7 +403,7 @@ func TestRecordingAPaneUnderABSLogbookDirPinIsRefused(t *testing.T) {
 	x.env = append(slices.Clone(env), "BS_LOGBOOK_DIR="+t.TempDir())
 	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 2, "isn't paths.logbook_dir", "nothing was recorded", "env -u BS_LOGBOOK_DIR")
 	x.env = append(slices.Clone(env), "BS_LOGBOOK_DIR="+filepath.Dir(x.logbook)) // the config's own dir: no harm
-	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 0, "spawned toy-1")
+	must(t, x.queen("spawn", "--label", "x", "--goal", "verdict", "toy-1"), 0, "spawned toy-1")
 }
 
 // kill stops worker name's harness process and waits for herdr to see it gone.
@@ -440,6 +440,7 @@ func TestSpawnResumesADeadWorker(t *testing.T) {
 	x.kill("toy-1")
 	must(t, x.keeper("status"), 0, "stuck: toy-1: its process is gone but it isn't ended → bs spawn --goal branch toy-1 resumes it in its pane")
 	must(t, x.queen("send", "toy-1", "while you were down"), 0, "stored, not rung")
+	must(t, x.queen("spawn", "--goal", "branch", "--label", "other work", "toy-1"), 2, `labelled "toy 1", not "other work"`, "leave --label off")
 	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 0, "resumed toy-1 in pane "+sp.Herdr.Pane)
 	// The resume prepares the same start a spawn does, in its own conversation (it read its inbox).
 	if st := rec.all(); len(st) != 2 || st[1].ShellTimeout != core.ShellTimeout || !st[1].Continue || st[1].Deny == nil || st[0].Continue {
@@ -494,7 +495,7 @@ func TestRespawnReusesAKeptWorkspace(t *testing.T) {
 	must(t, x.next(r), 0, "ended toy-1") // the literal next: text, as the queen would type it
 	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 0, "spawned toy-1", "on its kept worktree and branch toy-1")
 	sp2, _, err := x.open().LatestSpawn(context.Background(), "toy-1")
-	if err != nil || sp2.ID == sp.ID || sp2.Workspace.Dir != sp.Workspace.Dir || sp2.Workspace.Branch != "toy-1" || sp2.Workspace.Base != sp.Workspace.Base {
+	if err != nil || sp2.ID == sp.ID || sp2.Label != sp.Label || sp2.Workspace.Dir != sp.Workspace.Dir || sp2.Workspace.Branch != "toy-1" || sp2.Workspace.Base != sp.Workspace.Base {
 		t.Fatalf("the second spawn: %+v (first %+v), %v", sp2, sp, err)
 	}
 	if _, err := os.Stat(filepath.Join(sp.Workspace.Dir, "half.txt")); err != nil {
@@ -572,7 +573,7 @@ INSERT INTO entries VALUES ('e1','2026-10-01T00:01:00.000Z','ended','queen-toy',
 		t.Fatal(err)
 	}
 	x.bead("toy-9", "go on")
-	must(t, x.queen("spawn", "--goal", "branch", "toy-9"), 0, "spawned toy-9", "branch toy-9 its last spawn left")
+	must(t, x.queen("spawn", "--label", "x", "--goal", "branch", "toy-9"), 0, "spawned toy-9", "branch toy-9 its last spawn left")
 	if _, err := os.Stat(filepath.Join(dir, "old.txt")); err != nil {
 		t.Fatalf("the adopted branch's work isn't in the worktree: %v", err)
 	}

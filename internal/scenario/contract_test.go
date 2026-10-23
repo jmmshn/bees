@@ -137,7 +137,7 @@ func TestContractSpawnRefusals(t *testing.T) {
 		{"spawn-two-goals", "", []string{"--goal", "verdict", "--goal", "note"}, []string{"one goal per spawn"}},
 	} {
 		k.c(c.id, c.ticket, func(t *testing.T, x *toy) {
-			must(t, x.queen(append(append([]string{"spawn"}, c.args...), "toy-1")...), 2, c.want...)
+			must(t, x.queen(append(append([]string{"spawn", "--label", "x"}, c.args...), "toy-1")...), 2, c.want...)
 			if _, ok, _ := x.open().LatestSpawn(context.Background(), "toy-1"); ok {
 				fatalf(t, "a refused spawn was recorded")
 			}
@@ -576,7 +576,7 @@ func TestContractParallelFirstSpawns(t *testing.T) {
 			defer wg.Done()
 			var out, errb bytes.Buffer
 			code := cli.Run(context.Background(), cli.Env{Vars: x.env, Dir: x.repo, Self: os.Getpid(), Stdin: strings.NewReader("")}, x.ports,
-				[]string{"spawn", "--as", "queen-toy", "--goal", "verdict", fmt.Sprintf("toy-%d", i+1)}, &out, &errb)
+				[]string{"spawn", "--label", "x", "--as", "queen-toy", "--goal", "verdict", fmt.Sprintf("toy-%d", i+1)}, &out, &errb)
 			rs[i] = result{code, out.String(), errb.String()}
 		}()
 	}
@@ -890,7 +890,7 @@ func TestContractStackedAndPush(t *testing.T) {
 			_, url := x.target(b, 5, "feature")
 			x.gh.Edit(url, func(pr *fake.PR) { pr.State, pr.Fork = c.state, c.fork })
 			x.bead("toy-1", "stacked")
-			r := x.queen("spawn", "--goal", "pr="+url, "toy-1")
+			r := x.queen("spawn", "--label", "x", "--goal", "pr="+url, "toy-1")
 			must(t, r, 2, c.why)
 			lacks(t, r, "takes no target")
 		})
@@ -965,7 +965,7 @@ func TestContractStackedAndPush(t *testing.T) {
 		b.commit(x, owner.Workspace.Dir)
 		url := b.open(x, 1, owner.Workspace.Dir, "toy-1", false)
 		x.bead("toy-2", "fixup")
-		must(t, x.queen("spawn", "--goal", "push="+url, "toy-2"), 2, "toy-1 owns it", "next: bs spawn --goal pr toy-1")
+		must(t, x.queen("spawn", "--label", "x", "--goal", "push="+url, "toy-2"), 2, "toy-1 owns it", "next: bs spawn --goal pr toy-1")
 	})
 	gcase(t, "push-own-branch", "", func(t *testing.T, x *toy, b ghBackend) {
 		tdir, url := x.target(b, 5, "feature")

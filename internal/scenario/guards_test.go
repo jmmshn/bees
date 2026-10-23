@@ -67,7 +67,7 @@ func TestPilotBug1220MergeGrantOnAnUnprotectedRepo(t *testing.T) {
 	r := x.harness.Await(t, "keeper", 1)
 	must(t, result{r.Code, r.Stdout, r.Stderr}, 2, "every spawn would refuse this [guards] table", "protected")
 	x.bead("toy-1", "x")
-	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 2, "protected")
+	must(t, x.queen("spawn", "--label", "x", "--goal", "branch", "toy-1"), 2, "protected")
 	x.gh.Protected = map[string]bool{"main": true}
 	x.spawn("toy-1", "branch")
 	must(t, x.worker("toy-1", 1, "inbox"), 0, "merge your own change when its base matches stack/*")

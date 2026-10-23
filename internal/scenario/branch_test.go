@@ -149,7 +149,7 @@ func TestSpawnRefusesABranchThatExists(t *testing.T) {
 	x := newToy(t)
 	x.bead("toy-1", "x")
 	x.git(x.repo, "branch", "toy-1")
-	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 2, "already has a branch toy-1", "next: bs prune")
+	must(t, x.queen("spawn", "--label", "x", "--goal", "verdict", "toy-1"), 2, "already has a branch toy-1", "next: bs prune")
 	if _, err := os.Stat(x.logbook); !os.IsNotExist(err) { // a refused spawn leaves no logbook it made
 		t.Fatalf("a refused spawn left a logbook: %v", err)
 	}
@@ -318,7 +318,7 @@ func TestAFailedTagLeavesNoWorktreeOrBranch(t *testing.T) {
 	x := newToy(t)
 	x.bead("toy-1", "x")
 	x.herdr.RefuseNext = "workspace report-metadata"
-	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 1, "couldn't tag its workspace; nothing was recorded")
+	must(t, x.queen("spawn", "--label", "x", "--goal", "branch", "toy-1"), 1, "couldn't tag its workspace; nothing was recorded")
 	if out := x.git(x.repo, "branch", "--list", "toy-1"); out != "" {
 		t.Fatalf("branch left: %q", out)
 	}
@@ -335,7 +335,7 @@ func TestAnUnstartableLaunchMakesNothing(t *testing.T) {
 	x.bead("toy-1", "x")
 	cache := x.ports.CacheDir
 	x.ports.CacheDir = filepath.Join(cache, strings.Repeat(strings.Repeat("d", 99)+"/", 7)) // the start files' paths: the launch passes 768 bytes
-	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 2, "the launch can't be typed into a pane; nothing was made", "launch line too long")
+	must(t, x.queen("spawn", "--label", "x", "--goal", "branch", "toy-1"), 2, "the launch can't be typed into a pane; nothing was made", "launch line too long")
 	long := "toy-1234567890123456789012345678901" // toy-1234567890123456789012345678901: 35 characters
 	x.bead(long, "x")
 	must(t, x.queen("spawn", "--goal", "branch", long), 2, long+" can't be a worker's name; nothing was made", "at most 32 characters")

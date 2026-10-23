@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/jmmshn/bees/internal/cli"
+	"github.com/jmmshn/bees/internal/harness/agy"
 	"github.com/jmmshn/bees/internal/harness/claude"
 	"github.com/jmmshn/bees/internal/port"
 	"github.com/jmmshn/bees/internal/proc"
@@ -20,22 +21,26 @@ func main() {
 	if err != nil {
 		cache = os.TempDir()
 	}
+	exe, _ := os.Executable() // "": bs is then checked as the shared install
 	ports := cli.Ports{
 		Run:   port.Exec{},
 		Proc:  proc.System{},
 		Beads: port.BeadsCLI{R: port.Exec{}},
 		NewHarness: func(name, model string) port.Harness {
-			if name == claude.Name {
+			switch name {
+			case claude.Name:
 				return claude.Adapter{Model: model}
+			case agy.Name:
+				return agy.Adapter{Model: model, Bs: exe} // its guard hook runs this bs
 			}
 			return nil
 		},
 		CacheDir: filepath.Join(cache, "bees", "bs"),
 		Exec:     execHarness,
 		Revision: revision(),
+		Exe:      exe,
 	}
-	ports.Exe, _ = os.Executable() // "": bs is then checked as the shared install
-	dir, _ := os.Getwd()           // "" when gone: bs then knows the project only from BS_PROJECT
+	dir, _ := os.Getwd() // "" when gone: bs then knows the project only from BS_PROJECT
 	env := cli.Env{Vars: os.Environ(), Dir: dir, Self: os.Getpid(), Stdin: os.Stdin}
 	os.Exit(cli.Run(context.Background(), env, ports, os.Args[1:], os.Stdout, os.Stderr))
 }

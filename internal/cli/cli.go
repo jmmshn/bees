@@ -87,7 +87,7 @@ commands:
   epic    <title>                                          create the project's next epic (<project>-<n>)
   bead    ls [--all] [<bd query>] | new --parent <project>-N [--description D] [--type T] [--priority P] <title>
   version                                                  print the commit {cmd} was built from
-  guard   <glob>...                                        agy's PreToolUse hook: deny a tool call on stdin a glob matches
+  guard   --harness agy <glob>...                          a harness's PreToolUse hook: deny a tool call on stdin a glob matches
 
 {cmd} acts in the repo it runs in, as its nearest recorded ancestor (a queen, a worker),
 else as the keeper. --as <session>, a debug override from a shell no session started,
@@ -181,13 +181,12 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 		}
 		h := ports.Harness
 		if h == nil && ports.NewHarness != nil {
-			model := s.Worker.ClaudeCode.Model
-			if args[0] == "queen" {
-				model = s.Queen.ClaudeCode.Model
-			}
-			h = ports.NewHarness(s.Harness, model)
+			h = ports.NewHarness(s.Harness, s.model(s.Harness, args[0] == "queen"))
 		}
 		other := ports.recorded
+		if ports.Harness == nil && ports.NewHarness != nil { // spawn --harness starts one on its worker model
+			other = func(name string) port.Harness { return ports.NewHarness(name, s.model(name, false)) }
+		}
 		kind, why, _ := s.Kind(s.GitTop)
 		review, vcs := ports.Review, ports.VCS
 		if review == nil { // review.host's enum has github only (config)

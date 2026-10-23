@@ -79,7 +79,8 @@ type Start struct {
 	Branch     string            // the worker's own branch; "" for a workspace with none
 	PushTo     string            // a push goal's target head branch, which Branch is pushed onto; "" for none
 	Repo       string            // the project dir the workspace was made from
-	PromptFile string            // the assembled role prompt
+	PromptFile string            // the assembled role prompt's file
+	Prompt     string            // its text, for a harness that takes the prompt inline (agy's agent body)
 	Doorbell   string            // first user message; "" for the queen
 	Continue   bool              // resume the recorded conversation
 	Record     map[string]string // the spawn's recorded Launch.Record, on a resume

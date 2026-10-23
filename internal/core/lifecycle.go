@@ -589,12 +589,18 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 	// The prune rule's branch_merged, when it ran and passed, is the proof: one gh call,
 	// not two. A merged (or closed draft) handed-off change holding the tip is another.
 	release := e.Discarded || slices.Contains(e.Prune(), goal.BranchMerged)
-	if !release && slices.ContainsFunc(e.Parts, func(p goal.Part) bool { return p.Type == "pr" }) {
+	if !release && slices.ContainsFunc(e.Parts, func(p goal.Part) bool { return p.Type == "pr" || p.Type == "push" }) {
 		d, _, err := c.Logbook.LatestDone(ctx, sp.ID)
 		if err != nil {
 			return keep(true, "%v", err)
 		}
-		if p.Held, err = c.heldByChange(ctx, sp, d.PRs, slices.Contains(e.Prune(), goal.PRClosed)); err != nil {
+		changes := d.PRs
+		for _, pt := range e.Parts {
+			if pt.Type == "push" {
+				changes = append(changes, pt.Target)
+			}
+		}
+		if p.Held, err = c.heldByChange(ctx, sp, changes, slices.Contains(e.Prune(), goal.PRClosed)); err != nil {
 			return keep(true, "can't tell whether a handed-off change holds branch %s: %v", ws.Branch, err)
 		}
 		release = p.Held != ""
@@ -647,7 +653,8 @@ func ignoredBy(pat, p string) bool {
 	return false
 }
 
-// heldByChange is the URL of one of prs, handed off under a pr goal, that holds sp's
+// heldByChange is the URL of one of prs, handed off under a pr goal or a push goal's
+// target, that holds sp's
 // branch tip (as the VCS reads it) among its commits and is merged (or, with closed,
 // closed unmerged), else "": the work is then on the review host, whatever the branch was
 // called there, and the local branch holds nothing more. It catches a squash merge of a

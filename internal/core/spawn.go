@@ -68,7 +68,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	if err != nil {
 		return logbook.Spawn{}, false, err
 	}
-	ws, reused, err := c.workspace(ctx, name, target != nil && !target.branch, ended)
+	ws, reused, err := c.workspace(ctx, name, ended)
 	if err != nil {
 		return logbook.Spawn{}, false, err
 	}
@@ -126,7 +126,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 			}
 			return err
 		}
-		return c.unmake(context.WithoutCancel(ctx), session, hw.ID, ws)
+		return c.unmake(context.WithoutCancel(ctx), session, hw.ID, ws, target != nil)
 	}
 	// The worker= tag names whose workspace this is to anyone reading herdr's list.
 	if err := c.herdr(session).TagWorkspace(ctx, hw.ID, map[string]string{"worker": name}); err != nil {
@@ -280,12 +280,11 @@ func noteHash(b port.Bead) string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(b.Notes+"\x00"+b.Design)))
 }
 
-// target is a push goal's change as spawn found it: the workspace starts at its head,
-// detached, or on a branch of its own cut there when another part (pr, branch) needs one.
+// target is a push goal's change as spawn found it: the workspace starts at its head, on
+// a branch of its own cut there, so prune can tell its commits are kept (bees-13.55).
 type target struct {
-	c      port.Change
-	hint   string // how to push onto it
-	branch bool
+	c    port.Change
+	hint string // how to push onto it
 }
 
 // resolveReview runs the spawn-time refusals of g's pr, push and review parts (Rule G),
@@ -297,7 +296,6 @@ type target struct {
 // at, if any.
 func (c *Core) resolveReview(ctx context.Context, g *goal.Goal) (*target, error) {
 	var t *target
-	needsBranch := slices.ContainsFunc(g.Parts, func(p goal.Part) bool { return p.Type == "pr" || p.Type == "branch" })
 	for i := range g.Parts {
 		p := &g.Parts[i]
 		if !p.Reviewed() {
@@ -336,7 +334,7 @@ func (c *Core) resolveReview(ctx context.Context, g *goal.Goal) (*target, error)
 		}
 		p.Target = r.URL
 		if p.Type == "push" && t == nil {
-			t = &target{c: v, hint: c.Review.PushHint(ctx, c.Repo, v), branch: needsBranch}
+			t = &target{c: v, hint: c.Review.PushHint(ctx, c.Repo, v)}
 		}
 	}
 	return t, nil
@@ -344,12 +342,14 @@ func (c *Core) resolveReview(ctx context.Context, g *goal.Goal) (*target, error)
 
 // unmake takes back the worktree and branch a spawn made but couldn't record, or a second
 // spawn would find them with nothing to prune them (motif 8). The branch is the spawn's
-// own: workspace refused one that already existed.
-func (c *Core) unmake(ctx context.Context, session, workspace string, ws logbook.Workspace) error {
-	if ws.Branch == "" { // a detached worktree bs made itself, and a workspace on it
-		return errors.Join(c.herdr(session).CloseWorkspace(ctx, workspace), c.removeDetached(ctx, ws))
-	}
-	if err := c.herdr(session).RemoveWorktree(ctx, workspace, true); err != nil {
+// own: workspace refused one that already existed. cut: the VCS made the worktree (a push
+// target's head), herdr only a workspace on it.
+func (c *Core) unmake(ctx context.Context, session, workspace string, ws logbook.Workspace, cut bool) error {
+	if cut {
+		if err := errors.Join(c.herdr(session).CloseWorkspace(ctx, workspace), c.removeCut(ctx, ws)); err != nil {
+			return err
+		}
+	} else if err := c.herdr(session).RemoveWorktree(ctx, workspace, true); err != nil {
 		return fmt.Errorf("and its worktree %s stays: %w", ws.Dir, err)
 	}
 	switch ok, err := c.hasBranch(ctx, ws); {
@@ -364,11 +364,11 @@ func (c *Core) unmake(ctx context.Context, session, workspace string, ws logbook
 }
 
 // workspace works out the spawn's workspace (Rule D): the project dir the top level of a
-// git checkout is git_worktree, on a branch of its own, or detached for a push goal (none
-// and command arrive with bees-13.10 and 13.11). When ended, name's last spawn, left its
+// git checkout is git_worktree, on a branch of its own (none and command arrive with
+// bees-13.10 and 13.11). When ended, name's last spawn, left its
 // branch (its worktree kept, or gone with the branch kept), it is reused (reused true): the
 // work there is the new spawn's to build on, never refused with no way on (motif 5).
-func (c *Core) workspace(ctx context.Context, name string, detached bool, ended *logbook.Spawn) (ws logbook.Workspace, reused bool, err error) {
+func (c *Core) workspace(ctx context.Context, name string, ended *logbook.Spawn) (ws logbook.Workspace, reused bool, err error) {
 	if c.Repo == "" {
 		return logbook.Workspace{}, false, exit(ExitRefused, "", nil, "project %s has no repo: run it in the repo, or set paths.repo", c.Project)
 	}
@@ -395,14 +395,11 @@ func (c *Core) workspace(ctx context.Context, name string, detached bool, ended 
 	dir := filepath.Join(c.Worktrees, name)
 	if ok, err := c.kept(ctx, ended, dir); err != nil {
 		return logbook.Workspace{}, false, exit(ExitCantCheck, "", err, "can't tell whether %s is %s's kept worktree", dir, name)
-	} else if ok && !detached {
+	} else if ok {
 		return ended.Workspace, true, nil
 	}
 	if _, err := os.Stat(dir); err == nil {
 		return logbook.Workspace{}, false, exit(ExitRefused, bsname.Cmd+" prune", nil, "%s already exists", dir)
-	}
-	if detached { // a push goal: the target's head, never a branch of its own
-		return logbook.Workspace{Kind: config.GitWorktree, Dir: dir, Repo: c.Repo}, false, nil
 	}
 	ws = logbook.Workspace{Kind: "git_worktree", Dir: dir, Repo: c.Repo, Branch: name, Base: base}
 	// The branch is the spawn's own, whatever its goal, so prune may delete it later: one
@@ -490,20 +487,13 @@ func refusedOrCant(err error, next, format string, a ...any) *Exit {
 }
 
 // makeWorkspace makes ws and opens a herdr workspace on it: herdr cuts a branch's
-// worktree; a push goal's checkout at its target's head the VCS makes (herdr takes no
-// --detach), once the review host has fetched that head. ws.Dir becomes
-// herdr's answer. Nothing is recorded yet: a failure leaves nothing behind.
+// worktree from its base; a push goal's branch, cut at its target's head, the VCS makes
+// (herdr cuts only from a ref it has), once the review host has fetched that head. ws.Dir
+// becomes herdr's answer. Nothing is recorded yet: a failure leaves nothing behind.
 func (c *Core) makeWorkspace(ctx context.Context, session string, ws *logbook.Workspace, t *target, label string) (herdr.Workspace, error) {
 	name := filepath.Base(ws.Dir)
-	if t == nil || t.branch {
-		from := ws.Base
-		if t != nil { // a mixed goal: its own branch, cut at the push target's head
-			if err := c.Review.Fetch(ctx, ws.Repo, t.c); err != nil {
-				return herdr.Workspace{}, exit(ExitCantCheck, "", err, "%s: can't fetch %s's head; nothing was made", name, t.c.URL)
-			}
-			from = t.c.HeadCommit
-		}
-		hw, err := c.herdr(session).CreateWorktree(ctx, ws.Repo, from, ws.Branch, ws.Dir, label)
+	if t == nil {
+		hw, err := c.herdr(session).CreateWorktree(ctx, ws.Repo, ws.Base, ws.Branch, ws.Dir, label)
 		if err != nil {
 			return hw, exit(ExitFail, "", err, "%s: herdr couldn't make its worktree; nothing was recorded", name)
 		}
@@ -513,20 +503,20 @@ func (c *Core) makeWorkspace(ctx context.Context, session string, ws *logbook.Wo
 	if err := c.Review.Fetch(ctx, ws.Repo, t.c); err != nil {
 		return herdr.Workspace{}, exit(ExitCantCheck, "", err, "%s: can't fetch %s's head; nothing was made", name, t.c.URL)
 	}
-	if err := c.VCS.Detach(ctx, ws.Repo, ws.Dir, t.c.HeadCommit); err != nil {
+	if err := c.VCS.Cut(ctx, ws.Repo, ws.Dir, ws.Branch, t.c.HeadCommit); err != nil {
 		return herdr.Workspace{}, exit(ExitFail, "", err, "%s: couldn't make its workspace at %s; nothing was recorded", name, short(t.c.HeadCommit))
 	}
 	hw, err := c.herdr(session).CreateWorkspace(ctx, ws.Dir, label)
 	if err != nil {
-		err = errors.Join(err, c.removeDetached(context.WithoutCancel(ctx), *ws))
+		err = errors.Join(err, c.removeCut(context.WithoutCancel(ctx), *ws))
 		return hw, exit(ExitFail, "", err, "%s: herdr couldn't open a workspace on its worktree; nothing was recorded", name)
 	}
 	return hw, nil
 }
 
-// removeDetached removes the detached checkout makeWorkspace made.
-func (c *Core) removeDetached(ctx context.Context, ws logbook.Workspace) error {
-	if err := c.VCS.Drop(ctx, ws.Repo, ws.Dir); err != nil {
+// removeCut removes the checkout and branch makeWorkspace had the VCS cut.
+func (c *Core) removeCut(ctx context.Context, ws logbook.Workspace) error {
+	if err := c.VCS.Drop(ctx, ws.Repo, ws.Dir, ws.Branch); err != nil {
 		return fmt.Errorf("and its workspace %s stays: %w", ws.Dir, err)
 	}
 	return nil

@@ -369,9 +369,10 @@ func TestAPRMustHoldAWorkspaceCommit(t *testing.T) {
 	})
 }
 
-// --goal push=<url>: the workspace starts at the target's head on no branch; the handoff
-// needs the target's head to descend from a commit made there; bs end waits for its merge;
-// prune removes the workspace and has no branch to delete. --goal review=<url>: the
+// --goal push=<url>: the workspace starts at the target's head on a branch named after the
+// worker (bees-13.55); the handoff needs the target's head to descend from a commit made
+// there; bs end waits for its merge; prune removes the workspace and, the merged target
+// holding its tip, deletes its branch. --goal review=<url>: the
 // handoff needs the marker bs:<spawn id> on the target since the spawn.
 func TestPushAndReviewGoals(t *testing.T) {
 	both(t, func(t *testing.T, x *toy, b backend) {
@@ -384,8 +385,8 @@ func TestPushAndReviewGoals(t *testing.T) {
 
 		sp := x.spawn("toy-1", "push="+target)
 		dir := sp.Workspace.Dir
-		if sp.Workspace.Branch != "" || x.headOf(b, dir) != head {
-			t.Fatalf("push workspace %+v at %s, want detached at %s", sp.Workspace, x.headOf(b, dir), head)
+		if sp.Workspace.Branch != "toy-1" || x.headOf(b, dir) != head {
+			t.Fatalf("push workspace %+v at %s, want branch toy-1 at %s", sp.Workspace, x.headOf(b, dir), head)
 		}
 		must(t, x.worker("toy-1", 1, "inbox"), 0, "starts at "+target+"'s head")
 		must(t, x.worker("toy-1", 2, "done"), 7, "push_moved", "nothing was committed")
@@ -396,7 +397,7 @@ func TestPushAndReviewGoals(t *testing.T) {
 		must(t, x.queen("end", "toy-1"), 9, target+": open")
 		b.land(x, 5)
 		must(t, x.queen("end", "toy-1"), 0)
-		must(t, x.queen("prune"), 0, "removed "+dir+" (toy-1)")
+		must(t, x.queen("prune"), 0, "removed "+dir+" and branch toy-1")
 
 		b.commit(x, other)
 		target = b.open(x, 6, other, "feature-2", false)
@@ -412,6 +413,24 @@ func TestPushAndReviewGoals(t *testing.T) {
 		if _, ok, _ := x.open().LandedOf(ctx, sp.ID); !ok {
 			t.Fatal("review= didn't land at handoff")
 		}
+	})
+}
+
+// A discarded push worker's commits sit on its own branch, never a detached HEAD, so prune
+// removes its workspace and branch at the keeper's word (bees-13.55: one sat kept forever,
+// "its HEAD has commits on no branch").
+func TestADiscardedPushWorkspaceIsPruned(t *testing.T) {
+	both(t, func(t *testing.T, x *toy, b backend) {
+		other := filepath.Join(filepath.Dir(x.repo), "theirs")
+		x.git(x.repo, "worktree", "add", "-q", "-b", "feature", other)
+		b.commit(x, other)
+		target := b.open(x, 5, other, "feature", false)
+		sp := x.spawn("toy-1", "push="+target)
+		b.commit(x, sp.Workspace.Dir)
+		must(t, x.queen("end", "--incomplete", "toy-1"), 0)
+		must(t, x.queen("prune"), 3, "kept "+sp.Workspace.Dir)
+		must(t, x.keeper("goal", "toy-1", "discard"), 0, "(discarded)")
+		must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir+" and branch toy-1")
 	})
 }
 

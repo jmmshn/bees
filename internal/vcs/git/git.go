@@ -160,14 +160,17 @@ func (v VCS) Descends(ctx context.Context, dir, ancestor, commit string) (bool, 
 	return err == nil, err
 }
 
-// Detach adds dir as a worktree of repo, detached at commit.
-func (v VCS) Detach(ctx context.Context, repo, dir, commit string) error {
-	_, err := v.git(ctx, repo, "worktree", "add", "--quiet", "--detach", dir, commit)
+// Cut adds dir as a worktree of repo on a new branch at commit.
+func (v VCS) Cut(ctx context.Context, repo, dir, branch, commit string) error {
+	_, err := v.git(ctx, repo, "worktree", "add", "--quiet", "-b", branch, dir, commit)
 	return err
 }
 
-// Drop removes the worktree dir of repo, whatever it holds.
-func (v VCS) Drop(ctx context.Context, repo, dir string) error {
-	_, err := v.git(ctx, repo, "worktree", "remove", "--force", dir)
+// Drop removes the worktree dir of repo, whatever it holds, then its branch.
+func (v VCS) Drop(ctx context.Context, repo, dir, branch string) error {
+	if _, err := v.git(ctx, repo, "worktree", "remove", "--force", dir); err != nil {
+		return err
+	}
+	_, err := v.git(ctx, repo, "branch", "-D", branch)
 	return err
 }

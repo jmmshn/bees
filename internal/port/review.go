@@ -112,8 +112,8 @@ type VCS interface {
 	Has(ctx context.Context, dir, commit string) (bool, error)
 	// Descends reports whether commit is ancestor or descends from it.
 	Descends(ctx context.Context, dir, ancestor, commit string) (bool, error)
-	// Detach makes dir a checkout of repo at commit on no branch: a push goal's workspace.
-	Detach(ctx context.Context, repo, dir, commit string) error
-	// Drop removes a checkout Detach made.
-	Drop(ctx context.Context, repo, dir string) error
+	// Cut makes dir a checkout of repo on a new branch at commit: a push goal's workspace.
+	Cut(ctx context.Context, repo, dir, branch, commit string) error
+	// Drop removes a checkout Cut made, and its branch.
+	Drop(ctx context.Context, repo, dir, branch string) error
 }

@@ -20,7 +20,7 @@ import (
 // checks: CL-shaped changes (https://cl.test/<repo>/<n>) and a commit graph, all in
 // memory. A workspace's commits are what Commit made there; uploading a workspace points
 // a change at its head. It shows the goal checks need neither git nor GitHub (keeper,
-// bees-13.6). ponytail: the workspace itself is still git_worktree's: Detach makes a plain
+// bees-13.6). ponytail: the workspace itself is still git_worktree's: Cut makes a plain
 // git worktree, and prune removes it with git; the command workspace kind (bees-13.11)
 // replaces it.
 type CLHost struct {
@@ -408,19 +408,21 @@ func (h *CLHost) Descends(_ context.Context, _ string, ancestor, commit string) 
 	return slices.Contains(h.ancestors(commit), ancestor), nil
 }
 
-// Detach makes dir a plain git worktree of repo (the workspace kind is git_worktree's)
-// and starts its head, in memory, at commit.
-func (h *CLHost) Detach(_ context.Context, repo, dir, commit string) error {
-	if out, err := exec.Command("git", "-C", repo, "worktree", "add", "--quiet", "--detach", dir).CombinedOutput(); err != nil {
+// Cut makes dir a plain git worktree of repo on a new branch (the workspace kind is
+// git_worktree's) and starts its head, in memory, at commit.
+func (h *CLHost) Cut(_ context.Context, repo, dir, branch, commit string) error {
+	if out, err := exec.Command("git", "-C", repo, "worktree", "add", "--quiet", "-b", branch, dir).CombinedOutput(); err != nil {
 		return fmt.Errorf("git worktree add: %v: %s", err, out)
 	}
 	h.Move(dir, commit)
 	return nil
 }
 
-func (h *CLHost) Drop(_ context.Context, repo, dir string) error {
-	if out, err := exec.Command("git", "-C", repo, "worktree", "remove", "--force", dir).CombinedOutput(); err != nil {
-		return errors.New(string(out))
+func (h *CLHost) Drop(_ context.Context, repo, dir, branch string) error {
+	for _, args := range [][]string{{"worktree", "remove", "--force", dir}, {"branch", "-D", branch}} {
+		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+			return errors.New(string(out))
+		}
 	}
 	return nil
 }

@@ -79,6 +79,11 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	case ok:
 		ended = &prev
 	}
+	// A closed bead's work is done: a new spawn on it would start a goal nobody wants, and
+	// status would read that over the completion it replaces (bees-13.78.4).
+	if bead.Status == "closed" {
+		return logbook.Spawn{}, false, exit(ExitRefused, "bd reopen "+bead.ID, nil, "%s is closed; nothing was made (reopen it to spawn on it again)", bead.ID)
+	}
 	// An ended worker comes back under its recorded label (bees-2.8); a first spawn names one.
 	label := req.Label
 	if label == "" && ended != nil {

@@ -13,6 +13,7 @@ import (
 
 	"github.com/jmmshn/bees/internal/core"
 	"github.com/jmmshn/bees/internal/fake"
+	"github.com/jmmshn/bees/internal/port"
 )
 
 // The pilot's round-11 sweep (docs/pilot-bees-12.md on origin/pilot/bees-12), one test
@@ -614,4 +615,26 @@ func TestSpawnOfAnotherProjectsBeadIsRefused(t *testing.T) {
 	if _, err := os.Stat(x.logbook); !os.IsNotExist(err) {
 		t.Fatalf("a refused spawn left a logbook: %v", err)
 	}
+}
+
+// A closed bead refuses a new spawn before anything is made (exit 2, bees-13.78.4): its
+// work is done, and the respawn's row would hide the completion. Reopening it is the route.
+func TestSpawnOfAClosedBeadIsRefused(t *testing.T) {
+	x := newToy(t)
+	x.beads.Add(port.Bead{ID: "toy-1", Title: "x", Status: "closed"})
+	must(t, x.queen("spawn", "--goal", "verdict", "--label", "x", "toy-1"), 2, "toy-1 is closed; nothing was made", "next: bd reopen toy-1")
+	if _, err := os.Stat(x.logbook); !os.IsNotExist(err) {
+		t.Fatalf("a refused spawn left a logbook: %v", err)
+	}
+}
+
+// An ended worker spawned again keeps its earlier completion in status: the new row is
+// the latest spawn's, and an earlier: line names the complete one (bees-13.78.4).
+func TestStatusKeepsAnEarlierSpawnsCompletion(t *testing.T) {
+	x := newToy(t)
+	x.spawn("toy-1", "verdict")
+	must(t, x.worker("toy-1", 1, "done", "--answer", "yes", "--report", "r"), 0)
+	must(t, x.queen("end", "toy-1"), 0)
+	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 0)
+	must(t, x.keeper("status"), 0, "earlier: toy-1: its spawn of ", "(--goal verdict) is complete; this row is a later spawn's")
 }

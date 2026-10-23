@@ -465,7 +465,8 @@ func (r *run) inbox(fs *flag.FlagSet, args []string) error {
 // session with unread mail (a queen with no recorded start, a stranger). Then one line per worker the table alone would leave a question about, each with
 // the next command (Rule G): stuck (its process is gone, its start unconfirmed, or it
 // ended incomplete), kept (complete or discarded, its workspace still on disk), waived,
-// discarded, and late (a start healed after confirmation missed it). It reads the
+// discarded, late (a start healed after confirmation missed it), and earlier (a
+// completion an incomplete respawn's row would hide). It reads the
 // record, the process table and the disk, never a check, and asks herdr only to heal an
 // unconfirmed start (core.StartOf), so with herdr down that start reads unknown and the
 // rest still prints: a goal complete but not yet landed shows "no" until bs end or bs
@@ -594,6 +595,14 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 			}
 			if discarded && !sp.Ended {
 				note("discarded", sp.Name, "the keeper discarded its goal: the work is wanted nowhere → %s end %s", bsname.Cmd, sp.Name)
+			}
+		}
+		// An earlier spawn's completion stays visible under the respawn's row (bees-13.78.4).
+		if lerr == nil && !landed {
+			if prev, ok, err := r.c.Logbook.EarlierLanded(r.ctx, sp.Name, sp.ID); err != nil {
+				errs = append(errs, err)
+			} else if ok {
+				note("earlier", sp.Name, "its spawn of %s (--goal %s) is complete; this row is a later spawn's", prev.TS.Local().Format("01-02 15:04"), prev.Goal)
 			}
 		}
 		if st, ok, err := r.c.Logbook.LatestStart(r.ctx, sp.ID); err != nil {

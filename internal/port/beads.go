@@ -18,6 +18,7 @@ type bdBead struct {
 	Notes       string `json:"notes"`
 	Design      string `json:"design"`
 	Parent      string `json:"parent"`
+	Status      string `json:"status"`
 }
 
 func (b BeadsCLI) Show(ctx context.Context, id string) (Bead, error) {

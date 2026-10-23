@@ -123,6 +123,7 @@ type Bead struct {
 	ID, Title, Description string
 	Notes, Design          string
 	Parent                 string
+	Status                 string // the tracker's: open, in_progress, closed, …
 }
 
 // ErrNoBead is the tracker saying a bead doesn't exist; any other failure is the tracker

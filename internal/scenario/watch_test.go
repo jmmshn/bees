@@ -77,8 +77,9 @@ func TestTheMailWatcher(t *testing.T) {
 // agy's turn hooks, bs hook --harness agy (bees-13.13.10), run as agy runs them: a child
 // of the worker's harness, in its workspace, with agy's payload on stdin. A turn's first
 // model call with no watcher armed is told to arm one, and with one armed nothing; a turn
-// that ends on its own with unread mail is held with the doorbell, and one the keeper
-// cancelled isn't; the keeper's own agy gets nothing.
+// that ends on its own is held with the doorbell while mail is unread, else told to arm a
+// watcher while none is; one the keeper cancelled isn't held; the keeper's own agy gets
+// nothing.
 func TestAgyTurnHooks(t *testing.T) {
 	x := newToy(t)
 	sp := x.spawn("toy-1", "verdict")
@@ -103,11 +104,12 @@ func TestAgyTurnHooks(t *testing.T) {
 	if r := hook(st.PID, "PreInvocation", first); r.code != 0 || r.out != "" {
 		t.Fatalf("armed: %s", r)
 	}
-	release()
 	must(t, x.worker("toy-1", 1, "inbox"), 0) // the brief, read
 	if r := hook(st.PID, "Stop", stop); r.code != 0 || r.out != "" {
-		t.Fatalf("no unread mail: %s", r)
+		t.Fatalf("no unread mail, a watcher armed: %s", r)
 	}
+	release() // the watcher exited mid-turn, its mail read in the same turn: never idle deaf
+	must(t, hook(st.PID, "Stop", stop), 0, `{"decision":"continue","reason":"[bs] Run this command in the background`, "bs inbox --wait")
 	must(t, x.queen("send", "toy-1", "hi"), 0)
 	must(t, hook(st.PID, "Stop", stop), 0, `{"decision":"continue","reason":"[bs] 1 unread (queen-toy)`)
 	if r := hook(st.PID, "Stop", cancel); r.code != 0 || r.out != "" {

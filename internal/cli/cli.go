@@ -87,6 +87,7 @@ commands:
   epic    <title>                                          create the project's next epic (<project>-<n>)
   bead    ls [--all] [<bd query>] | new --parent <project>-N [--description D] [--type T] [--priority P] <title>
   version                                                  print the commit {cmd} was built from
+  guard   <glob>...                                        agy's PreToolUse hook: deny a tool call on stdin a glob matches
 
 {cmd} acts in the repo it runs in, as its nearest recorded ancestor (a queen, a worker),
 else as the keeper. --as <session>, a debug override from a shell no session started,
@@ -99,6 +100,9 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 	if len(args) == 0 || args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
 		fmt.Fprint(stdout, usage)
 		return map[bool]int{true: 2, false: 0}[len(args) == 0]
+	}
+	if args[0] == "guard" { // a hook: no config, logbook or stale check, and a deny on any error
+		return guard(args[1:], env.Stdin, stdout)
 	}
 	cmd, ok := commands[args[0]]
 	if !ok {

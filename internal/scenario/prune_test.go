@@ -199,7 +199,7 @@ func TestSpawnTrustsItsWorktreeAndPruneUntrustsIt(t *testing.T) {
 	h := &trustRec{Harness: x.harness, fail: errors.New("settings.json can't be read")}
 	x.ports.Harness = h
 	x.bead("toy-1", "work on toy-1")
-	must(t, x.queen("spawn", "--goal", "branch", "--label", "toy 1", "toy-1"), 1, "couldn't trust its worktree", "settings.json can't be read", "nothing was recorded")
+	must(t, x.queen("spawn", "--goal", "branch", "--label", "toy 1", "toy-1"), 1, "couldn't trust its folder", "settings.json can't be read", "nothing was recorded")
 	if x.hasBranch("toy-1") || len(h.all()) > 0 {
 		t.Fatalf("a refused trust left a branch (%v) or trust %v", x.hasBranch("toy-1"), h.all())
 	}

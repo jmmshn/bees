@@ -32,7 +32,7 @@ func TestGuardDeniesAMatchAndOtherwiseSaysNothing(t *testing.T) {
 	} {
 		var out, errb bytes.Buffer
 		env := Env{Dir: t.TempDir(), Stdin: strings.NewReader(c.stdin)}
-		code := Run(context.Background(), env, Ports{}, []string{"guard", "git push *main*", "gh pr merge*"}, &out, &errb)
+		code := Run(context.Background(), env, Ports{}, []string{"guard", "--harness", "agy", "git push *main*", "gh pr merge*"}, &out, &errb)
 		if code != 0 || errb.Len() != 0 {
 			t.Fatalf("guard on %q: exit %d, stderr %q", c.stdin, code, errb.String())
 		}
@@ -52,7 +52,18 @@ func TestGuardDeniesAMatchAndOtherwiseSaysNothing(t *testing.T) {
 // With no stdin at all, bs guard denies rather than crash.
 func TestGuardDeniesWithNoStdin(t *testing.T) {
 	var out bytes.Buffer
-	if code := Run(context.Background(), Env{}, Ports{}, []string{"guard"}, &out, &out); code != 0 || !strings.Contains(out.String(), `"deny"`) {
+	if code := Run(context.Background(), Env{}, Ports{}, []string{"guard", "--harness", "agy"}, &out, &out); code != 0 || !strings.Contains(out.String(), `"deny"`) {
 		t.Fatalf("exit %d, %q", code, out.String())
+	}
+}
+
+// Without a harness it serves, bs guard denies every call, a harmless one too.
+func TestGuardDeniesWithNoHarnessItKnows(t *testing.T) {
+	for _, args := range [][]string{{"guard", "git push *main*"}, {"guard", "--harness", "omp", "git push *main*"}} {
+		var out bytes.Buffer
+		env := Env{Stdin: strings.NewReader(`{"toolCall":{"name":"run_command","args":{"CommandLine":"ls"}}}`)}
+		if code := Run(context.Background(), env, Ports{}, args, &out, &out); code != 0 || !strings.Contains(out.String(), `"deny"`) {
+			t.Errorf("%q: exit %d, %q", args, code, out.String())
+		}
 	}
 }

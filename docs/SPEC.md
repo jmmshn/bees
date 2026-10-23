@@ -35,6 +35,7 @@ internal/logbook/          the entries table (schema 2) and its migration
 internal/goal/, checks/    goals and their handoff, complete and prune checks
 internal/port/             the Harness, Review, VCS, Beads and Runner ports
 internal/harness/claude/   the claude_code adapter: launch, settings, ring
+internal/harness/agy/      the agy adapter: launch, per-start agent and hooks, bs guard's payload
 internal/herdr/, proc/     herdr's CLI; process parents and start times
 internal/review/github/, vcs/git/   the GitHub review host and git
 internal/guards/, prompt/  a worker's deny list; the role prompts and fragments

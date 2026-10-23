@@ -25,7 +25,7 @@ Settle these with the keeper, one batch of questions:
 
 | Question | Values | Notes |
 |---|---|---|
-| Harness (machine-wide) | `claude_code` | The program every queen and worker starts; the only one yet (omp: bees-12.8, agy: bees-12.12). |
+| Harness (machine-wide) | `claude_code` \| `agy` | The program every queen and worker starts (omp: bees-12.8). `agy` is staged (bees-13.13): no ring, no resume until bees-13.13.6, and each new worktree must be trusted until bees-13.13.5. |
 | Projects | a name and a git checkout each | Its name is the checkout's directory name, lowercased with `-` and `_` dropped; bs finds it from the directory it runs in. |
 | Workspace | `git_worktree` | Each worker gets its own worktree and branch under `<repo>-WT/`. That is the only kind bs makes yet: a directory that isn't a git checkout's top level (`none`, bees-13.10) and other VCS such as jj or a CitC client (`command`, bees-13.11) have no working path, and `bs doctor` and `bs spawn` refuse them. |
 | Goals | `pr`, `branch`, `verdict`, `note`, `beads`, … | The queen names one per spawn (`bs spawn --goal`). `pr`, `push=` and `review=` need the repo's GitHub remote; the others need no network. |

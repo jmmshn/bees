@@ -61,13 +61,14 @@ func (c *Core) Queen(ctx context.Context, req QueenReq) ([]string, error) {
 	if err != nil {
 		return nil, exit(ExitCantCheck, bsname.Cmd+" doctor", err, "can't read its own start time")
 	}
-	l, err := c.Harness.Prepare(port.Start{Role: port.Queen, Name: name, Dir: c.Repo, PromptFile: "{{prompt.md}}"})
-	if err != nil {
-		return nil, exit(ExitRefused, bsname.Cmd+" config", err, "its harness refused the launch")
-	}
 	host, err := c.host(prompt.Queen)
 	if err != nil {
 		return nil, exit(ExitRefused, bsname.Cmd+" config", err, "her review host's section can't be read")
+	}
+	text := prompt.Text(prompt.Queen, c.Project, c.Harness.Kind(), c.Kind, goal.BuiltinTypes()) + host
+	l, err := c.Harness.Prepare(port.Start{Role: port.Queen, Name: name, Dir: c.Repo, PromptFile: "{{prompt.md}}", Prompt: text})
+	if err != nil {
+		return nil, exit(ExitRefused, bsname.Cmd+" config", err, "its harness refused the launch")
 	}
 	q := logbook.Queen{Name: name, Harness: c.HarnessName, Session: req.Session, Pane: req.Pane,
 		Process: logbook.Process{PID: req.Self, Start: start}, Exe: req.Exe, Repo: c.Repo}
@@ -79,7 +80,7 @@ func (c *Core) Queen(ctx context.Context, req QueenReq) ([]string, error) {
 	case !ok:
 		return nil, twin(prev)
 	}
-	l.Files = withPrompt(l.Files, prompt.Text(prompt.Queen, c.Project, c.Harness.Kind(), c.Kind, goal.BuiltinTypes())+host)
+	l.Files = withPrompt(l.Files, text)
 	args, err := c.writeFiles(name, l)
 	if err != nil {
 		return nil, exit(ExitFail, bsname.Cmd+" queen", err, "couldn't write her start files (her entry names this pid, which exits: harmless)")

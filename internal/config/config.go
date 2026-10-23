@@ -30,7 +30,7 @@ import (
 // A table (a pointer to a struct, or a map of them) is a unit: the nearest file that
 // sets it sets all of it, and its own check method validates it.
 type Config struct {
-	Harness   string              `toml:"harness" scope:"global" default:"claude_code" enum:"claude_code" doc:"the harness every queen and worker on this machine starts on (omp and agy arrive with bees-12.8 and bees-12.12)"`
+	Harness   string              `toml:"harness" scope:"global" default:"claude_code" enum:"claude_code|agy" doc:"the harness every queen and worker on this machine starts on: claude_code (Claude Code) or agy (Antigravity's CLI; omp arrives with bees-12.8)"`
 	Paths     Paths               `toml:"paths"`
 	Workspace Workspace           `toml:"workspace"`
 	Goal      map[string]GoalType `toml:"goal" scope:"both" unread:"bees-13.11" doc:"custom goal types, by name"`
@@ -98,6 +98,7 @@ type Review struct {
 // Role holds the queen's harness tables.
 type Role struct {
 	ClaudeCode ClaudeCode `toml:"claude_code"`
+	Agy        Agy        `toml:"agy"`
 }
 
 // Prune is what bs prune lets go.
@@ -109,11 +110,17 @@ type Prune struct {
 type Worker struct {
 	Path       []string   `toml:"path" scope:"project" path:"dir" doc:"dirs put first on every worker's PATH (a live test's build under test)"`
 	ClaudeCode ClaudeCode `toml:"claude_code"`
+	Agy        Agy        `toml:"agy"`
 }
 
 // ClaudeCode holds the settings bs passes to Claude Code.
 type ClaudeCode struct {
 	Model string `toml:"model" scope:"both" doc:"the model Claude Code starts on (claude --model); empty: Claude Code's default"`
+}
+
+// Agy holds the settings bs passes to agy.
+type Agy struct {
+	Model string `toml:"model" scope:"both" doc:"the model agy starts on (agy --model); empty: agy's default"`
 }
 
 // The workspace kinds.

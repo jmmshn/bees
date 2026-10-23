@@ -14,6 +14,7 @@ import (
 	"github.com/jmmshn/bees/internal/bsname"
 	"github.com/jmmshn/bees/internal/config"
 	"github.com/jmmshn/bees/internal/core"
+	"github.com/jmmshn/bees/internal/harness/agy"
 	"github.com/jmmshn/bees/internal/port"
 )
 
@@ -327,6 +328,18 @@ func samePath(a, b string) bool {
 	ra, errA := filepath.EvalSymlinks(a)
 	rb, errB := filepath.EvalSymlinks(b)
 	return errA == nil && errB == nil && ra == rb
+}
+
+// model is harness's model for a worker, or with queen the queen's.
+func (s *settings) model(harness string, queen bool) string {
+	cc, a := s.Worker.ClaudeCode, s.Worker.Agy
+	if queen {
+		cc, a = s.Queen.ClaudeCode, s.Queen.Agy
+	}
+	if harness == agy.Name {
+		return a.Model
+	}
+	return cc.Model
 }
 
 // harnessProgram is the program a config harness name starts.

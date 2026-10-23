@@ -42,7 +42,7 @@ func (c *Core) Check(ctx context.Context, name string, self int) ([]logbook.Chec
 	case len(bg) > 0:
 		gate.Pass, gate.Detail = false, fmt.Sprintf("%d background processes: %s", len(bg), lines(bg))
 	}
-	rs, cant := c.look(sp, Handed{PRs: d.PRs, Answer: d.Answer, Report: d.Report}).stage(ctx, e, func(p goal.Part) []string { return p.Handoff })
+	rs, cant := c.look(sp, Handed{PRs: d.PRs, Answer: d.Answer, Report: d.Report}).stage(ctx, e, e.Handoff)
 	rs = append([]logbook.CheckResult{gate}, rs...)
 	if cant != nil {
 		return append(rs, *cant), exit(ExitCantCheck, "", errors.New(cant.Err), "%s: %s couldn't run", name, cant.Name)
@@ -94,6 +94,8 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 			return logbook.Effective{}, exit(ExitRefused, bsname.Cmd+" goal "+req.Name+" discard (the keeper)", nil, "%s: it has ended; only a discard changes an ended goal", what)
 		case e.Discarded:
 			return logbook.Effective{}, exit(ExitRefused, "", nil, "%s: the keeper discarded it", what)
+		case e.Type == goal.MixedType:
+			return logbook.Effective{}, exit(ExitRefused, bsname.Cmd+" goal "+req.Name+" discard (the keeper)", nil, "%s: its goal --goal %s was recorded before one goal per spawn; only a discard changes it", what, e.Goal)
 		}
 	}
 	change := logbook.GoalChange{By: req.By}
@@ -105,7 +107,7 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 			return logbook.Effective{}, exit(ExitRefused, bsname.Cmd+" done --force, or "+bsname.Cmd+" end --force", nil, "--waive %s: the gate is waived per call with --force, never for good", req.Waive)
 		}
 		var runs []string
-		for _, n := range slices.Concat(e.Handoff(), e.Complete(), e.Prune()) {
+		for _, n := range slices.Concat(e.Handoff, e.Complete, e.Prune) {
 			if n != goal.NoBackground && !slices.Contains(runs, n) {
 				runs = append(runs, n)
 			}
@@ -115,29 +117,28 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 		}
 		change.Waive = req.Waive
 	default:
-		g, err := goal.Parse(req.Values)
+		if len(req.Values) > 1 {
+			return logbook.Effective{}, exit(ExitRefused, "", nil, "%s --goal %s: one goal per spawn; give one value", what, strings.Join(req.Values, " "))
+		}
+		g, err := goal.Parse(req.Values[0])
 		if err != nil {
 			return logbook.Effective{}, exit(ExitRefused, "", err, "%s", what)
 		}
-		for i, p := range g.Parts {
-			g.Parts[i].Fragment = prompt.Hash(p.Type)
-		}
+		g.Fragment = prompt.Hash(g.Type)
 		if _, err := c.resolveReview(ctx, &g); err != nil {
 			return logbook.Effective{}, err
 		}
 		// A push goal's workspace starts at its target's head: one made for another goal
 		// can't be re-cut there, so an amend never adds a push target.
-		for _, p := range g.Parts {
-			if p.Type == "push" && !slices.ContainsFunc(e.Parts, func(o goal.Part) bool { return o.Type == "push" && o.Target == p.Target }) {
-				return logbook.Effective{}, exit(ExitRefused, bsname.Cmd+" end --incomplete "+req.Name+", then "+bsname.Cmd+" spawn --goal "+p.String()+" "+sp.Bead, nil,
-					"--goal %s: a push goal's workspace starts at its target's head, and %s's was made for --goal %s", p, req.Name, e.Goal)
-			}
+		if g.Type == "push" && (e.Type != "push" || e.Target != g.Target) {
+			return logbook.Effective{}, exit(ExitRefused, bsname.Cmd+" end --incomplete "+req.Name+", then "+bsname.Cmd+" spawn --goal "+g.String()+" "+sp.Bead, nil,
+				"--goal %s: a push goal's workspace starts at its target's head, and %s's was made for --goal %s", g, req.Name, e.Goal)
 		}
 		if err := c.refuse(g, sp.Workspace); err != nil {
 			return logbook.Effective{}, err
 		}
 		// Only a spawn from before bs froze its bead has none: nothing to tell a change from.
-		if sp.At == nil && slices.ContainsFunc(g.Parts, goal.Part.ReadsBead) {
+		if sp.At == nil && g.ReadsBead() {
 			return logbook.Effective{}, exit(ExitRefused, bsname.Cmd+" goal "+sp.Name+" discard (the keeper), then "+bsname.Cmd+" end "+sp.Name+" and "+bsname.Cmd+" spawn --goal "+g.String()+" "+sp.Bead, nil,
 				"%s --goal %s: it was spawned before bs froze its bead, so there is nothing to tell a change from", what, g)
 		}
@@ -151,13 +152,11 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 		return e, err
 	}
 	body := fmt.Sprintf("%s changed your goal: it is now --goal %s. Hand it off with %s done when it holds.\n", req.By, e.Goal, bsname.Cmd)
-	for _, p := range e.Parts {
-		if p.Type == "review" {
-			body += fmt.Sprintf("Your review comment on %s must carry the marker bs:%s: %s done looks for it.\n", p.Target, sp.ID, bsname.Cmd)
-		}
+	if e.Type == "review" {
+		body += fmt.Sprintf("Your review comment on %s must carry the marker bs:%s: %s done looks for it.\n", e.Target, sp.ID, bsname.Cmd)
 	}
 	body += prompt.Goal(prompt.Worker, e.Types()) // the fragments its hash records
-	if slices.ContainsFunc(e.Parts, goal.Part.Reviewed) {
+	if e.Reviewed() {
 		body += prompt.Host(prompt.Worker, c.Review.Name())
 	}
 	switch {

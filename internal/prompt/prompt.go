@@ -1,5 +1,6 @@
 // Package prompt is the prompt bs appends to the sessions it starts (ADR-0010): the role
-// prompt (QUEEN.md or WORKER.md), PITFALLS.md and BEADS.md, then the workspace fragment
+// prompt (QUEEN.md or WORKER.md), the harness's pitfalls (harness/<kind>.md), PITFALLS.md
+// and BEADS.md, then the workspace fragment
 // of the workspace kind (workspace/<kind>.md) and a goal fragment per goal type
 // (goal/<type>.md). The role prompts name no VCS: what to commit and how work lands lives
 // only in the fragments, so a worker gets git wording only from a git workspace or a git
@@ -33,7 +34,7 @@ var (
 	pitfalls string
 	//go:embed BEADS.md
 	beads string
-	//go:embed workspace/*.md goal/*.md host/*.md
+	//go:embed workspace/*.md goal/*.md host/*.md harness/*.md
 	fragments embed.FS
 )
 
@@ -47,19 +48,25 @@ func Hash(typ string) string {
 	return fmt.Sprintf("%x", sha256.Sum256(b))
 }
 
-// Text is r's prompt for project: the role prompt, PITFALLS.md and BEADS.md, then r's part
-// of the workspace fragment of kind under "## Workspace" and of each goal type's fragment
-// under "## Goal" (a worker: its own goal's types) or "## Goals" (the queen), with
+// Text is r's prompt for project on harness (port.Harness Kind: claude, omp, agy): the
+// role prompt, r's part of the harness's pitfalls (harness/<harness>.md: what only that
+// harness does, such as Claude Code's auto-mode denials), PITFALLS.md and BEADS.md, then
+// r's part of the workspace fragment of kind under "## Workspace" and of each goal type's
+// fragment under "## Goal" (a worker: its own goal's types) or "## Goals" (the queen), with
 // {{project}} and {{bs}} (the command, bsname.Cmd) filled in. A goal type with no fragment yet gets a line saying bs done
 // checks it. A kind with no fragment yet (none, command: bees-13.10, 13.11) gets no
-// workspace section; "" is no workspace known.
-func Text(r Role, project, kind string, goals []string) string {
+// workspace section; "" is no workspace known. A harness with no fragment adds no lines.
+func Text(r Role, project, harness, kind string, goals []string) string {
 	role, heading := worker, "## Goal"
 	if r == Queen {
 		role, heading = queen, "## Goals"
 	}
 	var b strings.Builder
-	b.WriteString(role + pitfalls + "\n" + beads)
+	b.WriteString(role)
+	if h, err := fragments.ReadFile("harness/" + harness + ".md"); harness != "" && err == nil {
+		b.WriteString(part(r, string(h)))
+	}
+	b.WriteString(pitfalls + "\n" + beads)
 	if ws, err := fragments.ReadFile("workspace/" + kind + ".md"); kind != "" && err == nil {
 		b.WriteString("\n## Workspace\n\n" + part(r, string(ws)))
 	}

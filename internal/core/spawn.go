@@ -117,7 +117,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	if err != nil {
 		return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s: its harness refused the launch; nothing was made", name)
 	}
-	text := prompt.Text(prompt.Worker, c.Project, ws.Kind, g.Types())
+	text := prompt.Text(prompt.Worker, c.Project, c.Harness.Kind(), ws.Kind, g.Types())
 	if g.Reviewed() {
 		text += prompt.Host(prompt.Worker, c.Review.Name())
 	}
@@ -261,7 +261,7 @@ func (c *Core) resume(ctx context.Context, sp logbook.Spawn, bead port.Bead, req
 	if err != nil {
 		return exit(ExitRefused, "", err, "%s: its harness refused the restart; nothing started", sp.Name)
 	}
-	text := prompt.Text(prompt.Worker, c.Project, sp.Workspace.Kind, e.Types())
+	text := prompt.Text(prompt.Worker, c.Project, c.Harness.Kind(), sp.Workspace.Kind, e.Types())
 	if e.Reviewed() {
 		text += prompt.Host(prompt.Worker, c.Review.Name())
 	}

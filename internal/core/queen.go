@@ -72,7 +72,7 @@ func (c *Core) Queen(ctx context.Context, req QueenReq) ([]string, error) {
 	case !ok:
 		return nil, twin(prev)
 	}
-	l.Files = withPrompt(l.Files, prompt.Text(prompt.Queen, c.Project, c.Kind, goal.BuiltinTypes())+prompt.Host(prompt.Queen, c.Review.Name()))
+	l.Files = withPrompt(l.Files, prompt.Text(prompt.Queen, c.Project, c.Harness.Kind(), c.Kind, goal.BuiltinTypes())+prompt.Host(prompt.Queen, c.Review.Name()))
 	args, err := c.writeFiles(name, l)
 	if err != nil {
 		return nil, exit(ExitFail, bsname.Cmd+" queen", err, "couldn't write her start files (her entry names this pid, which exits: harmless)")

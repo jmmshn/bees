@@ -19,7 +19,7 @@ var gitWords = regexp.MustCompile(`(?i)\b(git|branch(es)?|commits?|worktrees?|me
 // workspace with a goal that isn't git's reads no git wording (bees-12.29).
 // The queen's side, every goal type under none, is bees-13.19.
 func TestANonGitWorkerReadsNoGitWording(t *testing.T) {
-	got := prompt.Text(prompt.Worker, "web2", "none", []string{"verdict", "note", "beads"})
+	got := prompt.Text(prompt.Worker, "web2", "claude", "none", []string{"verdict", "note", "beads"})
 	if m := gitWords.FindAllString(got, -1); m != nil {
 		t.Errorf("worker prompt under none with --goal verdict, note, beads says %q:\n%s", m, got)
 	}
@@ -27,8 +27,8 @@ func TestANonGitWorkerReadsNoGitWording(t *testing.T) {
 
 // Each role reads the shared lead and its own part of each fragment, never the other's.
 func TestFragmentsSplitPerRole(t *testing.T) {
-	w := prompt.Text(prompt.Worker, "web2", "git_worktree", []string{"branch"})
-	q := prompt.Text(prompt.Queen, "web2", "git_worktree", goal.BuiltinTypes())
+	w := prompt.Text(prompt.Worker, "web2", "claude", "git_worktree", []string{"branch"})
+	q := prompt.Text(prompt.Queen, "web2", "claude", "git_worktree", goal.BuiltinTypes())
 	for _, c := range []struct {
 		text string
 		has  []string
@@ -55,9 +55,37 @@ func TestFragmentsSplitPerRole(t *testing.T) {
 	}
 }
 
+// Harness-only prose reaches only that harness's sessions, under Known pitfalls before the
+// shared lines; a harness with no fragment (omp) reads only the shared ones (bees-13.20).
+func TestPitfallsArePerHarness(t *testing.T) {
+	const claude, agy, shared = "auto-mode permission denial", "agy's permission prompt", "Calling herdr directly"
+	for _, r := range []prompt.Role{prompt.Worker, prompt.Queen} {
+		for h, c := range map[string]struct{ has, not []string }{
+			"claude": {[]string{claude}, []string{agy}},
+			"agy":    {[]string{agy, "denied by `bs guard`"}, []string{claude, "Claude"}},
+			"omp":    {nil, []string{claude, agy, "Claude"}},
+		} {
+			got := prompt.Text(r, "web2", h, "git_worktree", []string{"pr"})
+			for _, s := range c.has {
+				if i := strings.Index(got, s); i < 0 || i > strings.Index(got, shared) || i < strings.Index(got, "## Known pitfalls") {
+					t.Errorf("%s on %s: %q missing or outside Known pitfalls before the shared lines:\n%s", r, h, s, got)
+				}
+			}
+			for _, s := range c.not {
+				if strings.Contains(got, s) {
+					t.Errorf("%s on %s has %q:\n%s", r, h, s, got)
+				}
+			}
+			if !strings.Contains(got, shared) {
+				t.Errorf("%s on %s lacks the shared pitfalls", r, h)
+			}
+		}
+	}
+}
+
 // A goal type with no fragment yet still names how to hand it off; each type appears once.
 func TestAGoalWithNoFragmentStillSaysBsDone(t *testing.T) {
-	got := prompt.Text(prompt.Worker, "web2", "git_worktree", []string{"cl", "branch", "branch"})
+	got := prompt.Text(prompt.Worker, "web2", "claude", "git_worktree", []string{"cl", "branch", "branch"})
 	if !strings.Contains(got, "`--goal cl`: `bs done` checks it") || strings.Count(got, "`--goal branch`:") != 1 {
 		t.Fatalf("prompt:\n%s", got)
 	}
@@ -71,7 +99,7 @@ func TestNonPRGoalsSayWhereTheReportGoes(t *testing.T) {
 		"note":    "bd update <bead> --append-notes",
 		"beads":   "bs bead new --parent <bead>",
 	} {
-		got := prompt.Text(prompt.Worker, "web2", "none", []string{g})
+		got := prompt.Text(prompt.Worker, "web2", "claude", "none", []string{g})
 		if !strings.Contains(got, want) || (g != "beads" && !strings.Contains(got, "never leave") && !strings.Contains(got, "Never leave")) {
 			t.Errorf("--goal %s worker prompt lacks %q or the scratch warning:\n%s", g, want, got)
 		}
@@ -80,7 +108,7 @@ func TestNonPRGoalsSayWhereTheReportGoes(t *testing.T) {
 
 // The goal fragments name no review host's commands; the host fragment does, by role.
 func TestGoalFragmentsLeaveCommandsToTheHost(t *testing.T) {
-	w := prompt.Text(prompt.Worker, "web2", "git_worktree", []string{"pr", "push", "review"})
+	w := prompt.Text(prompt.Worker, "web2", "claude", "git_worktree", []string{"pr", "push", "review"})
 	for _, host := range []string{"gh pr", "github"} {
 		if strings.Contains(strings.ToLower(w), host) {
 			t.Errorf("a goal fragment names %q:\n%s", host, w)

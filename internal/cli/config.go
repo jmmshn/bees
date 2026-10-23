@@ -16,6 +16,8 @@ import (
 	"github.com/jmmshn/bees/internal/core"
 	"github.com/jmmshn/bees/internal/harness/agy"
 	"github.com/jmmshn/bees/internal/port"
+	reviewcmd "github.com/jmmshn/bees/internal/review/command"
+	"github.com/jmmshn/bees/internal/review/github"
 )
 
 // errNoConfigDir is a session whose config dir is missing (Rule G): every command that
@@ -374,6 +376,15 @@ func (s *settings) command() *config.Command {
 	c := *s.Workspace.Command
 	c.Dir = s.Expand(c.Dir)
 	return &c
+}
+
+// review is review.host's host: GitHub through gh on run, or [review.command] with
+// getenv's PATH, HOME and LANG (config refused a command host without its keys).
+func (s *settings) review(run port.Runner, getenv func(string) string) (port.Review, error) {
+	if s.Review.Host == config.CommandHost {
+		return reviewcmd.New(s.Review.Command, nil, getenv)
+	}
+	return github.Host{Run: run}, nil
 }
 
 // goals is the custom goal types with each fragment's ~ expanded.

@@ -10,12 +10,14 @@ import (
 	"testing"
 
 	"github.com/jmmshn/bees/internal/fake"
+	reviewcmd "github.com/jmmshn/bees/internal/review/command"
 )
 
 // A pr goal in a command workspace whose VCS is the keeper's argv (bees-14.4): a toy vcs
 // keeps a workspace's commits in files under <dir>/.vcs (head, parents: "<commit>
-// <parent>…" per line, uploaded), and fake.CLHost is the review host, so neither git nor
-// gh reads the work. The goal checks see only port.VCS and port.Review.
+// <parent>…" per line, uploaded), and the review host is the command host over a scripted
+// cl answering from fake.CLHost (ADR-0010 Amendment 6), so neither git nor gh reads the
+// work. The goal checks see only port.VCS and port.Review.
 
 // vcsToy is a clToy with the toy vcs as its [workspace.command] VCS and h as its review
 // host.
@@ -55,7 +57,11 @@ branch = [%[1]q, "branch"]
 pushed = [%[1]q, "pushed"]
 has = [%[1]q, "has", "{commit}"]
 descends = [%[1]q, "descends", "{ancestor}", "{commit}"]`, vcs), ""), h: &fake.CLHost{RepoName: "toy"}}
-	x.ports.Review = x.h
+	host, err := reviewcmd.New(fake.CLToolConfig(), fake.CLTool{H: x.h}.Run, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	x.ports.Review = host
 	return x
 }
 

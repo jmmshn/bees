@@ -25,7 +25,7 @@ A goal whose state has been reached, a merged PR by default; bs finds it and rec
 _Avoid_: landed (as a verb the keeper types), finished, merged (for non-PR goals)
 
 **Review host**:
-Where a project's changes (pull requests, CLs) are reviewed and land, set by `review.host`: GitHub by default. bs reads PR goals' evidence (state, CI, comments) only through it (ADR-0010 Amendment 1).
+Where a project's changes (pull requests, CLs) are reviewed and land, set by `review.host`: GitHub by default, or `command`, the keeper's own argv answering in JSON (Amendment 6). bs reads PR goals' evidence (state, CI, comments) only through it (ADR-0010 Amendment 1).
 _Avoid_: forge, remote, GitHub (for the general idea)
 
 **Workspace commit**:

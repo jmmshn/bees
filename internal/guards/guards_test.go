@@ -66,21 +66,26 @@ func TestTheDefaultMatrix(t *testing.T) {
 		}
 	}
 	// none and command in a git checkout: no push to a default branch, no force push, and
-	// nothing else.
+	// the review host's merge and approve (Amendment 6).
 	for _, kind := range []string{config.NoWorkspace, config.CommandKind} {
 		deny := build(t, config.Guards{}, guards.In{Kind: kind, Git: true, DefaultBranches: guards.DefaultBranches(), MergeDeny: github.Host{}.MergeDeny(), ApproveDeny: github.Host{}.ApproveDeny()})
-		for _, cmd := range []string{"git push origin main", "git push origin x:master", "git push --force origin x"} {
+		for _, cmd := range []string{"git push origin main", "git push origin x:master", "git push --force origin x", "gh pr merge 41", "gh pr review 41 --approve"} {
 			if !denied(deny, cmd) {
 				t.Errorf("%s lets through %q", kind, cmd)
 			}
 		}
-		for _, cmd := range []string{"gh pr merge 41", "git push origin maintenance"} {
+		for _, cmd := range []string{"gh pr create", "git push origin maintenance"} {
 			if denied(deny, cmd) {
 				t.Errorf("%s refuses %q", kind, cmd)
 			}
 		}
 		if deny := build(t, config.Guards{}, guards.In{Kind: kind}); len(deny) != 0 {
 			t.Errorf("%s outside a git checkout denies %q", kind, deny)
+		}
+		// Outside one, only a host's own: a CL tool's submit and approve.
+		cl := build(t, config.Guards{}, guards.In{Kind: kind, MergeDeny: []string{"cl submit*"}, ApproveDeny: []string{"cl approve*"}})
+		if !denied(cl, "cl submit 7") || !denied(cl, "cl approve 7") || denied(cl, "cl upload") || denied(cl, "git push origin main") {
+			t.Errorf("%s outside a git checkout with a CL host denies %q", kind, cl)
 		}
 	}
 }

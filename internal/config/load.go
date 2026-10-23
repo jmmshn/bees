@@ -126,6 +126,11 @@ func Load(in Input) (*Loaded, error) {
 			errs = append(errs, fmt.Errorf("%s: [goal.%s] %w", l.Sources["goal."+name].Where, name, err))
 		}
 	}
+	if l.Review.Host == CommandHost {
+		if err := l.Review.Command.Incomplete(); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", l.Sources["review.host"].Where, err))
+		}
+	}
 	return l, errors.Join(errs...)
 }
 

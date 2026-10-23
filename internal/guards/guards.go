@@ -100,6 +100,10 @@ func Build(g config.Guards, in In) ([]string, error) {
 		deny = append(deny, in.ApproveDeny...) // no grant lifts an approval
 	case in.Git: // none and command in a git checkout (bees-12.21: no kind allows a force push)
 		deny = append(pushes(in.DefaultBranches), force()...)
+		fallthrough
+	default: // the review host's own submit and approve, whatever the workspace (Amendment 6)
+		deny = append(deny, in.MergeDeny...)
+		deny = append(deny, in.ApproveDeny...)
 	}
 	for _, d := range g.Deny {
 		if !slices.Contains(deny, d) {

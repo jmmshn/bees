@@ -3,6 +3,7 @@ package scenario_test
 import (
 	"context"
 	"fmt"
+	reviewcmd "github.com/jmmshn/bees/internal/review/command"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -190,7 +191,12 @@ func (b *clBackend) setup(x *toy, remote bool) {
 	if remote {
 		b.h.RepoName = "toy"
 	}
-	x.ports.Review, x.ports.VCS = b.h, b.h
+	// The review host is the command host over a scripted cl (ADR-0010 Amendment 6).
+	host, err := reviewcmd.New(fake.CLToolConfig(), fake.CLTool{H: b.h}.Run, nil)
+	if err != nil {
+		x.t.Fatal(err)
+	}
+	x.ports.Review, x.ports.VCS = host, b.h
 }
 func (b *clBackend) commit(_ *toy, dir string) { b.h.Commit(dir) }
 func (b *clBackend) open(_ *toy, n int, dir, _ string, draft bool) string {

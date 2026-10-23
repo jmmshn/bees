@@ -16,7 +16,7 @@ import (
 // protected. A lookup that fails is an error, never
 // "unprotected" or "no default branch" (Rule G).
 func (c *Core) guardIn(ctx context.Context) (guards.In, error) {
-	in := guards.In{Kind: cmp.Or(c.Kind, config.GitWorktree), Git: true}
+	in := guards.In{Kind: cmp.Or(c.Kind, config.GitWorktree), Git: true, MergeDeny: c.Review.MergeDeny(), ApproveDeny: c.Review.ApproveDeny()}
 	// A command workspace is a git checkout's only when the repo is one: else no git
 	// guard applies, and there is no branch to name.
 	if in.Kind != config.GitWorktree {
@@ -38,7 +38,6 @@ func (c *Core) guardIn(ctx context.Context) (guards.In, error) {
 		return in, err
 	}
 	in.DefaultBranches = guards.DefaultBranches(origin, head)
-	in.MergeDeny, in.ApproveDeny = c.Review.MergeDeny(), c.Review.ApproveDeny()
 	if len(c.Guards.AllowMergeInto) == 0 {
 		return in, nil
 	}

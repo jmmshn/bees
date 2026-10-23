@@ -7,6 +7,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -126,8 +127,119 @@ type Guards struct {
 
 // Review says where a project's changes (pr, push and review goals) are reviewed and land.
 type Review struct {
-	Host     string `toml:"host" scope:"both" default:"github" enum:"github" doc:"the review host pr, push and review goals check against: github (pull requests through gh, the repo's git remotes)"`
-	Fragment string `toml:"fragment" scope:"both" path:"dir" doc:"a markdown file that is the review host's section of the prompt, in place of the built-in one: how a worker uploads, revises and hands off a change there, and how the queen lands it (lines <!-- worker --> and <!-- queen --> start each role's part). A host with no built-in section (a command host) gets its instructions only from here, so no host's workflow ships in bs"`
+	Host     string         `toml:"host" scope:"both" default:"github" enum:"github|command" doc:"the review host pr, push and review goals check against: github (pull requests through gh, the repo's git remotes) or command (your own argv in [review.command], answering in JSON)"`
+	Fragment string         `toml:"fragment" scope:"both" path:"dir" doc:"a markdown file that is the review host's section of the prompt, in place of the built-in one: how a worker uploads, revises and hands off a change there, and how the queen lands it (lines <!-- worker --> and <!-- queen --> start each role's part). A host with no built-in section (a command host) gets its instructions only from here, so no host's workflow ships in bs"`
+	Command  *ReviewCommand `toml:"command" scope:"both" doc:"review.host = \"command\": the argv that answer for the review host, each printing one JSON value (docs/SETUP.md), the URL regexp, the hints shown to a worker and the host's own deny globs"`
+}
+
+// CommandHost is review.host's value for [review.command].
+const CommandHost = "command"
+
+// ReviewCommand is [review.command] (ADR-0010 Amendment 6): argv that answer for a
+// review host in JSON, run in the project's checkout.
+type ReviewCommand struct {
+	URL         string   `toml:"url"` // a regexp with named groups repo and number
+	Repo        []string `toml:"repo"`
+	Changes     []string `toml:"changes"`
+	View        []string `toml:"view"`
+	CI          []string `toml:"ci"`
+	PostReview  []string `toml:"post_review"`
+	Fetch       []string `toml:"fetch"`
+	Create      string   `toml:"create"`
+	Retarget    string   `toml:"retarget"`
+	PushHint    string   `toml:"push_hint"`
+	MergeDeny   []string `toml:"merge_deny"`
+	ApproveDeny []string `toml:"approve_deny"`
+	Timeout     string   `toml:"timeout"`
+}
+
+// The placeholders each [review.command] key may name: every argv runs in the project's
+// checkout ({repo}).
+var (
+	ReviewChangesKeys = []string{"repo", "dir", "branch", "base"}
+	ReviewViewKeys    = []string{"repo", "url"}
+	ReviewPostKeys    = []string{"repo", "url", "body_file", "marker"}
+	ReviewFetchKeys   = []string{"repo", "url", "commit"}
+	ReviewHintKeys    = []string{"url", "number", "base", "dir", "branch", "head"}
+)
+
+// argvs is each of r's argv keys with the placeholders it may name.
+func (r *ReviewCommand) argvs() []struct {
+	key  string
+	argv []string
+	keys []string
+} {
+	return []struct {
+		key  string
+		argv []string
+		keys []string
+	}{{"repo", r.Repo, []string{"repo"}}, {"changes", r.Changes, ReviewChangesKeys}, {"view", r.View, ReviewViewKeys},
+		{"ci", r.CI, ReviewViewKeys}, {"post_review", r.PostReview, ReviewPostKeys}, {"fetch", r.Fetch, ReviewFetchKeys}}
+}
+
+// check checks what config can know of a [review.command]: each argv's placeholders, the
+// URL regexp and its groups, the hints' placeholders, the timeout. A missing key is
+// Incomplete's, refused only when review.host is command.
+func (r *ReviewCommand) check() error {
+	errs := []error{checkTimeout(r.Timeout)}
+	for _, a := range r.argvs() {
+		if len(a.argv) > 0 {
+			if err := checks.Check(a.argv, a.keys); err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", a.key, err))
+			}
+		}
+	}
+	if r.URL != "" {
+		if _, err := URLPattern(r.URL); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	for _, h := range []struct{ key, text string }{{"create", r.Create}, {"retarget", r.Retarget}, {"push_hint", r.PushHint}} {
+		rest := h.text
+		for _, k := range ReviewHintKeys {
+			rest = strings.ReplaceAll(rest, "{"+k+"}", "")
+		}
+		if strings.ContainsAny(rest, "{}") {
+			errs = append(errs, fmt.Errorf("%s = %q: only {%s} are filled in", h.key, h.text, strings.Join(ReviewHintKeys, "}, {")))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// URLPattern compiles [review.command] url, matched against a whole URL: it must name
+// the groups repo and number.
+func URLPattern(s string) (*regexp.Regexp, error) {
+	re, err := regexp.Compile(`^(?:` + s + `)$`)
+	if err != nil {
+		return nil, fmt.Errorf("url = %q: %w", s, err)
+	}
+	for _, g := range []string{"repo", "number"} {
+		if re.SubexpIndex(g) < 0 {
+			return nil, fmt.Errorf("url = %q: it must name a group (?P<%s>…)", s, g)
+		}
+	}
+	return re, nil
+}
+
+// Incomplete is the error of a [review.command] missing a required key (url, repo,
+// changes, view, ci, post_review), nil when none is.
+func (r *ReviewCommand) Incomplete() error {
+	if r == nil {
+		return errors.New(`review.host = "command" needs a [review.command] table`)
+	}
+	var miss []string
+	if r.URL == "" {
+		miss = append(miss, "url")
+	}
+	for _, a := range r.argvs() {
+		if a.key != "fetch" && (len(a.argv) == 0 || a.argv[0] == "") {
+			miss = append(miss, a.key)
+		}
+	}
+	if len(miss) > 0 {
+		return fmt.Errorf("[review.command] has no %s", strings.Join(miss, ", "))
+	}
+	return nil
 }
 
 // Role holds the queen's harness tables.

@@ -322,3 +322,62 @@ func TestPruneKeepsADirRemadeByHand(t *testing.T) {
 		t.Fatalf("prune removed it: %v", err)
 	}
 }
+
+// review.host = "command" (ADR-0010 Amendment 6): the keeper's [review.command] argv, a
+// shell script here, answer for the review host in JSON, read from the config files as a
+// real bs reads them. A review goal's target is viewed at spawn (null: no such change, a
+// refusal) and its report posted through post_review.
+func TestCommandReviewHostFromConfig(t *testing.T) {
+	x := newToy(t)
+	root := filepath.Dir(x.repo)
+	cl, posted := filepath.Join(root, "bin", "cl"), filepath.Join(root, "posted")
+	if err := os.MkdirAll(filepath.Dir(cl), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// cl repo | view <url> | ci <url> | changes <dir> | review <url> <file> <marker>
+	x.write(cl, `#!/bin/sh
+case "$1" in
+repo) echo '{"repo": "toy", "protected": false}' ;;
+changes) echo '[]' ;;
+view) case "$2" in
+	https://cl.test/toy/6) echo '{"url": "'"$2"'", "state": "open", "head": "", "head_commit": "abc", "base": "trunk", "created": "2026-01-01T00:00:00Z"}' ;;
+	*) echo null ;;
+	esac ;;
+ci) echo '{"checks": [], "required": []}' ;;
+review)
+	if test -e "`+posted+`" && grep -q "$4" "`+posted+`"; then echo '{"url": "'"$2"'#r1"}'; exit 0; fi
+	cat "$3" >> "`+posted+`"; echo '{"url": "'"$2"'#r1"}' ;;
+*) echo "cl: unknown $1" >&2; exit 2 ;;
+esac
+`)
+	if err := os.Chmod(cl, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(x.config, "projects"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	frag := filepath.Join(root, "cl.md")
+	x.write(frag, "<!-- worker -->\nUpload with cl upload.\n<!-- queen -->\nLand with cl submit.\n")
+	x.write(filepath.Join(x.config, "projects", project+".toml"), fmt.Sprintf(`[review]
+host = "command"
+fragment = %q
+
+[review.command]
+url = 'https://cl\.test/(?P<repo>[^/]+)/(?P<number>[0-9]+)'
+repo = [%[2]q, "repo"]
+changes = [%[2]q, "changes", "{dir}"]
+view = [%[2]q, "view", "{url}"]
+ci = [%[2]q, "ci", "{url}"]
+post_review = [%[2]q, "review", "{url}", "{body_file}", "{marker}"]
+merge_deny = ["cl submit*"]
+`, frag, cl))
+	x.bead("toy-1", "x")
+	must(t, x.queen("spawn", "--label", "x", "--goal", "review=https://cl.test/toy/9", "toy-1"), 2, "no such change")
+	must(t, x.queen("spawn", "--label", "x", "--goal", "review=https://github.com/o/r/pull/1", "toy-1"), 2, "not a change URL")
+	sp := x.spawn("toy-1", "review=https://cl.test/toy/6")
+	must(t, x.keeper("done", "--as", "toy-1", "--answer", "changes", "--report", "rename it"), 0, "review https://cl.test/toy/6#r1")
+	b, err := os.ReadFile(posted)
+	if err != nil || strings.Count(string(b), "rename it") != 1 || !strings.Contains(string(b), "bs:"+string(sp.ID)) {
+		t.Fatalf("posted reviews: %q, %v", b, err)
+	}
+}

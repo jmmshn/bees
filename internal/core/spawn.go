@@ -126,6 +126,18 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 		}
 		return c.unmake(context.WithoutCancel(ctx), session, hw.ID, ws)
 	}
+	// Where the branch starts: a pr goal's change must be ahead of it (pr_head).
+	if ws.Branch != "" {
+		tip, ok, err := c.VCS.Branch(ctx, ws.Dir, ws.Branch)
+		if err == nil && !ok {
+			err = fmt.Errorf("no branch %s in %s", ws.Branch, ws.Dir)
+		}
+		if err != nil {
+			err = errors.Join(err, undo())
+			return logbook.Spawn{}, false, exit(ExitFail, "", err, "%s: can't read where its branch starts; nothing was recorded", name)
+		}
+		ws.Start = tip
+	}
 	// The worker= tag names whose workspace this is to anyone reading herdr's list.
 	if err := c.herdr(session).TagWorkspace(ctx, hw.ID, map[string]string{"worker": name}); err != nil {
 		err = errors.Join(err, undo())

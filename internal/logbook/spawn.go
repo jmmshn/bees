@@ -37,6 +37,9 @@ type Workspace struct {
 	Repo   string `json:"repo,omitempty"`   // the project dir the workspace was made from
 	Branch string `json:"branch,omitempty"` // git_worktree: the worker's branch
 	Base   string `json:"base,omitempty"`   // the ref the branch was cut from
+	// Start is the branch's tip at spawn: a pr goal's change must be ahead of it. A spawn
+	// recorded before bees-13.62 has none.
+	Start string `json:"start,omitempty"`
 }
 
 // Spawn is a spawned entry: everything bs end, prune and a handoff read about a worker,

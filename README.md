@@ -92,7 +92,7 @@ bs queen                      record this pane's queen, then exec the harness in
 bs epic <title>               create the project's next epic, <project>-<n>
 bs bead ls | new …            list the project's beads, or file one under an epic
 bs spawn --goal G --label L <bead>   start a worker in its own herdr workspace, its goal fixed
-bs done [--pr URL]… | --answer … --report …   (a worker) hand off; bs checks the goal
+bs done [--answer … --report …]       (a worker) hand off; bs finds a pr goal's change from the branch and checks the goal
 bs check <worker>             run a worker's handoff checks again; writes nothing
 bs goal <worker> <goal>…      amend a live goal; --waive <check>; discard (the keeper)
 bs send [--now] <to> <body|-> store a message, then ring <to>

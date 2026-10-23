@@ -50,7 +50,7 @@ bs check <project>-2-1         # run its handoff checks again, before merging
 bs end <project>-2-1           # the completion gate: ends it once its goal is complete (exit 9 names what isn't)
 bs prune                       # remove ended workers' workspaces once their goal's prune rule holds
 # inside a worker:
-bs done --pr <url>             # hand off: bs checks the goal and tells the queen (exit 7 names each failure)
+bs done                        # hand off: bs finds the change from your branch, checks the goal and tells the queen (exit 7 names each failure)
 ```
 
 `--goal` is required and fixed at spawn: `pr` (complete when merged), `pr:ready`, `pr:draft`, `push=<url>`, `review=<url>`, `verdict`, `note`, `beads`, `branch` ([ADR-0010](adr/0010-core-rebuild.md#goals)). `bs goal <worker> <goal>` amends a live one. The queen's merge turn is: land it, `bs end`, `bs prune`, `bd close`.

@@ -183,7 +183,9 @@ func (h *CLHost) Uploaded(dir string, since time.Time) []port.Change {
 	slices.SortFunc(out, func(a, b *clChange) int { return b.created.Compare(a.created) })
 	var cs []port.Change
 	for _, c := range out {
-		cs = append(cs, c.Change)
+		ch := c.Change
+		ch.Created = c.created
+		cs = append(cs, ch)
 	}
 	return cs
 }
@@ -331,21 +333,19 @@ func (h *CLHost) Protected(context.Context, string, string) (bool, error) {
 	return h.TrunkProtected, h.offline()
 }
 
-// Landed is the head of each merged change whose head is branch.
-func (h *CLHost) Landed(_ context.Context, _ string, branch string) ([]string, string, error) {
+// Changes is the changes uploaded from w's workspace since: a CL host keys them by
+// client, never by a branch name.
+func (h *CLHost) Changes(_ context.Context, w port.Where, since time.Time) ([]port.Change, string, error) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	if err := h.offline(); err != nil {
+	err := h.offline()
+	h.mu.Unlock()
+	if err != nil {
 		return nil, "", err
 	}
-	var out []string
-	for _, c := range h.changes {
-		if c.State == port.Merged && c.Head == branch {
-			out = append(out, c.HeadCommit)
-		}
-	}
-	return out, "", nil
+	return h.Uploaded(w.Dir, since), "", nil
 }
+
+func (*CLHost) Create(port.Where) string { return "cl upload" }
 
 // MergeDeny denies the CL tool's submit.
 func (*CLHost) MergeDeny() []string { return []string{"cl submit*", "cl * submit*"} }
@@ -379,22 +379,27 @@ func (h *CLHost) Commits(_ context.Context, dir string, since time.Time) ([]stri
 }
 
 // Branch is the head of the workspace named name: a worker's workspace is the only
-// "branch" a CL-shaped checkout has, and the change it uploads holds its commits. Two
+// "branch" a CL-shaped checkout has, and the change it uploads holds its commits. dir
+// itself, when named name, is one even before anything moved it (at trunk's tip). Two
 // workspaces of that name is an error, never the first one found.
-func (h *CLHost) Branch(_ context.Context, _ string, name string) (string, bool, error) {
+func (h *CLHost) Branch(_ context.Context, dir string, name string) (string, bool, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.init()
 	var dirs []string
-	for dir := range h.heads {
-		if filepath.Base(dir) == name {
-			dirs = append(dirs, dir)
+	if filepath.Base(dir) == name {
+		dirs = append(dirs, dir)
+	}
+	for d := range h.heads {
+		if filepath.Base(d) == name && d != dir {
+			dirs = append(dirs, d)
 		}
 	}
 	switch len(dirs) {
 	case 0:
 		return "", false, nil
 	case 1:
-		return h.heads[dirs[0]], true, nil
+		return h.head(dirs[0]), true, nil
 	}
 	slices.Sort(dirs)
 	return "", false, fmt.Errorf("cl: workspace %s is ambiguous: %s", name, strings.Join(dirs, ", "))

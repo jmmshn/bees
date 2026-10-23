@@ -346,12 +346,6 @@ type run struct {
 	spawnReq spawnArgs // bs spawn's arguments, checked before the logbook is opened
 }
 
-// list is a repeatable flag.
-type list []string
-
-func (l *list) String() string     { return strings.Join(*l, " ") }
-func (l *list) Set(v string) error { *l = append(*l, v); return nil }
-
 // oneGoal is --goal, refused a second time: one goal per spawn (ADR-0010 Amendment 4).
 type oneGoal string
 

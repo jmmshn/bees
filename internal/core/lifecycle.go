@@ -22,9 +22,9 @@ import (
 	"github.com/jmmshn/bees/internal/proc"
 )
 
-// Done is the handoff (bs done) of worker who, called by process self: the PRs it names
-// are checked against its goal's repo and added to those handed off before (h.Replaces
-// dropped), then the gate, then every handoff check of the frozen goal (waivers skipped).
+// Done is the handoff (bs done) of worker who, called by process self: the gate, then a pr
+// goal's change, found from the worker's branch (none, or two open, is exit 7 saying what
+// to do), then every handoff check of the frozen goal (waivers skipped).
 // It stops at the first check that can't run (exit 6), otherwise reports every failure at
 // once (exit 7), and records the done only when all pass, with landed when the goal
 // completes at handoff. Only pending left (CI still running, or the host not yet showing
@@ -61,7 +61,7 @@ func (c *Core) Done(ctx context.Context, who Caller, self int, h Handed, o DoneO
 		return logbook.Done{}, exit(ExitRefused, bsname.Cmd+" send "+sp.By+" \"...\"", nil, "the keeper discarded %s's goal; there is nothing to hand off", sp.Name)
 	}
 	// A goal complete at handoff is final once it lands: a second done would rewrite it
-	// (bees-13.54). A goal complete at merge keeps taking handoffs; its PRs accumulate.
+	// (bees-13.54). A goal complete at merge keeps taking handoffs.
 	if e.Type == goal.MixedType {
 		return logbook.Done{}, exit(ExitRefused, bsname.Cmd+" send "+sp.By+" \"...\"", nil, "%s's goal --goal %s was spawned before one goal per spawn: end it", sp.Name, e.Goal)
 	}
@@ -73,20 +73,12 @@ func (c *Core) Done(ctx context.Context, who Caller, self int, h Handed, o DoneO
 		}
 	}
 	d := logbook.Done{Spawn: sp.ID, Name: sp.Name, Queen: sp.By, Bead: sp.Bead, Answer: h.Answer, Report: h.Report}
-	if prev, ok, err := c.Logbook.LatestDone(ctx, sp.ID); err != nil {
-		return d, err
-	} else if ok {
-		d.PRs = prev.PRs // handed-off PRs accumulate across bs done calls
-	}
 	if !e.TakesReport() && (h.Answer != "" || h.Report != "") {
 		where := bsname.Cmd + " send " + sp.By + " \"...\""
 		if e.Type == "note" {
 			where = "bd update " + sp.Bead + " --append-notes \"...\", then " + bsname.Cmd + " done"
 		}
 		return d, exit(ExitRefused, where, nil, "--goal %s takes no --answer or --report", e.Goal)
-	}
-	if d.PRs, err = c.handedPRs(e.Goal, d.PRs, h); err != nil {
-		return d, err
 	}
 	var failed []string
 	// The gate first: no_background, implicit in every handoff; again after a --wait,
@@ -113,23 +105,40 @@ func (c *Core) Done(ctx context.Context, who Caller, self int, h Handed, o DoneO
 		return d, err
 	}
 	d.Checks = append(d.Checks, r)
+	var f *found // the change, found once before the first look; a --wait's later looks find it again
+	if e.Type == "pr" {
+		ff := c.theChange(lookCtx, sp)
+		f = &ff
+		switch {
+		case f.err != nil:
+			return d, exit(ExitCantCheck, bsname.Cmd+" done again once it can", f.err, "can't ask %s for %s's change", c.Review.Name(), sp.Workspace.Branch)
+		case f.why != "":
+			return d, exit(ExitHandoff, f.next, nil, "%s", f.why)
+		default:
+			d.Change = f.c.URL
+		}
+	}
 	var rs []logbook.CheckResult
 	for {
 		var cant *logbook.CheckResult
-		rs, cant = c.look(sp, Handed{PRs: d.PRs, Answer: h.Answer, Report: h.Report}).stage(lookCtx, e, e.Handoff)
+		k := c.look(sp, Handed{Answer: h.Answer, Report: h.Report})
+		if !waited {
+			k.found = f
+		}
+		rs, cant = k.stage(lookCtx, e, e.Handoff)
 		// Out of time after waiting is still pending; a first look that couldn't run is 6.
 		if cant != nil && waited && lookCtx.Err() != nil {
-			return d, exit(ExitWaited, bsname.Cmd+" done --wait"+prFlags(d.PRs)+", or ask the queen", nil, "still pending after %s (%s ran out of time)", o.Wait, cant.Name)
+			return d, exit(ExitWaited, bsname.Cmd+" done --wait, or ask the queen", nil, "still pending after %s (%s ran out of time)", o.Wait, cant.Name)
 		}
 		if cant != nil {
-			return d, exit(ExitCantCheck, bsname.Cmd+" done"+prFlags(d.PRs)+" again once it can run", errors.New(cant.Err), "check %s couldn't run", cant.Name)
+			return d, exit(ExitCantCheck, bsname.Cmd+" done again once it can run", errors.New(cant.Err), "check %s couldn't run", cant.Name)
 		}
 		if o.Wait <= 0 || !pendingOnly(rs) {
 			break
 		}
 		left := time.Until(deadline)
 		if left <= 0 {
-			return d, exit(ExitWaited, bsname.Cmd+" done --wait"+prFlags(d.PRs)+", or ask the queen", nil, "still pending after %s:\n  %s", o.Wait, strings.Join(pendingLines(rs), "\n  "))
+			return d, exit(ExitWaited, bsname.Cmd+" done --wait, or ask the queen", nil, "still pending after %s:\n  %s", o.Wait, strings.Join(pendingLines(rs), "\n  "))
 		}
 		c.warn("still pending (%s); asking again in %s", strings.Join(pendingLines(rs), "; "), min(c.timing().CIPoll, left).Round(time.Second))
 		if err := sleep(lookCtx, min(c.timing().CIPoll, left)); err != nil {
@@ -183,65 +192,6 @@ func pendingLines(rs []logbook.CheckResult) []string {
 func pendingOnly(rs []logbook.CheckResult) bool {
 	failed := slices.DeleteFunc(slices.Clone(rs), func(r logbook.CheckResult) bool { return r.Pass })
 	return len(failed) > 0 && !slices.ContainsFunc(failed, func(r logbook.CheckResult) bool { return !r.Pending })
-}
-
-// handedPRs is the PRs handed off once h is: prev, less h.Replaces, plus h.PRs, each in
-// the one spelling bs records. Only a pr goal takes PRs; each must be a PR of its repo; a
-// replaced one must have been handed off; and a pr goal needs one (Rule G: refused before
-// any check runs).
-func (c *Core) handedPRs(g goal.Goal, prev []string, h Handed) ([]string, error) {
-	if g.Type != "pr" {
-		if len(h.PRs)+len(h.Replaces) > 0 {
-			return nil, exit(ExitRefused, "", nil, "--goal %s takes no --pr or --replaces", g)
-		}
-		return prev, nil
-	}
-	repo := g.Repo
-	canon := func(u string) (string, error) {
-		r, err := c.Review.Parse(u)
-		if err != nil {
-			return "", exit(ExitRefused, "", err, "--pr")
-		}
-		if !strings.EqualFold(r.Repo, repo) {
-			return "", exit(ExitRefused, "", nil, "%s is a change of %s, not of this spawn's repo %s", u, r.Repo, repo)
-		}
-		return r.URL, nil
-	}
-	out := slices.Clone(prev)
-	for _, u := range h.Replaces {
-		r, err := canon(u)
-		if err != nil {
-			return nil, err
-		}
-		j := slices.Index(out, r)
-		if j < 0 {
-			return nil, exit(ExitRefused, "", nil, "--replaces %s: it was never handed off (handed off: %s)", r, cmp.Or(strings.Join(out, " "), "none"))
-		}
-		out = slices.Delete(out, j, j+1)
-	}
-	for _, u := range h.PRs {
-		r, err := canon(u)
-		if err != nil {
-			return nil, err
-		}
-		if !slices.Contains(out, r) {
-			out = append(out, r)
-		}
-	}
-	if len(out) == 0 {
-		return nil, exit(ExitRefused, bsname.Cmd+" done --pr <url>", nil, "--goal %s hands off PRs, and none is handed off", g)
-	}
-	return out, nil
-}
-
-// prFlags is " --pr <url>" for each PR: a next: that repeats bs done names the PRs it
-// handed, so it runs as printed even when nothing was recorded yet.
-func prFlags(prs []string) string {
-	var b strings.Builder
-	for _, u := range prs {
-		b.WriteString(" --pr " + u)
-	}
-	return b.String()
 }
 
 // EndOpts are bs end's flags.
@@ -658,11 +608,11 @@ func ignoredBy(pat, p string) bool {
 	return false
 }
 
-// heldByChange is the URL of one of prs, handed off under a pr goal, that holds sp's
-// branch tip (as the VCS reads it) among its commits and is merged (or, with closed,
-// closed unmerged), else "": the work is then on the review host, whatever the branch was
-// called there, and the local branch holds nothing more. It catches a squash merge of a
-// branch pushed under another name, which merged's proofs miss.
+// heldByChange is the URL of sp's change (or of one of prs, which a done recorded before
+// Amendment 4 named) that holds sp's branch tip (as the VCS reads it) among its commits and
+// is merged (or, with closed, closed unmerged), else "": the work is then on the review
+// host, and the local branch holds nothing more. It catches a squash merge, which
+// merged's local proofs miss.
 func (c *Core) heldByChange(ctx context.Context, sp logbook.Spawn, prs []string, closed bool) (string, error) {
 	ws := sp.Workspace
 	tip, ok, err := c.VCS.Branch(ctx, ws.Repo, ws.Branch)
@@ -670,6 +620,14 @@ func (c *Core) heldByChange(ctx context.Context, sp logbook.Spawn, prs []string,
 		return "", err
 	}
 	k := c.look(sp, Handed{})
+	if len(prs) == 0 {
+		switch f := k.change(ctx); {
+		case f.err != nil:
+			return "", f.err
+		case f.why == "":
+			prs = []string{f.c.URL}
+		}
+	}
 	for _, u := range prs {
 		r, err := c.Review.Parse(u)
 		if err != nil {

@@ -85,16 +85,19 @@ type CheckResult struct {
 	Pending bool `json:"pending,omitempty"`
 }
 
-// Done is a done entry, a worker's handoff (bs done): the PRs handed off so far, or a
-// verdict, and every check's result. A second bs done is a new entry; PRs accumulate in
-// the newest. It is addressed to Queen, so it reads as her unread mail.
+// Done is a done entry, a worker's handoff (bs done): the change bs found from the
+// worker's branch, or a verdict, and every check's result. A second bs done is a new
+// entry. It is addressed to Queen, so it reads as her unread mail.
 type Done struct {
-	ID     ID            `json:"-"`
-	Spawn  ID            `json:"-"`
-	Name   string        `json:"-"`
-	Queen  string        `json:"-"`
-	TS     time.Time     `json:"-"`
-	Bead   string        `json:"bead"`
+	ID     ID        `json:"-"`
+	Spawn  ID        `json:"-"`
+	Name   string    `json:"-"`
+	Queen  string    `json:"-"`
+	TS     time.Time `json:"-"`
+	Bead   string    `json:"bead"`
+	Change string    `json:"change,omitempty"` // the change bs found and judged
+	// PRs is what a done recorded before ADR-0010 Amendment 4 handed off by --pr: bs reads
+	// them, never writes them, for one release (bees-13.60 Q11).
 	PRs    []string      `json:"prs,omitempty"`
 	Answer string        `json:"answer,omitempty"`
 	Report string        `json:"report,omitempty"`
@@ -114,7 +117,9 @@ func (d Done) Passed() bool {
 // Text is d as its queen's inbox shows it.
 func (d Done) Text() string {
 	s := "done: " + d.Bead
-	if prs := d.prs(); len(prs) > 0 {
+	if d.Change != "" {
+		s += " PR " + d.Change
+	} else if prs := d.prs(); len(prs) > 0 {
 		s += " PR " + strings.Join(prs, " ")
 	}
 	if d.Answer != "" {

@@ -60,7 +60,7 @@ func TestCrossProjectSendsRaceToOneQueen(t *testing.T) {
 	}
 	defer ro.Close()
 	q, ok, err := ro.LatestQueen(ctx, "queen-other")
-	if err != nil || !ok || q.Session != "toy" || q.Repo != repo {
+	if err != nil || !ok || q.Session != "toy" || !sameDir(q.Repo, repo) {
 		t.Fatalf("queen-other's entry: %+v %v %v", q, ok, err)
 	}
 	if alive, _ := x.herdr.Alive(q.Process); !alive {
@@ -119,4 +119,12 @@ func (x *toy) sqlOneAt(path, query string) string {
 	y := *x
 	y.logbook = path
 	return y.sqlOne(query)
+}
+
+// sameDir reports whether a and b name one directory through symlinks (macOS's /var is
+// /private/var).
+func sameDir(a, b string) bool {
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	return errA == nil && errB == nil && ra == rb
 }

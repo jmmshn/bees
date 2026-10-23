@@ -342,8 +342,11 @@ func (s *settings) model(harness string, queen bool) string {
 	return cc.Model
 }
 
-// harnessProgram is the program a config harness name starts.
-func harnessProgram(name string) string {
+// program is the program a config harness name starts: for agy, agy.bin (bees-14.1).
+func (s *settings) program(name string) string {
+	if name == agy.Name {
+		return s.Expand(s.Agy.Bin)
+	}
 	return cmp.Or(map[string]string{"claude_code": "claude"}[name], name)
 }
 

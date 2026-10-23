@@ -213,6 +213,7 @@ func (d *doctor) harness() {
 	}
 	if s.Harness == agy.Name && at != "" {
 		d.agyBin(at)
+		d.agySignIn(at)
 	}
 	h := d.r.ports.Harness
 	if h == nil && d.r.ports.NewHarness != nil {
@@ -240,6 +241,27 @@ func (d *doctor) agyBin(at string) {
 		d.line("FAIL", "agy.bin", "workers start agy from PATH (%s), and this shell's PATH has none: put %s's dir first on it", how, at)
 	case !samePath(path, at):
 		d.line("WARN", "agy.bin", "workers start %s, the agy on this shell's PATH (%s), not %s, the queen's: put %s's dir first on PATH", path, how, at, at)
+	}
+}
+
+// agySignIn checks agy at is signed in as a worker's runs, without agy.Remote, which its
+// launch unsets: agy reads them as a remote session and says "not signed in" there, and a
+// herdr server started over ssh hands them to every pane (bees-13.13.13). agy models asks
+// agy's server, so a check that can't tell warns too.
+func (d *doctor) agySignIn(at string) {
+	argv := []string{"env"}
+	for _, v := range agy.Remote {
+		argv = append(argv, "-u", v)
+	}
+	ctx, cancel := context.WithTimeout(d.r.ctx, 20*time.Second)
+	defer cancel()
+	switch _, err := d.r.ports.Run.Run(ctx, "", append(argv, at, "models")...); {
+	case err != nil && strings.Contains(strings.ToLower(err.Error()), "sign in"):
+		d.line("WARN", "agy sign-in", "%s isn't signed in as workers run it (without %s), so an agy worker can't start: run agy once to sign in", at, strings.Join(agy.Remote, ", "))
+	case err != nil:
+		d.line("WARN", "agy sign-in", "can't tell whether workers' agy is signed in: %v", err)
+	default:
+		d.line("ok", "agy sign-in", "%s models answers without %s", at, strings.Join(agy.Remote, ", "))
 	}
 }
 

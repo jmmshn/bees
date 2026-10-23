@@ -415,6 +415,22 @@ func TestPushAndReviewGoals(t *testing.T) {
 	})
 }
 
+// A push= target closed after the spawn fails the handoff on pr_open (bees-13.51): pushing
+// to a change nobody will merge hands off nothing.
+func TestPushHandoffOntoAClosedTarget(t *testing.T) {
+	both(t, func(t *testing.T, x *toy, b backend) {
+		other := filepath.Join(filepath.Dir(x.repo), "theirs")
+		x.git(x.repo, "worktree", "add", "-q", "-b", "feature", other)
+		b.commit(x, other)
+		target := b.open(x, 5, other, "feature", false)
+		sp := x.spawn("toy-1", "push="+target)
+		b.commit(x, sp.Workspace.Dir)
+		b.update(x, 5, sp.Workspace.Dir)
+		b.close(x, 5)
+		must(t, x.worker("toy-1", 1, "done"), 7, "pr_open", target+": closed")
+	})
+}
+
 // Rule G at spawn: a pr goal in a repo on no review host, a target that isn't an open
 // change of the project's repo, and a fork's PR that takes no edits are refused (exit 2)
 // and record nothing; a host that can't be reached is exit 6, never 2.

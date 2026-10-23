@@ -57,6 +57,18 @@ func TestSpawnHandoffEndPruneOnABranchGoal(t *testing.T) {
 	x.spawn("toy-1", "branch") // the bead's next worker starts clean
 }
 
+// bs end's next: keeps the flags it was given, so --incomplete and --force never send the
+// queen back and forth: the way past both refusals is printed whole (bees-13.52).
+func TestEndNextKeepsItsFlags(t *testing.T) {
+	x := newToy(t)
+	x.spawn("toy-1", "branch")
+	x.harness.Step(t, "toy-1", "child", "server")
+	x.harness.Await(t, "toy-1", 1)
+	must(t, x.queen("end", "--incomplete", "toy-1"), 5, "background work", "next: bs end --incomplete --force toy-1")
+	must(t, x.queen("end", "--force", "toy-1"), 9, "next: bs end --incomplete --force toy-1")
+	must(t, x.queen("end", "--incomplete", "--force", "toy-1"), 0, "ended toy-1")
+}
+
 // The background-work gate on real processes: a child the start didn't see refuses bs
 // done (exit 5) and names it; --force hands off anyway and records the gate as waived,
 // never passed; a killed child clears it; a detached one escapes, still running (the

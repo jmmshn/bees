@@ -157,11 +157,11 @@ func resolve(typ, state, target string) Part {
 	case "pr:draft":
 		p.Handoff, p.AtHandoff, p.Prune = []string{PRExists, PRWorkspaceCommit, PRPushed}, true, []string{PRClosed}
 	case "push:":
-		p.Handoff, p.Complete, p.Prune = []string{PushMoved, PRCurrent, CIGreen}, []string{PRMerged}, []string{PRMerged}
+		p.Handoff, p.Complete, p.Prune = []string{PROpen, PushMoved, PRCurrent, CIGreen}, []string{PRMerged}, []string{PRMerged}
 	case "push:ready":
-		p.Handoff, p.AtHandoff, p.Prune = []string{PushMoved, PRCurrent, CIGreen}, true, []string{PRMerged}
+		p.Handoff, p.AtHandoff, p.Prune = []string{PROpen, PushMoved, PRCurrent, CIGreen}, true, []string{PRMerged}
 	case "push:draft":
-		p.Handoff, p.AtHandoff, p.Prune = []string{PushMoved}, true, []string{PRClosed}
+		p.Handoff, p.AtHandoff, p.Prune = []string{PROpen, PushMoved}, true, []string{PRClosed}
 	case "review:":
 		p.Handoff, p.AtHandoff = []string{ReviewComment}, true
 	case "verdict:":

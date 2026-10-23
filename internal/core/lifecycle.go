@@ -239,6 +239,19 @@ type EndOpts struct {
 	Incomplete bool // end an incomplete goal anyway; prune completes it later
 }
 
+// rerun is the bs end that gets past a refusal: the flags given plus the ones it needs, so
+// following each next: line never loops between --incomplete and --force (bees-13.52).
+func (o EndOpts) rerun(name string, need EndOpts) string {
+	cmd := bsname.Cmd + " end"
+	if o.Incomplete || need.Incomplete {
+		cmd += " --incomplete"
+	}
+	if o.Force || need.Force {
+		cmd += " --force"
+	}
+	return cmd + " " + name
+}
+
 // End is the completion gate (bs end, ADR-0010): a complete goal lands, then the spawn
 // ends; an incomplete one is exit 9 unless o.Incomplete. It runs the gate, closes the herdr workspace, stops the process, and keeps the
 // directory for prune.
@@ -259,7 +272,7 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 	done, passed, failed, err := c.complete(ctx, sp, e)
 	switch {
 	case err != nil && !o.Incomplete:
-		return exit(ExitCantCheck, bsname.Cmd+" end --incomplete "+name, err, "%s: can't tell whether its goal is complete", name)
+		return exit(ExitCantCheck, o.rerun(name, EndOpts{Incomplete: true}), err, "%s: can't tell whether its goal is complete", name)
 	case err != nil:
 		// --incomplete is the way out while a check can't run (motif 5); prune completes it.
 		c.warn("can't tell whether %s's goal is complete (%v): treating it as incomplete", name, err)
@@ -272,7 +285,7 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 		for _, f := range failed {
 			why = append(why, f.Name+": "+f.Detail)
 		}
-		return exit(ExitIncomplete, bsname.Cmd+" end --incomplete "+name, nil, "%s: its goal (--goal %s) is not complete:\n  %s", name, e.Goal, strings.Join(why, "\n  "))
+		return exit(ExitIncomplete, o.rerun(name, EndOpts{Incomplete: true}), nil, "%s: its goal (--goal %s) is not complete:\n  %s", name, e.Goal, strings.Join(why, "\n  "))
 	}
 	// --incomplete is the abort, handed off or not (motif 5): it keeps the workspace, and
 	// prune, which removes only landed or discarded work, is the guard.
@@ -281,16 +294,16 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 		case errors.Is(err, ErrHarnessGone): // its children were reparented away: nothing to walk
 		case errors.Is(err, ErrNoStart): // nothing recorded to walk: an unconfirmed spawn
 		case err != nil:
-			return exit(ExitCantCheck, bsname.Cmd+" end --force "+name, err, "%s: can't check for background work", name)
+			return exit(ExitCantCheck, o.rerun(name, EndOpts{Force: true}), err, "%s: can't check for background work", name)
 		case len(bg) > 0:
-			return exit(ExitBackground, bsname.Cmd+" end --force "+name, nil, "%s", background(name, bg))
+			return exit(ExitBackground, o.rerun(name, EndOpts{Force: true}), nil, "%s", background(name, bg))
 		}
 	}
 	// The old bs's spawn recorded no process, and herdr reuses workspace ids once its server
 	// restarts: bs can't prove the recorded workspace is still the worker's, so it leaves it
 	// open and says so rather than close one it guessed (motif 12).
 	if _, started, err := c.StartOf(ctx, sp); err != nil {
-		return exit(ExitCantCheck, bsname.Cmd+" end "+name, err, "%s: can't tell whether it ever started; nothing closed", name)
+		return exit(ExitCantCheck, o.rerun(name, EndOpts{}), err, "%s: can't tell whether it ever started; nothing closed", name)
 	} else if e.IsLegacy() && !started {
 		c.warn("%s was started by the old bs, which recorded no process, so bs can't prove herdr workspace %s (session %s) is still its own: left open; close it yourself if it is (herdr workspace close %s)",
 			name, sp.Herdr.Workspace, sp.Herdr.Session, sp.Herdr.Workspace)
@@ -300,24 +313,24 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 	// wouldn't stop it, so only --force ends it, by its recorded process (bees-12.46).
 	switch pid, err := c.moved(ctx, sp); {
 	case err != nil:
-		return exit(ExitCantCheck, bsname.Cmd+" end "+name, err, "%s: can't tell whether its pane is still in its workspace %s; nothing closed", name, sp.Herdr.Workspace)
+		return exit(ExitCantCheck, o.rerun(name, EndOpts{}), err, "%s: can't tell whether its pane is still in its workspace %s; nothing closed", name, sp.Herdr.Workspace)
 	case pid != 0 && !o.Force:
-		return exit(ExitRefused, bsname.Cmd+" end --force "+name+" (stops pid "+strconv.Itoa(pid)+" wherever it runs)", nil,
+		return exit(ExitRefused, o.rerun(name, EndOpts{Force: true})+" (stops pid "+strconv.Itoa(pid)+" wherever it runs)", nil,
 			"%s: its pane %s moved out of its workspace %s, and its process (pid %d) still runs there; nothing closed", name, sp.Herdr.Pane, sp.Herdr.Workspace, pid)
 	}
 	switch g, err := c.guests(ctx, sp); {
 	case err != nil:
-		return exit(ExitCantCheck, bsname.Cmd+" end "+name, err, "%s: can't tell what else its workspace %s holds; nothing closed", name, sp.Herdr.Workspace)
+		return exit(ExitCantCheck, o.rerun(name, EndOpts{}), err, "%s: can't tell what else its workspace %s holds; nothing closed", name, sp.Herdr.Workspace)
 	case len(g) > 0:
-		return exit(ExitRefused, "herdr --session "+sp.Herdr.Session+" pane move <pane> --new-workspace, then "+bsname.Cmd+" end "+name, nil,
+		return exit(ExitRefused, "herdr --session "+sp.Herdr.Session+" pane move <pane> --new-workspace, then "+o.rerun(name, EndOpts{}), nil,
 			"%s: its workspace %s also holds %s, which closing it would end; nothing closed", name, sp.Herdr.Workspace, strings.Join(g, ", "))
 	}
 	h := c.herdr(sp.Herdr.Session)
 	if err := h.CloseWorkspace(ctx, sp.Herdr.Workspace); err != nil {
-		return exit(ExitKept, bsname.Cmd+" end "+name, err, "%s: herdr couldn't close its workspace; nothing was recorded", name)
+		return exit(ExitKept, o.rerun(name, EndOpts{}), err, "%s: herdr couldn't close its workspace; nothing was recorded", name)
 	}
 	if err := c.stop(ctx, sp); err != nil {
-		return exit(ExitFail, bsname.Cmd+" end "+name, err, "%s: its workspace is closed but its process wouldn't stop; nothing was recorded", name)
+		return exit(ExitFail, o.rerun(name, EndOpts{}), err, "%s: its workspace is closed but its process wouldn't stop; nothing was recorded", name)
 	}
 	if err := c.removeFiles(sp.Name); err != nil {
 		c.warn("couldn't remove %s's start files: %v", sp.Name, err)

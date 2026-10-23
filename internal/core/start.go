@@ -37,7 +37,11 @@ func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch, repl
 	if err != nil {
 		return exit(ExitStart, next, err, "%s: couldn't write its start files", sp.Name)
 	}
-	line, err := typed(kind, prog, args, l.Unset)
+	pre, err := prep(l.Unset, sp.ConfigHome)
+	if err != nil {
+		return exit(ExitStart, next, err, "%s: its pane's env can't be readied", sp.Name)
+	}
+	line, err := typed(kind, prog, args, pre)
 	if err != nil {
 		return exit(ExitStart, next, err, "%s: the launch can't be typed into a pane", sp.Name)
 	}
@@ -58,16 +62,11 @@ func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch, repl
 	case ok:
 		return exit(ExitStart, next, nil, "%s: pane %s already runs %s (pid %d), which bs has no start of: a second would be its twin", sp.Name, sp.Herdr.Pane, prog, p.PID)
 	}
-	// herdr types the launch into the pane's shell, whose env a herdr server started over
-	// ssh filled: what the harness must not inherit is unset there first (bees-13.13.13),
-	// on a typed line's own.
-	if len(l.Unset) > 0 && line == "" {
-		line, err := unsetLine(l.Unset)
-		if err == nil {
-			err = c.herdr(sp.Herdr.Session).RunInPane(ctx, sp.Herdr.Pane, line)
-		}
-		if err != nil {
-			return exit(ExitStart, next, err, "%s: couldn't unset %s in pane %s: nothing started", sp.Name, strings.Join(l.Unset, ", "), sp.Herdr.Pane)
+	// herdr types the launch into the pane's shell, whose env the herdr server's start
+	// filled, not the queen's: it is readied there first (prep), on a typed line's own.
+	if pre != "" && line == "" {
+		if err := c.herdr(sp.Herdr.Session).RunInPane(ctx, sp.Herdr.Pane, pre); err != nil {
+			return exit(ExitStart, next, err, "%s: couldn't ready pane %s's env (%s): nothing started", sp.Name, sp.Herdr.Pane, pre)
 		}
 	}
 	t := c.timing()
@@ -120,6 +119,25 @@ func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch, repl
 	return nil
 }
 
+// prep is the shell line readying a pane's env for a launch, "" when nothing needs it:
+// what the harness must not inherit, which a herdr server started over ssh hands every
+// pane, unset (bees-13.13.13); and home, the config home its spawn ran under, exported,
+// so the worker's bs reads the config its queen's did (bees-14.10).
+func prep(unset []string, home string) (string, error) {
+	var steps []string
+	if len(unset) > 0 {
+		u, err := unsetLine(unset)
+		if err != nil {
+			return "", err
+		}
+		steps = append(steps, u)
+	}
+	if home != "" {
+		steps = append(steps, "export XDG_CONFIG_HOME="+shellQuote(home))
+	}
+	return strings.Join(steps, "; "), nil
+}
+
 // unsetLine is the shell line unsetting vars, each a plain variable name.
 func unsetLine(vars []string) (string, error) {
 	for _, v := range vars {
@@ -134,10 +152,15 @@ var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // typed is how a launch of prog reaches the pane: "" when herdr agent start --kind kind
 // types it, prog being kind's own program; else the shell line bs types with herdr pane
-// run, unsetting unset first, since herdr's --kind starts only its own program (no flag
+// run, pre (prep's line) first, since herdr's --kind starts only its own program (no flag
 // for another in 0.9.5, bees-14.7). Either is refused when herdr or the tty would refuse it.
-func typed(kind, prog string, args, unset []string) (string, error) {
+func typed(kind, prog string, args []string, pre string) (string, error) {
 	if prog == kind {
+		if pre != "" {
+			if err := herdr.CheckAgentArgs([]string{pre}); err != nil {
+				return "", err
+			}
+		}
 		return "", herdr.CheckAgentArgs(args)
 	}
 	words := []string{shellQuote(prog)}
@@ -145,12 +168,8 @@ func typed(kind, prog string, args, unset []string) (string, error) {
 		words = append(words, shellQuote(a))
 	}
 	line := strings.Join(words, " ")
-	if len(unset) > 0 {
-		u, err := unsetLine(unset)
-		if err != nil {
-			return "", err
-		}
-		line = u + "; " + line
+	if pre != "" {
+		line = pre + "; " + line
 	}
 	return line, herdr.CheckAgentArgs([]string{line}) // one line through the same tty
 }

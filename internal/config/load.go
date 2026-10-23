@@ -29,14 +29,9 @@ const RepoPlaceholder = "{repo}"
 // session other than default reads <base>/bees/sessions/<session> instead. It returns
 // the session too.
 func Dir(getenv func(string) string) (dir, session string, err error) {
-	base := getenv("XDG_CONFIG_HOME")
-	switch home := getenv("HOME"); {
-	case base != "" && !filepath.IsAbs(base):
-		return "", "", fmt.Errorf("XDG_CONFIG_HOME=%s is not an absolute path", base)
-	case base == "" && home == "":
-		return "", "", errors.New("neither XDG_CONFIG_HOME nor HOME is set")
-	case base == "":
-		base = filepath.Join(home, ".config")
+	base, err := Base(getenv)
+	if err != nil {
+		return "", "", err
 	}
 	session = getenv("HERDR_SESSION")
 	if session == "" || session == DefaultSession {
@@ -46,6 +41,22 @@ func Dir(getenv func(string) string) (dir, session string, err error) {
 		return "", "", fmt.Errorf("HERDR_SESSION %q can't name a config dir", session)
 	}
 	return filepath.Join(base, "bees", "sessions", session), session, nil
+}
+
+// Base is the config home of a caller whose env getenv reads: XDG_CONFIG_HOME, else
+// ~/.config. Spawn sets it in the worker's pane, so the worker's bs reads the config its
+// queen's did (bees-14.10).
+func Base(getenv func(string) string) (string, error) {
+	base := getenv("XDG_CONFIG_HOME")
+	switch home := getenv("HOME"); {
+	case base != "" && !filepath.IsAbs(base):
+		return "", fmt.Errorf("XDG_CONFIG_HOME=%s is not an absolute path", base)
+	case base == "" && home == "":
+		return "", errors.New("neither XDG_CONFIG_HOME nor HOME is set")
+	case base == "":
+		base = filepath.Join(home, ".config")
+	}
+	return base, nil
 }
 
 // Input is what Load reads.

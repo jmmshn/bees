@@ -1,18 +1,21 @@
 // Package scenario is bs's scenario suite (ADR-0010 Tests): every check of the pilot's
 // round-11 sweep, every pilot bug, and ADR-0010's goal and Rule G rules, each a test with
 // assertions on entries, output and exit codes. A scenario whose feature lands later is
-// skipped, naming the bead that un-skips it.
+// skipped, naming the bead that un-skips it; a contract-card case of a rebuild ticket not
+// landed yet runs as an xfail naming the ticket (contract_test.go).
 package scenario_test
 
 import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -29,10 +32,61 @@ func later(t *testing.T, bead, feature string) {
 	t.Skip(bead + ": " + feature)
 }
 
+// xfails holds the ticket each xfail-marked test waits for, by its *testing.T.
+var xfails sync.Map
+
+// xfail marks t a case of behavior ticket hasn't built yet (the contract card, bees-13.68).
+// It runs: a failure through the rig (must, fatalf, newToy's toy) skips it as XFAIL naming
+// the ticket, and a pass logs XPASS, so the ticket that builds it drops the mark. Call it
+// first, before newToy.
+func xfail(t *testing.T, ticket string) {
+	t.Helper()
+	xfails.Store(t, ticket)
+	t.Cleanup(func() {
+		xfails.Delete(t)
+		if !t.Failed() && !t.Skipped() {
+			t.Logf("XPASS (%s landed? drop its xfail mark)", ticket)
+		}
+	})
+}
+
+// tb is t as the rig fails it: under xfail, a failure skips as XFAIL.
+func tb(t testing.TB) testing.TB {
+	if tt, ok := t.(*testing.T); ok {
+		if ticket, ok := xfails.Load(tt); ok {
+			return xt{tt, ticket.(string)}
+		}
+	}
+	return t
+}
+
+// xt is an xfail test: each way to fail skips it instead, saying why.
+type xt struct {
+	*testing.T
+	ticket string
+}
+
+func (t xt) xf(msg string) {
+	t.Helper()
+	t.Skipf("XFAIL (%s): %s", t.ticket, msg)
+}
+func (t xt) Fail()                     { t.Helper(); t.xf("failed") }
+func (t xt) FailNow()                  { t.Helper(); t.xf("failed") }
+func (t xt) Error(a ...any)            { t.Helper(); t.xf(fmt.Sprint(a...)) }
+func (t xt) Errorf(f string, a ...any) { t.Helper(); t.xf(fmt.Sprintf(f, a...)) }
+func (t xt) Fatal(a ...any)            { t.Helper(); t.xf(fmt.Sprint(a...)) }
+func (t xt) Fatalf(f string, a ...any) { t.Helper(); t.xf(fmt.Sprintf(f, a...)) }
+
+// fatalf fails t through the rig, so an xfail case skips.
+func fatalf(t testing.TB, format string, a ...any) {
+	t.Helper()
+	tb(t).Fatalf(format, a...)
+}
+
 // toy is one throwaway project on a fake herdr --session server: a real git repo, its
 // session config dir, a logbook dir, and beesfake as the harness.
 type toy struct {
-	t       *testing.T
+	t       testing.TB
 	session string
 	repo    string
 	env     []string // the keeper's shell: outside any pane
@@ -47,8 +101,9 @@ type toy struct {
 
 const project = "toy"
 
-func newToy(t *testing.T) *toy {
+func newToy(t testing.TB) *toy {
 	t.Helper()
+	t = tb(t)
 	root := t.TempDir()
 	state, err := os.MkdirTemp("", "bf") // short: socket paths must fit sun_path
 	if err != nil {
@@ -265,8 +320,9 @@ func (x *toy) commit(dir, file string) {
 	x.git(dir, "commit", "-qm", "add "+file)
 }
 
-func must(t *testing.T, r result, code int, want ...string) {
+func must(t testing.TB, r result, code int, want ...string) {
 	t.Helper()
+	t = tb(t)
 	if r.code != code {
 		t.Fatalf("exit %d, want %d:\n%s", r.code, code, r)
 	}

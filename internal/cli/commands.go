@@ -563,7 +563,7 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 			// Completion needs a passing handoff, and an ended worker hands nothing off.
 			note("stuck", sp.Name, "ended with nothing handed off, so its goal can't complete → the keeper discards it (%s goal %s discard, bees-13.6)", bsname.Cmd, sp.Name)
 		case sp.Ended && !landed && !sp.Legacy() && !discarded:
-			note("stuck", sp.Name, "ended with its goal incomplete → %s prune completes it once --goal %s holds", bsname.Cmd, g)
+			note("stuck", sp.Name, "ended with its goal incomplete → %s prune completes it once --goal %s holds; if its change closed unmerged it never will, so the keeper discards it (%s goal %s discard)", bsname.Cmd, g, bsname.Cmd, sp.Name)
 		case sp.Ended && (landed || discarded) && sp.Workspace.Kind == "git_worktree" && sp.Workspace.Dir != "":
 			why := "its goal is complete"
 			if discarded {

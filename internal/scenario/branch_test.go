@@ -202,7 +202,7 @@ func TestStatusSaysWhatIsStuck(t *testing.T) {
 	must(t, x.worker("toy-1", 1, "done"), 0)
 	must(t, x.queen("end", "--incomplete", "toy-1"), 0)
 	r := x.keeper("status")
-	must(t, r, 0, "stuck: toy-1: ended with its goal incomplete → bs prune completes it once --goal branch holds")
+	must(t, r, 0, "stuck: toy-1: ended with its goal incomplete → bs prune completes it once --goal branch holds; if its change closed unmerged it never will, so the keeper discards it (bs goal toy-1 discard)")
 	if cell(r.out, "toy-1", "STATE") != "ended --incomplete" {
 		t.Fatalf("status:\n%s", r)
 	}

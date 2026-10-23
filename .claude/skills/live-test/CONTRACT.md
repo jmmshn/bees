@@ -16,7 +16,6 @@ A case of behavior not built yet names its rebuild ticket: `xfail(t, "T3")` in G
 | T4 one goal per spawn | `amend-two-values`, `mixed-refuses-amend`, `mixed-refuses-done`, `spawn-two-bad`, `spawn-two-goals` |
 | T5 stacked `pr=`, narrow `push=` | `pr-target-closed`, `pr-target-fork`, `pr-target-merged`, `push-discarded-pruned`, `push-own-branch`, `push-owned-refused`, `stacked-cut`, `stacked-handoff-after-target-merged`, `stacked-lower-end-refused`, `stacked-merged-into-live-target`, `stacked-prune-falls-back-to-trunk` |
 | T6 bs posts the review | `review-answer-yes`, `review-never-approves`, `review-posts-once`, `review-retry-posts-nothing` |
-| T7 #118's hints (bees-13.52, .53) | `gate-end-incomplete-next`, `gate-force-next`, `stuck-closed-pr` |
 
 Every other case holds today and passes plainly.
 

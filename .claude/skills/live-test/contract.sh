@@ -3,7 +3,8 @@
 # tier) against a fresh toy from setup.sh --no-queen. Prints PASS/FAIL/XFAIL/XPASS per case
 # with expected vs actual, and a markdown table at <run>/keeper/contract/table.md.
 # Exit 0: no FAIL (XFAIL and XPASS included). 1: some case failed. 2: bad run dir.
-# It deletes nothing: teardown.sh stays the only deleter.
+# It deletes nothing: teardown.sh stays the only deleter. Run it in a toy pane (SKILL.md
+# "Stay in the toy"): from a worker's own shell bs takes it for that worker, and refuses --as.
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 run=$(cd "${1:?usage: contract.sh <run dir>}" && pwd -P) || exit 2

@@ -6,9 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -453,9 +455,10 @@ func (r *run) inbox(fs *flag.FlagSet, args []string) error {
 	return r.c.Logbook.RecordReceipts(r.ctx, w.Name, ids)
 }
 
-// status lists each worker's latest spawn: its goal, whether it ended, its handoff,
-// whether its goal is complete (landed, and by what), and whether its recorded process
-// runs. Then one line per worker the table alone would leave a question about, each with
+// status lists each worker's latest spawn: its label (its herdr workspace's), its goal,
+// whether it ended, its handoff, whether its goal is complete (landed, and by what),
+// whether its recorded process runs, and its unread mail; then a row for each other
+// session with unread mail (a queen with no recorded start, a stranger). Then one line per worker the table alone would leave a question about, each with
 // the next command (Rule G): stuck (its process is gone, its start unconfirmed, or it
 // ended incomplete), kept (complete or discarded, its workspace still on disk), waived,
 // discarded, and late (a start healed after confirmation missed it). It reads the
@@ -473,8 +476,20 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 	}
 	fmt.Fprintln(r.out, r.as())
 	tw := tabwriter.NewWriter(r.out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "WORKER\tGOAL\tSTATE\tHANDOFF\tCOMPLETE\tRUNNING\tWORKSPACE")
+	fmt.Fprintln(tw, "WORKER\tLABEL\tGOAL\tSTATE\tHANDOFF\tCOMPLETE\tRUNNING\tUNREAD\tWORKSPACE")
 	var errs []error
+	counts, cerr := r.c.Logbook.UnreadCounts(r.ctx)
+	if cerr != nil {
+		errs = append(errs, cerr)
+	}
+	shown := map[string]bool{}
+	unread := func(name string) string { // couldn't read it is never 0 (Rule G)
+		shown[name] = true
+		if cerr != nil {
+			return "unknown"
+		}
+		return strconv.Itoa(counts[name])
+	}
 	var notes []string
 	note := func(kind, name, format string, a ...any) {
 		notes = append(notes, kind+": "+name+": "+fmt.Sprintf(format, a...))
@@ -483,7 +498,7 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 	if q, ok, err := r.c.Logbook.LatestQueen(r.ctx, queen); err != nil {
 		errs = append(errs, err)
 	} else if ok {
-		fmt.Fprintf(tw, "%s\t-\tqueen\t-\t-\t%s\tpane %s on herdr session %s\n", queen, alive(r.c.Proc.Alive(q.Process)), q.Pane, q.Session)
+		fmt.Fprintf(tw, "%s\t-\t-\tqueen\t-\t-\t%s\t%s\tpane %s on herdr session %s\n", queen, alive(r.c.Proc.Alive(q.Process)), unread(queen), q.Pane, q.Session)
 	}
 	for _, sp := range sps {
 		state := "live"
@@ -514,9 +529,9 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 		case sp.Legacy():
 			complete = "-"
 		}
-		running := "-"
+		running, mail := "-", "-" // an ended spawn reads no mail
 		if !sp.Ended {
-			running = r.running(sp)
+			running, mail = r.running(sp), unread(sp.Name)
 		}
 		g, discarded := sp.Goal.String(), false
 		e, gerr := r.c.Logbook.Goal(r.ctx, sp) // the newest amend, not the spawn's goal
@@ -536,7 +551,7 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 		if sp.Ended && dir != "" && errors.Is(serr, os.ErrNotExist) {
 			dir += " (removed)"
 		}
-		fmt.Fprintf(tw, "%s\t--goal %s\t%s\t%s\t%s\t%s\t%s\n", sp.Name, g, state, handoff, complete, running, dir)
+		fmt.Fprintf(tw, "%s\t%s\t--goal %s\t%s\t%s\t%s\t%s\t%s\t%s\n", sp.Name, cmp.Or(sp.Label, "-"), g, state, handoff, complete, running, mail, dir)
 		switch {
 		case running == "no start recorded (legacy)":
 			note("stuck", sp.Name, "started by the old bs, which recorded no process → %s end %s", bsname.Cmd, sp.Name)
@@ -581,6 +596,13 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 			errs = append(errs, err)
 		} else if ok && st.Late && !sp.Ended {
 			note("late", sp.Name, "its start was recorded late, after confirmation missed it (pid %d) → nothing to do; %s end %s if it misbehaves", st.PID, bsname.Cmd, sp.Name)
+		}
+	}
+	// Mail waits for sessions no row above names: a queen never recorded starting, a
+	// stranger. Mail the table hides is mail nobody reads.
+	for _, name := range slices.Sorted(maps.Keys(counts)) {
+		if counts[name] > 0 && !shown[name] {
+			fmt.Fprintf(tw, "%s\t-\t-\tno spawn\t-\t-\t-\t%d\t-\n", name, counts[name])
 		}
 	}
 	if err := tw.Flush(); err != nil {

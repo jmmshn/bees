@@ -337,19 +337,23 @@ func ghs(globs ...string) []string {
 
 // MergeDeny denies gh's merge, whatever the spelling: gh pr merge (--auto too), gh -R o/r
 // pr merge, the REST merge endpoint and GraphQL's merge mutations; never a read such as
-// gh api …/pulls/41 --jq .mergeable. ponytail: a request body from a file (--input) passes;
-// a deny hook that parses the command line would catch it.
+// gh api …/pulls/41 --jq .mergeable. Only options sit before pr (-* pr merge), never any
+// text: gh * pr merge denied a gh pr create titled "pr merge …" (bees-13.78.2). ponytail:
+// a request body from a file (--input) passes, and gh -R o/r pr create with "pr merge" in
+// its text is denied; a deny hook that parses the command line would fix both.
 func (Host) MergeDeny() []string {
-	return ghs("pr merge*", "* pr merge*", "api *pulls/*/merge*", "api *merges*", "api graphql*mergePullRequest*", "api graphql*AutoMerge*")
+	return ghs("pr merge*", "-* pr merge*", "api *pulls/*/merge*", "api *merges*", "api graphql*mergePullRequest*", "api graphql*AutoMerge*")
 }
 
 // ApproveDeny denies an approving review, gh -R o/r spelled too: on a repo that requires
 // one, the merge's other half. The API's: an event=APPROVE field on a reviews call, or
-// GraphQL's (ponytail: the same --input gap as MergeDeny).
+// GraphQL's (ponytail: the same --input gap as MergeDeny). -a counts first, last or before
+// another flag, not anywhere: * -a * denied a review whose body said "git commit -a"
+// (bees-13.78.2), so gh pr review -b x -a 41 passes.
 func (Host) ApproveDeny() []string {
 	var deny []string
-	for _, review := range []string{"pr review*", "* pr review*"} {
-		deny = append(deny, review+" --approve*", review+" -a *", review+" -a")
+	for _, review := range []string{"pr review", "-* pr review"} {
+		deny = append(deny, review+"* --approve*", review+" -a", review+" -a *", review+" * -a", review+" * -a -*")
 	}
 	return ghs(append(deny, "api *reviews*APPROVE*", "api *APPROVE*reviews*", "api graphql*APPROVE*")...)
 }

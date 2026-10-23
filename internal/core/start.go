@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/jmmshn/bees/internal/bsname"
@@ -56,7 +55,7 @@ func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch, repl
 	go func() {
 		got := c.watch(wctx, sp, time.Now().Add(t.Confirm))
 		if got.pid != 0 {
-			// A process with --name sp.Name in sp's pane is this start: herdr's answer can't undo it.
+			// A process in sp's pane that its harness owns as sp's is this start: herdr's answer can't undo it.
 			st := got.start(sp)
 			st.Replaces = replaces
 			_, _, got.err = c.Logbook.RecordStartOnce(context.WithoutCancel(ctx), st)
@@ -80,7 +79,7 @@ func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch, repl
 	case got.pid == 0 && got.err != nil: // never a clean look: a miss it can't claim (Rule G)
 		return exit(ExitCantCheck, bsname.Cmd+" status, then "+next, errors.Join(startErr, got.err), "%s: can't look for its harness in pane %s, so its start is unconfirmed", sp.Name, sp.Herdr.Pane)
 	case got.pid == 0:
-		return exit(ExitStart, next, startErr, "%s: start unconfirmed: no %s named %s in pane %s", sp.Name, c.Harness.Kind(), sp.Name, sp.Herdr.Pane)
+		return exit(ExitStart, next, startErr, "%s: start unconfirmed: no %s of %s's in pane %s", sp.Name, c.Harness.Kind(), sp.Name, sp.Herdr.Pane)
 	case got.err != nil:
 		return exit(ExitStart, next, got.err, "%s: its start (pid %d) couldn't be recorded", sp.Name, got.pid)
 	case errors.Is(startErr, herdr.ErrUnready):
@@ -154,29 +153,29 @@ func (c *Core) watch(ctx context.Context, sp logbook.Spawn, deadline time.Time) 
 	}
 }
 
-// foreground is sp's recorded pane's foreground processes and the harness kind sp was
-// started with. A pane herdr no longer knows holds none.
-func (c *Core) foreground(ctx context.Context, sp logbook.Spawn) ([]herdr.PaneProcess, string, error) {
-	kind, err := c.kindOf(sp)
+// foreground is sp's recorded pane's foreground processes and the harness sp was started
+// with. A pane herdr no longer knows holds none.
+func (c *Core) foreground(ctx context.Context, sp logbook.Spawn) ([]herdr.PaneProcess, port.Harness, error) {
+	h, err := c.recorded(sp)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	pi, err := c.herdr(sp.Herdr.Session).ProcessInfo(ctx, sp.Herdr.Pane)
 	if errors.Is(err, herdr.ErrPaneGone) {
-		return nil, kind, nil
+		return nil, h, nil
 	}
-	return pi.Foreground, kind, err
+	return pi.Foreground, h, err
 }
 
 // own finds sp's own harness in its recorded pane: a foreground process of the harness's
-// kind with --name sp.Name in its argv, as every launch of it has.
+// kind whose argv the harness owns as sp's, as every launch of it is.
 func (c *Core) own(ctx context.Context, sp logbook.Spawn) (proc.Process, bool, error) {
-	fg, kind, err := c.foreground(ctx, sp)
+	fg, h, err := c.foreground(ctx, sp)
 	if err != nil {
 		return proc.Process{}, false, err
 	}
 	for _, p := range fg {
-		if !isOwn(p, kind, sp.Name) {
+		if !isOwn(p, h, sp.Name) {
 			continue
 		}
 		start, err := c.Proc.Start(p.PID)
@@ -190,28 +189,22 @@ func (c *Core) own(ctx context.Context, sp logbook.Spawn) (proc.Process, bool, e
 
 // harnessIn finds any foreground process of the harness's kind in sp's pane.
 func (c *Core) harnessIn(ctx context.Context, sp logbook.Spawn) (proc.Process, bool, error) {
-	fg, kind, err := c.foreground(ctx, sp)
+	fg, h, err := c.foreground(ctx, sp)
 	if err != nil {
 		return proc.Process{}, false, err
 	}
 	for _, p := range fg {
-		if p.Name == kind {
+		if p.Name == h.Kind() {
 			return proc.Process{PID: p.PID}, true, nil
 		}
 	}
 	return proc.Process{}, false, nil
 }
 
-// isOwn reports whether f is worker name's harness: a process of kind with --name name
-// in its argv.
-func isOwn(f herdr.PaneProcess, kind, name string) bool {
-	return f.Name == kind && named(f.Argv, name)
-}
-
-// named reports whether argv carries --name name.
-func named(argv []string, name string) bool {
-	i := slices.Index(argv, "--name")
-	return i >= 0 && i+1 < len(argv) && argv[i+1] == name
+// isOwn reports whether f is session name's harness: a process of h's kind whose argv h
+// owns as name's (claude: --name name).
+func isOwn(f herdr.PaneProcess, h port.Harness, name string) bool {
+	return f.Name == h.Kind() && h.Owns(f.Argv, name)
 }
 
 // recordStart records p, found already running, as sp's start; late marks a heal, and
@@ -229,8 +222,8 @@ func (c *Core) recordStart(ctx context.Context, sp logbook.Spawn, p proc.Process
 var errFoundRunning = errors.New("found already running, not seen starting: the processes it began with are unknown")
 
 // StartOf is open spawn sp's newest start. A spawn with none, whose start confirmation
-// missed it, is healed (ADR-0010): when its recorded pane runs the harness with --name
-// sp.Name in its argv, that process is recorded as its start, marked late. A start whose
+// missed it, is healed (ADR-0010): when its recorded pane runs the harness with an argv it
+// owns as sp's, that process is recorded as its start, marked late. A start whose
 // process died counts as none (a worker restarted by hand in its pane, bees-13.9): the
 // harness found there is recorded as replacing it; with none found the dead start stands.
 // A heal whose probe fails is an error and writes nothing; one that finds nothing for a

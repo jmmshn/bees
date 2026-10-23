@@ -51,6 +51,18 @@ type Ports struct {
 	Revision, Exe string
 }
 
+// recorded is the adapter of a harness some entry recorded, any model: it only rings and
+// is looked for. nil when this bs has none.
+func (p Ports) recorded(name string) port.Harness {
+	if p.Harness != nil {
+		return p.Harness
+	}
+	if p.NewHarness != nil {
+		return p.NewHarness(name, "")
+	}
+	return nil
+}
+
 // usage says {cmd} for the command a reader runs.
 var usage = strings.ReplaceAll(`usage: {cmd} <command> [flags] [arguments]   (flags before arguments)
 
@@ -171,15 +183,7 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 			}
 			h = ports.NewHarness(s.Harness, model)
 		}
-		other := func(name string) port.Harness { // a harness some entry recorded, any model: it only rings and is looked for
-			if ports.Harness != nil {
-				return ports.Harness
-			}
-			if ports.NewHarness != nil {
-				return ports.NewHarness(name, "")
-			}
-			return nil
-		}
+		other := ports.recorded
 		kind, why, _ := s.Kind(s.GitTop)
 		review, vcs := ports.Review, ports.VCS
 		if review == nil { // review.host's enum has github only (config)

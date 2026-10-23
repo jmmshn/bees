@@ -2,8 +2,11 @@ package scenario_test
 
 import (
 	"context"
+	"errors"
 	"os/exec"
+	"slices"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -148,4 +151,68 @@ func TestPruneKeepsALockedWorktree(t *testing.T) {
 	must(t, x.queen("prune"), 3, "kept "+sp.Workspace.Dir+" (toy-1): git refused to remove it", "git worktree unlock")
 	x.git(x.repo, "worktree", "unlock", sp.Workspace.Dir)
 	must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir+" and branch toy-1")
+}
+
+// trustRec is the fake harness as one that starts only in a folder it trusts (agy):
+// it records each folder trusted, and refuses while fail is set.
+type trustRec struct {
+	fake.Harness
+	mu      sync.Mutex
+	trusted []string
+	fail    error
+}
+
+func (h *trustRec) Trust(dir string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.fail != nil {
+		return h.fail
+	}
+	if !slices.Contains(h.trusted, dir) {
+		h.trusted = append(h.trusted, dir)
+	}
+	return nil
+}
+
+func (h *trustRec) Untrust(dir string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.trusted = slices.DeleteFunc(h.trusted, func(d string) bool { return d == dir })
+	return nil
+}
+
+func (h *trustRec) all() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.trusted)
+}
+
+// bees-13.13.5: a harness that starts only in a folder it trusts is told to trust the
+// worktree a spawn made, and nothing else; prune takes the trust back with the worktree.
+// A trust that fails takes back the worktree, and records nothing (motif 8).
+func TestSpawnTrustsItsWorktreeAndPruneUntrustsIt(t *testing.T) {
+	x := newToy(t)
+	h := &trustRec{Harness: x.harness, fail: errors.New("settings.json can't be read")}
+	x.ports.Harness = h
+	x.bead("toy-1", "work on toy-1")
+	must(t, x.queen("spawn", "--goal", "branch", "--label", "toy 1", "toy-1"), 1, "couldn't trust its worktree", "settings.json can't be read", "nothing was recorded")
+	if x.hasBranch("toy-1") || len(h.all()) > 0 {
+		t.Fatalf("a refused trust left a branch (%v) or trust %v", x.hasBranch("toy-1"), h.all())
+	}
+	h.fail = nil
+	sp := x.spawn("toy-1", "branch")
+	if got := h.all(); !slices.Equal(got, []string{sp.Workspace.Dir}) {
+		t.Fatalf("trusted after spawn: %v", got)
+	}
+	x.commit(sp.Workspace.Dir, "work.txt")
+	must(t, x.worker("toy-1", 1, "done"), 0)
+	x.git(x.repo, "merge", "-q", "toy-1")
+	must(t, x.queen("end", "toy-1"), 0, "ended toy-1")
+	if got := h.all(); len(got) != 1 {
+		t.Fatalf("bs end took trust back before prune: %v", got)
+	}
+	must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir)
+	if got := h.all(); len(got) > 0 {
+		t.Fatalf("trusted after prune: %v", got)
+	}
 }

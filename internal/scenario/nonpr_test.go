@@ -18,7 +18,7 @@ func TestAVerdictReachesTheQueensInbox(t *testing.T) {
 	x := newToy(t)
 	sp := x.spawn("toy-1", "verdict")
 	must(t, x.worker("toy-1", 1, "done", "--report", "it holds"), 7, "--answer yes|no is missing")
-	must(t, x.worker("toy-1", 2, "done", "--answer", "YES", "--report", "it holds"), 7, `--answer must be yes or no (got "YES")`)
+	must(t, x.worker("toy-1", 2, "done", "--answer", "YES", "--report", "it holds"), 7, `--answer must be yes|no (got "YES")`)
 	must(t, x.worker("toy-1", 3, "done", "--answer", "yes", "--report", "-"), 2, "stdin was empty")
 	must(t, x.worker("toy-1", 4, "done", "--answer", "no"), 7, "--report <text>|- is missing")
 	must(t, x.worker("toy-1", 5, "done", "--answer", "no", "--report", "  "), 7, "--report <text>|- is missing")

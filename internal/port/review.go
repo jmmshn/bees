@@ -25,7 +25,6 @@ type Change struct {
 	Foreign     bool
 	ForeignRepo string
 	Editable    bool
-	Notes       []Note    // comments and reviews
 	Created     time.Time // when it was opened
 }
 
@@ -39,12 +38,6 @@ const (
 	Merged = "merged"
 	Closed = "closed"
 )
-
-// Note is one comment or review on a change.
-type Note struct {
-	Body string
-	At   time.Time
-}
 
 // CICheck is one CI check of a change. Bucket is one of the CI buckets below; any other
 // (gh's fail, cancel) is a failure.
@@ -100,6 +93,11 @@ type Review interface {
 	Fetch(ctx context.Context, dir string, c Change) error
 	// PushHint is the command that pushes the HEAD of dir's checkout onto c's head.
 	PushHint(ctx context.Context, dir string, c Change) string
+	// PostReview posts body on c as a comment review, never one that approves or asks for
+	// changes, and returns its URL. body carries marker; a review on c already carrying
+	// marker is a retry after a lost answer (motif 10): it posts nothing and returns that
+	// one's URL.
+	PostReview(ctx context.Context, dir string, c Change, body, marker string) (url string, err error)
 }
 
 // VCS is a workspace's version control as the goal checks read it.

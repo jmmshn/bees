@@ -457,8 +457,6 @@ func brief(b port.Bead, g goal.Goal, t *target, mergeInto []string) string {
 		s += fmt.Sprintf("The keeper lets you merge your own change when its base matches %s; check its base first, and never merge into the default branch.\n", strings.Join(mergeInto, " or "))
 	}
 	switch {
-	case g.Type == "review":
-		s += fmt.Sprintf("Your review comment on %s must carry the marker %s%s: "+bsname.Cmd+" done looks for it.\n", g.Target, "bs:", logbook.SpawnID)
 	case g.Type == "push" && t != nil:
 		s += fmt.Sprintf("Your workspace starts at %s's head (%s). Push your commits for it onto it: %s\n", g.Target, short(t.c.HeadCommit), t.hint)
 	}

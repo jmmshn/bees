@@ -2,7 +2,7 @@ Review host: GitHub (`review.host = "github"`). A change is a pull request, its 
 <!-- worker -->
 
 - A pull request: push your branch (`git push -u origin <branch>`), open it with `gh pr create` (`--draft` for a draft), and push later commits to the same branch. All your work goes on this one branch, in at most one open PR; work that wants a PR of its own is another bead, so tell the queen.
-- A review: `gh pr review <url> --comment --body "..."` or `gh pr comment <url> --body "..."`.
+- A review: bs posts it from your `{{bs}} done`. An inline comment on a line: `gh api repos/<owner>/<repo>/pulls/<n>/comments -f body="..." -f commit_id=<head sha> -f path=<file> -F line=<n>`.
 <!-- queen -->
 
 - Merge a PR with `gh pr merge <url>` (run `{{bs}} check <worker>` first), once the keeper says to land it.

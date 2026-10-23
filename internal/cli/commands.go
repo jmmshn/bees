@@ -132,8 +132,8 @@ func (r *run) spawn(_ *flag.FlagSet, _ []string) error {
 }
 
 func (r *run) done(fs *flag.FlagSet, args []string) error {
-	answer := fs.String("answer", "", "a verdict goal's answer: yes or no")
-	report := fs.String("report", "", "a verdict goal's report, or - to read it from stdin")
+	answer := fs.String("answer", "", "a verdict goal's answer (yes or no) or a review goal's (approve or changes)")
+	report := fs.String("report", "", "a verdict or review goal's report, or - to read it from stdin")
 	force := fs.Bool("force", false, "hand off while background work runs (waives that gate only)")
 	wait := fs.Bool("wait", r.name == "handoff", "while CI is still running (or the host hasn't shown a push yet), wait for it (up to --timeout), then hand off or name what failed")
 	timeout := fs.Duration("timeout", 8*time.Minute, "how long --wait waits, at most 9m (bs gives a worker's shell calls 10)")

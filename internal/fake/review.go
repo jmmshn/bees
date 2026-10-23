@@ -49,6 +49,7 @@ type clChange struct {
 	// host keys changes by client, never by a branch name (Head "clN" never names a worker).
 	dir     string
 	created time.Time
+	reviews []string // the bodies of the reviews posted on it, in order
 }
 
 type clMade struct {
@@ -267,7 +268,6 @@ func (h *CLHost) View(_ context.Context, dir string, r port.Ref) (port.Change, e
 		return port.Change{}, fmt.Errorf("%w: %s", port.ErrNoChange, r.URL)
 	}
 	out := c.Change
-	out.Notes = slices.Clone(c.Notes)
 	out.Commits = nil
 	onTrunk := h.ancestors(h.trunk)
 	if c.landed != "" {
@@ -352,6 +352,29 @@ func (*CLHost) MergeDeny() []string { return []string{"cl submit*", "cl * submit
 
 // ApproveDeny denies the CL tool's approval.
 func (*CLHost) ApproveDeny() []string { return []string{"cl approve*", "cl * approve*"} }
+
+// PostReview posts body as a review on c, unless one already carries marker; review i's
+// URL is c's with #review-i.
+func (h *CLHost) PostReview(_ context.Context, dir string, c port.Change, body, marker string) (string, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err := h.offlineIn(dir); err != nil {
+		return "", err
+	}
+	ch := h.change(c)
+	i := slices.IndexFunc(ch.reviews, func(r string) bool { return strings.Contains(r, marker) })
+	if i < 0 {
+		ch.reviews, i = append(ch.reviews, body), len(ch.reviews)
+	}
+	return fmt.Sprintf("%s#review-%d", ch.URL, i+1), nil
+}
+
+// Reviews is the bodies of the reviews posted on change n.
+func (h *CLHost) Reviews(n int) []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.changes[n].reviews)
+}
 
 // Fetch has nothing to do: every commit is in memory.
 func (h *CLHost) Fetch(context.Context, string, port.Change) error {

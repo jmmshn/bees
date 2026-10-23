@@ -141,7 +141,18 @@ func (g Goal) Reviewed() bool {
 }
 
 // TakesReport reports whether g's handoff takes --answer and --report.
-func (g Goal) TakesReport() bool { return g.Type == "verdict" }
+func (g Goal) TakesReport() bool { return g.Answers() != nil }
+
+// Answers is the --answer values g's handoff takes; none for a goal that takes no answer.
+func (g Goal) Answers() []string {
+	switch g.Type {
+	case "verdict":
+		return []string{"yes", "no"}
+	case "review":
+		return []string{"approve", "changes"}
+	}
+	return nil
+}
 
 // ReadsBead reports whether g's checks read the bead as spawn froze it.
 func (g Goal) ReadsBead() bool { return g.Type == "note" || g.Type == "beads" }
@@ -181,8 +192,8 @@ const (
 	PRMerged          = "pr_merged"           // the change merged
 	PRClosed          = "pr_merged_or_closed" // the change merged or closed
 	PushMoved         = "push_moved"          // the target's head descends from a workspace commit
-	ReviewComment     = "review_comment"      // a comment on the target since spawn carries bs:<spawn id>
-	VerdictGiven      = "verdict_given"       // --answer yes or no, and a report not blank
+	ReviewComment     = "review_comment"      // before bs posted the review: runs as verdict_given
+	VerdictGiven      = "verdict_given"       // --answer one of the goal's answers, and a report not blank
 	NoteChanged       = "note_changed"        // the bead's notes or design differ from spawn's hash
 	BeadCreated       = "bead_created"        // a bead created under the bead since spawn
 	BranchAhead       = "branch_ahead"        // the recorded branch is ahead of its base
@@ -244,7 +255,7 @@ func resolve(typ, state, target string) Goal {
 	case "push:draft":
 		p.Handoff, p.AtHandoff, p.Prune = []string{PushMoved}, true, []string{PRClosed}
 	case "review:":
-		p.Handoff, p.AtHandoff = []string{ReviewComment}, true
+		p.Handoff, p.AtHandoff = []string{VerdictGiven, PROpen}, true
 	case "verdict:":
 		p.Handoff, p.AtHandoff = []string{VerdictGiven}, true
 	case "note:":

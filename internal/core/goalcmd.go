@@ -152,9 +152,6 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 		return e, err
 	}
 	body := fmt.Sprintf("%s changed your goal: it is now --goal %s. Hand it off with %s done when it holds.\n", req.By, e.Goal, bsname.Cmd)
-	if e.Type == "review" {
-		body += fmt.Sprintf("Your review comment on %s must carry the marker bs:%s: %s done looks for it.\n", e.Target, sp.ID, bsname.Cmd)
-	}
 	body += prompt.Goal(prompt.Worker, e.Types()) // the fragments its hash records
 	if e.Reviewed() {
 		body += prompt.Host(prompt.Worker, c.Review.Name())

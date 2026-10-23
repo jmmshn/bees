@@ -87,9 +87,9 @@ type backend interface {
 	sync(x *toy, dir string)                                 // bring trunk into dir, with a commit
 	land(x *toy, n int)                                      // merge it
 	close(x *toy, n int)                                     // close it unmerged
-	note(x *toy, n int, body string, at time.Time)
-	adopt(x *toy, dir string, n int) // point dir at change n's head, committing nothing
-	foreign(x *toy, n int)           // its head in a fork that takes no edits
+	reviews(x *toy, n int) []string                          // the bodies of the reviews posted on it
+	adopt(x *toy, dir string, n int)                         // point dir at change n's head, committing nothing
+	foreign(x *toy, n int)                                   // its head in a fork that takes no edits
 	offline(x *toy, off bool)
 	stack(x *toy, dir, name string) // start a stacked change on top of dir's head
 	// pullRebase brings other's head (pushed as branch name) under dir's commits, as
@@ -159,9 +159,12 @@ func (ghBackend) sync(x *toy, dir string) {
 }
 func (ghBackend) land(x *toy, n int)  { x.mergePR(ghBackend{}.url(n)) }
 func (ghBackend) close(x *toy, n int) { x.gh.PRs[ghBackend{}.url(n)].State = "CLOSED" }
-func (ghBackend) note(x *toy, n int, body string, at time.Time) {
-	pr := x.gh.PRs[ghBackend{}.url(n)]
-	pr.Comments = append(pr.Comments, fake.Comment{Author: "jmmshn", Body: body, At: at})
+func (ghBackend) reviews(x *toy, n int) []string {
+	var out []string
+	for _, r := range x.gh.PRs[ghBackend{}.url(n)].Reviews {
+		out = append(out, r.Body)
+	}
+	return out
 }
 func (ghBackend) adopt(x *toy, dir string, n int) {
 	x.git(dir, "fetch", "-q", "origin")
@@ -221,9 +224,7 @@ func (b *clBackend) land(_ *toy, n int)               { b.h.Land(n) }
 func (b *clBackend) close(_ *toy, n int) {
 	b.h.Set(n, func(c *port.Change, _ *[]port.CICheck) { c.State = "closed" })
 }
-func (b *clBackend) note(_ *toy, n int, body string, at time.Time) {
-	b.h.Set(n, func(c *port.Change, _ *[]port.CICheck) { c.Notes = append(c.Notes, port.Note{Body: body, At: at}) })
-}
+func (b *clBackend) reviews(_ *toy, n int) []string { return b.h.Reviews(n) }
 func (b *clBackend) adopt(_ *toy, dir string, n int) {
 	var head string
 	b.h.Set(n, func(c *port.Change, _ *[]port.CICheck) { head = c.HeadCommit })
@@ -324,7 +325,8 @@ func TestPRReadyAndDraft(t *testing.T) {
 // --goal push=<url>: the workspace starts at the target's head on no branch; the handoff
 // needs the target's head to descend from a commit made there; bs end waits for its merge;
 // prune removes the workspace and has no branch to delete. --goal review=<url>: the
-// handoff needs the marker bs:<spawn id> on the target since the spawn.
+// handoff takes --answer approve|changes and a report, and bs posts the report on the
+// target as a comment review carrying bs:<spawn id>.
 func TestPushAndReviewGoals(t *testing.T) {
 	both(t, func(t *testing.T, x *toy, b backend) {
 		ctx := context.Background()
@@ -353,14 +355,14 @@ func TestPushAndReviewGoals(t *testing.T) {
 		b.commit(x, other)
 		target = b.open(x, 6, other, "feature-2", false)
 		sp = x.spawn("toy-2", "review="+target)
-		mark := "bs:" + string(sp.ID)
-		must(t, x.worker("toy-2", 1, "inbox"), 0, mark)
-		must(t, x.worker("toy-2", 2, "done"), 7, "review_comment", "carries "+mark)
-		b.note(x, 6, "looks fine "+mark, sp.TS.Add(-time.Hour)) // before the spawn: not this review
-		b.note(x, 6, "looks fine, no marker", time.Now())
-		must(t, x.worker("toy-2", 3, "done"), 7, "review_comment")
-		b.note(x, 6, "looks fine\n\n"+mark, time.Now())
-		must(t, x.worker("toy-2", 4, "done"), 0)
+		must(t, x.worker("toy-2", 1, "done"), 7, "verdict_given", "--answer approve|changes is missing")
+		if rs := b.reviews(x, 6); len(rs) != 0 {
+			t.Fatalf("a failed handoff posted %q", rs)
+		}
+		must(t, x.keeper("done", "--as", "toy-2", "--answer", "changes", "--report", "rename it"), 0, "answer changes review "+target+"#")
+		if rs := b.reviews(x, 6); len(rs) != 1 || !strings.Contains(rs[0], "rename it") || !strings.Contains(rs[0], "bs:"+string(sp.ID)) {
+			t.Fatalf("reviews on %s: %q", target, rs)
+		}
 		if _, ok, _ := x.open().LandedOf(ctx, sp.ID); !ok {
 			t.Fatal("review= didn't land at handoff")
 		}
@@ -456,9 +458,9 @@ func TestWaiversHoldAtEndAndAmendsAreRefused(t *testing.T) {
 		b.commit(x, sp.Workspace.Dir)
 		url := b.open(x, 1, sp.Workspace.Dir, "toy-1", false)
 		must(t, x.worker("toy-1", 1, "done"), 0)
-		// An amend tells the worker its new goal's fragments, and a review's marker.
+		// An amend tells the worker its new goal's fragments.
 		must(t, x.keeper("goal", "toy-1", "review="+url), 0)
-		must(t, x.worker("toy-1", 2, "inbox"), 0, "now --goal review="+url, "bs:"+string(sp.ID), "## Goal", "--goal review=<url>")
+		must(t, x.worker("toy-1", 2, "inbox"), 0, "now --goal review="+url, "## Goal", "--goal review=<url>")
 		must(t, x.keeper("goal", "toy-1", "push="+url), 2, "starts at its target's head")
 		must(t, x.keeper("goal", "toy-1", "pr"), 0)
 		b.close(x, 1)

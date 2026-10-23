@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/jmmshn/bees/internal/goal"
@@ -128,10 +127,6 @@ func (s *Spawn) decode(data string) error {
 	return nil
 }
 
-// SpawnID, in a brief, is replaced with the spawn's id: a review goal's marker
-// (bs:<spawn id>) names an id that exists only once the spawn is recorded.
-const SpawnID = "{{spawn}}"
-
 // ErrAlreadySpawned is a spawn of a worker whose last spawn hasn't ended.
 var ErrAlreadySpawned = errors.New("already spawned and not ended")
 
@@ -159,7 +154,6 @@ func (l *Logbook) RecordSpawn(ctx context.Context, by string, s Spawn, brief str
 			return err
 		}
 		if brief != "" {
-			brief = strings.ReplaceAll(brief, SpawnID, string(id))
 			_, err = insertOn(ctx, tx, entry{kind: "message", actor: by, subject: s.Name, ref: id, data: map[string]string{"body": brief}})
 		}
 		return err

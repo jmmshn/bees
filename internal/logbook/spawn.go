@@ -35,10 +35,15 @@ type Workspace struct {
 	Dir    string `json:"dir"`
 	Repo   string `json:"repo,omitempty"`   // the project dir the workspace was made from
 	Branch string `json:"branch,omitempty"` // git_worktree: the worker's branch
-	Base   string `json:"base,omitempty"`   // the ref the branch was cut from
+	// Base is the ref the branch is measured against: the project base, or a stacked pr=
+	// target's head ref.
+	Base string `json:"base,omitempty"`
 	// Start is the branch's tip at spawn: a pr goal's change must be ahead of it. A spawn
 	// recorded before bees-13.62 has none.
 	Start string `json:"start,omitempty"`
+	// Trunk is the project base at spawn (the branch the repo had checked out): Base unless
+	// the branch stacks. A spawn recorded before bees-13.63 has none.
+	Trunk string `json:"trunk,omitempty"`
 }
 
 // Spawn is a spawned entry: everything bs end, prune and a handoff read about a worker,
@@ -190,19 +195,6 @@ func (l *Logbook) LatestSpawn(ctx context.Context, name string) (Spawn, bool, er
 		return Spawn{}, false, nil
 	}
 	return s, err == nil, err
-}
-
-// FirstSpawnAt is when the first spawn that recorded dir as its workspace was recorded:
-// a workspace commit is one made there since (ADR-0010). ok is false when none did.
-func (l *Logbook) FirstSpawnAt(ctx context.Context, dir string) (t time.Time, ok bool, err error) {
-	var ts sql.NullString
-	err = l.db.QueryRowContext(ctx, `SELECT MIN(ts) FROM entries WHERE kind = 'spawned'
-  AND coalesce(json_extract(data, '$.workspace.dir'), json_extract(data, '$.worktree'), json_extract(data, '$.dir')) = ?`, dir).Scan(&ts)
-	if err != nil || !ts.Valid {
-		return time.Time{}, false, err
-	}
-	t, err = time.Parse(tsLayout, ts.String)
-	return t, err == nil, err
 }
 
 // Spawn returns the spawned entry id.

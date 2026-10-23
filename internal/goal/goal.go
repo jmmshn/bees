@@ -13,7 +13,7 @@ import (
 )
 
 // ErrNoGoal is a spawn with no --goal: the queen always names the goal (Rule D).
-var ErrNoGoal = errors.New("--goal is required: name what the worker hands off (pr, pr:ready, pr:draft, push=<pr-url>, review=<pr-url>, verdict, note, beads, branch)")
+var ErrNoGoal = errors.New("--goal is required: name what the worker hands off (pr, pr:ready, pr:draft, pr=<pr-url>, push=<pr-url>, review=<pr-url>, verdict, note, beads, branch)")
 
 // ErrBad is a --goal value bs can't resolve.
 var ErrBad = errors.New("bad --goal")
@@ -190,8 +190,10 @@ const (
 	PRCurrent         = "pr_current"          // current with its own base
 	CIGreen           = "ci_green"            // every required CI check passes
 	PRMerged          = "pr_merged"           // the change merged
+	PRLanded          = "pr_landed"           // the change merged onto the project base, never into its stacked target
 	PRClosed          = "pr_merged_or_closed" // the change merged or closed
-	PushMoved         = "push_moved"          // the target's head descends from a workspace commit
+	PRTargetOpen      = "pr_target_open"      // a stacked change's target is still open, or the change was retargeted off it
+	PushMoved         = "push_moved"          // before Amendment 4: runs as pr_head
 	ReviewComment     = "review_comment"      // before bs posted the review: runs as verdict_given
 	VerdictGiven      = "verdict_given"       // --answer one of the goal's answers, and a report not blank
 	NoteChanged       = "note_changed"        // the bead's notes or design differ from spawn's hash
@@ -204,7 +206,7 @@ const (
 // builtins are the built-in checks, for IsCheck; TestEveryCheckAGoalRunsIsBuiltIn keeps
 // it in step with the goal table.
 var builtins = []string{NoBackground, PRExists, PROpen, PRNotDraft, PRHead, PRWorkspaceCommit, PRPushed, PRCurrent,
-	CIGreen, PRMerged, PRClosed, PushMoved, ReviewComment, VerdictGiven, NoteChanged, BeadCreated, BranchAhead,
+	CIGreen, PRMerged, PRLanded, PRClosed, PRTargetOpen, PushMoved, ReviewComment, VerdictGiven, NoteChanged, BeadCreated, BranchAhead,
 	Clean, BranchMerged}
 
 // IsCheck reports whether name is a built-in check.
@@ -224,14 +226,25 @@ func IsType(name string) bool {
 // prHandoff is what bs checks of the worker's change for pr and pr:ready.
 var prHandoff = []string{PROpen, PRNotDraft, PRHead, PRCurrent, CIGreen}
 
+// pushHandoff is what bs checks of a push goal's target for push and push:ready: the
+// worker's branch is its head now.
+var pushHandoff = []string{PROpen, PRHead, PRCurrent, CIGreen}
+
+// The ways a goal type takes a target.
+const (
+	noTarget = iota
+	needsTarget
+	mayTarget // pr=<url> stacks on its target
+)
+
 // types are the built-in goal types: each state, and whether it takes a target.
 var types = map[string]struct {
 	states []string // "" is the bare type
-	target bool
+	target int
 }{
-	"pr":      {states: []string{"", "ready", "draft"}},
-	"push":    {states: []string{"", "ready", "draft"}, target: true},
-	"review":  {states: []string{""}, target: true},
+	"pr":      {states: []string{"", "ready", "draft"}, target: mayTarget},
+	"push":    {states: []string{"", "ready", "draft"}, target: needsTarget},
+	"review":  {states: []string{""}, target: needsTarget},
 	"verdict": {states: []string{""}},
 	"note":    {states: []string{""}},
 	"beads":   {states: []string{""}},
@@ -249,11 +262,11 @@ func resolve(typ, state, target string) Goal {
 	case "pr:draft":
 		p.Handoff, p.AtHandoff, p.Prune = []string{PRExists, PRHead}, true, []string{PRClosed}
 	case "push:":
-		p.Handoff, p.Complete, p.Prune = []string{PushMoved, PRCurrent, CIGreen}, []string{PRMerged}, []string{PRMerged}
+		p.Handoff, p.Complete, p.Prune = pushHandoff, []string{PRMerged}, []string{PRMerged}
 	case "push:ready":
-		p.Handoff, p.AtHandoff, p.Prune = []string{PushMoved, PRCurrent, CIGreen}, true, []string{PRMerged}
+		p.Handoff, p.AtHandoff, p.Prune = pushHandoff, true, []string{PRMerged}
 	case "push:draft":
-		p.Handoff, p.AtHandoff, p.Prune = []string{PushMoved}, true, []string{PRClosed}
+		p.Handoff, p.AtHandoff, p.Prune = []string{PRHead}, true, []string{PRClosed}
 	case "review:":
 		p.Handoff, p.AtHandoff = []string{VerdictGiven, PROpen}, true
 	case "verdict:":
@@ -269,6 +282,12 @@ func resolve(typ, state, target string) Goal {
 	case LegacyType + ":":
 		p.Prune = []string{BranchMerged}
 	}
+	// pr=<url> stacks on its target: the target must still be there to stack on at handoff,
+	// and the change lands only once it merges onto the project base (Amendment 4).
+	if typ == "pr" && target != "" {
+		p.Handoff = append([]string{PRTargetOpen}, p.Handoff...)
+		p.Complete, p.Prune = landed(p.Complete), landed(p.Prune)
+	}
 	p.Handoff = slices.Clip(p.Handoff)
 	if p.Handoff == nil {
 		p.Handoff = []string{}
@@ -280,6 +299,17 @@ func resolve(typ, state, target string) Goal {
 		p.Prune = []string{}
 	}
 	return p
+}
+
+// landed is cs with pr_merged read as pr_landed: a stacked change's.
+func landed(cs []string) []string {
+	out := slices.Clone(cs)
+	for i, c := range out {
+		if c == PRMerged {
+			out[i] = PRLanded
+		}
+	}
+	return out
 }
 
 // Parse resolves a spawn's --goal value, <type>[:<state>][=<target>] with the target
@@ -297,9 +327,11 @@ func Parse(v string) (Goal, error) {
 		return Goal{}, fmt.Errorf("%w %q: no goal type %q (built in: pr, push, review, verdict, note, beads, branch; custom types arrive with bees-13.11)", ErrBad, v, typ)
 	case !slices.Contains(t.states, state):
 		return Goal{}, fmt.Errorf("%w %q: %s has no state %q", ErrBad, v, typ, state)
-	case t.target && (!hasTarget || target == ""):
+	case t.target == needsTarget && (!hasTarget || target == ""):
 		return Goal{}, fmt.Errorf("%w %q: %s needs a target: %s=<pr-url>", ErrBad, v, typ, head)
-	case !t.target && hasTarget:
+	case t.target == mayTarget && hasTarget && target == "":
+		return Goal{}, fmt.Errorf("%w %q: %s= needs the change it stacks on: %s=<pr-url>", ErrBad, v, typ, head)
+	case t.target == noTarget && hasTarget:
 		return Goal{}, fmt.Errorf("%w %q: %s takes no target", ErrBad, v, typ)
 	case strings.HasPrefix(target, "-"):
 		return Goal{}, fmt.Errorf("%w %q: a target can't start with -", ErrBad, v)

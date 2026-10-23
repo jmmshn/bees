@@ -304,9 +304,24 @@ func (h Host) Changes(ctx context.Context, w port.Where, since time.Time) ([]por
 	return cs, "", nil
 }
 
-// Create opens a pull request from the branch, once pushed.
+// Create opens a pull request from the branch, once pushed: onto the branch it stacks on,
+// when it does.
 func (Host) Create(w port.Where) string {
-	return "gh pr create, once " + w.Branch + " is pushed (git push -u origin " + w.Branch + ")"
+	create := "gh pr create"
+	if w.Base != "" {
+		create += " --base " + w.Base
+	}
+	return create + ", once " + w.Branch + " is pushed (git push -u origin " + w.Branch + ")"
+}
+
+// Retarget moves the pull request onto base: by its number, or, before it has one, by its
+// head branch (gh pr edit takes either).
+func (Host) Retarget(c port.Change, base string) string {
+	pr := c.Head
+	if c.Number > 0 {
+		pr = strconv.Itoa(c.Number)
+	}
+	return "gh pr edit " + pr + " --base " + base
 }
 
 // ghs is each glob as gh, command gh or a path to gh (*/gh) starts it.

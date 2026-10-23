@@ -2,10 +2,8 @@ package fake
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -20,9 +18,9 @@ import (
 // checks: CL-shaped changes (https://cl.test/<repo>/<n>) and a commit graph, all in
 // memory. A workspace's commits are what Commit made there; uploading a workspace points
 // a change at its head. It shows the goal checks need neither git nor GitHub (keeper,
-// bees-13.6). ponytail: the workspace itself is still git_worktree's: Detach makes a plain
-// git worktree, and prune removes it with git; the command workspace kind (bees-13.11)
-// replaces it.
+// bees-13.6). ponytail: the workspace itself is still git_worktree's, cut by herdr at git's
+// base, so a target's head (a commit only this host has) can't be cut at: pr= and push=
+// on a CL host wait for the command workspace kind (bees-13.11).
 type CLHost struct {
 	mu       sync.Mutex
 	RepoName string // the repo every checkout belongs to; "" is none
@@ -32,8 +30,6 @@ type CLHost struct {
 	TrunkRequires  []string
 	changes        map[int]*clChange
 	parents        map[string][]string // commit → its parents
-	made           map[string]clMade   // commits Commit made: where and when
-	patch          map[string]string   // commit → its patch; a rebased copy keeps it, a merge has none
 	heads          map[string]string   // checkout dir → its head commit
 	trunk          string              // trunk's tip
 	n              int
@@ -52,11 +48,6 @@ type clChange struct {
 	reviews []string // the bodies of the reviews posted on it, in order
 }
 
-type clMade struct {
-	dir string
-	at  time.Time
-}
-
 var (
 	_ port.Review = (*CLHost)(nil)
 	_ port.VCS    = (*CLHost)(nil)
@@ -64,7 +55,7 @@ var (
 
 func (h *CLHost) init() {
 	if h.parents == nil {
-		h.changes, h.parents, h.made, h.heads, h.patch = map[int]*clChange{}, map[string][]string{}, map[string]clMade{}, map[string]string{}, map[string]string{}
+		h.changes, h.parents, h.heads = map[int]*clChange{}, map[string][]string{}, map[string]string{}
 		h.trunk = "t0"
 		h.parents["t0"] = nil
 	}
@@ -91,14 +82,12 @@ func (h *CLHost) Commit(dir string) string {
 	defer h.mu.Unlock()
 	h.init()
 	id := h.newCommit(h.head(dir))
-	h.made[id] = clMade{dir: dir, at: time.Now()}
-	h.patch[id] = "p" + id
 	h.heads[dir] = id
 	return id
 }
 
 // Rebase replays dir's commits that onto lacks on top of onto, as a pull --rebase does:
-// copies with the same patches, written by no one, and dir's head moves to the last.
+// copies written by no one, and dir's head moves to the last.
 func (h *CLHost) Rebase(dir, onto string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -111,10 +100,8 @@ func (h *CLHost) Rebase(dir, onto string) {
 		}
 	}
 	head := onto
-	for _, c := range todo {
-		id := h.newCommit(head)
-		h.patch[id] = h.patch[c]
-		head = id
+	for range todo {
+		head = h.newCommit(head)
 	}
 	h.heads[dir] = head
 }
@@ -125,7 +112,6 @@ func (h *CLHost) Sync(dir string) string {
 	defer h.mu.Unlock()
 	h.init()
 	id := h.newCommit(h.head(dir), h.trunk)
-	h.made[id] = clMade{dir: dir, at: time.Now()}
 	h.heads[dir] = id
 	return id
 }
@@ -152,7 +138,6 @@ func (h *CLHost) Trunk() {
 	defer h.mu.Unlock()
 	h.init()
 	h.trunk = h.newCommit(h.trunk)
-	h.patch[h.trunk] = "p" + h.trunk
 }
 
 // Upload points change n (made open when new) at dir's head and returns its URL.
@@ -347,6 +332,10 @@ func (h *CLHost) Changes(_ context.Context, w port.Where, since time.Time) ([]po
 
 func (*CLHost) Create(port.Where) string { return "cl upload" }
 
+func (*CLHost) Retarget(c port.Change, base string) string {
+	return fmt.Sprintf("cl rebase --change %d --onto %s", c.Number, base)
+}
+
 // MergeDeny denies the CL tool's submit.
 func (*CLHost) MergeDeny() []string { return []string{"cl submit*", "cl * submit*"} }
 
@@ -387,20 +376,6 @@ func (*CLHost) PushHint(_ context.Context, _ string, c port.Change) string {
 	return fmt.Sprintf("cl upload --change %d", c.Number)
 }
 
-func (h *CLHost) Commits(_ context.Context, dir string, since time.Time) ([]string, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.init()
-	var out []string
-	for id, m := range h.made {
-		if m.dir == dir && !m.at.Before(since) {
-			out = append(out, id)
-		}
-	}
-	slices.Sort(out)
-	return out, nil
-}
-
 // Branch is the head of the workspace named name: a worker's workspace is the only
 // "branch" a CL-shaped checkout has, and the change it uploads holds its commits. dir
 // itself, when named name, is one even before anything moved it (at trunk's tip). Two
@@ -431,20 +406,6 @@ func (h *CLHost) Branch(_ context.Context, dir string, name string) (string, boo
 // Pushed: a CL host has no local branches to push.
 func (*CLHost) Pushed(context.Context, string, string) (string, bool, error) { return "", false, nil }
 
-// PatchIDs is each commit's patch; every commit is in memory, so none is missing.
-func (h *CLHost) PatchIDs(_ context.Context, _ string, commits []string) (map[string]string, []string, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.init()
-	ids := map[string]string{}
-	for _, c := range commits {
-		if p := h.patch[c]; p != "" {
-			ids[c] = p
-		}
-	}
-	return ids, nil, nil
-}
-
 func (h *CLHost) Has(_ context.Context, _ string, commit string) (bool, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -457,21 +418,4 @@ func (h *CLHost) Descends(_ context.Context, _ string, ancestor, commit string) 
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return slices.Contains(h.ancestors(commit), ancestor), nil
-}
-
-// Detach makes dir a plain git worktree of repo (the workspace kind is git_worktree's)
-// and starts its head, in memory, at commit.
-func (h *CLHost) Detach(_ context.Context, repo, dir, commit string) error {
-	if out, err := exec.Command("git", "-C", repo, "worktree", "add", "--quiet", "--detach", dir).CombinedOutput(); err != nil {
-		return fmt.Errorf("git worktree add: %v: %s", err, out)
-	}
-	h.Move(dir, commit)
-	return nil
-}
-
-func (h *CLHost) Drop(_ context.Context, repo, dir string) error {
-	if out, err := exec.Command("git", "-C", repo, "worktree", "remove", "--force", dir).CombinedOutput(); err != nil {
-		return errors.New(string(out))
-	}
-	return nil
 }

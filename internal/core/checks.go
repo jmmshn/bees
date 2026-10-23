@@ -62,6 +62,9 @@ func (k *look) stage(ctx context.Context, e logbook.Effective, names []string) (
 
 func (k *look) run(ctx context.Context, g goal.Goal, name string) (outcome, string, error) {
 	c, ws, h := k.c, k.sp.Workspace, k.h
+	if name == goal.PRTargetOpen {
+		return k.targetOpen(ctx, g)
+	}
 	if isPRCheck(name) {
 		return k.prCheck(ctx, g, name)
 	}

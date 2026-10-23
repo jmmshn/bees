@@ -322,39 +322,48 @@ func TestPRReadyAndDraft(t *testing.T) {
 	})
 }
 
-// --goal push=<url>: the workspace starts at the target's head on no branch; the handoff
-// needs the target's head to descend from a commit made there; bs end waits for its merge;
-// prune removes the workspace and has no branch to delete. --goal review=<url>: the
-// handoff takes --answer approve|changes and a report, and bs posts the report on the
-// target as a comment review carrying bs:<spawn id>.
-func TestPushAndReviewGoals(t *testing.T) {
+// --goal push=<url> (Amendment 4, narrow): the worker's own branch, cut at the target's
+// head; the handoff needs the target's head to be that branch's tip, ahead of where it
+// started, and names the push onto the target; bs end waits for its merge; prune removes
+// the workspace and the branch. GitHub only: on a CL host the git_worktree cut can't start
+// at a CL's commit (the command kind, bees-13.11).
+func TestPushGoal(t *testing.T) {
+	x := newToy(t)
+	b := ghBackend{}
+	b.setup(x, true)
+	other := filepath.Join(filepath.Dir(x.repo), "theirs")
+	x.git(x.repo, "worktree", "add", "-q", "-b", "feature", other)
+	b.commit(x, other)
+	target := b.open(x, 5, other, "feature", false)
+	head := x.headOf(b, other)
+
+	sp := x.spawn("toy-1", "push="+target)
+	dir := sp.Workspace.Dir
+	if sp.Workspace.Branch != "toy-1" || sp.Workspace.Start != head || x.headOf(b, dir) != head {
+		t.Fatalf("push workspace %+v at %s, want branch toy-1 at %s", sp.Workspace, x.headOf(b, dir), head)
+	}
+	must(t, x.worker("toy-1", 1, "inbox"), 0, "starts at "+target+"'s head", "git push origin HEAD:feature")
+	must(t, x.worker("toy-1", 2, "done"), 7, "pr_head", "where it started at spawn")
+	b.commit(x, dir)
+	must(t, x.worker("toy-1", 3, "done"), 7, "pr_head", "git push origin HEAD:feature")
+	b.update(x, 5, dir)
+	must(t, x.worker("toy-1", 4, "done"), 0, "handed off")
+	must(t, x.queen("end", "toy-1"), 9, target+": open")
+	b.land(x, 5)
+	must(t, x.queen("end", "toy-1"), 0)
+	must(t, x.queen("prune"), 0, "removed "+dir+" and branch toy-1 (toy-1)")
+}
+
+// --goal review=<url>: the handoff takes --answer approve|changes and a report, and bs
+// posts the report on the target as a comment review carrying bs:<spawn id>.
+func TestReviewGoal(t *testing.T) {
 	both(t, func(t *testing.T, x *toy, b backend) {
 		ctx := context.Background()
 		other := filepath.Join(filepath.Dir(x.repo), "theirs")
-		x.git(x.repo, "worktree", "add", "-q", "-b", "feature", other)
+		x.git(x.repo, "worktree", "add", "-q", "-b", "feature-2", other)
 		b.commit(x, other)
-		target := b.open(x, 5, other, "feature", false)
-		head := x.headOf(b, other)
-
-		sp := x.spawn("toy-1", "push="+target)
-		dir := sp.Workspace.Dir
-		if sp.Workspace.Branch != "" || x.headOf(b, dir) != head {
-			t.Fatalf("push workspace %+v at %s, want detached at %s", sp.Workspace, x.headOf(b, dir), head)
-		}
-		must(t, x.worker("toy-1", 1, "inbox"), 0, "starts at "+target+"'s head")
-		must(t, x.worker("toy-1", 2, "done"), 7, "push_moved", "nothing was committed")
-		b.commit(x, dir)
-		must(t, x.worker("toy-1", 3, "done"), 7, "push_moved", "holds no commit made in "+dir)
-		b.update(x, 5, dir)
-		must(t, x.worker("toy-1", 4, "done"), 0, "handed off")
-		must(t, x.queen("end", "toy-1"), 9, target+": open")
-		b.land(x, 5)
-		must(t, x.queen("end", "toy-1"), 0)
-		must(t, x.queen("prune"), 0, "removed "+dir+" (toy-1)")
-
-		b.commit(x, other)
-		target = b.open(x, 6, other, "feature-2", false)
-		sp = x.spawn("toy-2", "review="+target)
+		target := b.open(x, 6, other, "feature-2", false)
+		sp := x.spawn("toy-2", "review="+target)
 		must(t, x.worker("toy-2", 1, "done"), 7, "verdict_given", "--answer approve|changes is missing")
 		if rs := b.reviews(x, 6); len(rs) != 0 {
 			t.Fatalf("a failed handoff posted %q", rs)
@@ -464,7 +473,7 @@ func TestWaiversHoldAtEndAndAmendsAreRefused(t *testing.T) {
 		must(t, x.keeper("goal", "toy-1", "push="+url), 2, "starts at its target's head")
 		must(t, x.keeper("goal", "toy-1", "pr"), 0)
 		b.close(x, 1)
-		must(t, x.keeper("goal", "toy-1", "push="+url), 2, "bs goal: --goal push="+url, "not open")
+		must(t, x.keeper("goal", "toy-1", "review="+url), 2, "bs goal: --goal review="+url, "not open")
 		must(t, x.queen("end", "toy-1"), 9, "closed")
 		must(t, x.keeper("goal", "toy-1", "--waive", "pr_merged"), 0, "(waived: pr_merged)")
 		must(t, x.queen("end", "toy-1"), 0)
@@ -536,7 +545,7 @@ func TestTheOldHeadsCIIsPendingWhileTheHostLags(t *testing.T) {
 	b.commit(x, dir)
 	x.gh.Edit(target, func(pr *fake.PR) { pr.Stale = true })
 	b.update(x, 5, dir)
-	must(t, x.worker("toy-2", 1, "done"), 10, "push_moved", "pending: feature was pushed at")
+	must(t, x.worker("toy-2", 1, "done"), 10, "pr_head", "pending: feature was pushed at")
 	time.AfterFunc(300*time.Millisecond, func() { x.gh.Edit(target, func(pr *fake.PR) { pr.Stale = false }) })
 	must(t, x.worker("toy-2", 2, "done", "--wait"), 0)
 }

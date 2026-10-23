@@ -394,4 +394,8 @@ func TestDoctorAgyMode(t *testing.T) {
 	}
 	_, out = r.doctor()
 	wantIn(t, out, "ok   agy mode: the newest agy bs started took --mode accept-edits (its log "+now+")")
+	// Under claude_code, a spawn's --harness agy still starts agy: its log is read too.
+	r.write("config.toml", "[paths]\nlogbook_dir = \""+r.logbook+"\"\n")
+	_, out = r.doctor()
+	wantIn(t, out, "ok   agy mode: the newest agy bs started took --mode accept-edits (its log "+now+")")
 }

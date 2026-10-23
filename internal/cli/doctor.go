@@ -213,8 +213,8 @@ func (d *doctor) harness() {
 	}
 	if s.Harness == agy.Name && at != "" {
 		d.agySignIn(at)
-		d.agyMode()
 	}
+	d.agyMode(s.Harness != agy.Name)
 	h := d.r.ports.Harness
 	if h == nil && d.r.ports.NewHarness != nil {
 		h = d.r.ports.NewHarness(s.Harness, s.opts(s.Harness, false))
@@ -255,9 +255,11 @@ func (d *doctor) agySignIn(at string) {
 
 // agyMode checks the newest agy start bs launched took the mode bs asked for: agy says it
 // didn't only in its log, and runs on in default mode, asking about every edit and command
-// (bees-13.13.14).
-func (d *doctor) agyMode() {
+// (bees-13.13.14). Under another harness a spawn's --harness agy still starts agy, so it
+// says only what a bs-started agy's log shows (quiet).
+func (d *doctor) agyMode(quiet bool) {
 	switch t, ok, err := d.r.s.agyLogs().Took(""); {
+	case quiet && (err != nil || !ok):
 	case err != nil:
 		d.line("WARN", "agy mode", "can't tell whether agy took --mode %s: %v", agy.Mode, err)
 	case !ok:

@@ -45,6 +45,7 @@ type Harness interface {
 	Prepare(st Start) (Launch, error)             // pure: argv, per-start files, guards rendered, Record
 	Owns(argv []string, name string) bool         // argv, of a Kind process, is session name's launch
 	Ring(t Target, text string, p Priority) error // ErrNotRunning | ErrNoRing | a write error
+	Observe(env []string) map[string]string       // pure: post-start facts a later start needs, read from the env of a bs the session runs
 }
 
 // ErrNotRunning means the session rung is not running: its recorded process is gone.

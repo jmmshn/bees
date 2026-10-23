@@ -100,6 +100,17 @@ func (h Harness) Prepare(st port.Start) (port.Launch, error) {
 	return l, nil
 }
 
+// Observe reads BEESFAKE_CONVERSATION, as agy's conversation id, for a script's env step
+// to set.
+func (Harness) Observe(env []string) map[string]string {
+	for i := len(env) - 1; i >= 0; i-- {
+		if v, ok := strings.CutPrefix(env[i], "BEESFAKE_CONVERSATION="); ok && v != "" {
+			return map[string]string{"conversation": v}
+		}
+	}
+	return nil
+}
+
 // Ring writes the doorbell to the session's 0600 ring socket; no listener is
 // ErrNotRunning.
 func (h Harness) Ring(t port.Target, text string, p port.Priority) error {

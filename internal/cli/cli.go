@@ -281,7 +281,8 @@ func (r *run) moved() error {
 
 // authorize settles who runs this command (ADR-0010 Amendment 4 Identity): the caller
 // load found, its start healed (core.Confirm), --as applied, then the permission table
-// (core.May) for the command. A command acting on a worker asks May again with it.
+// (core.May) for the command; a worker's session then tells what it observes of itself
+// (core.Observe). A command acting on a worker asks May again with it.
 func (r *run) authorize(as string) error {
 	c, err := r.c.Confirm(r.ctx, r.caller)
 	if err != nil {
@@ -290,7 +291,11 @@ func (r *run) authorize(as string) error {
 	if r.caller, err = r.c.As(r.ctx, c, as); err != nil {
 		return err
 	}
-	return r.may("")
+	if err := r.may(""); err != nil {
+		return err
+	}
+	r.c.Observe(r.ctx, r.caller, r.env.Vars)
+	return nil
 }
 
 // may asks the permission table whether the caller runs this command on subject.

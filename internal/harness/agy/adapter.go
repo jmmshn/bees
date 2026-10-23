@@ -33,9 +33,14 @@ const Shell = "run_command"
 // registry).
 var Tools = []string{Shell, "view_file", "list_dir", "grep_search", "find_by_name", "write_to_file", "replace_file_content", "multi_replace_file_content"}
 
-// Conversation is the Record key of the conversation a resume continues (bees-13.13.6
-// records it from the worker's first bs call: agy names it only after the start).
+// Conversation is the Record key of the conversation a resume continues: agy names it
+// only after the start, so the worker's first bs call observes it (bees-13.13.6).
 const Conversation = "conversation"
+
+// envConversation is the conversation id agy hands its run_command shells (bees-13.80).
+// Its language server's address and CSRF token beside it are left alone until a ring
+// needs them (bees-13.13.10): a token bs doesn't use, bs doesn't keep.
+const envConversation = "ANTIGRAVITY_CONVERSATION_ID"
 
 // Adapter is the agy harness for one role: its [<role>.agy] model, the agy binary (""
 // is agy on PATH) and the bs its hook runs, an absolute path.
@@ -85,7 +90,7 @@ func (a Adapter) Prepare(st port.Start) (port.Launch, error) {
 	case len(st.Path) > 0:
 		return l, fmt.Errorf("agy: bs can't put %s first on agy's commands' PATH yet (bees-13.80 row 5); drop bs spawn --path, and worker.path from the config", strings.Join(st.Path, ", "))
 	case st.Continue && st.Record[Conversation] == "":
-		return l, errors.New("agy: no recorded conversation to resume (bees-13.13.6); bs end the worker and spawn it again to start fresh")
+		return l, errors.New("agy: no recorded conversation to resume: its session never ran a bs call, which records it; bs end the worker and spawn it again to start fresh")
 	case st.Role == port.Worker && !filepath.IsAbs(a.Bs):
 		return l, fmt.Errorf("agy: the bs its guard hook runs must be an absolute path, not %q", a.Bs)
 	}
@@ -111,6 +116,25 @@ func (a Adapter) Prepare(st port.Start) (port.Launch, error) {
 // Ring has no way in yet: agy agentapi send-message needs the session's language-server
 // address and CSRF token (bees-13.80 row 7). The message waits for its next bs inbox.
 func (Adapter) Ring(port.Target, string, port.Priority) error { return port.ErrNoRing }
+
+// Observe reads the conversation agy runs a bs in from that bs's env: a resume continues
+// it. An env without one (a shell agy didn't start) tells nothing.
+func (Adapter) Observe(env []string) map[string]string {
+	if cid := getenv(env, envConversation); cid != "" {
+		return map[string]string{Conversation: cid}
+	}
+	return nil
+}
+
+// getenv is key's value in env, the last one set winning.
+func getenv(env []string, key string) string {
+	for i := len(env) - 1; i >= 0; i-- {
+		if v, ok := strings.CutPrefix(env[i], key+"="); ok {
+			return v
+		}
+	}
+	return ""
+}
 
 // agentFile is the role's custom agent: its tools, and the role prompt as its body.
 func agentFile(name string, role port.Role, prompt string) string {

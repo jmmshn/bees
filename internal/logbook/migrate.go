@@ -17,14 +17,14 @@ import (
 
 // Kinds is every entry kind the CHECK allows. It only ever grows (ADR-0010): rang is kept
 // though nothing writes it, so a table from any older bs still fits.
-var Kinds = []string{"message", "received", "rang", "spawned", "ended", "queen", "started", "done", "goal", "landed"}
+var Kinds = []string{"message", "received", "rang", "spawned", "ended", "queen", "started", "done", "goal", "landed", "observed"}
 
-// table is the DDL of the entries table of schema version 2, named name.
+// table is the DDL of the entries table of schema Version, named name.
 func table(name string) string {
 	return `CREATE TABLE IF NOT EXISTS ` + name + ` (
   id      TEXT PRIMARY KEY,
   ts      TEXT NOT NULL,
-  kind    TEXT NOT NULL CHECK (kind IN ('message','received','rang','spawned','ended','queen','started','done','goal','landed')),
+  kind    TEXT NOT NULL CHECK (kind IN ('message','received','rang','spawned','ended','queen','started','done','goal','landed','observed')),
   actor   TEXT NOT NULL,
   subject TEXT,
   ref     TEXT REFERENCES ` + name + `(id),
@@ -38,8 +38,9 @@ CREATE INDEX IF NOT EXISTS k_ref  ON entries (kind, ref);
 `
 
 // Version is the schema's PRAGMA user_version: 0 is main's bs before ADR-0009, 1 the
-// bees-12 pilot's (queen, started, done), 2 ADR-0010's (goal, landed).
-const Version = 2
+// bees-12 pilot's (queen, started, done), 2 ADR-0010's (goal, landed), 3 agy's
+// (observed, bees-13.13.6).
+const Version = 3
 
 // ErrNoLogbook is a logbook file that doesn't exist, which Open never makes: a deleted
 // logbook must not come back empty without a word (R48, bees-8.12, motif 14).
@@ -126,7 +127,7 @@ func build(ctx context.Context, path string) (created bool, err error) {
 	return !existed && err == nil, err
 }
 
-// schema makes the version 2 table and indexes on db.
+// schema makes the current table and indexes on db.
 func schema(ctx context.Context, db execer) error {
 	for _, q := range []string{table("entries"), indexes, fmt.Sprintf(`PRAGMA user_version = %d`, Version)} {
 		if _, err := db.ExecContext(ctx, q); err != nil {
@@ -200,8 +201,8 @@ func busy(err error) bool {
 	return errors.As(err, &se) && se.Code()&0xff == sqlite3.SQLITE_BUSY
 }
 
-// migrate brings the schema to Version. A new file gets the table as it is now. A version
-// 0 or 1 file is copied aside to <path>.pre-2 first (motif 14), then its table is rebuilt
+// migrate brings the schema to Version. A new file gets the table as it is now. An older
+// file (version 0, 1 or 2) is copied aside to <path>.pre-<Version> first (motif 14), then its table is rebuilt
 // once with the wider kind CHECK, which SQLite can't alter in place: inside BEGIN
 // IMMEDIATE, the write lock every writer takes, so a concurrent Open waits and then finds
 // the work done. Rows move verbatim: an old spawn's data is mapped when it is read
@@ -253,7 +254,7 @@ func hasEntries(ctx context.Context, db querier) (bool, error) {
 	return n > 0, err
 }
 
-// rebuild makes the version 2 table on c, unless another Open did while c waited.
+// rebuild makes the current table on c, unless another Open did while c waited.
 func rebuild(ctx context.Context, c *sql.Conn) error {
 	tx, err := c.BeginTx(ctx, nil) // BEGIN IMMEDIATE (_txlock)
 	if err != nil {
@@ -274,10 +275,10 @@ func rebuild(ctx context.Context, c *sql.Conn) error {
 	stmts := []string{table("entries")}
 	if old {
 		stmts = []string{
-			table("entries_v2"),
-			`INSERT INTO entries_v2 (id, ts, kind, actor, subject, ref, data) SELECT id, ts, kind, actor, subject, ref, data FROM entries ORDER BY rowid`,
+			table("entries_new"),
+			`INSERT INTO entries_new (id, ts, kind, actor, subject, ref, data) SELECT id, ts, kind, actor, subject, ref, data FROM entries ORDER BY rowid`,
 			`DROP TABLE entries`,
-			`ALTER TABLE entries_v2 RENAME TO entries`,
+			`ALTER TABLE entries_new RENAME TO entries`,
 		}
 	}
 	stmts = append(stmts, indexes, fmt.Sprintf(`PRAGMA user_version = %d`, Version))

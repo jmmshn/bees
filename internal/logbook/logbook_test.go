@@ -133,6 +133,37 @@ func TestRecordSpawnRefusesAnOpenTwin(t *testing.T) {
 	spawn(t, lb, "toy-1", "toy", "w2:p1", "verdict")
 }
 
+// An observation is written once per change, not per bs call, and only the newest reads
+// back, on that spawn alone: a respawn starts with none (bees-13.13.6).
+func TestObservedIsWrittenPerChange(t *testing.T) {
+	ctx := context.Background()
+	lb := open(t, filepath.Join(t.TempDir(), "bees.db"))
+	s := spawn(t, lb, "toy-1", "toy", "w1:p1", "verdict")
+	for i, c := range []struct {
+		facts map[string]string
+		wrote bool
+	}{
+		{nil, false},
+		{map[string]string{"conversation": "c1"}, true},
+		{map[string]string{"conversation": "c1"}, false},
+		{map[string]string{"conversation": "c2"}, true},
+	} {
+		if wrote, err := lb.RecordObserved(ctx, s.ID, s.Name, c.facts); err != nil || wrote != c.wrote {
+			t.Fatalf("observation %d %v: wrote %v, %v; want %v", i, c.facts, wrote, err, c.wrote)
+		}
+	}
+	if got, _, err := lb.LatestSpawn(ctx, "toy-1"); err != nil || got.Observed["conversation"] != "c2" || len(got.Observed) != 1 {
+		t.Fatalf("observed = %v, %v", got.Observed, err)
+	}
+	if err := lb.RecordEnd(ctx, "queen-toy", s.ID, logbook.Ended{}); err != nil {
+		t.Fatal(err)
+	}
+	spawn(t, lb, "toy-1", "toy", "w2:p1", "verdict")
+	if got, _, err := lb.LatestSpawn(ctx, "toy-1"); err != nil || got.Observed != nil {
+		t.Fatalf("a respawn's observed = %v, %v", got.Observed, err)
+	}
+}
+
 // A done is the queen's unread mail, still after its worker ended; the newest wins.
 // landed (with the done, in its transaction) and ended are written once per spawn.
 func TestDoneLandedAndEnded(t *testing.T) {

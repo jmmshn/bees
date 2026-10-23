@@ -9,6 +9,7 @@ import (
 
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/proc"
+	"github.com/jmmshn/bees/internal/watch"
 )
 
 // ErrBackground is the gate's finding (exit 5): the harness runs a process its start
@@ -76,6 +77,11 @@ func (c *Core) background(ctx context.Context, sp logbook.Spawn, self int) ([]pr
 	if err != nil {
 		return nil, err
 	}
+	w, err := c.watcher(sp.Name)
+	if err != nil {
+		return nil, err
+	}
+	skip = append(skip, w...)
 	mine, err := c.Proc.Group(self)
 	if err != nil {
 		return nil, err
@@ -137,6 +143,18 @@ func (c *Core) background(ctx context.Context, sp logbook.Spawn, self int) ([]pr
 		out[i].Ports = ports[out[i].PID]
 	}
 	return out, nil
+}
+
+// watcher is session name's armed mail watcher, bs inbox --wait, and its ancestors (a
+// shell its harness wrapped it in): waiting for mail is how an agy worker is woken, not
+// background work it left (bees-13.13.10). The watcher is the process holding its lock,
+// never one guessed from a command line.
+func (c *Core) watcher(name string) ([]int, error) {
+	pid, armed, err := watch.Armed(watch.Path(c.CacheDir, name))
+	if err != nil || !armed || pid <= 0 {
+		return nil, err
+	}
+	return c.ancestors(pid)
 }
 
 func lines[T fmt.Stringer](xs []T) string {

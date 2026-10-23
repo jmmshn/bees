@@ -395,7 +395,7 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 	switch q := sent.Started; {
 	case q.Pane != "":
 		fmt.Fprintf(r.out, "started %s in pane %s on herdr session %s (%s queen)\n", to, q.Pane, q.Session, sent.Bs)
-		if sent.Rung != nil && !errors.Is(sent.Rung, core.ErrEnded) {
+		if sent.Rung != nil && !errors.Is(sent.Rung, core.ErrEnded) && !errors.Is(sent.Rung, port.ErrArmed) {
 			fmt.Fprintf(r.out, "stored, not rung: %s doesn't take a ring yet (%v); her pane may be at a prompt, such as folder trust: herdr --session %s pane read %s --source recent\n", to, sent.Rung, q.Session, q.Pane)
 			return nil
 		}
@@ -440,6 +440,8 @@ func (r *run) rang(to string, err error) {
 	switch {
 	case err == nil:
 		fmt.Fprintf(r.out, "rung %s\n", to)
+	case errors.Is(err, port.ErrArmed):
+		fmt.Fprintf(r.out, "stored; %s's watcher wakes it to read it (%v)\n", to, err)
 	case errors.Is(err, port.ErrNotRunning), errors.Is(err, port.ErrNoRing):
 		fmt.Fprintf(r.out, "stored, not rung (%v): %s reads it at its next "+bsname.Cmd+" inbox\n", err, to)
 	case errors.Is(err, core.ErrEnded):
@@ -450,10 +452,20 @@ func (r *run) rang(to string, err error) {
 }
 
 func (r *run) inbox(fs *flag.FlagSet, args []string) error {
+	wait := fs.Bool("wait", false, "wait for new mail, say who it's from and exit, marking nothing read: run it in the background, and its exit wakes an idle agy session")
+	timeout := fs.Duration("timeout", time.Hour, "how long --wait waits")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
 	w := r.caller
+	if *wait {
+		ms, err := r.c.Watch(r.ctx, w, r.env.Self, *timeout)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(r.out, core.Doorbell(ms, ms[len(ms)-1].From))
+		return nil
+	}
 	ms, err := r.c.Logbook.Unread(r.ctx, w.Name)
 	if err != nil {
 		return err

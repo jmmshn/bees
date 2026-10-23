@@ -139,7 +139,7 @@ worktrees = "`+filepath.Join(root, "toy-WT")+`"
 	x.gh = &fake.GH{PRs: map[string]*fake.PR{}}
 	x.ports = cli.Ports{Run: fake.Commands{Herdr: x.herdr, GH: x.gh, Real: port.Exec{}}, Harness: x.harness, Proc: x.herdr, Beads: x.beads,
 		CacheDir: filepath.Join(root, "cache"),
-		Timing:   core.Timing{Confirm: 10 * time.Second, Poll: 20 * time.Millisecond, SecondLook: 100 * time.Millisecond, Stop: time.Second, CIPoll: 50 * time.Millisecond, WaitGrace: 300 * time.Millisecond}}
+		Timing:   core.Timing{Confirm: 10 * time.Second, Poll: 20 * time.Millisecond, SecondLook: 100 * time.Millisecond, Stop: time.Second, CIPoll: 50 * time.Millisecond, WaitGrace: 300 * time.Millisecond, Mail: 20 * time.Millisecond}}
 	// A bs call a pane's beesfake makes runs here, as that process: its env, its pid.
 	// bs queen's exec is handed back for the caller to make: it keeps the pid recorded.
 	fake.Relay(t, relay, func(c fake.Call) fake.Reply {

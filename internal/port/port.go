@@ -45,7 +45,7 @@ type Harness interface {
 	Program() string                              // the program a launch runs, a name on PATH or an absolute path: Kind's own, or another (agy.bin); a spawn records it
 	Prepare(st Start) (Launch, error)             // pure: argv, per-start files, guards rendered, Record
 	Owns(argv []string, name string) bool         // argv, of a process running the spawn's program, is session name's launch
-	Ring(t Target, text string, p Priority) error // ErrNotRunning | ErrNoRing | a write error
+	Ring(t Target, text string, p Priority) error // ErrNotRunning | ErrNoRing | ErrArmed | a write error
 	Observe(env []string) map[string]string       // pure: post-start facts a later start needs, read from the env of a bs the session runs
 }
 
@@ -55,6 +55,10 @@ var ErrNotRunning = errors.New("not running")
 // ErrNoRing means the harness has no way to ring a running session: the message waits for
 // the session's next bs inbox.
 var ErrNoRing = errors.New("its harness has no ring")
+
+// ErrArmed means the harness typed nothing, since a watcher the session armed wakes it
+// when mail comes (agy's bs inbox --wait, bees-13.13.10): rung, by other means.
+var ErrArmed = errors.New("its watcher wakes it")
 
 // Truster is a harness that only starts in a folder it was told to trust, exact path:
 // spawn trusts the workspace folder it just made, and prune untrusts it once removed.

@@ -4,7 +4,8 @@
 // agy has no flag for a system-prompt or settings file: it finds custom agents and hooks
 // under a .agents/ directory it discovers, which --add-dir adds (probe 1). So Prepare puts
 // both in the per-start directory the core writes: the role's custom agent, its prompt the
-// agent's body, and for a worker the hooks.json that runs bs guard before each command.
+// agent's body, and for a worker the hooks.json that runs bs guard before each command and
+// bs hook around each turn, which keeps a mail watcher armed: agy's ring (bees-13.13.10).
 package agy
 
 import (
@@ -19,6 +20,7 @@ import (
 	"github.com/jmmshn/bees/internal/bsname"
 	"github.com/jmmshn/bees/internal/guards"
 	"github.com/jmmshn/bees/internal/port"
+	"github.com/jmmshn/bees/internal/watch"
 )
 
 // Name is this harness's config name.
@@ -49,12 +51,14 @@ var Remote = []string{"SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"}
 
 // Adapter is the agy harness for one role: its [<role>.agy] model, the agy binary (""
 // is agy on PATH), the bs its hook runs, an absolute path, and agy's settings.json, which
-// holds its trusted folders ("" is ~/.gemini/antigravity-cli/settings.json).
+// holds its trusted folders ("" is ~/.gemini/antigravity-cli/settings.json), and bs's
+// cache dir, which holds each session's mail watcher lock.
 type Adapter struct {
 	Model    string
 	Bin      string
 	Bs       string
 	Settings string
+	Cache    string
 }
 
 var _ port.Harness = Adapter{}
@@ -107,7 +111,7 @@ func (a Adapter) Prepare(st port.Start) (port.Launch, error) {
 	agent := "bs-" + string(st.Role)
 	l.Dir = map[string]string{".agents/agents/" + agent + ".md": agentFile(agent, st.Role, st.Prompt)}
 	if st.Role == port.Worker {
-		l.Dir[".agents/hooks.json"] = hooks(a.Bs, st.Deny)
+		l.Dir[".agents/hooks.json"] = hooks(a.Bs, st.Dir, st.Deny)
 	}
 	l.Args = []string{"--add-dir", "{{dir}}", "--agent", agent, "--mode", "auto"}
 	l.Unset = Remote
@@ -124,9 +128,21 @@ func (a Adapter) Prepare(st port.Start) (port.Launch, error) {
 	return l, nil
 }
 
-// Ring has no way in yet: agy agentapi send-message needs the session's language-server
-// address and CSRF token (bees-13.80 row 7). The message waits for its next bs inbox.
-func (Adapter) Ring(port.Target, string, port.Priority) error { return port.ErrNoRing }
+// Ring types nothing: agy wakes an idle session when a background command it ran exits
+// (probed on 1.4.6), so the session's ring is its own bs inbox --wait, which exits when
+// mail comes, and its hooks keep one armed. Ring only says whether one is: ErrArmed, or
+// ErrNoRing with the message held until the session's next turn, where its Stop hook
+// holds it until it reads its mail.
+func (a Adapter) Ring(t port.Target, _ string, _ port.Priority) error {
+	pid, armed, err := watch.Armed(watch.Path(a.Cache, t.Name))
+	switch {
+	case err != nil:
+		return fmt.Errorf("can't tell whether its watcher is armed: %w", err)
+	case !armed:
+		return fmt.Errorf("no %s inbox --wait armed, so it's held until its next turn: %w", bsname.Cmd, port.ErrNoRing)
+	}
+	return fmt.Errorf("%s inbox --wait, pid %d: %w", bsname.Cmd, pid, port.ErrArmed)
+}
 
 // Observe reads the conversation agy runs a bs in from that bs's env: a resume continues
 // it. An env without one (a shell agy didn't start) tells nothing.
@@ -153,9 +169,11 @@ func agentFile(name string, role port.Role, prompt string) string {
 }
 
 // hooks is agy's hooks.json: before each run_command, bs guard gets the tool call on
-// stdin and the deny globs as arguments. agy runs the command under sh -c in the
-// hooks.json dir, so bs is an absolute path and each word is single-quoted.
-func hooks(bs string, deny []string) string {
+// stdin and the deny globs as arguments; before each model call and when a turn stops,
+// bs hook gets agy's payload, from the workspace dir so bs finds its project and caller.
+// agy runs each command under sh -c in the hooks.json dir, so bs is an absolute path and
+// each word is single-quoted.
+func hooks(bs, dir string, deny []string) string {
 	cmd := []string{quote(bs), "guard", "--harness", Name}
 	for _, g := range deny {
 		cmd = append(cmd, quote(g))
@@ -167,8 +185,17 @@ func hooks(bs string, deny []string) string {
 				"hooks":   []any{map[string]any{"type": "command", "command": strings.Join(cmd, " ")}},
 			}},
 		},
+		"bs-mail": map[string]any{
+			"PreInvocation": []any{map[string]any{"type": "command", "command": mailHook(bs, dir, "PreInvocation")}},
+			"Stop":          []any{map[string]any{"type": "command", "command": mailHook(bs, dir, "Stop")}},
+		},
 	})
 	return string(b)
+}
+
+// mailHook is the sh command that runs bs hook for event in dir.
+func mailHook(bs, dir, event string) string {
+	return "cd " + quote(dir) + " && " + quote(bs) + " hook --harness " + Name + " " + event
 }
 
 // quote is s as one sh word.
@@ -216,4 +243,48 @@ func Answer(w io.Writer, d guards.Decision) error {
 		d.Reason = "allow is not wired yet (bees-13.13.9)"
 	}
 	return json.NewEncoder(w).Encode(map[string]string{"decision": "deny", "reason": bsname.Cmd + " guard: " + d.Reason})
+}
+
+// FirstCall reads PreInvocation's payload: whether this model call is its turn's first
+// (invocationNum 0, which protojson may leave out).
+func FirstCall(stdin io.Reader) (bool, error) {
+	var in struct {
+		InvocationNum int `json:"invocationNum"`
+	}
+	if err := decode(stdin, &in); err != nil {
+		return false, err
+	}
+	return in.InvocationNum == 0, nil
+}
+
+// Stopped reads Stop's payload: whether the turn ended on its own (NO_TOOL_CALL), not
+// cancelled by the keeper or cut by one of agy's limits, which a hook doesn't fight.
+func Stopped(stdin io.Reader) (bool, error) {
+	var in struct {
+		TerminationReason string `json:"terminationReason"`
+	}
+	if err := decode(stdin, &in); err != nil {
+		return false, err
+	}
+	return in.TerminationReason == "NO_TOOL_CALL", nil
+}
+
+// Inject writes PreInvocation's answer adding msg as a user message.
+func Inject(w io.Writer, msg string) error {
+	return json.NewEncoder(w).Encode(map[string]any{"injectSteps": []any{map[string]string{"userMessage": msg}}})
+}
+
+// Hold writes Stop's answer keeping the turn going, reason its next message.
+func Hold(w io.Writer, reason string) error {
+	return json.NewEncoder(w).Encode(map[string]string{"decision": "continue", "reason": reason})
+}
+
+func decode(stdin io.Reader, v any) error {
+	if stdin == nil {
+		return errors.New("no hook payload on stdin")
+	}
+	if err := json.NewDecoder(stdin).Decode(v); err != nil {
+		return fmt.Errorf("can't read the hook payload: %w", err)
+	}
+	return nil
 }

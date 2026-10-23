@@ -12,6 +12,7 @@ import (
 
 	"github.com/jmmshn/bees/internal/harness/agy"
 	"github.com/jmmshn/bees/internal/port"
+	"github.com/jmmshn/bees/internal/watch"
 )
 
 func worker() port.Start {
@@ -173,10 +174,107 @@ func TestObserveRecordsOnlyTheConversation(t *testing.T) {
 	}
 }
 
-// agy has no ring yet: the message waits for the session's next bs inbox.
-func TestRingHasNone(t *testing.T) {
-	if err := (agy.Adapter{}).Ring(port.Target{Name: "bees-8", PID: 1}, "hi", port.Now); !errors.Is(err, port.ErrNoRing) {
-		t.Errorf("ring: %v", err)
+// agy's ring is the session's mail watcher (bees-13.13.10): with one armed, Ring says it
+// wakes the session and types nothing; with none, the message is held until its next turn.
+func TestRingIsTheArmedWatcher(t *testing.T) {
+	a := agy.Adapter{Cache: t.TempDir()}
+	tg := port.Target{Name: "bees-8", PID: 1}
+	if err := a.Ring(tg, "hi", port.Now); !errors.Is(err, port.ErrNoRing) || !strings.Contains(err.Error(), "next turn") {
+		t.Errorf("no watcher: %v", err)
+	}
+	release, _, err := watch.Arm(watch.Path(a.Cache, "bees-8"), 4242)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if err := a.Ring(tg, "hi", port.Now); !errors.Is(err, port.ErrArmed) || !strings.Contains(err.Error(), "pid 4242") {
+		t.Errorf("an armed watcher: %v", err)
+	}
+	if err := a.Ring(port.Target{Name: "bees-9", PID: 1}, "hi", port.Now); !errors.Is(err, port.ErrNoRing) {
+		t.Errorf("another session's watcher rang bees-9: %v", err)
+	}
+}
+
+// hooks.json runs bs hook --harness agy before each model call and when a turn stops,
+// from the worker's workspace (agy runs it in the hooks.json dir, where bs would find no
+// project): flat handler lists, as PreInvocation and Stop take (agy 1.4.6 docs).
+func TestHooksRunBsHookForMail(t *testing.T) {
+	bin := t.TempDir()
+	bs := filepath.Join(bin, "my bs")
+	if err := os.WriteFile(bs, []byte("#!/bin/sh\npwd\nprintf '%s\\n' \"$@\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	st := worker()
+	st.Dir = t.TempDir()
+	l, err := agy.Adapter{Bs: bs}.Prepare(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var h map[string]map[string][]struct{ Type, Command string }
+	if err := json.Unmarshal([]byte(l.Dir[".agents/hooks.json"]), &h); err != nil {
+		t.Fatal(err)
+	}
+	for _, ev := range []string{"PreInvocation", "Stop"} {
+		hs := h["bs-mail"][ev]
+		if len(hs) != 1 || hs[0].Type != "command" {
+			t.Fatalf("%s: hooks.json = %s", ev, l.Dir[".agents/hooks.json"])
+		}
+		c := exec.Command("sh", "-c", hs[0].Command)
+		c.Dir = bin
+		out, err := c.Output()
+		if want := st.Dir + "\nhook\n--harness\nagy\n" + ev + "\n"; err != nil || string(out) != want {
+			t.Errorf("%s: the hook ran with %q (%v), want %q", ev, out, err, want)
+		}
+	}
+}
+
+// PreInvocation's payload as agy 1.4.6 sends it (probed): invocationNum 0 is a turn's
+// first model call, sent even though protojson may drop a zero.
+func TestFirstCall(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		want bool
+	}{
+		{`{"conversationId":"bc84","initialNumSteps":1,"invocationNum":0,"modelName":"gemini-3.8-flash-low","workspacePaths":["/k","/r"]}`, true},
+		{`{"conversationId":"bc84","initialNumSteps":3,"invocationNum":1}`, false},
+		{`{"conversationId":"bc84"}`, true},
+	} {
+		if got, err := agy.FirstCall(strings.NewReader(c.in)); err != nil || got != c.want {
+			t.Errorf("FirstCall(%s) = %v, %v; want %v", c.in, got, err, c.want)
+		}
+	}
+	if _, err := agy.FirstCall(strings.NewReader("nope")); err == nil {
+		t.Error("an unreadable payload read")
+	}
+}
+
+// Stop's payload (probed): only a turn that ended on its own (NO_TOOL_CALL) is held; the
+// keeper's cancel and agy's own limits are let stop.
+func TestStopped(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		want bool
+	}{
+		{`{"conversationId":"bc84","error":"","executionNum":0,"fullyIdle":true,"terminationReason":"NO_TOOL_CALL"}`, true},
+		{`{"terminationReason":"USER_CANCELED"}`, false},
+		{`{"terminationReason":"MAX_FORCED_INVOCATIONS"}`, false},
+	} {
+		if got, err := agy.Stopped(strings.NewReader(c.in)); err != nil || got != c.want {
+			t.Errorf("Stopped(%s) = %v, %v; want %v", c.in, got, err, c.want)
+		}
+	}
+}
+
+// The answers' shapes are agy's: PreInvocation's injectSteps with a plain-string
+// userMessage, Stop's decision continue with its reason.
+func TestHookAnswers(t *testing.T) {
+	var b strings.Builder
+	if err := agy.Inject(&b, "arm it"); err != nil || strings.TrimSpace(b.String()) != `{"injectSteps":[{"userMessage":"arm it"}]}` {
+		t.Errorf("Inject = %q, %v", b.String(), err)
+	}
+	b.Reset()
+	if err := agy.Hold(&b, "1 unread"); err != nil || strings.TrimSpace(b.String()) != `{"decision":"continue","reason":"1 unread"}` {
+		t.Errorf("Hold = %q, %v", b.String(), err)
 	}
 }
 

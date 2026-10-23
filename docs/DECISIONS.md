@@ -46,7 +46,7 @@ Status: **accepted**, **superseded** (replaced by a later decision), or **open**
 | R8c | Each bee worktree sets `"crossSessionInbound": "accept"`, because a session in bypass mode otherwise holds peer messages. | accepted | SPEC |
 | R8d | The Claude adapter only talks to sessions with `peerProtocol == 1`, whose pid is alive with a matching start time. | accepted | SPEC |
 | R16 | Whether a session is alive is worked out each time (Claude's registry, herdr), never stored. No reaping. | accepted, amended by R18″ (`spawned`/`ended` entries record workspace ownership) | ADR-0004 |
-| M4 | A session finds its own name from `--as`, then `BS_SESSION`, then by walking up its parent processes to a Claude registry file. | accepted | SPEC |
+| M4 | A session is its nearest recorded ancestor process (a queen's, an open spawn's start), across every logbook; with none it is the keeper. `HERDR_PANE_ID` is a hint (a heal, the workspace tripwire), never identity. `--as` is a debug override from a shell with no recorded ancestor only, with that session's permissions; a role table says what each may do. `BS_SESSION` and the Claude registry walk are gone. | accepted, amended by bees-13.49 (keeper, 2026-10-22) | ADR-0010 |
 
 ## Waking and reconciling
 

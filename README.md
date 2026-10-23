@@ -105,8 +105,9 @@ bs doctor                     check what bs needs
 bs version                    print the commit bs was built from
 ```
 
-Every command takes `--project`; `send`, `inbox`, `spawn` and `end` take `--as <session>`
-for use outside a named Claude session; `spawn --repo <path>` puts workers in another repo.
+bs acts as its nearest recorded ancestor (the queen, a worker), else as the keeper;
+`--as <session>` is a debug override from the keeper's shell only. `send --project` writes
+another project's logbook.
 
 ---
 

@@ -69,9 +69,9 @@ Claude asks whether to trust a repo the first time it opens one, and its worktre
 
 No sandbox: the keeper chose not to run workers in Claude's bubblewrap sandbox (bees-1.51).
 
-## Outside a pane
+## Who runs bs
 
-bs knows a queen or worker by its recorded herdr pane. From a shell outside one (tests, scripts, the keeper), name the session with `--as`: `bs inbox --as queen-<project>`, `bs end --as queen-<project> <worker>`.
+bs acts as its nearest recorded ancestor process: the queen's, or a worker's. A shell neither started is the keeper's, so from your own shell `bs end <worker>`, `bs prune` and `bs goal <worker> discard` just work. `--as <session>` is a debug override from such a shell only: it acts as that session, with its permissions, and `bs inbox --as <session>` peeks without marking anything read.
 
 ## Check it works
 

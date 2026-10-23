@@ -18,7 +18,7 @@ bakeoff/mkrun.sh c 3                       # fresh toy repo + bare origin + lead
 bakeoff/observe.sh ~/.cache/bees-bakeoff/runs/t3c   # snapshot: lead, worker panes, branches
 bakeoff/collect.sh ~/.cache/bees-bakeoff/runs/t3c   # metrics.json: wall time, keeper turns, interventions, tokens, leftovers, check
 cd ~/.cache/bees-bakeoff/runs/t3c/t3c && bs status   # arm c, after collect.sh: then for each worker still recorded,
-bs end --as queen-t3c --force [--incomplete] <worker>  # end it (--incomplete when its goal isn't complete)
+bs end --force [--incomplete] <worker>  # end it (--incomplete when its goal isn't complete)
 ```
 
 - **A one-off live check is not a card.** To exercise a bs change by hand, use the `live-test` skill (`.claude/skills/live-test/SKILL.md`): its own toy project, a scripted teardown and a leak check.

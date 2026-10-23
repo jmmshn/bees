@@ -69,6 +69,18 @@ Claude asks whether to trust a repo the first time it opens one, and its worktre
 
 No sandbox: the keeper chose not to run workers in Claude's bubblewrap sandbox (bees-1.51).
 
+### agy workers
+
+bs starts agy with `--mode accept-edits`: file edits in the workspace go through with no review, and commands ask unless agy's own allow list covers them. Not `--mode auto`: auto needs agy's terminal sandbox, which a host whose AppArmor restricts unprivileged user namespaces (Ubuntu's `kernel.apparmor_restrict_unprivileged_userns = 1`) refuses, and agy then falls back to default mode, asking about every edit and command, and says so only in its log (bees-13.13.14). `bs spawn` warns when the new agy's log says its mode didn't take, and `bs doctor` checks the newest bs-started agy's log (`~/.gemini/antigravity-cli/log/`).
+
+bs never writes agy's allow list. To let workers run their usual commands unasked, add them yourself under `permissions.allow` in `~/.gemini/antigravity-cli/settings.json`:
+
+```json
+{"permissions": {"allow": ["command(bd)", "command(go)", "command(git)", "command(gh pr create)", "command(./bin/bs)"]}}
+```
+
+bs's guard hook runs before each command all the same, and its deny wins over an allow: `git push` to the default branch and `gh pr merge` stay denied.
+
 ## Who bs takes you for
 
 bs acts as its nearest ancestor process a session's entry recorded (a queen, a worker), else as the keeper; `bs status`'s first line says which. From the keeper's shell, `--as <session>` is a debug override that acts as that session, with its permissions: `bs done --as <worker> ...`, `bs send --as queen-<project> <worker> "..."` while her pane is down. `bs inbox --as <session>` only peeks: it marks nothing read.

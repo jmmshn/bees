@@ -125,7 +125,8 @@ del() {
 	done
 	rm -rf -- "$@"
 }
-del "$repo" "$repo-WT" || fail "couldn't remove $repo"
+# $repo-cl, $repo-clients: setup.sh --cl's toy cl and its clients.
+del "$repo" "$repo-WT" "$repo-cl" "$repo-clients" || fail "couldn't remove $repo"
 # Claude's transcripts of the toy's sessions: kept as the run's record, moved out of ~/.claude.
 for t in "$projects/$enc"-*; do
 	[ -d "$t" ] || continue
@@ -181,7 +182,7 @@ else
 	unchecked="stray processes (no /proc to look in)" # couldn't look is not "none" (Rule G)
 	echo "can't check for processes left in $run: no /proc"
 fi
-left=$(ls -d "$store/$toy".db* "$cache/$toy"-* "$cache/bs/$toy"-* "$cache/bs/queen-$toy"-* "$cache/bsx/$toy"-* "$cache/bsx/queen-$toy"-* "$repo" "$config" "$projects/$enc"-* 2>/dev/null | tr '\n' ' ')
+left=$(ls -d "$store/$toy".db* "$cache/$toy"-* "$cache/bs/$toy"-* "$cache/bs/queen-$toy"-* "$cache/bsx/$toy"-* "$cache/bsx/queen-$toy"-* "$repo" "$repo-WT" "$repo-cl" "$repo-clients" "$config" "$projects/$enc"-* 2>/dev/null | tr '\n' ' ')
 [ -z "$left" ] || leak "files left: $left"
 left=$(untrust --check) && [ -z "$left" ] || leak "agy trust entries left in $agy_settings: ${left:-unreadable}"
 # shellcheck disable=SC2046

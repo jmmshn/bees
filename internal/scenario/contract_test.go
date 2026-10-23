@@ -886,7 +886,7 @@ func (x *toy) target(b ghBackend, n int, branch string) (dir, url string) {
 // T5 (Amendment 4: pr=<url> stacks; push=<url> is narrow; no detached workspace).
 func TestContractStackedAndPush(t *testing.T) {
 	for _, c := range []struct{ id, state, fork, why string }{{"pr-target-merged", "MERGED", "", "merged"}, {"pr-target-closed", "CLOSED", "", "closed"}, {"pr-target-fork", "OPEN", "someone/toy", "fork"}} {
-		gcase(t, c.id, "T5", func(t *testing.T, x *toy, b ghBackend) {
+		gcase(t, c.id, "", func(t *testing.T, x *toy, b ghBackend) {
 			_, url := x.target(b, 5, "feature")
 			x.gh.Edit(url, func(pr *fake.PR) { pr.State, pr.Fork = c.state, c.fork })
 			x.bead("toy-1", "stacked")
@@ -895,14 +895,14 @@ func TestContractStackedAndPush(t *testing.T) {
 			lacks(t, r, "takes no target")
 		})
 	}
-	gcase(t, "stacked-cut", "T5", func(t *testing.T, x *toy, b ghBackend) {
+	gcase(t, "stacked-cut", "", func(t *testing.T, x *toy, b ghBackend) {
 		tdir, url := x.target(b, 5, "feature")
 		sp := x.spawn("toy-1", "pr="+url)
 		if sp.Workspace.Branch != "toy-1" || sp.Workspace.Base != "feature" || x.git(sp.Workspace.Dir, "rev-parse", "HEAD") != x.git(tdir, "rev-parse", "HEAD") {
 			fatalf(t, "stacked workspace %+v at %s: want branch toy-1 cut at feature's head, base feature", sp.Workspace, x.git(sp.Workspace.Dir, "rev-parse", "HEAD"))
 		}
 	})
-	gcase(t, "stacked-handoff-after-target-merged", "T5", func(t *testing.T, x *toy, b ghBackend) {
+	gcase(t, "stacked-handoff-after-target-merged", "", func(t *testing.T, x *toy, b ghBackend) {
 		_, url := x.target(b, 5, "feature")
 		sp := x.spawn("toy-1", "pr="+url)
 		b.commit(x, sp.Workspace.Dir)
@@ -911,7 +911,7 @@ func TestContractStackedAndPush(t *testing.T) {
 		b.land(x, 5)
 		must(t, x.worker("toy-1", 1, "done"), 7, "gh pr edit 6 --base main")
 	})
-	gcase(t, "stacked-merged-into-live-target", "T5", func(t *testing.T, x *toy, b ghBackend) {
+	gcase(t, "stacked-merged-into-live-target", "", func(t *testing.T, x *toy, b ghBackend) {
 		_, url := x.target(b, 5, "feature")
 		sp := x.spawn("toy-1", "pr="+url)
 		b.commit(x, sp.Workspace.Dir)
@@ -921,17 +921,33 @@ func TestContractStackedAndPush(t *testing.T) {
 		x.gh.Edit(mine, func(pr *fake.PR) { pr.State = "MERGED" }) // into feature, which is still open
 		must(t, x.queen("end", "toy-1"), 9, "merged into feature")
 	})
-	gcase(t, "stacked-lower-end-refused", "T5", func(t *testing.T, x *toy, b ghBackend) {
+	gcase(t, "stacked-lower-end-refused", "", func(t *testing.T, x *toy, b ghBackend) {
 		lower := x.spawn("toy-1", "pr")
 		b.commit(x, lower.Workspace.Dir)
 		url := b.open(x, 1, lower.Workspace.Dir, "toy-1", false)
 		must(t, x.worker("toy-1", 1, "done"), 0)
+		upper := x.spawn("toy-2", "pr="+url)
+		b.land(x, 1)
+		must(t, x.queen("end", "toy-1"), 2, "toy-2 stacks on its change", "next: gh pr edit toy-2 --base main")
+		b.commit(x, upper.Workspace.Dir)
+		mine := b.open(x, 2, upper.Workspace.Dir, "toy-2", false)
+		x.gh.Edit(mine, func(pr *fake.PR) { pr.Base = "toy-1" })
+		must(t, x.queen("end", "toy-1"), 2, "next: gh pr edit 2 --base main")
+		x.gh.Edit(mine, func(pr *fake.PR) { pr.Base = "main" }) // retargeted
+		must(t, x.queen("end", "toy-1"), 0)
+	})
+	// A lower worker that ended before anything stacked on it keeps its branch while it does.
+	gcase(t, "stacked-lower-prune-kept", "", func(t *testing.T, x *toy, b ghBackend) {
+		lower := x.spawn("toy-1", "pr:ready")
+		b.commit(x, lower.Workspace.Dir)
+		url := b.open(x, 1, lower.Workspace.Dir, "toy-1", false)
+		must(t, x.worker("toy-1", 1, "done"), 0)
+		must(t, x.queen("end", "toy-1"), 0)
 		x.spawn("toy-2", "pr="+url)
 		b.land(x, 1)
-		must(t, x.queen("end", "toy-1"), 2, "gh pr edit")
-		must(t, x.queen("prune"), 2, "gh pr edit")
+		must(t, x.queen("prune"), 3, "kept "+lower.Workspace.Dir+" (toy-1): toy-2 stacks on its change", "gh pr edit toy-2 --base main")
 	})
-	gcase(t, "stacked-prune-falls-back-to-trunk", "T5", func(t *testing.T, x *toy, b ghBackend) {
+	gcase(t, "stacked-prune-falls-back-to-trunk", "", func(t *testing.T, x *toy, b ghBackend) {
 		_, url := x.target(b, 5, "feature")
 		sp := x.spawn("toy-1", "pr="+url)
 		b.commit(x, sp.Workspace.Dir)
@@ -944,14 +960,14 @@ func TestContractStackedAndPush(t *testing.T) {
 		must(t, x.queen("end", "toy-1"), 0)
 		must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir)
 	})
-	gcase(t, "push-owned-refused", "T5", func(t *testing.T, x *toy, b ghBackend) {
+	gcase(t, "push-owned-refused", "", func(t *testing.T, x *toy, b ghBackend) {
 		owner := x.spawn("toy-1", "pr")
 		b.commit(x, owner.Workspace.Dir)
 		url := b.open(x, 1, owner.Workspace.Dir, "toy-1", false)
 		x.bead("toy-2", "fixup")
-		must(t, x.queen("spawn", "--goal", "push="+url, "toy-2"), 2, "next: bs spawn toy-1")
+		must(t, x.queen("spawn", "--goal", "push="+url, "toy-2"), 2, "toy-1 owns it", "next: bs spawn --goal pr toy-1")
 	})
-	gcase(t, "push-own-branch", "T5", func(t *testing.T, x *toy, b ghBackend) {
+	gcase(t, "push-own-branch", "", func(t *testing.T, x *toy, b ghBackend) {
 		tdir, url := x.target(b, 5, "feature")
 		sp := x.spawn("toy-1", "push="+url)
 		dir := sp.Workspace.Dir
@@ -980,7 +996,7 @@ func TestContractStackedAndPush(t *testing.T) {
 		must(t, x.worker("toy-1", 1, "done"), 7, "closed")
 	})
 	// bees-13.55: a discarded push= workspace is pruned, never kept for a detached HEAD.
-	gcase(t, "push-discarded-pruned", "T5", func(t *testing.T, x *toy, b ghBackend) {
+	gcase(t, "push-discarded-pruned", "", func(t *testing.T, x *toy, b ghBackend) {
 		_, url := x.target(b, 5, "feature")
 		sp := x.spawn("toy-1", "push="+url)
 		b.commit(x, sp.Workspace.Dir)

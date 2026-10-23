@@ -66,7 +66,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	if err != nil {
 		return logbook.Spawn{}, false, err
 	}
-	ws, reused, err := c.workspace(ctx, name, target != nil, ended)
+	ws, reused, err := c.workspace(ctx, name, target, ended)
 	if err != nil {
 		return logbook.Spawn{}, false, err
 	}
@@ -126,6 +126,10 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 		}
 		return c.unmake(context.WithoutCancel(ctx), session, hw.ID, ws)
 	}
+	if err := c.track(ctx, ws, target); err != nil {
+		err = errors.Join(err, undo())
+		return logbook.Spawn{}, false, exit(ExitFail, "", err, "%s: couldn't set its branch's upstream to %s's head; nothing was recorded", name, target.c.URL)
+	}
 	// Where the branch starts: a pr goal's change must be ahead of it (pr_head).
 	if ws.Branch != "" {
 		tip, ok, err := c.VCS.Branch(ctx, ws.Dir, ws.Branch)
@@ -149,7 +153,14 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 		Goal: g, ConfigDir: c.ConfigDir, At: at, PruneIgnore: c.PruneIgnore,
 	}
 	sp.Record = launch.Record
-	if sp.ID, err = c.Logbook.RecordSpawn(ctx, req.By, sp, brief(bead, g, target, c.Guards.AllowMergeInto)); err != nil {
+	hint := "" // how the worker hands its work to the target
+	switch {
+	case target != nil && target.stacks:
+		hint = c.Review.Create(where(ws))
+	case target != nil:
+		hint = c.Review.PushHint(ctx, ws.Dir, target.c)
+	}
+	if sp.ID, err = c.Logbook.RecordSpawn(ctx, req.By, sp, brief(bead, g, ws, target, hint, c.Guards.AllowMergeInto)); err != nil {
 		err = errors.Join(err, undo())
 		if errors.Is(err, logbook.ErrAlreadySpawned) {
 			return logbook.Spawn{}, false, exit(ExitRefused, bsname.Cmd+" end "+name, err, "another spawn of %s was recorded first", name)
@@ -262,7 +273,7 @@ func (c *Core) workerStart(name string, ws logbook.Workspace, bell string, deny 
 // refuse runs the spawn-time refusals of goal g that need no network, in workspace ws,
 // for bs spawn and every bs goal amend.
 func (c *Core) refuse(g goal.Goal, ws logbook.Workspace) error {
-	if (g.Type == "branch" || g.Type == "pr") && ws.Branch == "" {
+	if (g.Type == "branch" || g.Type == "pr" || g.Type == "push") && ws.Branch == "" {
 		return exit(ExitRefused, "", nil, "--goal %s: a %s workspace with no branch has none to hand off", g, ws.Kind)
 	}
 	return nil
@@ -285,20 +296,21 @@ func noteHash(b port.Bead) string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(b.Notes+"\x00"+b.Design)))
 }
 
-// target is a push goal's change as spawn found it: the workspace starts at its head,
-// detached.
+// target is a pr= or push= goal's change as spawn found it: the worker's own branch is
+// cut at its head (ADR-0010 Amendment 4).
 type target struct {
-	c    port.Change
-	hint string // how to push onto it
+	c      port.Change
+	stacks bool // pr=<url>: the branch is measured against the target's head ref
 }
 
 // resolveReview runs the spawn-time refusals of a pr, push or review goal g (Rule G), for
-// bs spawn and every bs goal amend: the project's checkout must
-// belong to a repo on the review host, which g freezes; a push or review target
-// must be an open change of that repo, recorded in its one spelling; a push target whose
-// head lives elsewhere (a fork) must let the project push to it. A host that couldn't be
-// asked (network, auth) is exit 6, never 2. It returns the push target a workspace starts
-// at, if any.
+// bs spawn and every bs goal amend: the project's checkout must belong to a repo on the
+// review host, which g freezes; a target must be an open change of that repo, recorded in
+// its one spelling. A pr= target must not be a fork's: a stacked branch is cut from the
+// repo's own. A push target whose head lives elsewhere (a fork) must let the project push
+// to it, and no open spawn may own it (its branch is the target's head): a fix to a
+// bees-owned change is its owner's (Q3). A host that couldn't be asked (network, auth) is
+// exit 6, never 2. It returns the target a pr= or push= workspace is cut at.
 func (c *Core) resolveReview(ctx context.Context, g *goal.Goal) (*target, error) {
 	if !g.Reviewed() {
 		return nil, nil
@@ -330,24 +342,53 @@ func (c *Core) resolveReview(ctx context.Context, g *goal.Goal) (*target, error)
 		return nil, exit(ExitCantCheck, "", err, "--goal %s: can't ask %s about it", g, c.Review.Name())
 	case v.State != port.Open:
 		return nil, exit(ExitRefused, "", nil, "--goal %s: it is %s, not open", g, v.State)
+	case g.Type == "pr" && v.Foreign:
+		return nil, exit(ExitRefused, "", nil, "--goal %s: its head is in a fork (%s), and a stacked branch is cut from this repo's own", g, v.ForeignRepo)
 	case g.Type == "push" && !v.Editable:
 		return nil, exit(ExitRefused, "ask its author to allow edits by maintainers", nil,
 			"--goal %s: its head is in %s, which doesn't let this project push to it", g, v.ForeignRepo)
 	}
 	g.Target = r.URL
-	if g.Type != "push" {
+	switch g.Type {
+	case "push":
+		if err := c.unowned(ctx, g, v); err != nil {
+			return nil, err
+		}
+	case "pr":
+	default:
 		return nil, nil
 	}
-	return &target{c: v, hint: c.Review.PushHint(ctx, c.Repo, v)}, nil
+	return &target{c: v, stacks: g.Type == "pr"}, nil
+}
+
+// unowned refuses push goal g on change v while an open spawn owns v: its recorded branch
+// is v's head. Two workers never write one branch; the owner fixes its own change.
+func (c *Core) unowned(ctx context.Context, g *goal.Goal, v port.Change) error {
+	if v.Foreign {
+		return nil // a fork's branch no spawn of this project's can be on
+	}
+	sps, err := c.Logbook.LatestSpawns(ctx)
+	if err != nil {
+		return err
+	}
+	for _, sp := range sps {
+		if sp.Ended || sp.Workspace.Branch != v.Head {
+			continue
+		}
+		e, err := c.Logbook.Goal(ctx, sp)
+		if err != nil {
+			return err
+		}
+		return exit(ExitRefused, bsname.Cmd+" spawn "+goalFlags(e.Goal)+" "+sp.Bead+" (it resumes "+sp.Name+"), or "+bsname.Cmd+" send "+sp.Name+" \"...\"", nil,
+			"--goal %s: %s owns it (its branch %s is the change's head), and only it pushes there", g, sp.Name, v.Head)
+	}
+	return nil
 }
 
 // unmake takes back the worktree and branch a spawn made but couldn't record, or a second
 // spawn would find them with nothing to prune them (motif 8). The branch is the spawn's
 // own: workspace refused one that already existed.
 func (c *Core) unmake(ctx context.Context, session, workspace string, ws logbook.Workspace) error {
-	if ws.Branch == "" { // a detached worktree bs made itself, and a workspace on it
-		return errors.Join(c.herdr(session).CloseWorkspace(ctx, workspace), c.removeDetached(ctx, ws))
-	}
 	if err := c.herdr(session).RemoveWorktree(ctx, workspace, true); err != nil {
 		return fmt.Errorf("and its worktree %s stays: %w", ws.Dir, err)
 	}
@@ -363,11 +404,13 @@ func (c *Core) unmake(ctx context.Context, session, workspace string, ws logbook
 }
 
 // workspace works out the spawn's workspace (Rule D): the project dir the top level of a
-// git checkout is git_worktree, on a branch of its own, or detached for a push goal (none
-// and command arrive with bees-13.10 and 13.11). When ended, name's last spawn, left its
-// branch (its worktree kept, or gone with the branch kept), it is reused (reused true): the
-// work there is the new spawn's to build on, never refused with no way on (motif 5).
-func (c *Core) workspace(ctx context.Context, name string, detached bool, ended *logbook.Spawn) (ws logbook.Workspace, reused bool, err error) {
+// git checkout is git_worktree, always on a branch of its own (none and command arrive
+// with bees-13.10 and 13.11). Its trunk is the branch the repo has checked out; it is
+// measured against that, or against t's head ref when it stacks on t. When ended, name's
+// last spawn, left its branch (its worktree kept, or gone with the branch kept), it is
+// reused (reused true): the work there is the new spawn's to build on, never refused with
+// no way on (motif 5).
+func (c *Core) workspace(ctx context.Context, name string, t *target, ended *logbook.Spawn) (ws logbook.Workspace, reused bool, err error) {
 	if c.Repo == "" {
 		return logbook.Workspace{}, false, exit(ExitRefused, "", nil, "project %s has no repo: run it in the repo, or set paths.repo", c.Project)
 	}
@@ -387,23 +430,29 @@ func (c *Core) workspace(ctx context.Context, name string, detached bool, ended 
 	if c.Kind != "" && c.Kind != "git_worktree" {
 		return logbook.Workspace{}, false, exit(ExitRefused, bsname.Cmd+" config", nil, "workspace kind %s (%s) isn't built yet (none: bees-13.10, command: bees-13.11)", c.Kind, c.KindWhy)
 	}
-	base, err := c.git(ctx, c.Repo, "symbolic-ref", "--short", "HEAD")
+	trunk, err := c.git(ctx, c.Repo, "symbolic-ref", "--short", "HEAD")
 	if err != nil {
 		return logbook.Workspace{}, false, refusedOrCant(err, "git -C "+c.Repo+" switch main", "%s has no branch checked out to cut from", c.Repo)
+	}
+	base := trunk
+	if t != nil && t.stacks {
+		base = t.c.Head
 	}
 	dir := filepath.Join(c.Worktrees, name)
 	if ok, err := c.kept(ctx, ended, dir); err != nil {
 		return logbook.Workspace{}, false, exit(ExitCantCheck, "", err, "can't tell whether %s is %s's kept worktree", dir, name)
-	} else if ok && !detached {
-		return ended.Workspace, true, nil
+	} else if ok {
+		ws = ended.Workspace
+		ws.Trunk = trunk
+		if t != nil {
+			ws.Base = base
+		}
+		return ws, true, nil
 	}
 	if _, err := os.Stat(dir); err == nil {
 		return logbook.Workspace{}, false, exit(ExitRefused, bsname.Cmd+" prune", nil, "%s already exists", dir)
 	}
-	if detached { // a push goal: the target's head, never a branch of its own
-		return logbook.Workspace{Kind: config.GitWorktree, Dir: dir, Repo: c.Repo}, false, nil
-	}
-	ws = logbook.Workspace{Kind: "git_worktree", Dir: dir, Repo: c.Repo, Branch: name, Base: base}
+	ws = logbook.Workspace{Kind: config.GitWorktree, Dir: dir, Repo: c.Repo, Branch: name, Base: base, Trunk: trunk}
 	// The branch is the spawn's own, whatever its goal, so prune may delete it later: one
 	// left by an earlier spawn holds work bs would build on unseen (motif 12).
 	switch ok, err := c.hasBranch(ctx, ws); {
@@ -451,7 +500,7 @@ func (c *Core) writeFiles(name string, l port.Launch) ([]string, error) {
 	return args, nil
 }
 
-func brief(b port.Bead, g goal.Goal, t *target, mergeInto []string) string {
+func brief(b port.Bead, g goal.Goal, ws logbook.Workspace, t *target, hint string, mergeInto []string) string {
 	s := fmt.Sprintf("You own %s: %s\n\nYour goal: --goal %s. Hand it off with "+bsname.Cmd+" done when it holds.\n", b.ID, b.Title, g)
 	if len(mergeInto) > 0 { // the guard can't see a PR's base: the brief says which (guards.allow_merge_into)
 		s += fmt.Sprintf("The keeper lets you merge your own change when its base matches %s; check its base first, and never merge into the default branch.\n", strings.Join(mergeInto, " or "))
@@ -459,8 +508,10 @@ func brief(b port.Bead, g goal.Goal, t *target, mergeInto []string) string {
 	switch {
 	case g.Type == "review":
 		s += fmt.Sprintf("Your review comment on %s must carry the marker %s%s: "+bsname.Cmd+" done looks for it.\n", g.Target, "bs:", logbook.SpawnID)
-	case g.Type == "push" && t != nil:
-		s += fmt.Sprintf("Your workspace starts at %s's head (%s). Push your commits for it onto it: %s\n", g.Target, short(t.c.HeadCommit), t.hint)
+	case t != nil && t.stacks:
+		s += fmt.Sprintf("Your branch %s starts at %s's head (%s) and stacks on it: open your change onto %s: %s\n", ws.Branch, g.Target, oid(t.c.HeadCommit), t.c.Head, hint)
+	case t != nil:
+		s += fmt.Sprintf("Your branch %s starts at %s's head (%s). Push your commits onto that change: %s\n", ws.Branch, g.Target, oid(t.c.HeadCommit), hint)
 	}
 	return s + "\n" + b.Description
 }
@@ -486,38 +537,43 @@ func refusedOrCant(err error, next, format string, a ...any) *Exit {
 	return exit(ExitCantCheck, "", err, format, a...)
 }
 
-// makeWorkspace makes ws and opens a herdr workspace on it: herdr cuts a branch's
-// worktree; a push goal's checkout at its target's head the VCS makes (herdr takes no
-// --detach), once the review host has fetched that head. ws.Dir becomes
-// herdr's answer. Nothing is recorded yet: a failure leaves nothing behind.
+// makeWorkspace makes ws and opens a herdr workspace on it: herdr cuts the worker's branch
+// and its worktree from the trunk, or from t's head commit once the review host has
+// fetched it (herdr worktree create --base takes a commit: probed, herdr 0.9.5). ws.Dir
+// becomes herdr's answer. Nothing is recorded yet: a failure leaves nothing behind.
 func (c *Core) makeWorkspace(ctx context.Context, session string, ws *logbook.Workspace, t *target, label string) (herdr.Workspace, error) {
 	name := filepath.Base(ws.Dir)
-	if t == nil {
-		hw, err := c.herdr(session).CreateWorktree(ctx, ws.Repo, ws.Base, ws.Branch, ws.Dir, label)
-		if err != nil {
-			return hw, exit(ExitFail, "", err, "%s: herdr couldn't make its worktree; nothing was recorded", name)
+	from := ws.Base
+	if t != nil {
+		if err := c.Review.Fetch(ctx, ws.Repo, t.c); err != nil {
+			return herdr.Workspace{}, exit(ExitCantCheck, "", err, "%s: can't fetch %s's head; nothing was made", name, t.c.URL)
 		}
-		ws.Dir = hw.Path // herdr makes it where asked; its answer is the record
-		return hw, nil
+		from = t.c.HeadCommit
 	}
-	if err := c.Review.Fetch(ctx, ws.Repo, t.c); err != nil {
-		return herdr.Workspace{}, exit(ExitCantCheck, "", err, "%s: can't fetch %s's head; nothing was made", name, t.c.URL)
-	}
-	if err := c.VCS.Detach(ctx, ws.Repo, ws.Dir, t.c.HeadCommit); err != nil {
-		return herdr.Workspace{}, exit(ExitFail, "", err, "%s: couldn't make its workspace at %s; nothing was recorded", name, short(t.c.HeadCommit))
-	}
-	hw, err := c.herdr(session).CreateWorkspace(ctx, ws.Dir, label)
+	hw, err := c.herdr(session).CreateWorktree(ctx, ws.Repo, from, ws.Branch, ws.Dir, label)
 	if err != nil {
-		err = errors.Join(err, c.removeDetached(context.WithoutCancel(ctx), *ws))
-		return hw, exit(ExitFail, "", err, "%s: herdr couldn't open a workspace on its worktree; nothing was recorded", name)
+		return hw, exit(ExitFail, "", err, "%s: herdr couldn't make its worktree; nothing was recorded", name)
 	}
+	ws.Dir = hw.Path // herdr makes it where asked; its answer is the record
 	return hw, nil
 }
 
-// removeDetached removes the detached checkout makeWorkspace made.
-func (c *Core) removeDetached(ctx context.Context, ws logbook.Workspace) error {
-	if err := c.VCS.Drop(ctx, ws.Repo, ws.Dir); err != nil {
-		return fmt.Errorf("and its workspace %s stays: %w", ws.Dir, err)
+// track sets a push goal's branch's upstream to its target's head ref, on the remote the
+// trunk tracks (origin when it tracks none), so the worker's branch never reads as one of
+// its own to publish (#119's review). A fork's target has no upstream here: the brief's
+// push command names it.
+func (c *Core) track(ctx context.Context, ws logbook.Workspace, t *target) error {
+	if t == nil || t.stacks || t.c.Foreign {
+		return nil
 	}
-	return nil
+	remote, err := c.git(ctx, ws.Repo, "for-each-ref", "--format=%(upstream:remotename)", "refs/heads/"+ws.Trunk)
+	if err != nil {
+		return err
+	}
+	remote = cmp.Or(remote, "origin")
+	if _, err := c.git(ctx, ws.Repo, "config", "branch."+ws.Branch+".remote", remote); err != nil {
+		return err
+	}
+	_, err = c.git(ctx, ws.Repo, "config", "branch."+ws.Branch+".merge", "refs/heads/"+t.c.Head)
+	return err
 }

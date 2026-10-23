@@ -53,7 +53,7 @@ bs prune                       # remove ended workers' workspaces once their goa
 bs done                        # hand off: bs finds the change from your branch, checks the goal and tells the queen (exit 7 names each failure)
 ```
 
-`--goal` is required and fixed at spawn: `pr` (complete when merged), `pr:ready`, `pr:draft`, `push=<url>`, `review=<url>`, `verdict`, `note`, `beads`, `branch` ([ADR-0010](adr/0010-core-rebuild.md#goals)). `bs goal <worker> <goal>` amends a live one. The queen's merge turn is: land it, `bs end`, `bs prune`, `bd close`.
+`--goal` is required and fixed at spawn: `pr` (complete when merged), `pr:ready`, `pr:draft`, `pr=<url>` (stacked on that change), `push=<url>`, `review=<url>`, `verdict`, `note`, `beads`, `branch` ([ADR-0010](adr/0010-core-rebuild.md#goals)). `bs goal <worker> <goal>` amends a live one. The queen's merge turn is: land it, `bs end`, `bs prune`, `bd close`.
 
 After a change to bs merges, rebuild it from `main` with `go install ./cmd/bs`; in a bees fleet that is the queen's job. Workers never install bs: they build into their worktree (`go build -o bin/bs ./cmd/bs`) and run `./bin/bs`. Inside this repo, bs warns when the shared bs was built from a commit behind `main` or not on it (a branch build), and when a worktree's `bin/bs` doesn't match its checkout; a worker is told to ask the queen rather than reinstall. `bs version` prints the commit it was built from.
 

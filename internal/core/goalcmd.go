@@ -125,14 +125,17 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 			return logbook.Effective{}, exit(ExitRefused, "", err, "%s", what)
 		}
 		g.Fragment = prompt.Hash(g.Type)
+		if r, err := c.Review.Parse(g.Target); g.Target != "" && err == nil {
+			g.Target = r.URL // its one spelling, as e's was recorded
+		}
+		// A pr= or push= goal's branch starts at its target's head: one cut for another goal
+		// can't be re-cut, so an amend never adds, drops or changes such a target.
+		if cutAt(g) != cutAt(e.Goal) {
+			return logbook.Effective{}, exit(ExitRefused, bsname.Cmd+" end --incomplete "+req.Name+", then "+bsname.Cmd+" spawn --goal "+g.String()+" "+sp.Bead, nil,
+				"--goal %s: a pr= or push= goal's branch starts at its target's head, and %s's was cut for --goal %s", g, req.Name, e.Goal)
+		}
 		if _, err := c.resolveReview(ctx, &g); err != nil {
 			return logbook.Effective{}, err
-		}
-		// A push goal's workspace starts at its target's head: one made for another goal
-		// can't be re-cut there, so an amend never adds a push target.
-		if g.Type == "push" && (e.Type != "push" || e.Target != g.Target) {
-			return logbook.Effective{}, exit(ExitRefused, bsname.Cmd+" end --incomplete "+req.Name+", then "+bsname.Cmd+" spawn --goal "+g.String()+" "+sp.Bead, nil,
-				"--goal %s: a push goal's workspace starts at its target's head, and %s's was made for --goal %s", g, req.Name, e.Goal)
 		}
 		if err := c.refuse(g, sp.Workspace); err != nil {
 			return logbook.Effective{}, err
@@ -167,4 +170,13 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 	}
 	_, err = c.Logbook.Send(ctx, req.By, sp.Name, body) // read only by this spawn: mail is scoped to the open spawn
 	return e, err
+}
+
+// cutAt is where goal g's branch was cut, when that is its target's head: "pr=<url>" or
+// "push=<url>"; "" for a branch cut from the trunk.
+func cutAt(g goal.Goal) string {
+	if (g.Type == "pr" || g.Type == "push") && g.Target != "" {
+		return g.Type + "=" + g.Target
+	}
+	return ""
 }

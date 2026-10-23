@@ -90,20 +90,23 @@ func (c *Core) base(ctx context.Context, ws logbook.Workspace) (string, error) {
 // bases is where ws's branch lands, as full refs (a tag named like a branch never stands
 // in for it, motif 3): its recorded base and, when it has one that still exists, the
 // base's upstream (where a hosted merge is pulled; fetch --prune drops a merged stacked
-// base's). A spawn from before goals recorded no base ref (main's v0) or the repo's path in
-// its place (the pilot's v1), and a base branch can be deleted since: then its bases are
-// the pilot's default branches, origin's default branch and the local one of the same
-// name, or main.
+// base's). A stacked base deleted since (its target merged and removed) falls back to the
+// trunk recorded at spawn (ADR-0010 Amendment 4). A spawn from before goals recorded no
+// base ref (main's v0) or the repo's path in its place (the pilot's v1), and one from
+// before bees-13.63 no trunk: then its bases are the pilot's default branches, origin's
+// default branch and the local one of the same name, or main.
 func (c *Core) bases(ctx context.Context, ws logbook.Workspace) ([]string, error) {
-	if ws.Base != "" && !filepath.IsAbs(ws.Base) {
-		// A base deleted since (a stacked base merged and removed) lands where it landed:
-		// the default branches, never "can't check" forever (motif 5).
-		switch ok, err := c.isRef(ctx, ws.Repo, "refs/heads/"+ws.Base); {
+	for _, b := range []string{ws.Base, ws.Trunk} {
+		if b == "" || filepath.IsAbs(b) {
+			continue
+		}
+		// A base deleted since lands where it landed, never "can't check" forever (motif 5).
+		switch ok, err := c.isRef(ctx, ws.Repo, "refs/heads/"+b); {
 		case err != nil:
 			return nil, err
 		case ok:
-			out := []string{"refs/heads/" + ws.Base}
-			up, err := c.git(ctx, ws.Repo, "for-each-ref", "--format=%(upstream)", "refs/heads/"+ws.Base)
+			out := []string{"refs/heads/" + b}
+			up, err := c.git(ctx, ws.Repo, "for-each-ref", "--format=%(upstream)", "refs/heads/"+b)
 			if err != nil || up == "" {
 				return out, err
 			}

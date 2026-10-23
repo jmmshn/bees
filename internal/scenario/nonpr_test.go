@@ -24,6 +24,10 @@ func TestAVerdictReachesTheQueensInbox(t *testing.T) {
 	must(t, x.worker("toy-1", 5, "done", "--answer", "no", "--report", "  "), 7, "--report <text>|- is missing")
 	must(t, x.worker("toy-1", 6, "done", "--answer", "no", "--report", "the cache is never read"), 0)
 	must(t, x.queen("inbox"), 0, "done: toy-1 answer no", "the cache is never read")
+	must(t, x.worker("toy-1", 7, "done", "--answer", "yes", "--report", "it holds after all"), 2, "goal is complete (landed)", "bs send queen-toy")
+	if r := x.queen("inbox"); strings.Contains(r.String(), "it holds after all") {
+		t.Fatalf("a refused done reached the inbox:\n%s", r)
+	}
 	must(t, x.queen("end", "toy-1"), 0)
 	x.write(filepath.Join(sp.Workspace.Dir, "verdict.md"), "draft")
 	must(t, x.queen("prune"), 3, "kept", "verdict.md")

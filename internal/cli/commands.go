@@ -21,6 +21,9 @@ import (
 	"github.com/jmmshn/bees/internal/port"
 )
 
+// asHelp is --as's help: a debug override, off the golden path (ADR-0010 identity).
+const asHelp = "debug: act as this session, with its permissions (only from a shell no recorded session started)"
+
 // queen records the queen of the project in this pane and execs her harness, which keeps
 // this process's pid and start time (ADR-0010). Her bs calls find her by that pane.
 func (r *run) queen(fs *flag.FlagSet, args []string) error {
@@ -80,7 +83,7 @@ func (r *run) spawnArgs(fs *flag.FlagSet, args []string) error {
 	a := &r.spawnReq
 	fs.Var(&a.goals, "goal", "what the worker hands off (repeatable)")
 	fs.StringVar(&a.label, "label", "", "its herdr label (default: the bead's title)")
-	fs.StringVar(&a.as, "as", "", "the queen, outside a recorded herdr pane")
+	fs.StringVar(&a.as, "as", "", asHelp)
 	if err := parse(fs, args); err != nil {
 		return err
 	}
@@ -122,7 +125,7 @@ func (r *run) spawn(_ *flag.FlagSet, _ []string) error {
 	if err != nil {
 		return err
 	}
-	sp, resumed, err := r.c.Spawn(r.ctx, core.SpawnReq{By: w.Name, Session: cmp.Or(core.Getenv(r.env.Vars, "HERDR_SESSION"), logbook.DefaultSession),
+	sp, resumed, err := r.c.Spawn(r.ctx, core.SpawnReq{Who: w, Session: cmp.Or(core.Getenv(r.env.Vars, "HERDR_SESSION"), logbook.DefaultSession),
 		Bead: a.bead, Label: *label, Goals: goals})
 	if err != nil {
 		return err
@@ -145,7 +148,7 @@ func (r *run) done(fs *flag.FlagSet, args []string) error {
 	force := fs.Bool("force", false, "hand off while background work runs (waives that gate only)")
 	wait := fs.Bool("wait", r.name == "handoff", "while CI is still running (or the host hasn't shown a push yet), wait for it (up to --timeout), then hand off or name what failed")
 	timeout := fs.Duration("timeout", 8*time.Minute, "how long --wait waits, at most 9m (bs gives a worker's shell calls 10)")
-	as := fs.String("as", "", "the worker, outside a recorded herdr pane")
+	as := fs.String("as", "", asHelp)
 	project := fs.String("project", "", "refused unless it names your own project: a handoff goes to your own queen")
 	if err := parse(fs, args); err != nil {
 		return err
@@ -188,14 +191,19 @@ func (r *run) done(fs *flag.FlagSet, args []string) error {
 
 // check runs a worker's handoff checks now and prints each result; it writes nothing.
 func (r *run) check(fs *flag.FlagSet, args []string) error {
+	as := fs.String("as", "", asHelp)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
 		return fmt.Errorf("%w: "+bsname.Cmd+" check <worker>", errUsage)
 	}
+	w, err := r.who(*as)
+	if err != nil {
+		return err
+	}
 	name := core.Name(fs.Arg(0))
-	rs, err := r.c.Check(r.ctx, name, r.env.Self)
+	rs, err := r.c.Check(r.ctx, w, name, r.env.Self)
 	for _, c := range rs {
 		mark := "ok  "
 		switch {
@@ -218,7 +226,7 @@ func (r *run) check(fs *flag.FlagSet, args []string) error {
 // goal amends, waives or discards a worker's goal.
 func (r *run) goal(fs *flag.FlagSet, args []string) error {
 	waive := fs.String("waive", "", "a check of its goal no longer run")
-	as := fs.String("as", "", "the queen, outside a herdr pane (default: the keeper)")
+	as := fs.String("as", "", asHelp)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -230,20 +238,11 @@ func (r *run) goal(fs *flag.FlagSet, args []string) error {
 	if err := fs.Parse(fs.Args()[1:]); err != nil {
 		return err
 	}
-	by := cmp.Or(*as, "keeper")
-	if r.s.Pane != nil {
-		w, err := r.who(*as)
-		if err != nil {
-			return err
-		}
-		by = w.Name
-	} else if q := core.Queen(r.c.Project); *as != "" && *as != q {
-		return fmt.Errorf("%w: --as %s: only the queen (--as %s) or the keeper (no --as) changes a goal", errUsage, *as, q)
+	w, err := r.who(*as)
+	if err != nil {
+		return err
 	}
-	if slices.Equal(fs.Args(), []string{"discard"}) && r.s.Pane == nil {
-		by = "keeper" // only the keeper discards (ADR-0010), whatever --as says
-	}
-	e, err := r.c.Goal(r.ctx, core.GoalReq{By: by, Self: r.env.Self, Name: name, Values: fs.Args(), Waive: *waive})
+	e, err := r.c.Goal(r.ctx, core.GoalReq{Who: w, Name: name, Values: fs.Args(), Waive: *waive})
 	if err != nil {
 		return err
 	}
@@ -266,32 +265,22 @@ func waitFor(wait bool, timeout time.Duration) time.Duration {
 	return max(timeout, time.Second)
 }
 
-// asQueen is who for a command only the queen or the keeper runs: --as names no worker.
-// Inside a pane, core refuses a worker by its process ancestry.
-func (r *run) asQueen(as, does string) (core.Who, error) {
-	w, err := r.who(as)
-	if err == nil && r.s.Pane == nil && w.Spawn != "" {
-		return core.Who{}, fmt.Errorf("%w: --as %s: a worker never %s; only the queen (--as %s) or the keeper does", errUsage, as, does, core.Queen(r.c.Project))
-	}
-	return w, err
-}
-
 func (r *run) end(fs *flag.FlagSet, args []string) error {
 	force := fs.Bool("force", false, "end while background work runs (waives that gate only)")
 	incomplete := fs.Bool("incomplete", false, "end an incomplete goal; prune completes it later")
-	as := fs.String("as", "", "the queen, outside a recorded herdr pane")
+	as := fs.String("as", "", asHelp)
 	if err := parse(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 1 {
 		return fmt.Errorf("%w: "+bsname.Cmd+" end <worker>", errUsage)
 	}
-	w, err := r.asQueen(*as, "ends a worker")
+	w, err := r.who(*as)
 	if err != nil {
 		return err
 	}
 	name := core.Name(fs.Arg(0))
-	if err := r.c.End(r.ctx, w.Name, name, r.env.Self, core.EndOpts{Force: *force, Incomplete: *incomplete}); err != nil {
+	if err := r.c.End(r.ctx, w, name, r.env.Self, core.EndOpts{Force: *force, Incomplete: *incomplete}); err != nil {
 		return err
 	}
 	fmt.Fprintf(r.out, "ended %s; its workspace stays for "+bsname.Cmd+" prune\n", name)
@@ -299,15 +288,15 @@ func (r *run) end(fs *flag.FlagSet, args []string) error {
 }
 
 func (r *run) prune(fs *flag.FlagSet, args []string) error {
-	as := fs.String("as", "", "the queen, outside a recorded herdr pane")
+	as := fs.String("as", "", asHelp)
 	if err := parse(fs, args); err != nil {
 		return err
 	}
-	w, err := r.asQueen(*as, "prunes")
+	w, err := r.who(*as)
 	if err != nil {
 		return err
 	}
-	ps, err := r.c.Prune(r.ctx, w.Name, r.env.Self)
+	ps, err := r.c.Prune(r.ctx, w)
 	if err != nil {
 		return err
 	}
@@ -350,7 +339,7 @@ func (r *run) prune(fs *flag.FlagSet, args []string) error {
 }
 
 func (r *run) send(fs *flag.FlagSet, args []string) error {
-	as := fs.String("as", "", "the sender, outside a recorded herdr pane")
+	as := fs.String("as", "", asHelp)
 	project := fs.String("project", "", "write into another project's logbook (its session reads it there)")
 	now := fs.Bool("now", false, "ring with priority now: interrupt the recipient's current turn")
 	if err := parse(fs, args); err != nil {
@@ -382,7 +371,7 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 			return &core.Exit{Code: core.ExitCantCheck, Msg: fmt.Sprintf(bsname.Cmd+" send --project %s: can't read %s; nothing stored", p, path), Err: err, Next: bsname.Cmd + " doctor"}
 		} else if what != "" {
 			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("%s send --project %s: %s; nothing stored", bsname.Cmd, p, what),
-				Next: "its queen or keeper ends them first: " + bsname.Cmd + " end --as " + core.Queen(p) + " <worker>, in " + p + "'s repo"}
+				Next: "its queen or keeper ends them first: " + bsname.Cmd + " end <worker>, in " + p + "'s repo"}
 		}
 		lb, err := logbook.Open(r.ctx, path)
 		if errors.Is(err, logbook.ErrNoLogbook) {
@@ -450,7 +439,7 @@ func (r *run) ring(c *core.Core, from, to string, p port.Priority) {
 }
 
 func (r *run) inbox(fs *flag.FlagSet, args []string) error {
-	as := fs.String("as", "", "the reader, outside a recorded herdr pane")
+	as := fs.String("as", "", asHelp)
 	project := fs.String("project", "", "refused unless it names your own project: your mail is in your own project's logbook")
 	if err := parse(fs, args); err != nil {
 		return err
@@ -477,6 +466,10 @@ func (r *run) inbox(fs *flag.FlagSet, args []string) error {
 			fmt.Fprintf(r.out, "   (reply with: "+bsname.Cmd+" send --project %s %s \"...\")\n\n", m.FromProject, m.From)
 		}
 		ids = append(ids, m.ID)
+	}
+	if *as != "" && r.s.Pane == nil { // a debug peek: only the session itself marks its mail read
+		fmt.Fprintf(r.out, "(peeked as %s with --as: nothing marked read)\n", w.Name)
+		return nil
 	}
 	return r.c.Logbook.RecordReceipts(r.ctx, w.Name, ids)
 }

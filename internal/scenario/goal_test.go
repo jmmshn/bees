@@ -25,8 +25,8 @@ func TestBsGoalAmendWaiveDiscard(t *testing.T) {
 	must(t, x.keeper("goal", "toy-1", "--waive", goal.NoBackground), 2, "--force")
 	must(t, x.queenRuns(2, "goal", "toy-1", "--waive", goal.BranchAhead), 0, "(waived: branch_ahead)")
 	must(t, x.worker("toy-1", 2, "done"), 0) // nothing committed: branch_ahead is waived
-	must(t, x.worker("toy-1", 3, "goal", "toy-1", "branch:ready"), 2, "a worker never changes a goal")
-	must(t, x.queenRuns(3, "goal", "toy-1", "discard"), 2, "only the keeper discards")
+	must(t, x.worker("toy-1", 3, "goal", "toy-1", "branch:ready"), 2, "toy-1 runs this as a worker; only the queen or the keeper changes a goal")
+	must(t, x.queenRuns(3, "goal", "toy-1", "discard"), 2, "queen-toy runs this as the queen; only the keeper discards a goal")
 	if e, _ := x.open().Goal(ctx, sp); e.String() != "branch" || len(e.Waived) != 1 || e.Discarded {
 		t.Fatalf("effective goal %+v", e)
 	}
@@ -70,27 +70,4 @@ func entries(t *testing.T, x *toy) int {
 		t.Fatal(err)
 	}
 	return n
-}
-
-// Only the queen or the keeper ends a worker, prunes, or names itself with --as: a worker
-// ends no sibling and prunes nothing (bees-13.49), --as names no worker, and a discard is
-// always the keeper's, whatever --as says (bees-13.50).
-func TestWorkerNeverEndsPrunesOrPosesAsQueen(t *testing.T) {
-	x := newToy(t)
-	x.startQueen()
-	x.spawn("toy-1", "verdict")
-	x.spawn("toy-2", "verdict")
-	must(t, x.worker("toy-1", 1, "end", "--incomplete", "toy-2"), 2, "run by worker toy-1", "a worker never ends a worker")
-	must(t, x.worker("toy-1", 2, "prune"), 2, "run by worker toy-1", "a worker never prunes")
-	must(t, x.keeper("end", "--as", "toy-1", "--incomplete", "toy-2"), 2, "--as toy-1: a worker never ends a worker")
-	must(t, x.keeper("prune", "--as", "toy-1"), 2, "--as toy-1: a worker never prunes")
-	must(t, x.keeper("goal", "--as", "toy-2", "toy-2", "note"), 2, "--as toy-2: only the queen")
-	must(t, x.keeper("goal", "--as", "queen-toy", "toy-2", "discard"), 0, "(discarded)")
-	must(t, x.worker("toy-2", 1, "inbox"), 0, "keeper discarded your goal")
-
-	// The queen, in its pane or by --as, and the keeper still end and prune.
-	must(t, x.queenRuns(1, "end", "--incomplete", "toy-1"), 0, "ended toy-1")
-	must(t, x.queen("end", "toy-2"), 0, "ended toy-2")
-	must(t, x.queenRuns(2, "prune"), 0)
-	must(t, x.keeper("prune", "--as", "keeper"), 0)
 }

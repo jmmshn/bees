@@ -122,15 +122,17 @@ func TestSendReadsAMessageFromStdin(t *testing.T) {
 	must(t, x.worker("toy-1", 1, "inbox"), 0, "line one\nline two\n")
 }
 
-// bees-13.14: a keeper's herdr shell is a pane no entry recorded: --as names the session
-// there as outside herdr, and without it bs says so.
-func TestAnUnrecordedPaneTakesAs(t *testing.T) {
+// bees-13.14, bees-13.49: a keeper's herdr shell is a pane no entry recorded, in no
+// worker's workspace: bs runs there as the keeper, and --as names a session as outside
+// herdr.
+func TestAnUnrecordedPaneIsTheKeeper(t *testing.T) {
 	x := newToy(t)
 	x.start()
 	x.shell(x.session, "keeper", x.repo)
-	must(t, x.worker("keeper", 1, "send", "--as", "keeper", "queen-toy", "hi"), 0, "to queen-toy")
-	must(t, x.worker("keeper", 2, "inbox"), 2, "not in a recorded herdr pane: name the session with --as")
-	must(t, x.keeper("inbox", "--as", "queen-toy"), 0, "from keeper", "hi")
+	must(t, x.worker("keeper", 1, "send", "queen-toy", "hi"), 0, "to queen-toy")
+	must(t, x.worker("keeper", 2, "inbox"), 0, "no unread messages")
+	must(t, x.worker("keeper", 3, "send", "--as", "keeper", "queen-toy", "again"), 0, "to queen-toy")
+	must(t, x.keeper("inbox", "--as", "queen-toy"), 0, "from keeper", "hi", "again")
 }
 
 // bees-13.15, bees-12.43: a worker finds its project from its pane, wherever its cwd is:
@@ -185,7 +187,7 @@ func TestTheSamePaneIDOnAnotherSessionNamesNoOne(t *testing.T) {
 	if w.Pane != sp.Herdr.Pane {
 		t.Fatalf("toy2's first pane is %s, not %s: herdr numbers each server's panes from w1:p1", w.Pane, sp.Herdr.Pane)
 	}
-	must(t, x.worker("elsewhere", 1, "inbox"), 2, "not in a recorded herdr pane")
+	must(t, x.worker("elsewhere", 1, "inbox"), 0, "no unread messages") // the keeper's
 	must(t, x.worker("elsewhere", 2, "inbox", "--as", "toy-1"), 0, "You own toy-1")
 }
 
@@ -687,8 +689,8 @@ func TestTheResumeHintRunsAsPrinted(t *testing.T) {
 	}
 }
 
-// An unreadable target logbook on send --project is exit 6, nothing stored, with a next:
-// (bees-13.9 re-review 2).
+// An unreadable logbook is exit 6, nothing stored, with a next: (bees-13.9 re-review 2):
+// identity reads every logbook first, and fails closed (bees-13.49).
 func TestSendAcrossProjectsToAnUnreadableLogbook(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root reads a 0000 file")
@@ -705,7 +707,7 @@ func TestSendAcrossProjectsToAnUnreadableLogbook(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(other, 0o600) })
-	must(t, x.queen("send", "--project", "other", "queen-other", "hi"), 6, "can't read", "nothing stored", "next: bs doctor")
+	must(t, x.queen("send", "--project", "other", "queen-other", "hi"), 6, "can't read logbook "+other+" to find who runs it", "next: check "+other)
 }
 
 // A dead worker recorded on another harness than this bs starts is refused, never resumed

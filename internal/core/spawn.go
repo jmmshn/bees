@@ -23,7 +23,7 @@ import (
 
 // SpawnReq is what bs spawn takes from its caller: only what bs can't look up (Rule D).
 type SpawnReq struct {
-	By      string // the queen
+	Who     Who    // who spawns it; the spawn is always the queen's
 	Session string // the herdr session the spawn opens on: the queen's
 	Bead    string
 	Label   string   // "" is the bead's title
@@ -36,6 +36,10 @@ type SpawnReq struct {
 // after the record leaves an unconfirmed spawn (exit 8) that bs end clears. An open spawn
 // whose process died is resumed instead (resumed true).
 func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resumed bool, err error) {
+	if err := c.permit(req.Who, "spawn", ""); err != nil {
+		return logbook.Spawn{}, false, err
+	}
+	by := Queen(c.Project) // the keeper's spawn too: its worker hands off to the queen
 	g, err := goal.Parse(req.Goals)
 	if err != nil {
 		return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s", req.Bead)
@@ -80,7 +84,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 		return logbook.Spawn{}, false, err
 	}
 	// Prepare is pure, so it runs before anything is made: a refused launch leaves nothing.
-	launch, err := c.Harness.Prepare(c.workerStart(name, ws.Dir, doorbell(name, bead.ID, req.By), deny))
+	launch, err := c.Harness.Prepare(c.workerStart(name, ws.Dir, doorbell(name, bead.ID, by), deny))
 	if err != nil {
 		return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s: its harness refused the launch; nothing was made", name)
 	}
@@ -134,12 +138,12 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 		return logbook.Spawn{}, false, exit(ExitFail, "", err, "%s: herdr couldn't tag its workspace; nothing was recorded", name)
 	}
 	sp = logbook.Spawn{
-		Name: name, By: req.By, Bead: bead.ID, Label: label, Harness: c.HarnessName,
+		Name: name, By: by, Bead: bead.ID, Label: label, Harness: c.HarnessName,
 		Herdr: logbook.Pane{Session: session, Workspace: hw.ID, Pane: hw.Pane}, Workspace: ws,
 		Goal: g, ConfigDir: c.ConfigDir, At: at, PruneIgnore: c.PruneIgnore,
 	}
 	sp.Record = launch.Record
-	if sp.ID, err = c.Logbook.RecordSpawn(ctx, req.By, sp, brief(bead, g, target, c.Guards.AllowMergeInto)); err != nil {
+	if sp.ID, err = c.Logbook.RecordSpawn(ctx, by, sp, brief(bead, g, target, c.Guards.AllowMergeInto)); err != nil {
 		err = errors.Join(err, undo())
 		if errors.Is(err, logbook.ErrAlreadySpawned) {
 			return logbook.Spawn{}, false, exit(ExitRefused, bsname.Cmd+" end "+name, err, "another spawn of %s was recorded first", name)

@@ -11,7 +11,7 @@
 //
 // A script line is a JSON array: ["bs", args...] runs a bs call as its own job (process
 // group), as a shell runs a command, and ["bs|", args...] one piped into a sibling in its
-// group (bs done | tail); ["bs&", args...] starts one without waiting (bs queen, which
+// group (bs done | tail), ["bs-nopane", args...] one with HERDR_PANE_ID unset; ["bs&", args...] starts one without waiting (bs queen, which
 // execs), its output in a DIR/bg-*.out file the result's stdout names; ["child", tag] starts an idle child in its own
 // group, ["child-same-group", tag] one in beesfake's group, ["listen", tag] one listening
 // on a TCP port, ["detach", tag] one that escapes the tree; ["kill", tag] kills one;
@@ -30,6 +30,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -188,10 +189,13 @@ func run(state string, step []string, kids map[string]int) Result {
 		tag = step[1]
 	}
 	switch step[0] {
-	case "bs", "bs|":
+	case "bs", "bs|", "bs-nopane":
 		var out, errb bytes.Buffer
 		c := exec.Command(self(), append([]string{"call"}, step[1:]...)...)
 		c.Stdout, c.Stderr = &out, &errb
+		if step[0] == "bs-nopane" { // env -u HERDR_PANE_ID bs ...: no pane hint, only its ancestry
+			c.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool { return strings.HasPrefix(kv, "HERDR_PANE_ID=") })
+		}
 		c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		if step[0] == "bs|" { // bs ... | tail: a sibling in the call's process group, as a shell pipeline has
 			sib := exec.Command(self(), "idle")

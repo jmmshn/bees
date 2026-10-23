@@ -14,9 +14,13 @@ import (
 )
 
 // Check runs worker name's handoff checks now, over the PRs it handed off, and writes
-// nothing (bs check): the queen runs it before merging. It returns every result so far;
-// the error is exit 6 at the first check that couldn't run, else exit 7 when one failed.
-func (c *Core) Check(ctx context.Context, name string, self int) ([]logbook.CheckResult, error) {
+// nothing (bs check): the queen runs it before merging, a worker on itself. It returns
+// every result so far; the error is exit 6 at the first check that couldn't run, else exit
+// 7 when one failed.
+func (c *Core) Check(ctx context.Context, w Who, name string, self int) ([]logbook.CheckResult, error) {
+	if err := c.permit(w, "check", name); err != nil {
+		return nil, err
+	}
 	sp, ok, err := c.Logbook.LatestSpawn(ctx, name)
 	switch {
 	case err != nil:
@@ -58,17 +62,15 @@ func (c *Core) Check(ctx context.Context, name string, self int) ([]logbook.Chec
 
 // GoalReq is a bs goal call: an amend (Values), a waiver (Waive), or the keeper's discard.
 type GoalReq struct {
-	By     string // who records it
-	Self   int    // the calling bs: its ancestors say whether a worker or a queen runs it
+	Who    Who // who records it
 	Name   string
 	Values []string // the new --goal values; ["discard"] is a discard
 	Waive  string
 }
 
 // Goal amends worker name's live, incomplete goal, waives one of its checks, or discards
-// it (ADR-0010). The queen or the keeper may amend or waive, never a worker or anything it
-// started; only the keeper, with no recorded queen or worker among its ancestors, may
-// discard, at any time. An amend re-runs the spawn-time refusals for the new goal, and the
+// it (ADR-0010). The queen or the keeper may amend or waive, never a worker; only the
+// keeper may discard, at any time. An amend re-runs the spawn-time refusals for the new goal, and the
 // worker is told its new goal.
 func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error) {
 	discard := slices.Equal(req.Values, []string{"discard"})
@@ -82,16 +84,12 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 	case (len(req.Values) > 0) == (req.Waive != ""):
 		return logbook.Effective{}, exit(ExitRefused, "", nil, "%s: give the new goal (--goal values, or discard) or --waive <check>, one of them", what)
 	}
-	if err := c.refuseWorker(ctx, req.Self, what, "changes a goal"); err != nil {
-		return logbook.Effective{}, err
-	}
+	act := "goal"
 	if discard {
-		switch up, err := c.recordedAbove(ctx, req.Self); {
-		case err != nil:
-			return logbook.Effective{}, exit(ExitCantCheck, "", err, "%s: can't tell who runs it", what)
-		case len(up) > 0: // the queen: refuseWorker let nothing else through
-			return logbook.Effective{}, exit(ExitRefused, "ask the keeper", nil, "%s discard: only the keeper discards a goal, from a shell no queen or worker started (%s runs this)", what, up[0])
-		}
+		act = "discard"
+	}
+	if err := c.permit(req.Who, act, ""); err != nil {
+		return logbook.Effective{}, err
 	}
 	e, err := c.Logbook.Goal(ctx, sp)
 	if err != nil {
@@ -109,7 +107,7 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 			return logbook.Effective{}, exit(ExitRefused, "", nil, "%s: the keeper discarded it", what)
 		}
 	}
-	change := logbook.GoalChange{By: req.By}
+	change := logbook.GoalChange{By: req.Who.Name}
 	switch {
 	case discard:
 		change.Discard = true
@@ -163,7 +161,7 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 	if err != nil || sp.Ended {
 		return e, err
 	}
-	body := fmt.Sprintf("%s changed your goal: it is now --goal %s. Hand it off with %s done when it holds.\n", req.By, e.Goal, bsname.Cmd)
+	body := fmt.Sprintf("%s changed your goal: it is now --goal %s. Hand it off with %s done when it holds.\n", req.Who.Name, e.Goal, bsname.Cmd)
 	for _, p := range e.Parts {
 		if p.Type == "review" {
 			body += fmt.Sprintf("Your review comment on %s must carry the marker bs:%s: %s done looks for it.\n", p.Target, sp.ID, bsname.Cmd)
@@ -175,50 +173,53 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 	}
 	switch {
 	case change.Discard:
-		body = req.By + " discarded your goal: stop, and hand nothing off"
+		body = req.Who.Name + " discarded your goal: stop, and hand nothing off"
 	case change.Waive != "":
-		body = fmt.Sprintf("%s waived the %s check of your goal (--goal %s)", req.By, change.Waive, e.Goal)
+		body = fmt.Sprintf("%s waived the %s check of your goal (--goal %s)", req.Who.Name, change.Waive, e.Goal)
 	}
-	_, err = c.Logbook.Send(ctx, req.By, sp.Name, body) // read only by this spawn: mail is scoped to the open spawn
+	_, err = c.Logbook.Send(ctx, req.Who.Name, sp.Name, body) // read only by this spawn: mail is scoped to the open spawn
 	return e, err
 }
 
-// refuseWorker refuses a call a worker, or anything it started, runs: one this logbook
-// recorded among self and its ancestors that isn't the queen. Only the queen or the keeper
-// does it (ends a worker, prunes, changes a goal); what, if any, names the worker it's on.
-func (c *Core) refuseWorker(ctx context.Context, self int, what, does string) error {
-	up, err := c.recordedAbove(ctx, self)
-	if err != nil {
-		return exit(ExitCantCheck, "", err, "%s: can't tell who runs it", what)
-	}
-	for _, s := range up {
-		if s != Queen(c.Project) {
-			why := fmt.Sprintf("run by worker %s or something it started; a worker never %s", s, does)
-			if what != "" {
-				why = what + ": " + why
-			}
-			return exit(ExitRefused, bsname.Cmd+" send "+Queen(c.Project)+" \"...\"", nil, "%s", why)
-		}
-	}
-	return nil
+// can is the permission table (ADR-0010 Identity): what each role may do, beside sending
+// as itself and reading its own inbox, which every session may. A worker's done and check
+// are of itself only.
+var can = map[string][]string{
+	Keeper:   {"spawn", "end", "prune", "goal", "discard", "check"},
+	"queen":  {"spawn", "end", "prune", "goal", "check"},
+	"worker": {"done", "check"},
 }
 
-// recordedAbove names each session this logbook recorded (its queen, an open spawn's
-// start) among self and its ancestors.
-func (c *Core) recordedAbove(ctx context.Context, self int) ([]string, error) {
-	up, err := c.ancestors(self)
-	if err != nil {
-		return nil, err
+// doing is how a refusal names each act.
+var doing = map[string]string{"spawn": "spawns a worker", "end": "ends a worker", "prune": "prunes", "goal": "changes a goal",
+	"discard": "discards a goal", "check": "checks another worker", "done": "hands off"}
+
+// permit refuses w doing act unless its role may; name is the worker check runs on.
+func (c *Core) permit(w Who, act, name string) error {
+	role := w.Role()
+	if slices.Contains(can[role], act) && (role != "worker" || act != "check" || name == w.Name) {
+		return nil
 	}
-	var out []string
-	for _, pid := range up {
-		who, err := c.recordedAs(ctx, pid)
-		if err != nil {
-			return nil, err
-		}
-		if who != "" && !slices.Contains(out, who) {
-			out = append(out, who)
+	var who []string
+	for _, r := range []string{"queen", Keeper, "worker"} {
+		if slices.Contains(can[r], act) && (r != "worker" || act != "check") {
+			who = append(who, as(r))
 		}
 	}
-	return out, nil
+	next := bsname.Cmd + " send " + Queen(c.Project) + " \"...\""
+	switch role {
+	case "queen":
+		next = "ask the keeper"
+	case Keeper:
+		next = bsname.Cmd + " status"
+	}
+	return exit(ExitRefused, next, nil, "%s runs this as %s; only %s %s", w.Name, as(role), strings.Join(who, " or "), doing[act])
+}
+
+// as is a role with its article.
+func as(role string) string {
+	if role == "worker" {
+		return "a worker"
+	}
+	return "the " + role
 }

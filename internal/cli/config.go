@@ -27,7 +27,7 @@ type settings struct {
 	*config.Loaded
 	Dir, Session string
 	Missing      bool   // the session's config dir doesn't exist
-	InPane       bool   // run inside a recorded herdr pane, where BS_* is ignored
+	InPane       bool   // run under a recorded session (Pane), where BS_* is ignored
 	Project      string // "" when bs can't tell: config and doctor still run
 	ProjectFrom  string // how bs found it
 	Repo         string // the project's main checkout, "" if unknown
@@ -36,7 +36,7 @@ type settings struct {
 	GitTop       bool       // Repo is a git checkout's top level
 	Logbook      string     // the logbook file
 	Worktrees    string     // paths.worktrees with {repo} and ~ resolved
-	Pane         *core.Pane // the recorded pane bs runs in; nil outside one
+	Pane         *core.Pane // the recorded session bs runs under; nil for the keeper
 	PinnedDir    string     // BS_LOGBOOK_DIR outside a recorded pane, when it isn't paths.logbook_dir
 	ConfigDir    string     // paths.logbook_dir as the config files set it, without the pin
 	Warnings     []string
@@ -96,12 +96,12 @@ func load(ctx context.Context, env Env, ports Ports) (*settings, error) {
 		return s, fmt.Errorf("config dir %s is not a directory", dir)
 	}
 	home := core.Getenv(env.Vars, "HOME")
-	if pane := core.Getenv(env.Vars, "HERDR_PANE_ID"); pane != "" {
+	if ports.Proc != nil { // who runs bs is its nearest recorded ancestor, in a pane or not
 		global, err := config.Load(config.Input{Dir: dir, Home: home})
 		if err != nil {
 			return s, err
 		}
-		p, ok, err := core.ScanPanes(ctx, core.ScanIn{Dir: global.Expand(global.Paths.LogbookDir), Session: session, Pane: pane,
+		p, ok, err := core.ScanPanes(ctx, core.ScanIn{Dir: global.Expand(global.Paths.LogbookDir), Session: session, Pane: core.Getenv(env.Vars, "HERDR_PANE_ID"),
 			Self: env.Self, Run: run, Proc: ports.Proc, Program: harnessProgram})
 		if err != nil {
 			return s, err

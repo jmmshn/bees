@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -266,30 +267,40 @@ type Recorded struct {
 	Process    Process
 	HasProcess bool
 	Repo       string // a queen's recorded repo (bees-12.43); a worker's is its spawn's
+	// Where it was recorded: entries from before sessions were recorded are on
+	// DefaultSession. A queen, and the old bs's spawn, record no workspace.
+	Session, Pane, Workspace string
 }
 
-// InPane returns the sessions whose open entries recorded pane on herdr session session:
-// the key of identity (ADR-0010). Entries from before sessions were recorded are on
-// DefaultSession. A file with no entries table yet (one Open is still creating) records
-// nothing.
+// InPane returns the sessions whose open entries recorded pane on herdr session session.
 func (l *Logbook) InPane(ctx context.Context, session, pane string) ([]Recorded, error) {
+	rs, err := l.Sessions(ctx)
+	return slices.DeleteFunc(rs, func(r Recorded) bool { return r.Session != session || r.Pane != pane }), err
+}
+
+// Sessions returns every session with an open entry: each worker's open spawn and each
+// queen's newest queen entry, the records identity is found from (ADR-0010). A file with
+// no entries table yet (one Open is still creating) records nothing.
+func (l *Logbook) Sessions(ctx context.Context) ([]Recorded, error) {
 	if ok, err := hasEntries(ctx, l.db); err != nil || !ok {
 		return nil, err
 	}
 	rows, err := l.db.QueryContext(ctx, `
 SELECT 0, s.subject, s.id, json_extract(s.data, '$.harness'),
-       (SELECT st.data FROM entries st WHERE st.kind = 'started' AND st.ref = s.id ORDER BY st.rowid DESC LIMIT 1)
+       (SELECT st.data FROM entries st WHERE st.kind = 'started' AND st.ref = s.id ORDER BY st.rowid DESC LIMIT 1),
+       coalesce(json_extract(s.data, '$.herdr.session'), 'default'),
+       coalesce(json_extract(s.data, '$.herdr.pane'), json_extract(s.data, '$.pane'), ''),
+       coalesce(json_extract(s.data, '$.herdr.workspace'), '')
 FROM entries s
 WHERE s.kind = 'spawned'
-  AND coalesce(json_extract(s.data, '$.herdr.pane'), json_extract(s.data, '$.pane')) = ?2
-  AND coalesce(json_extract(s.data, '$.herdr.session'), 'default') = ?1
   AND s.rowid = (SELECT MAX(x.rowid) FROM entries x WHERE x.kind = 'spawned' AND x.subject = s.subject)
   AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = s.id)
 UNION ALL
-SELECT 1, q.subject, '', json_extract(q.data, '$.harness'), q.data FROM entries q
-WHERE q.kind = 'queen' AND json_extract(q.data, '$.pane') = ?2
-  AND coalesce(json_extract(q.data, '$.session'), 'default') = ?1
-  AND q.rowid = (SELECT MAX(x.rowid) FROM entries x WHERE x.kind = 'queen' AND x.subject = q.subject)`, session, pane)
+SELECT 1, q.subject, '', json_extract(q.data, '$.harness'), q.data,
+       coalesce(json_extract(q.data, '$.session'), 'default'), coalesce(json_extract(q.data, '$.pane'), ''), ''
+FROM entries q
+WHERE q.kind = 'queen'
+  AND q.rowid = (SELECT MAX(x.rowid) FROM entries x WHERE x.kind = 'queen' AND x.subject = q.subject)`)
 	if err != nil {
 		return nil, err
 	}
@@ -298,7 +309,7 @@ WHERE q.kind = 'queen' AND json_extract(q.data, '$.pane') = ?2
 	for rows.Next() {
 		var r Recorded
 		var h, data sql.NullString
-		if err := rows.Scan(&r.Queen, &r.Name, &r.Spawn, &h, &data); err != nil {
+		if err := rows.Scan(&r.Queen, &r.Name, &r.Spawn, &h, &data, &r.Session, &r.Pane, &r.Workspace); err != nil {
 			return nil, err
 		}
 		r.Harness = cmp.Or(h.String, DefaultHarness)

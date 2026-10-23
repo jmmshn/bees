@@ -57,15 +57,15 @@ var usage = strings.ReplaceAll(`usage: {cmd} <command> [flags] [arguments]   (fl
 
 commands:
   queen                                                    record this pane's queen, then exec the harness
-  spawn   --goal <goal>... [--label L] [--as Q] <bead>   start a worker
-  done    [--pr URL]... [--replaces URL]... [--answer yes|no --report TEXT|-] [--wait [--timeout D]] [--force] [--as W]   hand off
+  spawn   --goal <goal>... [--label L] <bead>   start a worker
+  done    [--pr URL]... [--replaces URL]... [--answer yes|no --report TEXT|-] [--wait [--timeout D]] [--force]   hand off
   handoff                                                  done --wait
   check   <worker>                                         run its handoff checks now; writes nothing
-  goal    [--as Q] <worker> <goal>... | discard | --waive <check>   amend, waive or (keeper) discard
-  end     [--force] [--incomplete] [--as Q] <worker>      complete and end a worker
-  prune   [--as Q]                                         remove completed workspaces
-  send    [--as S] [--project P] [--now] <to> <message|->  store a message, then ring
-  inbox   [--as S]                                         print unread mail
+  goal    <worker> <goal>... | discard | --waive <check>   amend, waive or (keeper) discard
+  end     [--force] [--incomplete] <worker>      complete and end a worker
+  prune                                                    remove completed workspaces
+  send    [--project P] [--now] <to> <message|->  store a message, then ring
+  inbox                                                    print unread mail
   status                                                   list workers and their goals
   config                                                   every setting and where it came from
   config  init [--project] [--harness H] [--logbook-dir D] [--repos D] [--worktrees D] [--workspace K] [--repo D]   write a commented config file
@@ -73,6 +73,9 @@ commands:
   epic    <title>                                          create the project's next epic (<project>-<n>)
   bead    ls [--all] [<bd query>] | new --parent <project>-N [--description D] [--type T] [--priority P] <title>
   version                                                  print the commit {cmd} was built from
+
+{cmd} acts as its nearest recorded ancestor (a queen, a worker), else as the keeper.
+--as <session>, a debug override from a shell no session started, acts as that session.
 `, "{cmd}", bsname.Cmd)
 
 // Run runs bs args for env on ports, printing to stdout and stderr, and returns the exit
@@ -260,9 +263,6 @@ func (r *run) oldSessions() error {
 		return err
 	}
 	end := bsname.Cmd + " end <worker>"
-	if r.s.Pane == nil { // the keeper's shell: no pane says who ends them
-		end = bsname.Cmd + " end --as " + core.Queen(r.s.Project) + " <worker>"
-	}
 	if r.name == "end" || r.name == "status" {
 		fmt.Fprintf(r.err, "%s %s: warning: %s\n  next: %s for each\n", bsname.Cmd, r.name, what, end)
 		return nil
@@ -320,9 +320,11 @@ type list []string
 func (l *list) String() string     { return strings.Join(*l, " ") }
 func (l *list) Set(v string) error { *l = append(*l, v); return nil }
 
-// who is the caller: its recorded pane inside one, else --as (ADR-0010 identity), in an
-// unrecorded herdr pane too (bees-13.14). load has already ignored, with a warning, every
-// BS_* variable inside a recorded pane.
+// who is the caller (ADR-0010 identity): the session its nearest recorded ancestor is
+// (load found it), else the keeper. --as is a debug override, taken only where no ancestor
+// is recorded, with that session's identity and permissions; anywhere else it must name
+// the caller itself (exit 2). load has already ignored, with a warning, every BS_*
+// variable under a recorded session.
 func (r *run) who(as string) (core.Who, error) {
 	if p := r.s.Pane; p != nil {
 		w, err := r.c.Identify(r.ctx, *p, r.env.Self)
@@ -330,12 +332,12 @@ func (r *run) who(as string) (core.Who, error) {
 			return core.Who{}, err
 		}
 		if as != "" && as != w.Name {
-			return core.Who{}, fmt.Errorf("%w: --as %s inside %s's recorded pane", errUsage, as, w.Name)
+			return core.Who{}, fmt.Errorf("%w: --as %s: this bs runs under %s", errUsage, as, w.Name)
 		}
 		return w, nil
 	}
-	if as == "" {
-		return core.Who{}, fmt.Errorf("%w: %v: name the session with --as", errUsage, core.ErrOutsidePane)
+	if as == "" || as == core.Keeper {
+		return core.Who{Name: core.Keeper}, nil
 	}
 	sp, ok, err := r.c.Logbook.LatestSpawn(r.ctx, as)
 	if err != nil {
@@ -344,7 +346,7 @@ func (r *run) who(as string) (core.Who, error) {
 	if ok && !sp.Ended {
 		return core.Who{Name: as, Spawn: sp.ID}, nil
 	}
-	return core.Who{Name: as, Queen: strings.HasPrefix(as, "queen-")}, nil
+	return core.Who{Name: as, Queen: as == core.Queen(r.s.Project)}, nil
 }
 
 // command is one bs command and whether it opens the logbook (refused with no config

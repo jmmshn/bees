@@ -280,7 +280,7 @@ INSERT INTO entries VALUES ('s1','2026-10-01T00:00:00.000Z','spawned','queen-toy
 	}
 	// The old bs started it and recorded no start: status and end warn, all else refuses
 	// before the logbook is opened, so nothing is migrated (bees-13.9).
-	must(t, x.keeper("goal", "toy-9", "note"), 2, "has an open spawn the old bs started, which this bs can neither ring nor see run: toy-9", "nothing was recorded or migrated", "next: bs end --as queen-toy <worker> for each (it names the herdr workspace to close by hand)")
+	must(t, x.keeper("goal", "toy-9", "note"), 2, "has an open spawn the old bs started, which this bs can neither ring nor see run: toy-9", "nothing was recorded or migrated", "next: bs end <worker> for each (it names the herdr workspace to close by hand)")
 	if _, err := os.Stat(x.logbook + ".pre-2"); !os.IsNotExist(err) {
 		t.Fatalf("a refused command migrated the logbook: %v", err)
 	}
@@ -387,7 +387,7 @@ func TestOnlyQueenAndSpawnStartALogbook(t *testing.T) {
 	}
 }
 
-// A spawn refused after its arguments passed (no --as outside a pane, a BS_LOGBOOK_DIR pin,
+// A spawn refused after its arguments passed (a BS_LOGBOOK_DIR pin,
 // herdr down) leaves no logbook it made: a refused command records nothing, and an empty
 // logbook left behind would pass for a started project (bees-13.9 re-review 1, motif 14).
 func TestARefusedSpawnLeavesNoLogbook(t *testing.T) {
@@ -400,7 +400,6 @@ func TestARefusedSpawnLeavesNoLogbook(t *testing.T) {
 		args []string
 		down bool
 	}{
-		{"no --as", nil, []string{"spawn", "--goal", "branch", "toy-1"}, false},
 		{"pin", []string{"BS_LOGBOOK_DIR=" + other}, []string{"spawn", "--as", "queen-toy", "--goal", "branch", "toy-1"}, false},
 		{"herdr down", nil, []string{"spawn", "--as", "queen-toy", "--goal", "branch", "toy-1"}, true},
 	} {

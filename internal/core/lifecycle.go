@@ -241,12 +241,12 @@ type EndOpts struct {
 
 // End is the completion gate (bs end, ADR-0010): a complete goal lands, then the spawn
 // ends; an incomplete one is exit 9 unless o.Incomplete. It runs the gate, closes the herdr workspace, stops the process, and keeps the
-// directory for prune. Only the queen or the keeper ends a worker, never a worker or
-// anything it started.
-func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) error {
-	if err := c.refuseWorker(ctx, self, name, "ends a worker"); err != nil {
+// directory for prune. Only the queen or the keeper ends a worker.
+func (c *Core) End(ctx context.Context, w Who, name string, self int, o EndOpts) error {
+	if err := c.permit(w, "end", ""); err != nil {
 		return err
 	}
+	by := w.Name
 	sp, ok, err := c.Logbook.LatestSpawn(ctx, name)
 	switch {
 	case err != nil:
@@ -477,11 +477,12 @@ type Pruned struct {
 // that is proven merged (or discarded), completing a goal ended --incomplete on the way. A
 // workspace whose directory is already gone still has its branch pruned, so nothing is
 // kept forever (bees-12.41). It never touches a remote branch, and names what it kept and
-// why. Only the queen or the keeper prunes, never a worker or anything it started.
-func (c *Core) Prune(ctx context.Context, by string, self int) ([]Pruned, error) {
-	if err := c.refuseWorker(ctx, self, "", "prunes"); err != nil {
+// why. Only the queen or the keeper prunes.
+func (c *Core) Prune(ctx context.Context, w Who) ([]Pruned, error) {
+	if err := c.permit(w, "prune", ""); err != nil {
 		return nil, err
 	}
+	by := w.Name
 	sps, err := c.Logbook.LatestSpawns(ctx)
 	if err != nil {
 		return nil, err

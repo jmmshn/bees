@@ -280,6 +280,28 @@ func (c Client) Panes(ctx context.Context, workspace string) ([]string, error) {
 	return out, nil
 }
 
+// PaneWorkspace is the workspace herdr has pane in now; ok is false when herdr knows no
+// such pane.
+func (c Client) PaneWorkspace(ctx context.Context, pane string) (ws string, ok bool, err error) {
+	var r struct {
+		Result struct {
+			Panes []struct {
+				ID        string `json:"pane_id"`
+				Workspace string `json:"workspace_id"`
+			} `json:"panes"`
+		} `json:"result"`
+	}
+	if err := c.call(ctx, &r, "pane", "list"); err != nil {
+		return "", false, err
+	}
+	for _, p := range r.Result.Panes {
+		if p.ID == pane {
+			return p.Workspace, true, nil
+		}
+	}
+	return "", false, nil
+}
+
 // Workspaces lists every workspace, with Path the checkout it is open on ("" for one
 // opened on no worktree).
 func (c Client) Workspaces(ctx context.Context) ([]Workspace, error) {

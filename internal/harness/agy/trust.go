@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jmmshn/bees/internal/harness/jsonfile"
 	"github.com/jmmshn/bees/internal/port"
 )
 
@@ -100,8 +101,8 @@ func (a Adapter) editTrusted(edit func([]string) []string) error {
 		if err != nil {
 			return err
 		}
-		switch err := replace(path, old, append(b, '\n')); {
-		case errors.Is(err, errChanged):
+		switch err := jsonfile.Replace(path, old, append(b, '\n')); {
+		case errors.Is(err, jsonfile.ErrChanged):
 			continue
 		case err != nil:
 			return fmt.Errorf("agy's settings %s: %w", path, err)
@@ -109,38 +110,6 @@ func (a Adapter) editTrusted(edit func([]string) []string) error {
 		return nil
 	}
 	return fmt.Errorf("agy's settings %s: it kept changing while bs edited %s; try again", path, Trusted)
-}
-
-var errChanged = errors.New("changed since it was read")
-
-// replace writes b to path by rename, with path's mode (0600 for a new file), unless path
-// no longer holds old.
-func replace(path string, old, b []byte) error {
-	mode := fs.FileMode(0o600)
-	if fi, err := os.Stat(path); err == nil {
-		mode = fi.Mode().Perm()
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".bs-*")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name()) // gone already once renamed
-	_, err = f.Write(b)
-	err = errors.Join(err, f.Chmod(mode), f.Sync(), f.Close())
-	if err != nil {
-		return err
-	}
-	now, err := os.ReadFile(path)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	if !bytes.Equal(now, old) {
-		return errChanged
-	}
-	return os.Rename(f.Name(), path)
 }
 
 // lockFile takes an exclusive flock(2) on path, made if missing, waiting up to wait.

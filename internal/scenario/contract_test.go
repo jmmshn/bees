@@ -544,7 +544,7 @@ func TestContractAs(t *testing.T) {
 // Parallel first spawns on a new project, with a concurrent read-only scan of its
 // logbook (bees-13.59): every spawn works and one prints R48's new logbook line.
 func TestContractParallelFirstSpawns(t *testing.T) {
-	xfail(t, "T1")
+	// xfail(t, "T1") [DEBUG-p59]
 	x := newToy(t)
 	const n = 11
 	for i := 1; i <= n; i++ {

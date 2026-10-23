@@ -113,10 +113,10 @@ func TestMailAcrossProjects(t *testing.T) {
 	must(t, x.worker("queen-other", 2, "send", "--project", "toy", "queen-toy", "hello back"), 0, "rung queen-toy")
 	must(t, x.queenRuns(2, "inbox"), 0, "from queen-other", "hello back", `(reply with: bs send --project other queen-other "...")`)
 
-	must(t, x.queenRuns(3, "inbox", "--project", "other"), 2, "you are queen-toy of project toy, so your mail is in toy's logbook; only bs send crosses projects")
-	must(t, x.queenRuns(4, "send", "--as", "queen-other", "--project", "other", "queen-other", "spoof"), 2, "--as queen-other inside queen-toy's recorded pane")
+	must(t, x.queenRuns(3, "inbox", "--project", "other"), 2, "flag provided but not defined: -project")
+	must(t, x.queenRuns(4, "send", "--as", "queen-other", "--project", "other", "queen-other", "spoof"), 2, "--as queen-other: this bs runs under queen-toy")
 	x.bead("toy-1", "work on toy-1")
 	must(t, x.queenRuns(5, "spawn", "--goal", "verdict", "toy-1"), 0)
-	must(t, x.worker("toy-1", 1, "done", "--project", "other", "--answer", "yes", "--report", "ok"), 2, "you are toy-1 of project toy, so your handoff is in toy's logbook")
+	must(t, x.worker("toy-1", 1, "done", "--project", "other", "--answer", "yes", "--report", "ok"), 2, "flag provided but not defined: -project")
 	must(t, x.keeper("inbox", "--as", "queen-toy", "--project", "other"), 2, "this shell is in project toy", "next: run it from other's repo")
 }

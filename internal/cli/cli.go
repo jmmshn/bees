@@ -57,15 +57,15 @@ var usage = strings.ReplaceAll(`usage: {cmd} <command> [flags] [arguments]   (fl
 
 commands:
   queen                                                    record this pane's queen, then exec the harness
-  spawn   --goal <goal>... [--label L] [--as Q] <bead>   start a worker
-  done    [--pr URL]... [--replaces URL]... [--answer yes|no --report TEXT|-] [--wait [--timeout D]] [--force] [--as W]   hand off
+  spawn   --goal <goal>... [--label L] <bead>                start a worker
+  done    [--pr URL]... [--replaces URL]... [--answer yes|no --report TEXT|-] [--wait [--timeout D]] [--force]   hand off
   handoff                                                  done --wait
   check   <worker>                                         run its handoff checks now; writes nothing
-  goal    [--as Q] <worker> <goal>... | discard | --waive <check>   amend, waive or (keeper) discard
-  end     [--force] [--incomplete] [--as Q] <worker>      complete and end a worker
-  prune   [--as Q]                                         remove completed workspaces
-  send    [--as S] [--project P] [--now] <to> <message|->  store a message, then ring
-  inbox   [--as S]                                         print unread mail
+  goal    <worker> <goal>... | discard | --waive <check>   amend, waive or (keeper) discard
+  end     [--force] [--incomplete] <worker>               complete and end a worker
+  prune                                                    remove completed workspaces
+  send    [--project P] [--now] <to> <message|->           store a message, then ring
+  inbox                                                    print unread mail
   status                                                   list workers and their goals
   config                                                   every setting and where it came from
   config  init [--project] [--harness H] [--logbook-dir D] [--repos D] [--worktrees D] [--workspace K] [--repo D]   write a commented config file
@@ -73,6 +73,10 @@ commands:
   epic    <title>                                          create the project's next epic (<project>-<n>)
   bead    ls [--all] [<bd query>] | new --parent <project>-N [--description D] [--type T] [--priority P] <title>
   version                                                  print the commit {cmd} was built from
+
+{cmd} acts in the repo it runs in, as its nearest recorded ancestor (a queen, a worker),
+else as the keeper. --as <session>, a debug override from a shell no session started,
+acts as that session of the project, with its permissions; inbox --as only peeks.
 `, "{cmd}", bsname.Cmd)
 
 // Run runs bs args for env on ports, printing to stdout and stderr, and returns the exit
@@ -85,6 +89,11 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 	cmd, ok := commands[args[0]]
 	if !ok {
 		fmt.Fprintf(stderr, bsname.Cmd+": unknown command %q\n\n%s", args[0], usage)
+		return core.ExitRefused
+	}
+	args, as, err := cutAs(args)
+	if err != nil {
+		fmt.Fprintf(stderr, bsname.Cmd+" %s: %v\n", args[0], err)
 		return core.ExitRefused
 	}
 	s, err := load(ctx, env, ports)
@@ -112,7 +121,7 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 		fmt.Fprintf(stderr, bsname.Cmd+" %s: refused: %v %s, so "+bsname.Cmd+" won't guess a logbook; nothing was read or written\n", args[0], errNoConfigDir, s.Session)
 		return core.ExitRefused
 	}
-	r := &run{ctx: ctx, name: args[0], env: env, s: s, ports: ports, out: stdout, err: stderr}
+	r := &run{ctx: ctx, name: args[0], env: env, s: s, ports: ports, out: stdout, err: stderr, caller: s.Caller}
 	fs := flag.NewFlagSet(bsname.Cmd+" "+args[0], flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	badFlag := false // flag calls Usage on a flag it can't parse: a refusal, never exit 1
@@ -183,12 +192,14 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 			ConfigDir: s.Dir, CacheDir: ports.CacheDir, Timing: ports.Timing, WorkerPath: s.workerPath(), Guards: s.Guards, PruneIgnore: s.Prune.Ignore, Review: review, VCS: vcs,
 			Warn: func(msg string) { fmt.Fprintf(stderr, bsname.Cmd+" %s: warning: %s\n", args[0], msg) },
 		}
+		if err := r.authorize(as); err != nil {
+			return report(stderr, args[0], err)
+		}
+	} else if as != "" {
+		return report(stderr, args[0], fmt.Errorf("%w: --as: %s %s acts as nobody", errUsage, bsname.Cmd, args[0]))
 	}
 	err = cmd.run(r, fs, rest)
-	if err != nil && r.created {
-		r.uncreate(lb) // refused after it made the logbook: it leaves none (motif 14)
-	}
-	if err == nil && r.created {
+	if lb != nil && lb.Created() { // made at its first write (R48: said once)
 		fmt.Fprintf(stderr, "%s %s: new logbook for project %s at %s\n", bsname.Cmd, args[0], s.Project, s.Logbook)
 	}
 	return done(err)
@@ -214,40 +225,64 @@ func report(stderr io.Writer, name string, err error) int {
 var errUsage = errors.New("usage")
 
 // openLogbook opens the project's logbook. Only bs queen and bs spawn, which start a
-// project, make a missing one, and say so; any other command is refused, since a deleted
-// logbook would come back empty without a word (R48, bees-8.12, motif 14).
+// project, open a missing one, made at their first write, so a refused one makes none
+// (OQ-K1); any other command is refused, since a deleted logbook would come back empty
+// without a word (R48, bees-8.12, motif 14).
 func (r *run) openLogbook() (*logbook.Logbook, error) {
-	if r.name != "queen" && r.name != "spawn" {
-		lb, err := logbook.Open(r.ctx, r.s.Logbook)
-		if errors.Is(err, logbook.ErrNoLogbook) {
-			return nil, &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("no logbook for project %s at %s; nothing was read or written", r.s.Project, r.s.Logbook),
-				Next: bsname.Cmd + " queen starts the project; if it had a queen or workers, the logbook was deleted or paths.logbook_dir moved: restore the file rather than start afresh"}
-		}
-		return lb, err
+	if r.name == "queen" || r.name == "spawn" {
+		return logbook.AtFirstWrite(r.ctx, r.s.Logbook)
 	}
-	lb, created, err := logbook.Create(r.ctx, r.s.Logbook)
-	r.created = created && err == nil   // said once the command succeeds
-	if r.created && r.name == "queen" { // bs queen execs the harness and never returns to say it
-		fmt.Fprintf(r.err, "%s queen: new logbook for project %s at %s\n", bsname.Cmd, r.s.Project, r.s.Logbook)
-		r.created = false
+	lb, err := logbook.Open(r.ctx, r.s.Logbook)
+	if errors.Is(err, logbook.ErrNoLogbook) {
+		return nil, &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("no logbook for project %s at %s; nothing was read or written", r.s.Project, r.s.Logbook),
+			Next: bsname.Cmd + " queen starts the project; if it had a queen or workers, the logbook was deleted or paths.logbook_dir moved: restore the file rather than start afresh"}
 	}
 	return lb, err
 }
 
-// uncreate removes the logbook this command made, when it still holds no entries: a
-// command refused after Create must not leave an empty logbook passing for a started
-// project. One that recorded anything keeps it.
-func (r *run) uncreate(lb *logbook.Logbook) {
-	if empty, err := lb.Empty(r.ctx); err != nil || !empty {
-		return
+// authorize settles who runs this command (ADR-0010 Amendment 4 Identity): the caller
+// load found, its start healed (core.Confirm), --as applied, then the permission table
+// (core.May) for the command. A command acting on a worker asks May again with it.
+func (r *run) authorize(as string) error {
+	c, err := r.c.Confirm(r.ctx, r.caller)
+	if err != nil {
+		return err
 	}
-	lb.Close()
-	for _, p := range []string{r.s.Logbook, r.s.Logbook + "-wal", r.s.Logbook + "-shm"} {
-		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintf(r.err, "%s %s: warning: couldn't remove the empty logbook it made, %s: %v\n", bsname.Cmd, r.name, p, err)
+	if r.caller, err = r.c.As(r.ctx, c, as); err != nil {
+		return err
+	}
+	return r.may("")
+}
+
+// may asks the permission table whether the caller runs this command on subject.
+func (r *run) may(subject string) error {
+	cmd := r.name
+	if cmd == "handoff" {
+		cmd = "done"
+	}
+	return core.May(r.caller, cmd, r.s.Project, subject)
+}
+
+// cutAs takes --as <session> (or --as=<session>) out of args, wherever it is before a
+// "--": one global flag (ADR-0010 Amendment 4), not one per command.
+func cutAs(args []string) (rest []string, as string, err error) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--":
+			return append(rest, args[i:]...), as, nil
+		case a == "--as" || a == "-as":
+			if i+1 >= len(args) {
+				return args, "", fmt.Errorf("%w: flag needs an argument: --as", errUsage)
+			}
+			as, i = args[i+1], i+1
+		case strings.HasPrefix(a, "--as=") || strings.HasPrefix(a, "-as="):
+			_, as, _ = strings.Cut(a, "=")
+		default:
+			rest = append(rest, a)
 		}
 	}
-	r.created = false
+	return rest, as, nil
 }
 
 // oldSessions refuses, before the logbook is opened (and so migrated), a command on a
@@ -260,9 +295,6 @@ func (r *run) oldSessions() error {
 		return err
 	}
 	end := bsname.Cmd + " end <worker>"
-	if r.s.Pane == nil { // the keeper's shell: no pane says who ends them
-		end = bsname.Cmd + " end --as " + core.Queen(r.s.Project) + " <worker>"
-	}
 	if r.name == "end" || r.name == "status" {
 		fmt.Fprintf(r.err, "%s %s: warning: %s\n  next: %s for each\n", bsname.Cmd, r.name, what, end)
 		return nil
@@ -308,9 +340,9 @@ type run struct {
 	env      Env
 	s        *settings
 	ports    Ports
-	c        *core.Core // nil for a command that opens no logbook
+	c        *core.Core  // nil for a command that opens no logbook
+	caller   core.Caller // who runs it, --as applied and the permission table passed
 	out, err io.Writer
-	created  bool      // this command made the logbook
 	spawnReq spawnArgs // bs spawn's arguments, checked before the logbook is opened
 }
 
@@ -319,33 +351,6 @@ type list []string
 
 func (l *list) String() string     { return strings.Join(*l, " ") }
 func (l *list) Set(v string) error { *l = append(*l, v); return nil }
-
-// who is the caller: its recorded pane inside one, else --as (ADR-0010 identity), in an
-// unrecorded herdr pane too (bees-13.14). load has already ignored, with a warning, every
-// BS_* variable inside a recorded pane.
-func (r *run) who(as string) (core.Who, error) {
-	if p := r.s.Pane; p != nil {
-		w, err := r.c.Identify(r.ctx, *p, r.env.Self)
-		if err != nil {
-			return core.Who{}, err
-		}
-		if as != "" && as != w.Name {
-			return core.Who{}, fmt.Errorf("%w: --as %s inside %s's recorded pane", errUsage, as, w.Name)
-		}
-		return w, nil
-	}
-	if as == "" {
-		return core.Who{}, fmt.Errorf("%w: %v: name the session with --as", errUsage, core.ErrOutsidePane)
-	}
-	sp, ok, err := r.c.Logbook.LatestSpawn(r.ctx, as)
-	if err != nil {
-		return core.Who{}, err
-	}
-	if ok && !sp.Ended {
-		return core.Who{Name: as, Spawn: sp.ID}, nil
-	}
-	return core.Who{Name: as, Queen: strings.HasPrefix(as, "queen-")}, nil
-}
 
 // command is one bs command and whether it opens the logbook (refused with no config
 // dir, Rule G).

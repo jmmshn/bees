@@ -79,12 +79,12 @@ func (r *run) doctor(fs *flag.FlagSet, args []string) error {
 		}
 		switch {
 		case !strings.HasPrefix(k, "BS_"):
-		case s.Pane != nil:
-			d.line("WARN", "env", "%s is set in %s's pane, where %s ignores it: %s sets no BS_* in a session's env, so it leaked from the shell that started herdr", k, s.Pane.Who.Name, bsname.Cmd, bsname.Cmd)
+		case s.Caller.Recorded():
+			d.line("WARN", "env", "%s is set under %s, a recorded session, where %s ignores it: %s sets no BS_* in a session's env, so it leaked from the shell that started herdr", k, s.Caller.Name, bsname.Cmd, bsname.Cmd)
 		case !slices.Contains(envKeys, k):
 			d.line("WARN", "env", "%s is set; %s doesn't read it (an older bs did): it does nothing here", k, bsname.Cmd)
 		default:
-			d.line("WARN", "env", "%s is set and overrides the config here (outside a herdr pane), for every %s command run from this shell: unset it unless you meant it", k, bsname.Cmd)
+			d.line("WARN", "env", "%s is set and overrides the config here (from the keeper's shell), for every %s command run from this shell: unset it unless you meant it", k, bsname.Cmd)
 		}
 	}
 	if stray == 0 {
@@ -370,7 +370,7 @@ func (d *doctor) commands() {
 		unread[f.Key] = f.Unread != ""
 	}
 	where := "this shell's PATH (a check runs on the PATH of the " + bsname.Cmd + " that runs it: run doctor in a pane of the session to check that one)"
-	if d.r.s.Pane != nil {
+	if d.r.s.Caller.Recorded() {
 		where = "this pane's PATH, the one a check runs with"
 	}
 	argvs, missing := d.r.s.argvs(), 0

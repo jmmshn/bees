@@ -21,10 +21,30 @@ type ID string
 type Logbook struct {
 	db       *sql.DB
 	KeptCopy string
+	path     string // AtFirstWrite's file, not made yet: db is empty and in memory until the first write
+	created  bool   // the first write made the file
 }
 
 // Close closes the logbook.
 func (l *Logbook) Close() error { return l.db.Close() }
+
+// Created reports whether this logbook's first write made its file (AtFirstWrite).
+func (l *Logbook) Created() bool { return l.created }
+
+// rw is the database to write on: AtFirstWrite's file is made here, at the first write
+// (Create, which one of parallel first writers wins), and read from then on.
+func (l *Logbook) rw(ctx context.Context) (*sql.DB, error) {
+	if l.path == "" {
+		return l.db, nil
+	}
+	lb, created, err := Create(ctx, l.path)
+	if err != nil {
+		return nil, err
+	}
+	l.db.Close()
+	l.db, l.KeptCopy, l.path, l.created = lb.db, lb.KeptCopy, "", created
+	return l.db, nil
+}
 
 // querier is a *sql.DB or a *sql.Tx.
 type querier interface {
@@ -54,9 +74,18 @@ type entry struct {
 	data                     any // marshalled to JSON; nil stores NULL
 }
 
-// insert writes e on db and returns its id. An id given (a deterministic one) that is
+// insert writes e and returns its id. An id given (a deterministic one) that is
 // already there is kept, and the call is a no-op (INSERT OR IGNORE).
-func insert(ctx context.Context, db execer, e entry) (ID, error) {
+func (l *Logbook) insert(ctx context.Context, e entry) (ID, error) {
+	db, err := l.rw(ctx)
+	if err != nil {
+		return "", err
+	}
+	return insertOn(ctx, db, e)
+}
+
+// insertOn writes e on db (a *sql.DB or a write transaction) and returns its id.
+func insertOn(ctx context.Context, db execer, e entry) (ID, error) {
 	now := time.Now().UTC()
 	id := ID(e.id)
 	if id == "" {
@@ -85,7 +114,11 @@ func insert(ctx context.Context, db execer, e entry) (ID, error) {
 
 // write runs f in one write transaction (BEGIN IMMEDIATE).
 func (l *Logbook) write(ctx context.Context, f func(tx *sql.Tx) error) error {
-	tx, err := l.db.BeginTx(ctx, nil)
+	db, err := l.rw(ctx)
+	if err != nil {
+		return err
+	}
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}

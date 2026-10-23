@@ -27,18 +27,17 @@ type settings struct {
 	*config.Loaded
 	Dir, Session string
 	Missing      bool   // the session's config dir doesn't exist
-	InPane       bool   // run inside a recorded herdr pane, where BS_* is ignored
 	Project      string // "" when bs can't tell: config and doctor still run
 	ProjectFrom  string // how bs found it
 	Repo         string // the project's main checkout, "" if unknown
 	RepoFrom     string
-	RepoMissing  bool       // paths.repo or paths.repos named a dir that doesn't exist
-	GitTop       bool       // Repo is a git checkout's top level
-	Logbook      string     // the logbook file
-	Worktrees    string     // paths.worktrees with {repo} and ~ resolved
-	Pane         *core.Pane // the recorded pane bs runs in; nil outside one
-	PinnedDir    string     // BS_LOGBOOK_DIR outside a recorded pane, when it isn't paths.logbook_dir
-	ConfigDir    string     // paths.logbook_dir as the config files set it, without the pin
+	RepoMissing  bool        // paths.repo or paths.repos named a dir that doesn't exist
+	GitTop       bool        // Repo is a git checkout's top level
+	Logbook      string      // the logbook file
+	Worktrees    string      // paths.worktrees with {repo} and ~ resolved
+	Caller       core.Caller // who runs bs, as Resolve found it (before --as)
+	PinnedDir    string      // BS_LOGBOOK_DIR outside a recorded pane, when it isn't paths.logbook_dir
+	ConfigDir    string      // paths.logbook_dir as the config files set it, without the pin
 	Warnings     []string
 	Broken       error // why bs couldn't work out its settings: bs doctor still runs
 	GlobalBroken bool  // with Broken: the global file didn't read either, so doctor runs on the defaults
@@ -65,15 +64,15 @@ func broken(env Env, err error) (*settings, error) {
 	return s, nil
 }
 
-// envKeys are the BS_* variables bs reads outside a recorded herdr pane. Inside one it
-// reads none, and warns of every BS_* set, the old bs's pins included: a pane's identity
-// and config come from the pane (ADR-0010), and an inherited pin from some other
-// session's env is exactly what bees-12.47 and bees-13.1's probe saw leak.
+// envKeys are the BS_* variables the keeper's bs reads. Under a recorded session it reads
+// none, and warns of every BS_* set, the old bs's pins included: a session acts in the repo
+// it runs in (ADR-0010 Amendment 4), and an inherited pin from some other session's env is
+// exactly what bees-12.47 and bees-13.1's probe saw leak.
 var envKeys = []string{"BS_PROJECT", "BS_LOGBOOK_DIR", "BS_REPOS"}
 
-// load works out env's settings: its config dir (per herdr session), its project (the
-// logbook whose entry recorded the herdr pane bs runs in; outside a recorded pane, the
-// git repo bs runs in, else BS_PROJECT), the files, the repo and the logbook. It fails
+// load works out env's settings: its config dir (per herdr session), its project (the git
+// repo bs runs in; else, for a recorded session, its own project, and for the keeper
+// BS_PROJECT), who runs it (core.Resolve), the files, the repo and the logbook. It fails
 // only on what no command can run past: a broken file, a refused dir, a file or dir it
 // couldn't read (exit 6), a pane bs can't tell the session of. The settings come back
 // with the error, for the warnings found before it.
@@ -96,41 +95,41 @@ func load(ctx context.Context, env Env, ports Ports) (*settings, error) {
 		return s, fmt.Errorf("config dir %s is not a directory", dir)
 	}
 	home := core.Getenv(env.Vars, "HOME")
-	if pane := core.Getenv(env.Vars, "HERDR_PANE_ID"); pane != "" {
-		global, err := config.Load(config.Input{Dir: dir, Home: home})
-		if err != nil {
-			return s, err
-		}
-		p, ok, err := core.ScanPanes(ctx, core.ScanIn{Dir: global.Expand(global.Paths.LogbookDir), Session: session, Pane: pane,
-			Self: env.Self, Run: run, Proc: ports.Proc, Program: harnessProgram})
-		if err != nil {
-			return s, err
-		}
-		if ok {
-			s.Pane = &p
-		}
-	}
-	s.InPane = s.Pane != nil
 	overrides := map[string]string{}
 	for _, kv := range env.Vars {
-		k, v, _ := strings.Cut(kv, "=")
-		switch {
-		case !strings.HasPrefix(k, "BS_") || v == "":
-		case s.InPane:
-			s.Warnings = append(s.Warnings, fmt.Sprintf("ignoring %s inside %s's recorded herdr pane: the pane decides", k, s.Pane.Who.Name))
-		case slices.Contains(envKeys, k):
+		if k, v, _ := strings.Cut(kv, "="); strings.HasPrefix(k, "BS_") && v != "" {
 			overrides[k] = v
 		}
 	}
-	if s.InPane {
-		s.Project, s.ProjectFrom = s.Pane.Project, fmt.Sprintf("herdr pane %s, recorded for %s in %s", s.Pane.Pane, s.Pane.Who.Name, s.Pane.Logbook)
-		if s.Pane.Repo != "" {
-			s.Repo, s.RepoFrom = s.Pane.Repo, "the repo "+s.Pane.Who.Name+"'s entry recorded"
-		} else if err := s.cwdRepo(ctx, env.Dir, run); err != nil {
+	// The project comes first, from the repo bs runs in (ADR-0010 Amendment 4): every call
+	// acts in it, whoever calls; then who calls, in it.
+	if err := s.findProject(ctx, env.Dir, run, ""); err != nil {
+		return s, err
+	}
+	if ports.Proc != nil {
+		if err := s.resolve(ctx, env, ports, dir, home); err != nil {
 			return s, err
 		}
-	} else if err := s.findProject(ctx, env.Dir, run, overrides["BS_PROJECT"]); err != nil {
+	}
+	if s.Caller.Name == "" { // no process table to walk: config and doctor in tests
+		s.Caller = core.Caller{Name: core.Keeper, Role: core.KeeperR, How: core.ByNobody}
+	}
+	if s.Caller.Recorded() {
+		for k := range overrides {
+			s.Warnings = append(s.Warnings, fmt.Sprintf("ignoring %s: %s, a recorded session, runs this bs, so the repo it runs in decides", k, s.Caller.Name))
+		}
+		clear(overrides)
+		if s.Project == "" { // outside any repo, a session acts in its own project (OQ-K6)
+			s.Project, s.ProjectFrom = s.Caller.Project, "the project whose logbook ("+s.Caller.Logbook+") records "+s.Caller.Name
+			s.Repo, s.RepoFrom = s.Caller.Repo, "the repo "+s.Caller.Name+"'s entry recorded"
+		}
+	} else if err := s.findProject(ctx, "", run, overrides["BS_PROJECT"]); err != nil {
 		return s, err
+	}
+	for k := range overrides {
+		if !slices.Contains(envKeys, k) {
+			delete(overrides, k)
+		}
 	}
 	if pin := overrides["BS_LOGBOOK_DIR"]; pin != "" {
 		unpinned, err := config.Load(config.Input{Dir: dir, Project: s.Project, Home: home})
@@ -164,7 +163,7 @@ func load(ctx context.Context, env Env, ports Ports) (*settings, error) {
 // and different is refused (bees-12.47): a pin from another session must never silently
 // beat the repo you are in.
 func (s *settings) findProject(ctx context.Context, cwd string, run port.Runner, pinned string) error {
-	if cwd != "" {
+	if cwd != "" && s.Project == "" {
 		main, err := mainCheckout(ctx, run, cwd)
 		switch {
 		case errors.Is(err, errNotGit):
@@ -183,23 +182,6 @@ func (s *settings) findProject(ctx context.Context, cwd string, run port.Runner,
 	case p != s.Project:
 		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("BS_PROJECT=%s names another project than the repo you are in (%s)", pinned, s.Project),
 			Next: "env -u BS_PROJECT " + bsname.Cmd + " ..., or run it from " + p + "'s repo"}
-	}
-	return nil
-}
-
-// cwdRepo takes the git repo bs runs in as the repo when it is the pane's project's: a
-// queen's entry records no repo.
-func (s *settings) cwdRepo(ctx context.Context, cwd string, run port.Runner) error {
-	if cwd == "" {
-		return nil
-	}
-	main, err := mainCheckout(ctx, run, cwd)
-	switch {
-	case errors.Is(err, errNotGit):
-	case err != nil:
-		return &core.Exit{Code: core.ExitCantCheck, Msg: bsname.Cmd + " can't tell which project " + cwd + " is in", Err: err}
-	case config.Normalise(filepath.Base(main)) == s.Project:
-		s.Repo, s.RepoFrom = main, "the git repo "+bsname.Cmd+" runs in"
 	}
 	return nil
 }
@@ -294,7 +276,7 @@ func mainCheckout(ctx context.Context, run port.Runner, dir string) (string, err
 		return filepath.Dir(common), nil
 	}
 	return "", &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("%s is a linked worktree of %s, whose main checkout git doesn't record", top, common),
-		Next: "run " + bsname.Cmd + " in the main checkout, or outside a recorded herdr pane with BS_PROJECT set"}
+		Next: "run " + bsname.Cmd + " in the main checkout, or from the keeper's shell with BS_PROJECT set"}
 }
 
 // checkLogbook checks s names a project and, on a herdr --session toy, that its logbook
@@ -315,8 +297,8 @@ func (s *settings) checkLogbook(env Env) error {
 	return nil
 }
 
-// needProject refuses when bs can't tell the project. A recorded pane always names its
-// project (bees-13.15), so this is outside one.
+// needProject refuses when bs can't tell the project. A recorded session always names its
+// own (OQ-K6), so this is the keeper's.
 func (s *settings) needProject() error {
 	if s.Project == "" {
 		return &core.Exit{Code: core.ExitRefused, Msg: "no project: " + bsname.Cmd + " isn't in a git repo and BS_PROJECT is unset", Next: "cd into the project's repo"}
@@ -352,14 +334,14 @@ func harnessProgram(name string) string {
 	return cmp.Or(map[string]string{"claude_code": "claude"}[name], name)
 }
 
-// unpinned refuses a command that records a pane (bs queen, bs spawn) under a
-// BS_LOGBOOK_DIR pin other than paths.logbook_dir: the entry would land where no pane
-// scan looks, since a recorded pane's bs reads only the config's dir (motif 14).
+// unpinned refuses a command that records a session (bs queen, bs spawn) under a
+// BS_LOGBOOK_DIR pin other than paths.logbook_dir: the entry would land where no identity
+// scan looks, since a recorded session's bs reads only the config's dir (motif 14).
 func (s *settings) unpinned(cmd string) error {
 	if s.PinnedDir == "" {
 		return nil
 	}
-	return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("BS_LOGBOOK_DIR=%s isn't paths.logbook_dir (%s): a pane recorded there is never found by its own "+bsname.Cmd+" calls; nothing was recorded", s.PinnedDir, s.ConfigDir),
+	return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("BS_LOGBOOK_DIR=%s isn't paths.logbook_dir (%s): a session recorded there is never found by its own "+bsname.Cmd+" calls; nothing was recorded", s.PinnedDir, s.ConfigDir),
 		Next: "env -u BS_LOGBOOK_DIR " + bsname.Cmd + " " + cmd + " ..., or set paths.logbook_dir in the session's config"}
 }
 
@@ -384,4 +366,34 @@ func unmade(kind string) string {
 	default:
 		return bsname.Cmd + " spawn makes only git_worktree workspaces until bees-13.11 brings command"
 	}
+}
+
+// resolve finds who runs bs (core.Resolve): in the project of the repo bs runs in, then
+// in every logbook of the config in effect and of the default config (R9), unpinned.
+func (s *settings) resolve(ctx context.Context, env Env, ports Ports, dir, home string) error {
+	getenv := func(k string) string { return core.Getenv(env.Vars, k) }
+	var dirs []string
+	for _, d := range []string{dir, ""} {
+		if d == "" { // the default config: a toy's worker is spawned in the real dir
+			var err error
+			if d, _, err = config.Dir(func(k string) string { return map[bool]string{true: "", false: getenv(k)}[k == "HERDR_SESSION"] }); err != nil {
+				return err
+			}
+		}
+		l, err := config.Load(config.Input{Dir: d, Project: s.Project, Home: home})
+		if err != nil {
+			return cantRead(err)
+		}
+		if ld := l.Expand(l.Paths.LogbookDir); !slices.ContainsFunc(dirs, func(o string) bool { return samePath(o, ld) }) {
+			dirs = append(dirs, ld)
+		}
+	}
+	in := core.ResolveIn{Project: s.Project, Dirs: dirs, Self: env.Self, Session: s.Session, Pane: getenv("HERDR_PANE_ID"),
+		Run: ports.Run, Proc: ports.Proc, Program: harnessProgram}
+	if s.Project != "" {
+		in.Logbook = filepath.Join(dirs[0], s.Project+".db")
+	}
+	c, err := core.Resolve(ctx, in)
+	s.Caller = c
+	return err
 }

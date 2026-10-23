@@ -26,7 +26,7 @@ type GoalChange struct {
 
 // RecordGoal records change c to spawn's goal.
 func (l *Logbook) RecordGoal(ctx context.Context, spawn ID, name string, c GoalChange) (ID, error) {
-	return insert(ctx, l.db, entry{kind: "goal", actor: c.By, subject: name, ref: spawn, data: c})
+	return l.insert(ctx, entry{kind: "goal", actor: c.By, subject: name, ref: spawn, data: c})
 }
 
 // Effective is a spawn's goal as its goal entries left it.
@@ -156,10 +156,10 @@ func (l *Logbook) RecordDone(ctx context.Context, d Done, landed *Landed) (ID, e
 	var id ID
 	err := l.write(ctx, func(tx *sql.Tx) error {
 		var err error
-		if id, err = insert(ctx, tx, entry{kind: "done", actor: d.Name, subject: d.Queen, ref: d.Spawn, data: d}); err != nil || landed == nil {
+		if id, err = insertOn(ctx, tx, entry{kind: "done", actor: d.Name, subject: d.Queen, ref: d.Spawn, data: d}); err != nil || landed == nil {
 			return err
 		}
-		_, err = insert(ctx, tx, landedEntry(d.Spawn, d.Name, d.Name, *landed))
+		_, err = insertOn(ctx, tx, landedEntry(d.Spawn, d.Name, d.Name, *landed))
 		return err
 	})
 	return id, err
@@ -195,7 +195,7 @@ type Landed struct {
 // RecordLanded records that spawn's goal is complete. A spawn lands once: a second call
 // is a no-op.
 func (l *Logbook) RecordLanded(ctx context.Context, spawn ID, name, actor string, ld Landed) error {
-	_, err := insert(ctx, l.db, landedEntry(spawn, name, actor, ld))
+	_, err := l.insert(ctx, landedEntry(spawn, name, actor, ld))
 	return err
 }
 
@@ -225,7 +225,7 @@ func (l *Logbook) RecordEnd(ctx context.Context, by string, spawn ID, e Ended) e
 		if err := tx.QueryRowContext(ctx, `SELECT subject FROM entries WHERE id = ? AND kind = 'spawned'`, string(spawn)).Scan(&name); err != nil {
 			return fmt.Errorf("spawn %s: %w", spawn, err)
 		}
-		_, err := insert(ctx, tx, entry{id: "end:" + string(spawn), kind: "ended", actor: by, subject: name, ref: spawn, data: e})
+		_, err := insertOn(ctx, tx, entry{id: "end:" + string(spawn), kind: "ended", actor: by, subject: name, ref: spawn, data: e})
 		return err
 	})
 }

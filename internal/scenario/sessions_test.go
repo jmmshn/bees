@@ -122,29 +122,33 @@ func TestSendReadsAMessageFromStdin(t *testing.T) {
 	must(t, x.worker("toy-1", 1, "inbox"), 0, "line one\nline two\n")
 }
 
-// bees-13.14: a keeper's herdr shell is a pane no entry recorded: --as names the session
-// there as outside herdr, and without it bs says so.
-func TestAnUnrecordedPaneTakesAs(t *testing.T) {
+// bees-13.14, bees-13.49: a keeper's herdr shell is a pane no entry recorded, in no
+// worker's workspace: bs runs there as the keeper, and --as names a session as outside
+// herdr.
+func TestAnUnrecordedPaneIsTheKeeper(t *testing.T) {
 	x := newToy(t)
 	x.start()
 	x.shell(x.session, "keeper", x.repo)
-	must(t, x.worker("keeper", 1, "send", "--as", "keeper", "queen-toy", "hi"), 0, "to queen-toy")
-	must(t, x.worker("keeper", 2, "inbox"), 2, "not in a recorded herdr pane: name the session with --as")
-	must(t, x.keeper("inbox", "--as", "queen-toy"), 0, "from keeper", "hi")
+	must(t, x.worker("keeper", 1, "send", "queen-toy", "hi"), 0, "to queen-toy")
+	must(t, x.worker("keeper", 2, "inbox"), 0, "no unread messages")
+	must(t, x.worker("keeper", 3, "send", "--as", "keeper", "queen-toy", "again"), 0, "to queen-toy")
+	must(t, x.keeper("inbox", "--as", "queen-toy"), 0, "from keeper", "hi", "again")
 }
 
-// bees-13.15, bees-12.43: a worker finds its project from its pane, wherever its cwd is:
-// outside every repo, or inside another project's.
-func TestAPaneActsOnItsOwnProjectWhereverItsCwdIs(t *testing.T) {
+// ADR-0010 Amendment 4 (OQ-K6): a call acts in the repo it runs in. Outside every repo a
+// session acts in its own project; inside another project's repo it acts there, as a
+// session of its own project (here other has no logbook, so status is refused).
+func TestASessionActsInTheRepoItRunsIn(t *testing.T) {
 	x := newToy(t)
 	x.spawn("toy-1", "verdict")
 	other := filepath.Join(filepath.Dir(x.repo), "other")
 	x.git(filepath.Dir(x.repo), "init", "-q", other)
-	for i, dir := range []string{os.TempDir(), other} {
-		x.harness.Step(t, "toy-1", "cd", dir)
-		must(t, x.worker("toy-1", 2*i+2, "status"), 0, "toy-1")
-	}
-	must(t, x.worker("toy-1", 5, "inbox"), 0, "You own toy-1")
+	x.harness.Step(t, "toy-1", "cd", os.TempDir())
+	must(t, x.worker("toy-1", 2, "status"), 0, "as toy-1 (worker of toy")
+	x.harness.Step(t, "toy-1", "cd", other)
+	must(t, x.worker("toy-1", 4, "status"), 2, "no logbook for project other")
+	x.harness.Step(t, "toy-1", "cd", os.TempDir())
+	must(t, x.worker("toy-1", 6, "inbox"), 0, "You own toy-1")
 	// The queen too: her entry records the repo she started in, so a spawn from anywhere
 	// still has one.
 	x.startQueen()
@@ -165,9 +169,12 @@ func TestThePaneScanReadsEveryLogbook(t *testing.T) {
 	}
 	lb.Close()
 	x.write(filepath.Join(dir, "toy.db.pre-1"), "not a logbook")
-	must(t, x.worker("toy-1", 1, "inbox"), 0, "You own toy-1")
+	must(t, x.keeper("status"), 0)
 	x.write(filepath.Join(dir, "broken.db"), "not a logbook")
-	must(t, x.worker("toy-1", 2, "inbox"), 6, "broken.db")
+	// A worker is found in its own project's logbook first (P-first); the keeper's call,
+	// found in none, reads every one and fails closed.
+	must(t, x.worker("toy-1", 1, "inbox"), 0, "You own toy-1")
+	must(t, x.keeper("status"), 6, "broken.db")
 }
 
 // A pane on a second herdr session with the same pane id as a recorded one names no one
@@ -185,7 +192,7 @@ func TestTheSamePaneIDOnAnotherSessionNamesNoOne(t *testing.T) {
 	if w.Pane != sp.Herdr.Pane {
 		t.Fatalf("toy2's first pane is %s, not %s: herdr numbers each server's panes from w1:p1", w.Pane, sp.Herdr.Pane)
 	}
-	must(t, x.worker("elsewhere", 1, "inbox"), 2, "not in a recorded herdr pane")
+	must(t, x.worker("elsewhere", 1, "inbox"), 0, "no unread messages") // the keeper's
 	must(t, x.worker("elsewhere", 2, "inbox", "--as", "toy-1"), 0, "You own toy-1")
 }
 
@@ -687,8 +694,8 @@ func TestTheResumeHintRunsAsPrinted(t *testing.T) {
 	}
 }
 
-// An unreadable target logbook on send --project is exit 6, nothing stored, with a next:
-// (bees-13.9 re-review 2).
+// An unreadable logbook is exit 6, nothing stored, with a next: (bees-13.9 re-review 2):
+// the keeper's identity reads every logbook first, and fails closed (bees-13.49).
 func TestSendAcrossProjectsToAnUnreadableLogbook(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root reads a 0000 file")
@@ -705,7 +712,7 @@ func TestSendAcrossProjectsToAnUnreadableLogbook(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(other, 0o600) })
-	must(t, x.queen("send", "--project", "other", "queen-other", "hi"), 6, "can't read", "nothing stored", "next: bs doctor")
+	must(t, x.queen("send", "--project", "other", "queen-other", "hi"), 6, "can't read logbook "+other+" to find who runs it", "next: check "+other)
 }
 
 // A dead worker recorded on another harness than this bs starts is refused, never resumed

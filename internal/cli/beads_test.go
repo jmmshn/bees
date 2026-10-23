@@ -178,8 +178,8 @@ func TestACurrentOrForeignBsDoesNotWarn(t *testing.T) {
 
 // A worker is told to ask its queen, never to install bs itself.
 func TestAStaleBsTellsAWorkerToAskTheQueen(t *testing.T) {
-	worker := &settings{Project: "bees", Pane: &core.Pane{Who: core.Who{Name: "bees-1-2"}}}
-	queen := &settings{Project: "bees", Pane: &core.Pane{Who: core.Who{Name: "queen-bees", Queen: true}}}
+	worker := &settings{Project: "bees", Caller: core.Caller{Name: "bees-1-2", Role: core.WorkerR}}
+	queen := &settings{Project: "bees", Caller: core.Caller{Name: "queen-bees", Role: core.QueenR}}
 	if got := staleFix(worker); !strings.Contains(got, `bs send queen-bees "bs is stale"`) || strings.Contains(got, "go install") {
 		t.Errorf("worker: %q", got)
 	}

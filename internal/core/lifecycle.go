@@ -32,7 +32,7 @@ import (
 // o.Wait, bs asks the review host again every Timing.CIPoll until CI finishes, then hands
 // off or names what failed, and exit 11 past o.Wait (it runs in the caller's foreground:
 // no background job of the harness's). o.Force waives the gate and nothing else.
-func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts) (logbook.Done, error) {
+func (c *Core) Done(ctx context.Context, who Caller, self int, h Handed, o DoneOpts) (logbook.Done, error) {
 	force := o.Force
 	// With o.Wait every look is bounded from here, the last included, so bs answers before
 	// the caller's shell call is cut (motif 15); recording a handoff that passed is not.
@@ -43,7 +43,7 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 		lookCtx, cancel = context.WithDeadline(ctx, deadline.Add(c.timing().WaitGrace))
 		defer cancel()
 	}
-	if who.Queen {
+	if who.Role == QueenR {
 		return logbook.Done{}, exit(ExitRefused, "", nil, bsname.Cmd+" done is a worker's handoff; %s is a queen", who.Name)
 	}
 	if who.Spawn == "" {

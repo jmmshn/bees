@@ -39,31 +39,25 @@ func TestASpawnRoundTrips(t *testing.T) {
 	}
 }
 
-// Identity is keyed by (session, pane): a herdr --session server numbers its panes from
-// w1:p1 too, so the same pane id on two servers is two sessions (ADR-0010).
-func TestInPaneKeysOnTheHerdrSession(t *testing.T) {
+// Sessions lists every open session with where herdr runs it: each worker's open spawn
+// and each queen's newest entry; an ended spawn is none (ADR-0010 Amendment 4 Identity).
+func TestSessionsAreTheOpenEntries(t *testing.T) {
 	ctx := context.Background()
 	lb := open(t, filepath.Join(t.TempDir(), "bees.db"))
 	a := spawn(t, lb, "toy-1", "default", "w1:p1", "branch")
 	b := spawn(t, lb, "toy-2", "toy", "w1:p1", "branch")
-	for session, want := range map[string]logbook.ID{"default": a.ID, "toy": b.ID} {
-		in, err := lb.InPane(ctx, session, "w1:p1")
-		if err != nil || len(in) != 1 || in[0].Spawn != want {
-			t.Fatalf("InPane(%s) = %+v, %v; want spawn %s", session, in, err, want)
-		}
+	in, err := lb.Sessions(ctx)
+	if err != nil || len(in) != 2 || in[0].Spawn != a.ID || in[0].Session != "default" || in[1].Spawn != b.ID || in[1].Session != "toy" || in[1].Pane != "w1:p1" {
+		t.Fatalf("Sessions() = %+v, %v", in, err)
 	}
-	if in, _ := lb.InPane(ctx, "other", "w1:p1"); len(in) != 0 {
-		t.Fatalf("another server's pane matched: %+v", in)
-	}
-	// An ended spawn no longer holds its pane; a queen's newest entry does.
 	if err := lb.RecordEnd(ctx, "queen-toy", a.ID, logbook.Ended{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := lb.RecordQueen(ctx, logbook.Queen{Name: "queen-toy", Session: "default", Pane: "w1:p1", Process: logbook.Process{PID: 5, Start: "s"}}, nil); err != nil {
+	if _, _, err := lb.RecordQueen(ctx, logbook.Queen{Name: "queen-toy", Session: "default", Pane: "w1:p2", Process: logbook.Process{PID: 5, Start: "s"}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	in, err := lb.InPane(ctx, "default", "w1:p1")
-	if err != nil || len(in) != 1 || !in[0].Queen || in[0].Process.PID != 5 {
+	in, err = lb.Sessions(ctx)
+	if err != nil || len(in) != 2 || in[0].Spawn != b.ID || !in[1].Queen || in[1].Process.PID != 5 || in[1].Pane != "w1:p2" {
 		t.Fatalf("after end: %+v, %v", in, err)
 	}
 }

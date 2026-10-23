@@ -177,8 +177,10 @@ func TestOpenMigratesAVersion1Logbook(t *testing.T) {
 	if q, ok, err := lb.LatestQueen(ctx, "queen-toy"); err != nil || !ok || q.Session != "default" || q.PID != 10 {
 		t.Fatalf("queen = %+v, %v, %v", q, ok, err)
 	}
-	if in, err := lb.InPane(ctx, "default", "w3:p1"); err != nil || len(in) != 1 || in[0].Name != "toy-1" || in[0].Process.PID != 20 {
-		t.Fatalf("InPane = %+v, %v", in, err)
+	if in, err := lb.Sessions(ctx); err != nil || !slices.ContainsFunc(in, func(r logbook.Recorded) bool {
+		return r.Name == "toy-1" && r.Session == "default" && r.Pane == "w3:p1" && r.Process.PID == 20
+	}) {
+		t.Fatalf("Sessions = %+v, %v", in, err)
 	}
 }
 

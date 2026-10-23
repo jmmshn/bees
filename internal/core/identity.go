@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/jmmshn/bees/internal/bsname"
 	"github.com/jmmshn/bees/internal/herdr"
@@ -15,194 +16,393 @@ import (
 	"github.com/jmmshn/bees/internal/proc"
 )
 
-// Who is the session calling bs, as identity found it.
-type Who struct {
-	Name    string
-	Queen   bool
+// Role is what a caller may do in the project a call acts in (ADR-0010 Amendment 4).
+type Role string
+
+const (
+	KeeperR Role = "keeper"  // no recorded ancestor in any logbook bs can see
+	QueenR  Role = "queen"   // P's queen entry recorded an ancestor
+	WorkerR Role = "worker"  // an open spawn of P recorded an ancestor (or the tripwire)
+	Foreign Role = "foreign" // a session another project recorded, acting in P
+)
+
+// Keeper is the name bs gives a caller with no recorded ancestor.
+const Keeper = "keeper"
+
+// How is how Resolve found a caller.
+type How string
+
+const (
+	ByAncestor How = "ancestor"
+	ByTripwire How = "tripwire"
+	ByAs       How = "--as"
+	ByNobody   How = "keeper"
+)
+
+// Caller is who bs takes the caller for, in project P (ADR-0010 Amendment 4 Identity).
+type Caller struct {
+	Name    string // queen-<p>, a worker's name, or "keeper"
+	Role    Role
+	Project string     // the project whose logbook recorded it; "" for the keeper
 	Spawn   logbook.ID // a worker's open spawned entry
+	Spawned time.Time  // when it was spawned
 	Process proc.Process
-}
-
-// ErrOutsidePane is a caller in no recorded herdr pane: tests, scripts, the keeper's
-// shell (a herdr pane no entry recorded among them), where --as names the session
-// (bees-13.14).
-var ErrOutsidePane = errors.New("not in a recorded herdr pane")
-
-// Pane is a herdr pane as the scan found it: the open entry that recorded it, in its
-// project's logbook.
-type Pane struct {
+	How     How
+	Logbook string // the logbook that recorded it
+	Repo    string // the repo it was recorded in: a worker's workspace's, a queen's own
+	// Session and Pane are where its entry says herdr runs it.
 	Session, Pane string
-	Project       string // the logbook's file name without .db
-	Logbook       string
-	Who           Who
-	Repo          string // the recorded repo: a worker's workspace's, a queen's own
-	Unconfirmed   bool   // a worker with no live start (none yet, or its process died), whose harness runs above bs: Identify heals it
+	Workspace     string // the herdr workspace the tripwire found it by
+	Unconfirmed   bool   // a worker with no live start whose harness runs above bs: Confirm heals it
+	Peek          bool   // --as from the keeper's shell: bs inbox marks nothing read
+
+	harness, herdrWS, dir string // a worker's recorded harness, herdr workspace and workspace dir
+	legacy                bool   // the old bs's spawn, never healed
 }
 
-// ScanIn is what ScanPanes reads: the pane, the calling bs, and the ports to look with.
-type ScanIn struct {
-	Dir           string // paths.logbook_dir: every <project>.db in it is read, read-only
-	Session, Pane string // HERDR_SESSION (or default) and HERDR_PANE_ID
-	Self          int
+// Recorded reports whether c is a session some logbook recorded, not the keeper.
+func (c Caller) Recorded() bool { return c.Role != KeeperR && c.Role != "" }
+
+// ResolveIn is everything Resolve looks at; nothing in it is a name the caller typed.
+type ResolveIn struct {
+	Project string   // P: the project of the repo bs runs in; "" outside any
+	Logbook string   // P's logbook; "" when P is
+	Dirs    []string // every logbook dir bs can see: the config in effect's, then the default config's
+	Self    int
+	// Session and Pane are HERDR_SESSION (or default) and HERDR_PANE_ID: hints for the
+	// heal and the tripwire, never identity.
+	Session, Pane string
 	Run           port.Runner
 	Proc          port.Proc
 	Program       func(harness string) string // a recorded harness's process name; nil skips the heal probe
 }
 
-// ScanPanes finds the open entry that recorded the calling pane (ADR-0010 identity),
-// scanning every logbook in in.Dir read-only: <project>.db only (a .db.pre-N copy is
-// skipped), an unreadable one an error naming it. An entry counts only while its
-// recorded process is alive and an ancestor of in.Self. A worker entry with no start
-// counts when its harness, with --name <worker> in its argv, runs in the pane above
-// in.Self: its start is healed when its logbook is opened. Two entries counting is an
-// error (motif 4); none is ok false, and the caller is outside a recorded pane. Any
-// lookup that fails is an error, never "nobody" (motif 7).
-func ScanPanes(ctx context.Context, in ScanIn) (Pane, bool, error) {
-	es, err := os.ReadDir(in.Dir)
-	if errors.Is(err, os.ErrNotExist) {
-		return Pane{}, false, nil
-	} else if err != nil {
-		return Pane{}, false, exit(ExitCantCheck, bsname.Cmd+" doctor", err, bsname.Cmd+" can't read the logbook dir %s to find this pane's session", in.Dir)
-	}
+// Resolve finds who calls bs (ADR-0010 Amendment 4 Identity), reading every logbook
+// read-only: the nearest of self's ancestors that P's logbook recorded (a queen's
+// process, an open spawn's start, alive), else a worker of P with no live start whose
+// harness runs in the hinted pane above self (Confirm heals it), else the tripwire (the
+// hinted herdr pane, recorded by nobody, is in a live spawn's herdr workspace or
+// directory: that worker), else the nearest ancestor another project recorded (Foreign;
+// outside any repo, that session acting in its own project), else the keeper. Two
+// sessions at the same distance is exit 1 naming both (motif 4); any lookup that fails is
+// exit 6, never the keeper (motif 7).
+func Resolve(ctx context.Context, in ResolveIn) (Caller, error) {
 	up, err := ancestors(in.Proc, in.Self)
 	if err != nil {
-		return Pane{}, false, exit(ExitCantCheck, bsname.Cmd+" doctor", err, bsname.Cmd+" can't walk its own ancestors")
+		return Caller{}, exit(ExitCantCheck, bsname.Cmd+" doctor", err, bsname.Cmd+" can't walk its own ancestors")
 	}
-	var found []Pane
-	var probe *herdr.PaneProcesses // the pane's processes, looked up once, for a heal
-	for _, e := range es {
-		project, ok := strings.CutSuffix(e.Name(), ".db")
-		if !ok || e.IsDir() {
+	var mine []Caller // P's open sessions
+	if in.Logbook != "" {
+		if mine, err = sessions(ctx, in.Logbook, in.Project); err != nil {
+			return Caller{}, err
+		}
+		if c, ok, err := nearest(in.Proc, up, mine); err != nil || ok {
+			return c, err
+		}
+		if c, ok, err := heal(ctx, in, up, mine); err != nil || ok {
+			return c, err
+		}
+		if c, ok, err := tripwire(ctx, in, mine); err != nil || ok {
+			return c, err
+		}
+	}
+	var others []Caller
+	for _, dir := range in.Dirs {
+		es, err := os.ReadDir(dir)
+		if errors.Is(err, os.ErrNotExist) {
 			continue
+		} else if err != nil {
+			return Caller{}, exit(ExitCantCheck, bsname.Cmd+" doctor", err, bsname.Cmd+" can't read the logbook dir %s to find who runs it", dir)
 		}
-		path := filepath.Join(in.Dir, e.Name())
-		recs, err := inPane(ctx, path, in.Session, in.Pane)
-		if err != nil {
-			return Pane{}, false, exit(ExitCantCheck, "check "+path+" (a logbook dir holds only <project>.db logbooks)", err, bsname.Cmd+" can't read logbook %s to find this pane's session", path)
-		}
-		for _, r := range recs {
-			p := Pane{Session: in.Session, Pane: in.Pane, Project: project, Logbook: path,
-				Who: Who{Name: r.Name, Queen: r.Queen, Spawn: r.Spawn, Process: r.Process}, Repo: r.Repo}
-			alive := false
-			if r.HasProcess {
-				if alive, err = in.Proc.Alive(r.Process); err != nil {
-					return Pane{}, false, exit(ExitCantCheck, bsname.Cmd+" doctor", err, bsname.Cmd+" can't tell whether %s's process runs", r.Name)
-				}
-			}
-			// A worker with no start, or whose recorded process died (restarted by hand in
-			// its pane), counts when its harness runs here above in.Self: Identify heals it.
-			if !alive {
-				if r.Queen || in.Program == nil || r.Legacy { // the old bs's worker: never healed (SPEC7)
-					continue
-				}
-				if probe == nil {
-					pi, err := (herdr.Client{Run: in.Run, Session: in.Session}).ProcessInfo(ctx, in.Pane)
-					if err != nil && !errors.Is(err, herdr.ErrPaneGone) {
-						return Pane{}, false, exit(ExitCantCheck, "herdr --session "+in.Session+" pane process-info --pane "+in.Pane, err, "pane %s holds %s, whose start was never confirmed, and "+bsname.Cmd+" can't look for its harness", in.Pane, r.Name)
-					}
-					probe = &pi
-				}
-				i := slices.IndexFunc(probe.Foreground, func(f herdr.PaneProcess) bool {
-					return isOwn(f, in.Program(r.Harness), r.Name) && slices.Contains(up, f.PID)
-				})
-				if i < 0 {
-					continue
-				}
-				p.Unconfirmed = true
-				found = append(found, p)
+		for _, e := range es {
+			project, ok := strings.CutSuffix(e.Name(), ".db")
+			path := filepath.Join(dir, e.Name())
+			if !ok || e.IsDir() || samePath(path, in.Logbook) || slices.ContainsFunc(others, func(c Caller) bool { return samePath(c.Logbook, path) }) {
 				continue
 			}
-			if slices.Contains(up, r.Process.PID) {
-				found = append(found, p)
+			cs, err := sessions(ctx, path, project)
+			if err != nil {
+				return Caller{}, err
 			}
+			others = append(others, cs...)
+		}
+	}
+	c, ok, err := nearest(in.Proc, up, others)
+	switch {
+	case err != nil || !ok:
+		return Caller{Name: Keeper, Role: KeeperR, How: ByNobody}, err
+	case in.Project != "":
+		c.Role = Foreign
+	}
+	return c, nil
+}
+
+// nearest is the session among cs whose recorded process is alive and the nearest of up.
+func nearest(ps port.Proc, up []int, cs []Caller) (Caller, bool, error) {
+	var found []Caller
+	near := len(up)
+	for _, c := range cs {
+		i := slices.Index(up, c.Process.PID)
+		if c.Process.PID <= 0 || i < 0 || i > near {
+			continue
+		}
+		switch alive, err := ps.Alive(c.Process); {
+		case err != nil:
+			return Caller{}, false, exit(ExitCantCheck, bsname.Cmd+" doctor", err, bsname.Cmd+" can't tell whether %s's process runs", c.Name)
+		case !alive:
+		case i < near:
+			near, found = i, []Caller{c}
+		default:
+			found = append(found, c)
 		}
 	}
 	switch len(found) {
 	case 0:
-		return Pane{}, false, nil
+		return Caller{}, false, nil
 	case 1:
 		return found[0], true, nil
 	}
+	return Caller{}, false, claimed(found)
+}
+
+// claimed is the refusal for several sessions claiming one bs.
+func claimed(cs []Caller) error {
 	var names []string
-	for _, p := range found {
-		names = append(names, p.Who.Name+" ("+p.Logbook+")")
+	for _, c := range cs {
+		names = append(names, c.Name+" ("+c.Logbook+")")
 	}
-	return Pane{}, false, exit(ExitFail, bsname.Cmd+" status, then "+bsname.Cmd+" end the one that shouldn't be there", nil, "pane %s on herdr session %s is recorded by %d live sessions: %s", in.Pane, in.Session, len(found), strings.Join(names, ", "))
+	return exit(ExitFail, bsname.Cmd+" status, then "+bsname.Cmd+" end the one that shouldn't be there", nil, "this bs is claimed by %d live sessions: %s", len(cs), strings.Join(names, ", "))
 }
 
-// recorded is a logbook.Recorded with its spawn's workspace repo, and whether the spawn
-// is the old bs's (legacy), which is never healed.
-type recorded struct {
-	logbook.Recorded
-	Repo   string
-	Legacy bool
-}
-
-// inPane reads the entries of the logbook at path that recorded pane.
-func inPane(ctx context.Context, path, session, pane string) ([]recorded, error) {
-	lb, err := logbook.OpenReadOnly(ctx, path)
-	if err != nil {
-		return nil, err
+// heal finds a worker of P recorded in the hinted pane with no live start (none yet, or
+// its process died and was restarted by hand) whose harness, with --name <worker> in its
+// argv, runs there above self. The old bs's workers are never healed (SPEC7).
+func heal(ctx context.Context, in ResolveIn, up []int, mine []Caller) (Caller, bool, error) {
+	if in.Pane == "" || in.Program == nil {
+		return Caller{}, false, nil
 	}
-	defer lb.Close()
-	recs, err := lb.InPane(ctx, session, pane)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]recorded, len(recs))
-	for i, r := range recs {
-		out[i].Recorded = r
-		if r.Queen {
-			out[i].Repo = r.Repo
+	var probe *herdr.PaneProcesses // looked up once
+	var found []Caller
+	for _, c := range mine {
+		if c.Role != WorkerR || c.Session != in.Session || c.Pane != in.Pane || c.legacy {
 			continue
 		}
-		sp, err := lb.Spawn(ctx, r.Spawn)
-		if err != nil {
-			return nil, err
+		if c.Process.PID > 0 {
+			if alive, err := in.Proc.Alive(c.Process); err != nil || alive {
+				continue // a live start not above self is someone else's; one bs can't look at isn't healed
+			}
 		}
-		out[i].Repo, out[i].Legacy = sp.Workspace.Repo, sp.Legacy()
+		if probe == nil {
+			pi, err := (herdr.Client{Run: in.Run, Session: in.Session}).ProcessInfo(ctx, in.Pane)
+			if err != nil && !errors.Is(err, herdr.ErrPaneGone) {
+				return Caller{}, false, exit(ExitCantCheck, "herdr --session "+in.Session+" pane process-info --pane "+in.Pane, err, "pane %s holds %s, whose start was never confirmed, and "+bsname.Cmd+" can't look for its harness", in.Pane, c.Name)
+			}
+			probe = &pi
+		}
+		if slices.ContainsFunc(probe.Foreground, func(f herdr.PaneProcess) bool {
+			return isOwn(f, in.Program(c.harness), c.Name) && slices.Contains(up, f.PID)
+		}) {
+			c.Unconfirmed = true
+			found = append(found, c)
+		}
+	}
+	switch len(found) {
+	case 0:
+		return Caller{}, false, nil
+	case 1:
+		return found[0], true, nil
+	}
+	return Caller{}, false, claimed(found)
+}
+
+// tripwire takes the hinted herdr pane, which no entry recorded, for the live worker of P
+// whose recorded herdr workspace holds it, or whose workspace directory it works in.
+func tripwire(ctx context.Context, in ResolveIn, mine []Caller) (Caller, bool, error) {
+	if in.Pane == "" || !slices.ContainsFunc(mine, func(c Caller) bool { return c.Role == WorkerR }) {
+		return Caller{}, false, nil
+	}
+	panes, err := (herdr.Client{Run: in.Run, Session: in.Session}).PaneDirs(ctx)
+	if err != nil {
+		return Caller{}, false, exit(ExitCantCheck, "herdr --session "+in.Session+" pane list", err, "no recorded session runs this bs, and "+bsname.Cmd+" can't tell whether its pane %s is in a worker's workspace", in.Pane)
+	}
+	i := slices.IndexFunc(panes, func(p herdr.PaneDir) bool { return p.ID == in.Pane })
+	if i < 0 {
+		return Caller{}, false, nil
+	}
+	p := panes[i]
+	var found []Caller
+	for _, c := range mine {
+		if c.Role != WorkerR || c.Session != in.Session {
+			continue
+		}
+		if (c.herdrWS != "" && p.Workspace == c.herdrWS) || within(p.Cwd, c.dir, c.Repo) || within(p.ForegroundCwd, c.dir, c.Repo) {
+			c.How, c.Workspace = ByTripwire, c.herdrWS
+			found = append(found, c)
+		}
+	}
+	switch len(found) {
+	case 0:
+		return Caller{}, false, nil
+	case 1:
+		return found[0], true, nil
+	}
+	return Caller{}, false, claimed(found)
+}
+
+// within reports whether dir is ws or under it; a workspace that is the repo itself (kind
+// none) holds every shell in the repo, so it counts for nothing.
+func within(dir, ws, repo string) bool {
+	if dir == "" || ws == "" || samePath(ws, repo) {
+		return false
+	}
+	rel, err := filepath.Rel(ws, dir)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// sessions reads every open session of project's logbook at path, read-only.
+func sessions(ctx context.Context, path, project string) ([]Caller, error) {
+	cant := func(err error) error {
+		return exit(ExitCantCheck, "check "+path+" (a logbook dir holds only <project>.db logbooks)", err, bsname.Cmd+" can't read logbook %s to find who runs it", path)
+	}
+	lb, err := logbook.OpenReadOnly(ctx, path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, cant(err)
+	}
+	defer lb.Close()
+	recs, err := lb.Sessions(ctx)
+	if err != nil {
+		return nil, cant(err)
+	}
+	out := make([]Caller, 0, len(recs))
+	for _, r := range recs {
+		c := Caller{Name: r.Name, Role: WorkerR, Project: project, Spawn: r.Spawn, How: ByAncestor, Logbook: path,
+			Session: r.Session, Pane: r.Pane, Repo: r.Repo, harness: r.Harness}
+		if r.HasProcess {
+			c.Process = r.Process
+		}
+		if r.Queen {
+			c.Role = QueenR
+		} else {
+			sp, err := lb.Spawn(ctx, r.Spawn)
+			if err != nil {
+				return nil, cant(err)
+			}
+			c.Spawned, c.Repo, c.herdrWS, c.dir, c.legacy = sp.TS, sp.Workspace.Repo, sp.Herdr.Workspace, sp.Workspace.Dir, sp.Legacy()
+		}
+		out = append(out, c)
 	}
 	return out, nil
 }
 
-// Identify confirms p, the pane ScanPanes found, against this core's logbook, healing an
-// unconfirmed worker's start (ADR-0010): the entry must still be open, and its process
-// alive and an ancestor of self.
-func (c *Core) Identify(ctx context.Context, p Pane, self int) (Who, error) {
-	recs, err := c.Logbook.InPane(ctx, p.Session, p.Pane)
-	if err != nil {
-		return Who{}, err
-	}
-	i := slices.IndexFunc(recs, func(r logbook.Recorded) bool { return r.Name == p.Who.Name })
-	if i < 0 {
-		return Who{}, exit(ExitRefused, bsname.Cmd+" status", nil, "%s's entry for pane %s closed while bs looked", p.Who.Name, p.Pane)
-	}
-	r := recs[i]
-	if !r.HasProcess || p.Unconfirmed {
-		sp, err := c.Logbook.Spawn(ctx, r.Spawn)
+// Confirm finishes w, the caller Resolve found, against this core's logbook (P's): it
+// heals an unconfirmed worker's start (records it late), and warns of a tripwire.
+func (c *Core) Confirm(ctx context.Context, w Caller) (Caller, error) {
+	switch {
+	case w.How == ByTripwire:
+		c.warn("no recorded session runs this bs, but its herdr pane is in %s's workspace: taken for %s, with a worker's permissions", w.Name, w.Name)
+	case w.Unconfirmed:
+		sp, err := c.Logbook.Spawn(ctx, w.Spawn)
 		if err != nil {
-			return Who{}, err
+			return Caller{}, err
 		}
 		st, ok, err := c.StartOf(ctx, sp)
 		switch {
 		case err != nil:
-			return Who{}, exit(ExitCantCheck, "herdr --session "+p.Session+" pane process-info --pane "+p.Pane, err, "pane %s holds %s, whose start was never confirmed", p.Pane, r.Name)
+			return Caller{}, exit(ExitCantCheck, "herdr --session "+w.Session+" pane process-info --pane "+w.Pane, err, "pane %s holds %s, whose start was never confirmed", w.Pane, w.Name)
 		case !ok:
-			return Who{}, exit(ExitStart, bsname.Cmd+" end --incomplete "+r.Name, nil, "pane %s holds %s, whose start was never confirmed and whose harness "+bsname.Cmd+" can't find there", p.Pane, r.Name)
+			return Caller{}, exit(ExitStart, bsname.Cmd+" end --incomplete "+w.Name, nil, "pane %s holds %s, whose start was never confirmed and whose harness "+bsname.Cmd+" can't find there", w.Pane, w.Name)
 		}
-		r.Process = st.Process
+		w.Process, w.Unconfirmed = st.Process, false
 	}
-	up, err := c.ancestors(self)
-	if err != nil {
-		return Who{}, exit(ExitCantCheck, bsname.Cmd+" doctor", err, bsname.Cmd+" can't walk its own ancestors")
+	return w, nil
+}
+
+// As is w with --as as applied: a debug override, the keeper's alone, acting as the named
+// session of P with its role (and an inbox read so only peeks). Under any recorded session
+// --as must name that session (exit 2).
+func (c *Core) As(ctx context.Context, w Caller, as string) (Caller, error) {
+	switch {
+	case as == "" || as == w.Name:
+		return w, nil
+	case w.Recorded():
+		return Caller{}, exit(ExitRefused, "", nil, "--as %s: this bs runs under %s; --as is the keeper's, from a shell no session started", as, w.Name)
+	case as == Keeper:
+		return w, nil
+	case as == Queen(c.Project):
+		return Caller{Name: as, Role: QueenR, Project: c.Project, How: ByAs, Peek: true}, nil
 	}
-	switch alive, err := c.Proc.Alive(r.Process); {
+	sp, ok, err := c.Logbook.LatestSpawn(ctx, as)
+	switch {
 	case err != nil:
-		return Who{}, exit(ExitCantCheck, bsname.Cmd+" doctor", err, bsname.Cmd+" can't tell whether %s's process runs", r.Name)
-	case !alive || !slices.Contains(up, r.Process.PID):
-		return Who{}, exit(ExitRefused, bsname.Cmd+" status", nil, "%s's process (pid %d) is no longer this bs's ancestor", r.Name, r.Process.PID)
+		return Caller{}, err
+	case !ok || sp.Ended:
+		return Caller{}, exit(ExitRefused, bsname.Cmd+" status", nil, "--as %s: no open spawn for %s in project %s", as, as, c.Project)
 	}
-	return Who{Name: r.Name, Queen: r.Queen, Spawn: r.Spawn, Process: r.Process}, nil
+	return Caller{Name: as, Role: WorkerR, Project: c.Project, Spawn: sp.ID, Spawned: sp.TS, How: ByAs, Peek: true}, nil
+}
+
+// table is the permission table (ADR-0010 Amendment 4 Permissions), the one place it
+// lives: the roles that may run each command. A worker's check and done are of itself; a
+// foreign session's send goes to queen-P. A command not here runs for every role.
+var table = map[string][]Role{
+	"queen": {KeeperR}, "spawn": {KeeperR, QueenR}, "end": {KeeperR, QueenR}, "prune": {KeeperR, QueenR},
+	"goal": {KeeperR, QueenR}, "goal:discard": {KeeperR},
+	"check": {KeeperR, QueenR, WorkerR}, "done": {WorkerR},
+	"send": {KeeperR, QueenR, WorkerR, Foreign}, "inbox": {KeeperR, QueenR, WorkerR},
+	"bead:new": {KeeperR, QueenR, WorkerR}, "epic": {KeeperR, QueenR, WorkerR},
+}
+
+// doing is how a refusal names what each command does.
+var doing = map[string]string{
+	"queen": "starts a queen", "spawn": "spawns a worker", "end": "ends a worker", "prune": "prunes",
+	"goal": "changes a goal", "goal:discard": "discards a goal", "check": "checks a worker",
+	"done": "hands off", "inbox": "reads mail", "bead:new": "creates a bead", "epic": "creates an epic",
+}
+
+// May refuses w running cmd in project p (exit 2) unless the table lets its role; subject
+// is the worker or session cmd acts on ("" when none).
+func May(w Caller, cmd, p, subject string) error {
+	roles, listed := table[cmd]
+	ok := !listed || slices.Contains(roles, w.Role)
+	switch {
+	case ok && w.Role == WorkerR && cmd == "check" && subject != "" && subject != w.Name:
+		return exit(ExitRefused, bsname.Cmd+" check "+w.Name, nil, "%s runs this as a worker; a worker checks only its own work", w.Name)
+	case ok && w.Role == Foreign && cmd == "send" && subject != "" && subject != Queen(p):
+		ok = false
+	case ok:
+		return nil
+	}
+	if w.Role == Foreign {
+		return exit(ExitRefused, bsname.Cmd+" send "+Queen(p)+" \"...\"", nil, "you are %s of %s; message %s, the queen of %s, rather than %s", w.Name, w.Project, Queen(p), p, cmd)
+	}
+	var who []string
+	for _, r := range []Role{QueenR, KeeperR, WorkerR} {
+		if slices.Contains(roles, r) {
+			who = append(who, article(r))
+		}
+	}
+	why := "only " + strings.Join(who, " or ") + " " + doing[cmd]
+	if cmd == "goal" && w.Role == WorkerR {
+		why = "a worker never changes a goal; " + why
+	}
+	next := bsname.Cmd + " send " + Queen(p) + " \"...\""
+	switch w.Role {
+	case QueenR:
+		next = "ask the keeper"
+	case KeeperR:
+		next = bsname.Cmd + " status"
+	}
+	return exit(ExitRefused, next, nil, "%s runs this as %s; %s", w.Name, article(w.Role), why)
+}
+
+// article is a role with its article.
+func article(r Role) string {
+	if r == WorkerR {
+		return "a worker"
+	}
+	return "the " + string(r)
 }
 
 // ancestors is self and every process above it.

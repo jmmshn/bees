@@ -2,8 +2,11 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
+	"os"
+	"strings"
 
 	"github.com/jmmshn/bees/internal/bsname"
 	"github.com/jmmshn/bees/internal/goal"
@@ -62,6 +65,10 @@ func (c *Core) Queen(ctx context.Context, req QueenReq) ([]string, error) {
 	if err != nil {
 		return nil, exit(ExitRefused, bsname.Cmd+" config", err, "its harness refused the launch")
 	}
+	host, err := c.host(prompt.Queen)
+	if err != nil {
+		return nil, exit(ExitRefused, bsname.Cmd+" config", err, "her review host's section can't be read")
+	}
 	q := logbook.Queen{Name: name, Harness: c.HarnessName, Session: req.Session, Pane: req.Pane,
 		Process: logbook.Process{PID: req.Self, Start: start}, Exe: req.Exe, Repo: c.Repo}
 	switch prev, ok, err := c.Logbook.RecordQueen(ctx, q, running); {
@@ -72,12 +79,29 @@ func (c *Core) Queen(ctx context.Context, req QueenReq) ([]string, error) {
 	case !ok:
 		return nil, twin(prev)
 	}
-	l.Files = withPrompt(l.Files, prompt.Text(prompt.Queen, c.Project, c.Harness.Kind(), c.Kind, goal.BuiltinTypes())+prompt.Host(prompt.Queen, c.Review.Name()))
+	l.Files = withPrompt(l.Files, prompt.Text(prompt.Queen, c.Project, c.Harness.Kind(), c.Kind, goal.BuiltinTypes())+host)
 	args, err := c.writeFiles(name, l)
 	if err != nil {
 		return nil, exit(ExitFail, bsname.Cmd+" queen", err, "couldn't write her start files (her entry names this pid, which exits: harmless)")
 	}
 	return append([]string{c.Harness.Kind()}, args...), nil
+}
+
+// host is r's review host section of the prompt: review.fragment's file when the keeper
+// names one, else the host's built-in fragment. A file that can't be read, or is blank,
+// is an error: a session never starts without the instructions it was configured to get.
+func (c *Core) host(r prompt.Role) (string, error) {
+	if c.HostPrompt == "" {
+		return prompt.Host(r, c.Review.Name(), ""), nil
+	}
+	b, err := os.ReadFile(c.HostPrompt)
+	if err == nil && strings.TrimSpace(string(b)) == "" {
+		err = errors.New("it is blank")
+	}
+	if err != nil {
+		return "", fmt.Errorf("review.fragment %s: %w", c.HostPrompt, err)
+	}
+	return prompt.Host(r, c.Review.Name(), string(b)), nil
 }
 
 // withPrompt is files with text, the assembled prompt, added as prompt.md, the file a

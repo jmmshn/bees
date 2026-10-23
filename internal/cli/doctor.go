@@ -306,6 +306,16 @@ func (d *doctor) bd() {
 // bees-12.42).
 func (d *doctor) review() {
 	s := d.r.s
+	if f := s.hostPrompt(); f != "" {
+		switch b, err := os.ReadFile(f); {
+		case err != nil:
+			d.line("FAIL", "review", "review.fragment: %v: %s spawn refuses pr, push and review goals until it can be read", err, bsname.Cmd)
+		case strings.TrimSpace(string(b)) == "":
+			d.line("FAIL", "review", "review.fragment %s is blank: %s spawn refuses pr, push and review goals", f, bsname.Cmd)
+		default:
+			d.line("ok", "review", "the review host's section from %s", f)
+		}
+	}
 	if s.Review.Host != github.Name {
 		return
 	}

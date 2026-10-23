@@ -125,7 +125,11 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	}
 	text := prompt.Text(prompt.Worker, c.Project, c.Harness.Kind(), ws.Kind, g.Types())
 	if g.Reviewed() {
-		text += prompt.Host(prompt.Worker, c.Review.Name())
+		host, err := c.host(prompt.Worker)
+		if err != nil {
+			return logbook.Spawn{}, false, exit(ExitRefused, bsname.Cmd+" config", err, "%s: its review host's section can't be read; nothing was made", name)
+		}
+		text += host
 	}
 	launch.Files = withPrompt(launch.Files, text)
 	// A launch too long to type would fail after the record (motif 8): check its longest
@@ -275,7 +279,11 @@ func (c *Core) resume(ctx context.Context, sp logbook.Spawn, bead port.Bead, req
 	}
 	text := prompt.Text(prompt.Worker, c.Project, c.Harness.Kind(), sp.Workspace.Kind, e.Types())
 	if e.Reviewed() {
-		text += prompt.Host(prompt.Worker, c.Review.Name())
+		host, err := c.host(prompt.Worker)
+		if err != nil {
+			return exit(ExitRefused, bsname.Cmd+" config", err, "%s: its review host's section can't be read; nothing started", sp.Name)
+		}
+		text += host
 	}
 	launch.Files = withPrompt(launch.Files, text)
 	var replaces logbook.ID

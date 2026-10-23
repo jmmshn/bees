@@ -139,7 +139,7 @@ var ErrAlreadySpawned = errors.New("already spawned and not ended")
 // brief (if any), so a crash can't leave a recorded worker without its brief. The brief
 // refers to the spawn: once the spawn has ended, an unread brief is no longer unread.
 func (l *Logbook) RecordSpawn(ctx context.Context, by string, s Spawn, brief string) (ID, error) {
-	if len(s.Goal.Parts) == 0 {
+	if s.Goal.Type == "" {
 		return "", goal.ErrNoGoal // a spawn with no goal would read back as legacy
 	}
 	var id ID

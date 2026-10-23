@@ -668,14 +668,14 @@ INSERT INTO entries VALUES ('s1','2026-10-01T00:00:00.000Z','spawned','queen-toy
 	}
 }
 
-// The resume hint for a goal of several parts names one --goal per part, and runs as
-// printed; a discarded goal gets no resume hint (bees-13.9 review S5).
+// The resume hint names the --goal, and runs as printed; a discarded goal gets no resume
+// hint (bees-13.9 review S5).
 func TestTheResumeHintRunsAsPrinted(t *testing.T) {
 	x := newToy(t)
-	x.spawn("toy-1", "branch", "note")
+	x.spawn("toy-1", "branch:ready")
 	x.kill("toy-1")
 	r := x.keeper("status")
-	must(t, r, 0, "bs spawn --goal branch --goal note toy-1 resumes it")
+	must(t, r, 0, "bs spawn --goal branch:ready toy-1 resumes it")
 	_, hint, _ := strings.Cut(r.String(), "→ bs ")
 	hint, _, _ = strings.Cut(hint, " resumes it")
 	must(t, x.queen(strings.Fields(hint)...), 0, "resumed toy-1")
@@ -714,7 +714,7 @@ func TestAResumeOnAnotherHarnessIsRefused(t *testing.T) {
 	x := newToy(t)
 	x.start()
 	x.bead("toy-5", "work")
-	g, err := goal.Parse([]string{"branch"})
+	g, err := goal.Parse("branch")
 	if err != nil {
 		t.Fatal(err)
 	}

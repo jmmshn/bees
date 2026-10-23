@@ -457,8 +457,8 @@ func TestWaiversHoldAtEndAndAmendsAreRefused(t *testing.T) {
 		url := b.open(x, 1, sp.Workspace.Dir, "toy-1", false)
 		must(t, x.worker("toy-1", 1, "done"), 0)
 		// An amend tells the worker its new goal's fragments, and a review's marker.
-		must(t, x.keeper("goal", "toy-1", "pr", "review="+url), 0)
-		must(t, x.worker("toy-1", 2, "inbox"), 0, "now --goal pr review="+url, "bs:"+string(sp.ID), "## Goal", "--goal review=<url>")
+		must(t, x.keeper("goal", "toy-1", "review="+url), 0)
+		must(t, x.worker("toy-1", 2, "inbox"), 0, "now --goal review="+url, "bs:"+string(sp.ID), "## Goal", "--goal review=<url>")
 		must(t, x.keeper("goal", "toy-1", "push="+url), 2, "starts at its target's head")
 		must(t, x.keeper("goal", "toy-1", "pr"), 0)
 		b.close(x, 1)
@@ -470,33 +470,6 @@ func TestWaiversHoldAtEndAndAmendsAreRefused(t *testing.T) {
 			t.Fatalf("landed = %+v, %v; want landed with no complete check run", ld, ok)
 		}
 	})
-}
-
-// A mixed goal (push=<url> plus pr) holds every part: the worker's own branch is cut at the
-// push target's head, its commits must reach the target, and its own PR must pass too.
-func TestAMixedGoalHoldsEveryPart(t *testing.T) {
-	x := newToy(t)
-	b := ghBackend{}
-	b.setup(x, true)
-	other := filepath.Join(filepath.Dir(x.repo), "theirs")
-	x.git(x.repo, "worktree", "add", "-q", "-b", "feature", other)
-	b.commit(x, other)
-	target := b.open(x, 5, other, "feature", false)
-	sp := x.spawn("toy-1", "push="+target, "pr")
-	dir := sp.Workspace.Dir
-	if sp.Workspace.Branch != "toy-1" || x.headOf(b, dir) != x.git(other, "rev-parse", "HEAD") {
-		t.Fatalf("mixed workspace %+v not cut at the target's head", sp.Workspace)
-	}
-	must(t, x.worker("toy-1", 1, "inbox"), 0, "starts at "+target+"'s head", "git push origin HEAD:feature")
-	b.commit(x, dir)
-	b.open(x, 6, dir, "toy-1", false)
-	must(t, x.worker("toy-1", 2, "done"), 7, "push_moved")
-	b.update(x, 5, dir)
-	must(t, x.worker("toy-1", 3, "done"), 0)
-	b.land(x, 6)
-	must(t, x.queen("end", "toy-1"), 9, target+": open")
-	b.land(x, 5)
-	must(t, x.queen("end", "toy-1"), 0)
 }
 
 // GitHub lags a push by seconds (seen live): a branch pushed to its upstream that the PR

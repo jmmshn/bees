@@ -207,17 +207,17 @@ func (k *look) madeHere(ctx context.Context, v port.Change, cs []string) ([]stri
 	return out, nil
 }
 
-// changes is the changes part p's checks read: a pr part's change found from the branch
-// (or the ones a done recorded before Amendment 4 named), a push or review part's target.
+// changes is the changes goal g's checks read: a pr goal's change found from the branch
+// (or the ones a done recorded before Amendment 4 named), a push or review goal's target.
 // why says why there is none to read.
-func (k *look) changes(ctx context.Context, p goal.Part) (vs []port.Change, why string, err error) {
+func (k *look) changes(ctx context.Context, g goal.Goal) (vs []port.Change, why string, err error) {
 	urls := k.h.PRs
-	if p.Type == "pr" && len(urls) == 0 {
+	if g.Type == "pr" && len(urls) == 0 {
 		f := k.change(ctx)
 		return []port.Change{f.c}, f.why, f.err
 	}
-	if p.Type != "pr" {
-		urls = []string{p.Target}
+	if g.Type == "push" || g.Type == "review" {
+		urls = []string{g.Target}
 	}
 	var whys []string
 	for _, u := range urls {
@@ -247,11 +247,11 @@ func isPRCheck(name string) bool {
 	return false
 }
 
-// prCheck runs change check name over each of p's changes: it passes when every one does,
+// prCheck runs change check name over each of g's changes: it passes when every one does,
 // and is pending when the rest are; a change that couldn't be looked at is an error, never
 // a fail (Rule G).
-func (k *look) prCheck(ctx context.Context, p goal.Part, name string) (outcome, string, error) {
-	vs, why, err := k.changes(ctx, p)
+func (k *look) prCheck(ctx context.Context, g goal.Goal, name string) (outcome, string, error) {
+	vs, why, err := k.changes(ctx, g)
 	if err != nil || why != "" {
 		return failed, why, err
 	}

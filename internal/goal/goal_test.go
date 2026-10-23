@@ -11,7 +11,7 @@ import (
 )
 
 func TestParseResolvesEachBuiltInType(t *testing.T) {
-	for v, want := range map[string]goal.Part{
+	for v, want := range map[string]goal.Goal{
 		"pr":                {Type: "pr", Complete: []string{goal.PRMerged}},
 		"pr:ready":          {Type: "pr", State: "ready", AtHandoff: true},
 		"pr:draft":          {Type: "pr", State: "draft", AtHandoff: true},
@@ -24,11 +24,10 @@ func TestParseResolvesEachBuiltInType(t *testing.T) {
 		"branch":            {Type: "branch", Complete: []string{goal.BranchMerged}},
 		"branch:ready":      {Type: "branch", State: "ready", AtHandoff: true},
 	} {
-		g, err := goal.Parse([]string{v})
+		p, err := goal.Parse(v)
 		if err != nil {
 			t.Fatalf("Parse(%q): %v", v, err)
 		}
-		p := g.Parts[0]
 		if p.Type != want.Type || p.State != want.State || p.Target != want.Target || p.AtHandoff != want.AtHandoff ||
 			!want.AtHandoff && !slices.Equal(p.Complete, want.Complete) || len(p.Handoff) == 0 {
 			t.Errorf("Parse(%q) = %+v, want %+v", v, p, want)
@@ -39,53 +38,70 @@ func TestParseResolvesEachBuiltInType(t *testing.T) {
 	}
 }
 
-// Rule G: every bad value is named at once, and no goal is ErrNoGoal.
-func TestParseRefusesEveryBadValueAtOnce(t *testing.T) {
-	if _, err := goal.Parse(nil); !errors.Is(err, goal.ErrNoGoal) {
+// A bad value says what is wrong with it, and no goal is ErrNoGoal.
+func TestParseRefusesABadValue(t *testing.T) {
+	if _, err := goal.Parse(""); !errors.Is(err, goal.ErrNoGoal) {
 		t.Fatalf("no goal: %v", err)
 	}
-	bad := []string{"prr", "pr:merged", "push", "review=", "verdict=x", "pr=x", "legacy", "discard", "push=-x", "custom"}
-	_, err := goal.Parse(append(bad, "pr"))
-	if !errors.Is(err, goal.ErrBad) {
-		t.Fatalf("err = %v, want ErrBad", err)
-	}
-	for _, v := range bad {
-		if !strings.Contains(err.Error(), "\""+v+"\"") {
-			t.Errorf("error doesn't name %q:\n%v", v, err)
+	for _, v := range []string{"prr", "pr:merged", "push", "review=", "verdict=x", "pr=x", "legacy", "discard", "mixed", "push=-x", "custom"} {
+		if _, err := goal.Parse(v); !errors.Is(err, goal.ErrBad) || !strings.Contains(err.Error(), "\""+v+"\"") {
+			t.Errorf("Parse(%q) = %v, want ErrBad naming it", v, err)
 		}
 	}
-	if _, err := goal.Parse([]string{"pr", "pr"}); !errors.Is(err, goal.ErrBad) {
-		t.Errorf("a part given twice: %v", err)
-	}
 }
 
-// A mixed goal runs every part's checks once each, the gate first.
-func TestAMixedGoalUnitesItsParts(t *testing.T) {
-	g, err := goal.Parse([]string{"push=https://x/1", "pr"})
-	if err != nil {
+// A goal recorded before one goal per spawn decodes as a read-only mixed goal: its parts'
+// checks once each, complete at handoff only when every part was, and it records back
+// as it was.
+func TestAnOldMixedGoalUnitesItsParts(t *testing.T) {
+	push, _ := goal.Parse("push=https://x/1")
+	pr, _ := goal.Parse("pr")
+	pr.Repo = "o/r"
+	rec := []byte(`{"parts":[` + partOf(t, push) + `,` + partOf(t, pr) + `]}`)
+	var g goal.Goal
+	if err := json.Unmarshal(rec, &g); err != nil {
 		t.Fatal(err)
 	}
-	h := g.Handoff()
-	if h[0] != goal.NoBackground || !slices.Contains(h, goal.PushMoved) || !slices.Contains(h, goal.PROpen) {
-		t.Fatalf("handoff = %v", h)
+	if g.Type != goal.MixedType || g.String() != "push=https://x/1 pr" || g.AtHandoff || g.Repo != "o/r" || !g.Reviewed() {
+		t.Fatalf("mixed = %+v", g)
 	}
-	if n := len(slices.Compact(slices.Sorted(slices.Values(h)))); n != len(h) {
-		t.Fatalf("handoff repeats a check: %v", h)
+	if !slices.Contains(g.Handoff, goal.PushMoved) || !slices.Contains(g.Handoff, goal.PROpen) {
+		t.Fatalf("handoff = %v", g.Handoff)
 	}
-	if c := g.Complete(); !slices.Equal(c, []string{goal.PRMerged}) {
-		t.Fatalf("complete = %v", c)
+	if n := len(slices.Compact(slices.Sorted(slices.Values(g.Handoff)))); n != len(g.Handoff) {
+		t.Fatalf("handoff repeats a check: %v", g.Handoff)
+	}
+	if !slices.Equal(g.Complete, []string{goal.PRMerged}) || !slices.Equal(g.Types(), []string{"push", "pr"}) {
+		t.Fatalf("complete = %v, types = %v", g.Complete, g.Types())
+	}
+	if b, err := json.Marshal(g); err != nil || string(b) != string(rec) {
+		t.Fatalf("re-recorded as\n%s (%v)\nwant\n%s", b, err, rec)
 	}
 }
 
-// The frozen goal survives the logbook's JSON unchanged (ADR-0010: frozen).
+// partOf is g's one recorded part.
+func partOf(t *testing.T, g goal.Goal) string {
+	t.Helper()
+	b, err := json.Marshal(g)
+	var rec struct{ Parts []json.RawMessage }
+	if err != nil || json.Unmarshal(b, &rec) != nil || len(rec.Parts) != 1 {
+		t.Fatalf("%s: %s, %v", g, b, err)
+	}
+	return string(rec.Parts[0])
+}
+
+// The frozen goal survives the logbook's JSON unchanged (ADR-0010: frozen), as one part.
 func TestAGoalRoundTripsThroughJSON(t *testing.T) {
-	g, _ := goal.Parse([]string{"pr:draft", "verdict"})
+	g, _ := goal.Parse("pr:draft")
 	b, err := json.Marshal(g)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !strings.HasPrefix(string(b), `{"parts":[{"type":"pr","state":"draft",`) {
+		t.Fatalf("recorded as %s", b)
+	}
 	var back goal.Goal
-	if err := json.Unmarshal(b, &back); err != nil || back.String() != g.String() || !slices.Equal(back.Handoff(), g.Handoff()) {
+	if err := json.Unmarshal(b, &back); err != nil || back.String() != g.String() || !slices.Equal(back.Handoff, g.Handoff) {
 		t.Fatalf("round trip: %+v, %v", back, err)
 	}
 	if !goal.Legacy().IsLegacy() || g.IsLegacy() {

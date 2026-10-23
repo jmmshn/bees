@@ -14,9 +14,9 @@ import (
 	"github.com/jmmshn/bees/internal/logbook"
 )
 
-func spawn(t *testing.T, lb *logbook.Logbook, name, session, pane string, goals ...string) logbook.Spawn {
+func spawn(t *testing.T, lb *logbook.Logbook, name, session, pane, value string) logbook.Spawn {
 	t.Helper()
-	g, err := goal.Parse(goals)
+	g, err := goal.Parse(value)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,9 +32,9 @@ func spawn(t *testing.T, lb *logbook.Logbook, name, session, pane string, goals 
 func TestASpawnRoundTrips(t *testing.T) {
 	ctx := context.Background()
 	lb := open(t, filepath.Join(t.TempDir(), "bees.db"))
-	s := spawn(t, lb, "toy-1", "toy", "w1:p1", "pr:draft", "verdict")
+	s := spawn(t, lb, "toy-1", "toy", "w1:p1", "pr:draft")
 	got, ok, err := lb.LatestSpawn(ctx, "toy-1")
-	if err != nil || !ok || got.Legacy() || got.Goal.String() != "pr:draft verdict" || got.Herdr != s.Herdr || got.By != "queen-toy" {
+	if err != nil || !ok || got.Legacy() || got.Goal.String() != "pr:draft" || got.Herdr != s.Herdr || got.By != "queen-toy" {
 		t.Fatalf("spawn = %+v, %v, %v", got, ok, err)
 	}
 }
@@ -113,7 +113,7 @@ func TestGoalEntriesAmendWaiveAndDiscard(t *testing.T) {
 	if err != nil || e.String() != "pr" || len(e.Waived) != 1 || e.Discarded {
 		t.Fatalf("after waivers: %+v, %v", e, err)
 	}
-	draft, _ := goal.Parse([]string{"pr:draft"})
+	draft, _ := goal.Parse("pr:draft")
 	for _, c := range []logbook.GoalChange{{By: "queen-toy", Goal: &draft}, {By: "keeper", Discard: true}} {
 		if _, err := lb.RecordGoal(ctx, s.ID, s.Name, c); err != nil {
 			t.Fatal(err)

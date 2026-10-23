@@ -22,15 +22,15 @@ type Handed struct {
 	Report string
 }
 
-// check runs one built-in check of sp outside any goal part (prune's clean check).
+// check runs one built-in check of sp outside any goal (prune's clean check).
 func (c *Core) check(ctx context.Context, sp logbook.Spawn, name string, h Handed) logbook.CheckResult {
-	return c.look(sp, h).check(ctx, goal.Part{}, name)
+	return c.look(sp, h).check(ctx, goal.Goal{}, name)
 }
 
-// check runs check name of part p. The gate is run by its callers, who know self.
-func (k *look) check(ctx context.Context, p goal.Part, name string) logbook.CheckResult {
+// check runs check name of goal g. The gate is run by its callers, who know self.
+func (k *look) check(ctx context.Context, g goal.Goal, name string) logbook.CheckResult {
 	r := logbook.CheckResult{Name: name}
-	o, detail, err := k.run(ctx, p, name)
+	o, detail, err := k.run(ctx, g, name)
 	r.Pass, r.Detail, r.Pending = o == passed && err == nil, detail, o == pending && err == nil
 	if err != nil {
 		r.Err = err.Error()
@@ -38,39 +38,32 @@ func (k *look) check(ctx context.Context, p goal.Part, name string) logbook.Chec
 	return r
 }
 
-// stage runs the checks of(part) for every part of e, in order, skipping waived ones and
-// the gate: a PR check once per set of PRs it reads, any other once. It stops at the first
-// check that can't run, returning the results so far and that one.
-func (k *look) stage(ctx context.Context, e logbook.Effective, of func(goal.Part) []string) ([]logbook.CheckResult, *logbook.CheckResult) {
+// stage runs the checks names of e's goal, in order, skipping waived ones and the gate. It
+// stops at the first check that can't run, returning the results so far and that one.
+func (k *look) stage(ctx context.Context, e logbook.Effective, names []string) ([]logbook.CheckResult, *logbook.CheckResult) {
 	var out []logbook.CheckResult
-	var seen []string
-	for _, p := range e.Parts {
-		for _, name := range of(p) {
-			key := name
-			if name == goal.PRWorkspaceCommit || name == goal.PRPushed { // a goal frozen before pr_head
-				key = goal.PRHead
-			}
-			if isPRCheck(name) && p.Type != "pr" {
-				key += " " + p.Target
-			}
-			if name == goal.NoBackground || slices.Contains(e.Waived, name) || slices.Contains(seen, key) {
+	for _, name := range names {
+		if name == goal.PRWorkspaceCommit || name == goal.PRPushed { // a goal frozen before pr_head
+			if slices.Contains(names, goal.PRHead) || slices.Contains(e.Waived, goal.PRHead) {
 				continue
 			}
-			seen = append(seen, key)
-			r := k.check(ctx, p, name)
-			if r.Err != "" {
-				return out, &r
-			}
-			out = append(out, r)
 		}
+		if name == goal.NoBackground || slices.Contains(e.Waived, name) {
+			continue
+		}
+		r := k.check(ctx, e.Goal, name)
+		if r.Err != "" {
+			return out, &r
+		}
+		out = append(out, r)
 	}
 	return out, nil
 }
 
-func (k *look) run(ctx context.Context, p goal.Part, name string) (outcome, string, error) {
+func (k *look) run(ctx context.Context, g goal.Goal, name string) (outcome, string, error) {
 	c, ws, h := k.c, k.sp.Workspace, k.h
 	if isPRCheck(name) {
-		return k.prCheck(ctx, p, name)
+		return k.prCheck(ctx, g, name)
 	}
 	switch name {
 	case goal.VerdictGiven:
@@ -207,12 +200,11 @@ func (c *Core) complete(ctx context.Context, sp logbook.Spawn, e logbook.Effecti
 	if !ok || !d.Passed() {
 		return false, nil, []logbook.CheckResult{{Name: "handoff", Detail: "no " + bsname.Cmd + " done that passed its checks"}}, nil
 	}
-	rs, cant := c.look(sp, Handed{PRs: d.PRs}).stage(ctx, e, func(p goal.Part) []string {
-		if p.AtHandoff {
-			return nil
-		}
-		return p.Complete
-	})
+	var complete []string
+	if !e.AtHandoff {
+		complete = e.Complete
+	}
+	rs, cant := c.look(sp, Handed{PRs: d.PRs}).stage(ctx, e, complete)
 	if cant != nil {
 		return false, nil, nil, fmt.Errorf("%s: %s", cant.Name, cant.Err)
 	}

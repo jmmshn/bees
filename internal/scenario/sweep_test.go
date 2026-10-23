@@ -214,12 +214,13 @@ func TestTheGateSkipsDonesOwnPipeline(t *testing.T) {
 
 // ADR-0010's goal rules.
 
-// --goal is required, and every bad value is named at once (Rule D, Rule G).
-func TestSpawnRequiresAGoalAndNamesEveryBadOne(t *testing.T) {
+// --goal is required, and given once: one goal per spawn (Rule D, Amendment 4).
+func TestSpawnRequiresOneGoal(t *testing.T) {
 	x := newToy(t)
 	x.bead("toy-1", "x")
 	must(t, x.queen("spawn", "toy-1"), 2, "--goal is required")
-	must(t, x.queen("spawn", "--goal", "prr", "--goal", "push", "toy-1"), 2, `"prr"`, `"push"`)
+	must(t, x.queen("spawn", "--goal", "prr", "toy-1"), 2, `"prr"`)
+	must(t, x.queen("spawn", "--goal", "pr", "--goal", "note", "toy-1"), 2, "one goal per spawn")
 	if _, err := os.Stat(x.logbook); !os.IsNotExist(err) { // refused before even a logbook was made
 		t.Fatalf("a refused spawn made the logbook: %v", err)
 	}

@@ -62,8 +62,10 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 	}
 	// A goal complete at handoff is final once it lands: a second done would rewrite it
 	// (bees-13.54). A goal complete at merge keeps taking handoffs.
-	atHandoff := !slices.ContainsFunc(e.Parts, func(p goal.Part) bool { return !p.AtHandoff })
-	if atHandoff {
+	if e.Type == goal.MixedType {
+		return logbook.Done{}, exit(ExitRefused, bsname.Cmd+" send "+sp.By+" \"...\"", nil, "%s's goal --goal %s was spawned before one goal per spawn: end it", sp.Name, e.Goal)
+	}
+	if e.AtHandoff {
 		if _, landed, err := c.Logbook.LandedOf(ctx, sp.ID); err != nil {
 			return logbook.Done{}, err
 		} else if landed {
@@ -71,9 +73,9 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 		}
 	}
 	d := logbook.Done{Spawn: sp.ID, Name: sp.Name, Queen: sp.By, Bead: sp.Bead, Answer: h.Answer, Report: h.Report}
-	if !slices.ContainsFunc(e.Parts, goal.Part.TakesReport) && (h.Answer != "" || h.Report != "") {
+	if !e.TakesReport() && (h.Answer != "" || h.Report != "") {
 		where := bsname.Cmd + " send " + sp.By + " \"...\""
-		if slices.ContainsFunc(e.Parts, func(p goal.Part) bool { return p.Type == "note" }) {
+		if e.Type == "note" {
 			where = "bd update " + sp.Bead + " --append-notes \"...\", then " + bsname.Cmd + " done"
 		}
 		return d, exit(ExitRefused, where, nil, "--goal %s takes no --answer or --report", e.Goal)
@@ -104,7 +106,7 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 	}
 	d.Checks = append(d.Checks, r)
 	var f *found // the change, found once before the first look; a --wait's later looks find it again
-	if slices.ContainsFunc(e.Parts, func(p goal.Part) bool { return p.Type == "pr" }) {
+	if e.Type == "pr" {
 		ff := c.theChange(lookCtx, sp)
 		f = &ff
 		switch {
@@ -123,7 +125,7 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 		if !waited {
 			k.found = f
 		}
-		rs, cant = k.stage(lookCtx, e, func(p goal.Part) []string { return p.Handoff })
+		rs, cant = k.stage(lookCtx, e, e.Handoff)
 		// Out of time after waiting is still pending; a first look that couldn't run is 6.
 		if cant != nil && waited && lookCtx.Err() != nil {
 			return d, exit(ExitWaited, bsname.Cmd+" done --wait, or ask the queen", nil, "still pending after %s (%s ran out of time)", o.Wait, cant.Name)
@@ -162,7 +164,7 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 		return d, exit(ExitHandoff, "fix it, then "+bsname.Cmd+" done again", nil, "%d handoff checks failed:\n  %s", len(failed), strings.Join(failed, "\n  "))
 	}
 	var landed *logbook.Landed
-	if atHandoff {
+	if e.AtHandoff {
 		landed = &logbook.Landed{By: "done"}
 	}
 	d.ID, err = c.Logbook.RecordDone(ctx, d, landed)
@@ -507,7 +509,7 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 		if err != nil {
 			return keep(true, "%v", err)
 		}
-		rs, cant := c.look(sp, Handed{PRs: d.PRs}).stage(ctx, e, func(p goal.Part) []string { return p.Prune })
+		rs, cant := c.look(sp, Handed{PRs: d.PRs}).stage(ctx, e, e.Prune)
 		if cant != nil {
 			return keep(true, "%s couldn't run: %s", cant.Name, cant.Err)
 		}
@@ -547,13 +549,13 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 	}
 	// The prune rule's branch_merged, when it ran and passed, is the proof: one gh call,
 	// not two. A merged (or closed draft) handed-off change holding the tip is another.
-	release := e.Discarded || slices.Contains(e.Prune(), goal.BranchMerged)
-	if !release && slices.ContainsFunc(e.Parts, func(p goal.Part) bool { return p.Type == "pr" }) {
+	release := e.Discarded || slices.Contains(e.Prune, goal.BranchMerged)
+	if !release && slices.Contains(e.Types(), "pr") {
 		d, _, err := c.Logbook.LatestDone(ctx, sp.ID)
 		if err != nil {
 			return keep(true, "%v", err)
 		}
-		if p.Held, err = c.heldByChange(ctx, sp, d.PRs, slices.Contains(e.Prune(), goal.PRClosed)); err != nil {
+		if p.Held, err = c.heldByChange(ctx, sp, d.PRs, slices.Contains(e.Prune, goal.PRClosed)); err != nil {
 			return keep(true, "can't tell whether a handed-off change holds branch %s: %v", ws.Branch, err)
 		}
 		release = p.Held != ""

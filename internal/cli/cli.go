@@ -248,7 +248,10 @@ func (r *run) openLogbook() (*logbook.Logbook, error) {
 		return logbook.AtFirstWrite(r.ctx, r.s.Logbook)
 	}
 	lb, err := logbook.Open(r.ctx, r.s.Logbook)
-	if errors.Is(err, logbook.ErrNoLogbook) {
+	if errors.Is(err, logbook.ErrNoLogbook) && r.name == "send" { // a send never makes a project (R48)
+		return nil, &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("no logbook for project %s at %s: it is no bees project; nothing stored", r.s.Project, r.s.Logbook),
+			Next: bsname.Cmd + " queen, in a herdr pane in its repo, starts it; or send to a project that has one: " + bsname.Cmd + " send --project <project> queen-<project> \"...\""}
+	} else if errors.Is(err, logbook.ErrNoLogbook) {
 		return nil, &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("no logbook for project %s at %s; nothing was read or written", r.s.Project, r.s.Logbook),
 			Next: bsname.Cmd + " queen starts the project; if it had a queen or workers, the logbook was deleted or paths.logbook_dir moved: restore the file rather than start afresh"}
 	}

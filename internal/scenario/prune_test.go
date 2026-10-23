@@ -132,7 +132,7 @@ func TestANonGitHubOriginSaysNoPullRequestWasLookedFor(t *testing.T) {
 	sp := x.spawn("toy-1", "branch")
 	x.commit(sp.Workspace.Dir, "work.txt")
 	must(t, x.worker("toy-1", 1, "done"), 0)
-	must(t, x.queen("end", "toy-1"), 9, "toy-1 has work not on main (origin git@gh-work:x/toy.git is not on github.com, so no merged pull request was looked for)")
+	must(t, x.queen("end", "toy-1"), 9, "toy-1 has work not on main (origin git@gh-work:x/toy.git is not on github.com, so no pull request was looked for)")
 }
 
 // A worktree git refuses to remove (locked) is kept, naming the way out (exit 3), never

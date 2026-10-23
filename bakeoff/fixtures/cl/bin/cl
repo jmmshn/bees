@@ -1,41 +1,61 @@
 #!/usr/bin/env bash
 # cl: a fake CL tool for the S19 card. A client is a plain directory holding a copy of the
-# depot (a git repo's main); its edits go out as one CL per client, and a submit commits
-# them to the depot. State lives in ../cl beside this script, so it needs no env (bs runs
-# commands with only PATH, HOME and LANG).
+# depot (a git repo's main); its edits go out as one CL per client, numbered, and a submit
+# commits them to the depot. A client's commit is the hash of its files, so the commits are
+# its base, each upload, and whatever its files are now. It also answers bs's command
+# workspace VCS and [review.command] in their JSON (docs/SETUP.md). State lives in ../cl
+# beside this script, so it needs no env (bs runs commands with only PATH, HOME and LANG).
 set -uo pipefail
 state=$(cd "$(dirname "$(realpath "$0")")/.." && pwd)/cl
-die() { echo "cl: $*" >&2; exit "${code:-2}"; }
-no() { echo "$*"; exit 1; } # the answer is no: exit 1, never 2
+die() { echo "cl: $*" >&2; exit 2; }
 usage() {
 	cat >&2 <<-'EOF'
 	usage:
 	  cl client new <name> <dir>   make a client: <dir> gets a copy of the depot (run in the depot)
-	  cl client delete <name>      remove the client and its directory
+	  cl client delete <name>      remove the client and its directory (its CL stays)
 	  cl client clean <name>       exit 0 when the client has no edit outside its uploaded CL
 	  cl upload [-m <desc>]        upload this client's edits as its CL (run in the client)
-	  cl diff [<name>]             the CL's diff against the depot it started from
-	  cl list                      every client, its directory and its CL's state
-	  cl sent <name>               exit 0 when the client's CL is out for review (or submitted)
-	  cl submitted <name>          exit 0 when the client's CL is submitted
-	  cl submit <name>             land the CL: commit its edits to the depot's main
+	  cl diff [<name>]             the client's CL: its diff against the depot it started from
+	  cl list                      every client, its directory, and its CL's URL and state
+	  cl submit <name>             land the client's CL: commit its edits to the depot's main
+	JSON, for bs:
+	  cl head <dir> | cl uploaded <dir> | cl has <dir> <commit> | cl descends <dir> <ancestor> <commit>
+	  cl repo | cl changes <dir> | cl view <url> | cl ci <url> | cl review <url> <body file> <marker>
 	EOF
 	exit 2
 }
 c() { echo "$state/clients/$1"; }
-need() { [ -d "$(c "$1")" ] || code=1 die "no client $1"; }
-# here is the client whose directory holds the cwd.
-here() {
-	local d
+need() { [ -d "$(c "$1")" ] || die "no client $1"; }
+# at is the client whose directory holds $1 (default: the cwd).
+at() {
+	local d p=$(realpath -m "${1:-$PWD}")
 	for d in "$state"/clients/*/; do
 		[ -f "$d/dir" ] || continue
-		case $PWD/ in "$(cat "$d/dir")"/*) basename "$d"; return ;; esac
+		case $p/ in "$(cat "$d/dir")"/*) basename "$d"; return ;; esac
 	done
-	die "$PWD is in no client: run it in one, or name the client"
+	die "$p is in no client"
 }
+files() { (cd "$1" && find . -type f | sed 's|^\./||' | sort); }
+hash() { (cd "$1" && find . -type f -print0 | sort -z | xargs -0r sha1sum) | sha1sum | cut -c1-12; }
 # ref is what the client's directory is measured against: its CL once uploaded, else its base.
 ref() { if [ -d "$(c "$1")/cl" ]; then echo "$(c "$1")/cl"; else echo "$(c "$1")/base"; fi; }
-files() { (cd "$1" && find . -type f | sed 's|^\./||' | sort); }
+url() { echo "https://cl.example/$(basename "$(cat "$(c "$1")/depot")")/$(cat "$(c "$1")/number")"; }
+num() { [[ $1 =~ ^https://cl\.example/[^/]+/([0-9]+)$ ]] && [ -d "$state/changes/${BASH_REMATCH[1]}" ] && echo "${BASH_REMATCH[1]}"; }
+# commits is the client's history, oldest first: its base and each upload.
+commits() { cat "$(c "$1")/commits"; }
+tip() { hash "$(cat "$(c "$1")/dir")"; }
+change() { # the CL numbered $1 as JSON: its fields are files under changes/<n>
+	local d=$state/changes/$1 depot behind
+	depot=$(cat "$d/depot")
+	behind=$(git -C "$depot" rev-list --count "$(cat "$d/depot_base")..main" 2>/dev/null) || behind=0
+	[ "$(cat "$d/state")" = open ] || behind=0
+	jq -n --arg url "$(cat "$d/url")" --arg state "$(cat "$d/state")" --arg head "$(cat "$d/client")" \
+		--arg hc "$(cat "$d/head_commit")" --arg created "$(cat "$d/created")" --argjson behind "$behind" \
+		--rawfile commits "$d/commits" \
+		'{url: $url, state: $state, draft: false, head: $head, head_commit: $hc, base: "main",
+		  commits: ($commits | split("\n") | map(select(. != ""))), foreign: false, editable: true,
+		  created: $created, behind: $behind}'
+}
 
 case ${1:-} in
 client)
@@ -49,7 +69,9 @@ client)
 		mkdir -p "$(c "$name")/base" "$dir" || die "can't make $dir"
 		git -C "$depot" archive main | tar -x -C "$(c "$name")/base" || die "can't read the depot's main"
 		cp -a "$(c "$name")/base/." "$dir/"
-		echo "$dir" >"$(c "$name")/dir" && echo "$depot" >"$(c "$name")/depot" && echo none >"$(c "$name")/status"
+		echo "$dir" >"$(c "$name")/dir" && echo "$depot" >"$(c "$name")/depot"
+		git -C "$depot" rev-parse main >"$(c "$name")/depot_base"
+		hash "$(c "$name")/base" >"$(c "$name")/commits"
 		echo "client $name at $dir" ;;
 	delete)
 		[ $# -eq 3 ] || usage
@@ -59,7 +81,7 @@ client)
 	clean)
 		[ $# -eq 3 ] || usage
 		need "$3"
-		out=$(diff -rq "$(cat "$(c "$3")/dir")" "$(ref "$3")") || no "$3: edits outside its CL: $out"
+		out=$(diff -rq "$(cat "$(c "$3")/dir")" "$(ref "$3")") || { echo "$3: edits outside its CL: $out"; exit 1; }
 		echo "$3: clean" ;;
 	*) usage ;;
 	esac ;;
@@ -67,38 +89,46 @@ upload)
 	shift; desc=
 	[ "${1:-}" = -m ] && { desc=${2:-}; shift 2; }
 	[ $# -eq 0 ] || usage
-	name=$(here) || exit
-	[ "$(cat "$(c "$name")/status")" != submitted ] || die "$name's CL is submitted: make a new client for more work"
-	dir=$(cat "$(c "$name")/dir")
-	diff -rq "$(c "$name")/base" "$dir" >/dev/null && die "nothing to upload: $dir has no edit"
-	rm -rf "$(c "$name")/cl" && cp -a "$dir" "$(c "$name")/cl"
-	[ -z "$desc" ] || echo "$desc" >"$(c "$name")/desc"
-	echo sent >"$(c "$name")/status"
-	echo "uploaded CL $name ($(diff -rq "$(c "$name")/base" "$(c "$name")/cl" | wc -l) files changed)" ;;
+	name=$(at) || exit
+	cd "$(c "$name")" || exit
+	dir=$(cat dir)
+	[ ! -f number ] || [ "$(cat "$state/changes/$(cat number)/state")" = open ] || die "$name's CL is submitted: make a new client for more work"
+	diff -rq base "$dir" >/dev/null && die "nothing to upload: $dir has no edit"
+	rm -rf cl && cp -a "$dir" cl
+	h=$(hash cl)
+	[ "$(tail -1 commits)" = "$h" ] || echo "$h" >>commits
+	if [ ! -f number ]; then
+		mkdir -p "$state/changes"
+		n=$(($(ls "$state/changes" | sort -n | tail -1) + 1))
+		mkdir "$state/changes/$n" && echo "$n" >number
+		d=$state/changes/$n
+		echo "$name" >"$d/client" && cp depot depot_base "$d/" && url "$name" >"$d/url" && echo open >"$d/state"
+		date -u +%FT%TZ >"$d/created"
+	fi
+	d=$state/changes/$(cat number)
+	echo "$h" >"$d/head_commit" && tail -n +2 commits >"$d/commits"
+	[ -z "$desc" ] || echo "$desc" >"$d/desc"
+	echo "uploaded $(cat "$d/url") ($(diff -rq base cl | wc -l) files changed, commit $h)" ;;
 diff)
-	name=${2:-$(here)} || exit
+	name=${2:-$(at)} || exit
 	need "$name"
-	[ -d "$(c "$name")/cl" ] || code=1 die "$name has no CL uploaded"
+	[ -d "$(c "$name")/cl" ] || die "$name has no CL uploaded"
 	(cd "$(c "$name")" && diff -ruN base cl)
 	exit 0 ;;
 list)
 	for d in "$state"/clients/*/; do
-		[ -f "$d/dir" ] && printf '%s\t%s\t%s\n' "$(basename "$d")" "$(cat "$d/dir")" "$(cat "$d/status")"
+		[ -f "$d/dir" ] || continue
+		n=$(basename "$d") cl=-
+		[ ! -f "$d/number" ] || cl="$(url "$n") $(cat "$state/changes/$(cat "$d/number")/state")"
+		printf '%s\t%s\t%s\n' "$n" "$(cat "$d/dir")" "$cl"
 	done
 	exit 0 ;;
-sent)
-	[ $# -eq 2 ] || usage
-	need "$2"
-	case $(cat "$(c "$2")/status") in sent | submitted) echo "$2: sent" ;; *) no "$2: no CL uploaded" ;; esac ;;
-submitted)
-	[ $# -eq 2 ] || usage
-	need "$2"
-	[ "$(cat "$(c "$2")/status")" = submitted ] || no "$2: not submitted"
-	echo "$2: submitted" ;;
 submit)
 	[ $# -eq 2 ] || usage
 	name=$2 && need "$name"
-	[ "$(cat "$(c "$name")/status")" = sent ] || die "$name has no CL out for review"
+	[ -f "$(c "$name")/number" ] || die "$name has no CL uploaded"
+	d=$state/changes/$(cat "$(c "$name")/number")
+	[ "$(cat "$d/state")" = open ] || die "$(cat "$d/url") is $(cat "$d/state")"
 	depot=$(cat "$(c "$name")/depot") base=$(c "$name")/base cl=$(c "$name")/cl
 	[ "$(git -C "$depot" branch --show-current)" = main ] || die "$depot isn't on main"
 	[ -z "$(git -C "$depot" status --porcelain)" ] || die "$depot has uncommitted changes"
@@ -112,8 +142,37 @@ submit)
 	for f in "${changed[@]}"; do
 		if [ -e "$cl/$f" ]; then mkdir -p "$(dirname "$depot/$f")" && cp "$cl/$f" "$depot/$f"; else rm "$depot/$f"; fi
 	done
-	git -C "$depot" add -A && git -C "$depot" commit -qm "$(cat "$(c "$name")/desc" 2>/dev/null || echo "CL $name") (CL $name)" || die "commit failed"
-	echo submitted >"$(c "$name")/status"
-	echo "submitted CL $name as $(git -C "$depot" rev-parse --short HEAD)" ;;
+	git -C "$depot" add -A && git -C "$depot" commit -qm "$(cat "$d/desc" 2>/dev/null || echo "CL from $name") (CL $(cat "$d/url"))" || die "commit failed"
+	echo merged >"$d/state"
+	echo "submitted $(cat "$d/url") as $(git -C "$depot" rev-parse --short HEAD)" ;;
+# The command workspace's VCS (bs runs these in the client).
+head) [ $# -eq 2 ] || usage; n=$(at "$2") || exit; jq -n --arg t "$(tip "$n")" '{tip: $t}' ;;
+uploaded)
+	[ $# -eq 2 ] || usage; n=$(at "$2") || exit
+	[ -f "$(c "$n")/number" ] && t=$(cat "$state/changes/$(cat "$(c "$n")/number")/head_commit") || t=
+	jq -n --arg t "$t" '{tip: $t}' ;;
+has)
+	[ $# -eq 3 ] || usage; n=$(at "$2") || exit
+	{ commits "$n"; tip "$n"; } | grep -qx -- "$3" && h=true || h=false
+	jq -n --argjson h $h '{has: $h}' ;;
+descends) # the files as they are now come after the last commit
+	[ $# -eq 4 ] || usage; n=$(at "$2") || exit
+	hist=$({ commits "$n"; t=$(tip "$n"); [ "$(commits "$n" | tail -1)" = "$t" ] || echo "$t"; })
+	a=$(grep -nx -- "$3" <<<"$hist" | head -1 | cut -d: -f1) b=$(grep -nx -- "$4" <<<"$hist" | tail -1 | cut -d: -f1)
+	[ -n "$a" ] && [ -n "$b" ] && [ "$a" -le "$b" ] && r=true || r=false
+	jq -n --argjson r $r '{descends: $r}' ;;
+# The review host (bs runs these in the depot).
+repo) jq -n --arg r "$(basename "$(git rev-parse --show-toplevel)")" '{repo: $r, protected: true}' ;;
+changes)
+	[ $# -eq 2 ] || usage; n=$(at "$2") || exit
+	if [ -f "$(c "$n")/number" ]; then change "$(cat "$(c "$n")/number")" | jq -s .; else echo '[]'; fi ;;
+view) [ $# -eq 2 ] || usage; if n=$(num "$2"); then change "$n"; else echo null; fi ;;
+ci) [ $# -eq 2 ] || usage; num "$2" >/dev/null || die "no CL $2"; echo '{"checks": [], "required": []}' ;;
+review)
+	[ $# -eq 4 ] || usage; n=$(num "$2") || die "no CL $2"
+	r=$state/changes/$n/reviews && mkdir -p "$r"
+	k=$(grep -lxF -- "$4" "$r"/*.marker 2>/dev/null | head -1) # a retry after a lost answer: post nothing
+	[ -n "$k" ] || { k=$r/$(($(ls "$r" | grep -c marker) + 1)).marker; cp "$3" "${k%.marker}" && echo "$4" >"$k"; }
+	jq -n --arg u "$2#review-$(basename "$k" .marker)" '{url: $u}' ;;
 *) usage ;;
 esac

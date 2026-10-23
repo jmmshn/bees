@@ -1,22 +1,29 @@
 # S19's project file, written by mkrun.sh as projects/<id>.toml with its placeholders filled:
-# the run dir (bin/cl is the fake cl, the fragments beside bin/) and a branch build's dir.
+# the run dir (bin/cl is the fake cl, cl-host.md beside bin/) and a branch build's dir.
 worker.path = [@BSBIN@"@RUN@/bin"]
-review.fragment = "@RUN@/cl-host.md"
-guards.deny = ["cl submit*"]
 
 [workspace.command]
-create = ["@RUN@/bin/cl", "client", "new", "{name}", "{dir}"]
-remove = ["@RUN@/bin/cl", "client", "delete", "{name}"]
-clean  = ["@RUN@/bin/cl", "client", "clean", "{name}"]
-dir    = "{repo}-WS/{name}"
+create   = ["@RUN@/bin/cl", "client", "new", "{name}", "{dir}"]
+remove   = ["@RUN@/bin/cl", "client", "delete", "{name}"]
+clean    = ["@RUN@/bin/cl", "client", "clean", "{name}"]
+dir      = "{repo}-WS/{name}"
+branch   = ["@RUN@/bin/cl", "head", "{dir}"]
+pushed   = ["@RUN@/bin/cl", "uploaded", "{dir}"]
+has      = ["@RUN@/bin/cl", "has", "{dir}", "{commit}"]
+descends = ["@RUN@/bin/cl", "descends", "{dir}", "{ancestor}", "{commit}"]
 
-[checks.cl_sent]
-run = ["@RUN@/bin/cl", "sent", "{name}"]
-[checks.cl_submitted]
-run = ["@RUN@/bin/cl", "submitted", "{name}"]
+[review]
+host     = "command"
+fragment = "@RUN@/cl-host.md"
 
-[goal.cl]
-handoff  = ["cmd:cl_sent"]
-complete = ["cmd:cl_submitted"]
-prune    = ["cmd:cl_submitted"]
-fragment = "@RUN@/cl-goal.md"
+[review.command]
+url          = 'https://cl\.example/(?P<repo>[^/]+)/(?P<number>[0-9]+)'
+repo         = ["@RUN@/bin/cl", "repo"]
+changes      = ["@RUN@/bin/cl", "changes", "{dir}"]
+view         = ["@RUN@/bin/cl", "view", "{url}"]
+ci           = ["@RUN@/bin/cl", "ci", "{url}"]
+post_review  = ["@RUN@/bin/cl", "review", "{url}", "{body_file}", "{marker}"]
+create       = "cl upload -m <description>, in {dir}"
+push_hint    = "cl upload, in {dir}"
+merge_deny   = ["cl submit*", "*/cl submit*"]
+approve_deny = ["cl approve*", "*/cl approve*"]

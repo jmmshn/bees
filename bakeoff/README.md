@@ -27,7 +27,7 @@ bs end --as queen-t3c --force [--incomplete] <worker>  # end it (--incomplete wh
 - **Project names.** A toy repo's directory is `t<script><arm>`, and that is its bs project name, so bees runs never touch the real `bees` logbook. Logbooks outlive their runs, so a replay passes `BAKEOFF_TAG=<letters>` (`t1cp`): an older round's `t1c.db` would hand the new queen its recorded workers.
 - **Toy repo setup.**
   - `fixtures/toy/` is the starting tree. It includes an `AGENTS.md` that says to push the branch and report the sha instead of opening a PR (its origin is a bare repo, so arm c's queen has no `pr` goal to give: `bs spawn` refuses one without a GitHub remote), and a `.claude/settings.json` that sets auto mode and accepts cross-session messages.
-  - `fixtures/cl/` makes S19's depot CL-shaped: a fake `cl` (`cl` with no arguments lists its commands), the toy `AGENTS.md` for clients, and arm C's project file with a `[workspace.command]`, `--goal cl` and a `review.fragment`, written into the run's own config home.
+  - `fixtures/cl/` makes S19's depot CL-shaped: a fake `cl` (`cl` with no arguments lists its commands), the toy `AGENTS.md` for clients, and arm C's project file, a `[workspace.command]` with the VCS keys and a `review.host = "command"`, written into the run's own config home.
   - `fixtures/golden/` holds the expected results.
   - `check.sh` grades a run against them.
 - **Setup steps the harness does for the keeper.**

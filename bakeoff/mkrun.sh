@@ -13,11 +13,11 @@ git init -q -b main "$repo"
 git -C "$repo" config commit.gpgsign false # toy repo: the signing key is configured only under ~/repos
 git -C "$repo" config user.name bakeoff && git -C "$repo" config user.email bakeoff@example.invalid # identity too lives under ~/repos only
 cp -r "$here/fixtures/toy/." "$repo/"
-cl=$([ "$s" = 19 ] && echo 1 || true) # S19's depot is CL-shaped: a fake cl in <run>/bin, fragments beside it
+cl=$([ "$s" = 19 ] && echo 1 || true) # S19's depot is CL-shaped: a fake cl in <run>/bin, its host fragment beside it
 if [ -n "$cl" ]; then
 	cp "$here/fixtures/cl/AGENTS.md" "$repo/AGENTS.md"
 	mkdir -p "$dir/bin" && cp "$here/fixtures/cl/bin/cl" "$dir/bin/"
-	cp "$here/fixtures/cl/goal.md" "$dir/cl-goal.md" && cp "$here/fixtures/cl/host.md" "$dir/cl-host.md"
+	cp "$here/fixtures/cl/host.md" "$dir/cl-host.md"
 fi
 git -C "$repo" add -A && git -C "$repo" commit -qm "toy fixtures"
 git init -q --bare "$dir/origin.git"
@@ -32,7 +32,7 @@ case $arm in
 		if [ -n "${BAKEOFF_BS:-}${cl}" ]; then
 			# The queen runs it from PATH; her workers through worker.path, set in a config home of the
 			# run's own (the real one's entries linked in), as live-test's setup.sh does (bees-12.18).
-			# S19's project file there also sets the command workspace and --goal cl.
+			# S19's project file there also sets the command workspace and review host.
 			real=${XDG_CONFIG_HOME:-$HOME/.config} xdg=$dir/xdg bin=
 			[ -z "${BAKEOFF_BS:-}" ] || bin=$(cd "$(dirname "$BAKEOFF_BS")" && pwd)
 			mkdir -p "$xdg/bees/projects"

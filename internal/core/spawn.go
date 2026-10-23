@@ -26,8 +26,8 @@ type SpawnReq struct {
 	By      string // the queen
 	Session string // the herdr session the spawn opens on: the queen's
 	Bead    string
-	Label   string   // "" is the bead's title
-	Goals   []string // --goal, required
+	Label   string // "" is the bead's title
+	Goal    string // --goal, required
 }
 
 // Spawn starts a worker for req.Bead: it resolves the goal, opens its git_worktree
@@ -36,13 +36,11 @@ type SpawnReq struct {
 // after the record leaves an unconfirmed spawn (exit 8) that bs end clears. An open spawn
 // whose process died is resumed instead (resumed true).
 func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resumed bool, err error) {
-	g, err := goal.Parse(req.Goals)
+	g, err := goal.Parse(req.Goal)
 	if err != nil {
 		return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s", req.Bead)
 	}
-	for i, p := range g.Parts {
-		g.Parts[i].Fragment = prompt.Hash(p.Type)
-	}
+	g.Fragment = prompt.Hash(g.Type)
 	bead, err := c.Beads.Show(ctx, req.Bead)
 	if err != nil {
 		if errors.Is(err, port.ErrNoBead) {
@@ -68,7 +66,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	if err != nil {
 		return logbook.Spawn{}, false, err
 	}
-	ws, reused, err := c.workspace(ctx, name, target != nil && !target.branch, ended)
+	ws, reused, err := c.workspace(ctx, name, target != nil, ended)
 	if err != nil {
 		return logbook.Spawn{}, false, err
 	}
@@ -85,7 +83,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 		return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s: its harness refused the launch; nothing was made", name)
 	}
 	text := prompt.Text(prompt.Worker, c.Project, ws.Kind, g.Types())
-	if slices.ContainsFunc(g.Parts, goal.Part.Reviewed) {
+	if g.Reviewed() {
 		text += prompt.Host(prompt.Worker, c.Review.Name())
 	}
 	launch.Files = withPrompt(launch.Files, text)
@@ -159,8 +157,8 @@ func (c *Core) resume(ctx context.Context, sp logbook.Spawn, bead port.Bead, req
 	if err != nil {
 		return err
 	}
-	if g, err := goal.Parse(req.Goals); err == nil && g.String() != e.String() {
-		return exit(ExitRefused, bsname.Cmd+" goal "+sp.Name+" "+strings.Join(req.Goals, " "), nil,
+	if g, err := goal.Parse(req.Goal); err == nil && g.String() != e.String() {
+		return exit(ExitRefused, bsname.Cmd+" goal "+sp.Name+" "+req.Goal, nil,
 			"%s is spawned and not ended, and it was spawned with --goal %s, not --goal %s; a resume keeps its goal", sp.Name, e.Goal, g)
 	}
 	st, started, err := c.StartOf(ctx, sp)
@@ -178,11 +176,11 @@ func (c *Core) resume(ctx context.Context, sp logbook.Spawn, bead port.Bead, req
 	// launch starts the configured harness: a spawn recorded on another is refused, never
 	// restarted on a harness that can't resume its conversation (ADR-0010's switch refusal).
 	if sp.Harness != c.HarnessName {
-		return exit(ExitRefused, bsname.Cmd+" end --incomplete "+sp.Name+", then "+bsname.Cmd+" spawn "+goalFlags(e.Parts)+" "+bead.ID, nil,
+		return exit(ExitRefused, bsname.Cmd+" end --incomplete "+sp.Name+", then "+bsname.Cmd+" spawn "+goalFlags(e.Goal)+" "+bead.ID, nil,
 			"%s was spawned on harness %s, and this bs starts %s; nothing started", sp.Name, sp.Harness, c.HarnessName)
 	}
 	if _, err := c.herdr(sp.Herdr.Session).ProcessInfo(ctx, sp.Herdr.Pane); errors.Is(err, herdr.ErrPaneGone) {
-		return exit(ExitRefused, bsname.Cmd+" end --incomplete "+sp.Name+", then "+bsname.Cmd+" spawn "+goalFlags(e.Parts)+" "+bead.ID, nil,
+		return exit(ExitRefused, bsname.Cmd+" end --incomplete "+sp.Name+", then "+bsname.Cmd+" spawn "+goalFlags(e.Goal)+" "+bead.ID, nil,
 			"%s: its pane %s is gone from herdr session %s, so there is nowhere to resume it; nothing started", sp.Name, sp.Herdr.Pane, sp.Herdr.Session)
 	} else if err != nil {
 		return exit(ExitCantCheck, "", err, "%s: can't look at its pane %s; nothing started", sp.Name, sp.Herdr.Pane)
@@ -198,7 +196,7 @@ func (c *Core) resume(ctx context.Context, sp logbook.Spawn, bead port.Bead, req
 		return exit(ExitRefused, "", err, "%s: its harness refused the restart; nothing started", sp.Name)
 	}
 	text := prompt.Text(prompt.Worker, c.Project, sp.Workspace.Kind, e.Types())
-	if slices.ContainsFunc(e.Parts, goal.Part.Reviewed) {
+	if e.Reviewed() {
 		text += prompt.Host(prompt.Worker, c.Review.Name())
 	}
 	launch.Files = withPrompt(launch.Files, text)
@@ -232,13 +230,13 @@ func (c *Core) kept(ctx context.Context, ended *logbook.Spawn, dir string) (bool
 	return head == ended.Workspace.Branch, nil
 }
 
-// goalFlags is "--goal <part>" for each part: a next: that spawns again names the goal.
-func goalFlags(parts []goal.Part) string {
-	var f []string
-	for _, p := range parts {
-		f = append(f, "--goal "+p.String())
+// goalFlags is "--goal <goal>": a next: that spawns again names the goal; a mixed goal's
+// first part, since a spawn takes one.
+func goalFlags(g goal.Goal) string {
+	if g.Mixed != nil {
+		return "--goal " + g.Mixed[0]
 	}
-	return strings.Join(f, " ")
+	return "--goal " + g.String()
 }
 
 // workerStart is the start of worker name in dir that every launch of it prepares, a first
@@ -252,13 +250,8 @@ func (c *Core) workerStart(name, dir, bell string, deny []string) port.Start {
 // refuse runs the spawn-time refusals of goal g that need no network, in workspace ws,
 // for bs spawn and every bs goal amend.
 func (c *Core) refuse(g goal.Goal, ws logbook.Workspace) error {
-	for _, p := range g.Parts {
-		switch p.Type {
-		case "branch", "pr":
-			if ws.Branch == "" {
-				return exit(ExitRefused, "", nil, "--goal %s: a %s workspace with no branch has none to hand off", p, ws.Kind)
-			}
-		}
+	if (g.Type == "branch" || g.Type == "pr") && ws.Branch == "" {
+		return exit(ExitRefused, "", nil, "--goal %s: a %s workspace with no branch has none to hand off", g, ws.Kind)
 	}
 	return nil
 }
@@ -281,65 +274,59 @@ func noteHash(b port.Bead) string {
 }
 
 // target is a push goal's change as spawn found it: the workspace starts at its head,
-// detached, or on a branch of its own cut there when another part (pr, branch) needs one.
+// detached.
 type target struct {
-	c      port.Change
-	hint   string // how to push onto it
-	branch bool
+	c    port.Change
+	hint string // how to push onto it
 }
 
-// resolveReview runs the spawn-time refusals of g's pr, push and review parts (Rule G),
-// for bs spawn and every bs goal amend: the project's checkout must
-// belong to a repo on the review host, which each part freezes; a push or review target
+// resolveReview runs the spawn-time refusals of a pr, push or review goal g (Rule G), for
+// bs spawn and every bs goal amend: the project's checkout must
+// belong to a repo on the review host, which g freezes; a push or review target
 // must be an open change of that repo, recorded in its one spelling; a push target whose
 // head lives elsewhere (a fork) must let the project push to it. A host that couldn't be
 // asked (network, auth) is exit 6, never 2. It returns the push target a workspace starts
 // at, if any.
 func (c *Core) resolveReview(ctx context.Context, g *goal.Goal) (*target, error) {
-	var t *target
-	needsBranch := slices.ContainsFunc(g.Parts, func(p goal.Part) bool { return p.Type == "pr" || p.Type == "branch" })
-	for i := range g.Parts {
-		p := &g.Parts[i]
-		if !p.Reviewed() {
-			continue
-		}
-		repo, ok, err := c.Review.Repo(ctx, c.Repo)
-		switch {
-		case err != nil:
-			return nil, exit(ExitCantCheck, "", err, "--goal %s: can't tell which %s repo %s belongs to", p, c.Review.Name(), c.Repo)
-		case !ok:
-			return nil, exit(ExitRefused, "add a remote for it (review.host = "+c.Review.Name()+")", nil,
-				"--goal %s: %s belongs to no %s repo, so none of its changes can be checked", p, c.Repo, c.Review.Name())
-		}
-		p.Repo = repo
-		if p.Target == "" {
-			continue
-		}
-		r, err := c.Review.Parse(p.Target)
-		if err != nil {
-			return nil, exit(ExitRefused, "", err, "--goal %s", p)
-		}
-		if !strings.EqualFold(r.Repo, repo) {
-			return nil, exit(ExitRefused, "", nil, "--goal %s: that is a change of %s, not of this project's repo %s", p, r.Repo, repo)
-		}
-		v, err := c.Review.View(ctx, c.Repo, r)
-		switch {
-		case errors.Is(err, port.ErrNoChange):
-			return nil, exit(ExitRefused, "", nil, "--goal %s: %s has no such change", p, repo)
-		case err != nil:
-			return nil, exit(ExitCantCheck, "", err, "--goal %s: can't ask %s about it", p, c.Review.Name())
-		case v.State != port.Open:
-			return nil, exit(ExitRefused, "", nil, "--goal %s: it is %s, not open", p, v.State)
-		case p.Type == "push" && !v.Editable:
-			return nil, exit(ExitRefused, "ask its author to allow edits by maintainers", nil,
-				"--goal %s: its head is in %s, which doesn't let this project push to it", p, v.ForeignRepo)
-		}
-		p.Target = r.URL
-		if p.Type == "push" && t == nil {
-			t = &target{c: v, hint: c.Review.PushHint(ctx, c.Repo, v), branch: needsBranch}
-		}
+	if !g.Reviewed() {
+		return nil, nil
 	}
-	return t, nil
+	repo, ok, err := c.Review.Repo(ctx, c.Repo)
+	switch {
+	case err != nil:
+		return nil, exit(ExitCantCheck, "", err, "--goal %s: can't tell which %s repo %s belongs to", g, c.Review.Name(), c.Repo)
+	case !ok:
+		return nil, exit(ExitRefused, "add a remote for it (review.host = "+c.Review.Name()+")", nil,
+			"--goal %s: %s belongs to no %s repo, so none of its changes can be checked", g, c.Repo, c.Review.Name())
+	}
+	g.Repo = repo
+	if g.Target == "" {
+		return nil, nil
+	}
+	r, err := c.Review.Parse(g.Target)
+	if err != nil {
+		return nil, exit(ExitRefused, "", err, "--goal %s", g)
+	}
+	if !strings.EqualFold(r.Repo, repo) {
+		return nil, exit(ExitRefused, "", nil, "--goal %s: that is a change of %s, not of this project's repo %s", g, r.Repo, repo)
+	}
+	v, err := c.Review.View(ctx, c.Repo, r)
+	switch {
+	case errors.Is(err, port.ErrNoChange):
+		return nil, exit(ExitRefused, "", nil, "--goal %s: %s has no such change", g, repo)
+	case err != nil:
+		return nil, exit(ExitCantCheck, "", err, "--goal %s: can't ask %s about it", g, c.Review.Name())
+	case v.State != port.Open:
+		return nil, exit(ExitRefused, "", nil, "--goal %s: it is %s, not open", g, v.State)
+	case g.Type == "push" && !v.Editable:
+		return nil, exit(ExitRefused, "ask its author to allow edits by maintainers", nil,
+			"--goal %s: its head is in %s, which doesn't let this project push to it", g, v.ForeignRepo)
+	}
+	g.Target = r.URL
+	if g.Type != "push" {
+		return nil, nil
+	}
+	return &target{c: v, hint: c.Review.PushHint(ctx, c.Repo, v)}, nil
 }
 
 // unmake takes back the worktree and branch a spawn made but couldn't record, or a second
@@ -457,13 +444,11 @@ func brief(b port.Bead, g goal.Goal, t *target, mergeInto []string) string {
 	if len(mergeInto) > 0 { // the guard can't see a PR's base: the brief says which (guards.allow_merge_into)
 		s += fmt.Sprintf("The keeper lets you merge your own change when its base matches %s; check its base first, and never merge into the default branch.\n", strings.Join(mergeInto, " or "))
 	}
-	for _, p := range g.Parts {
-		switch {
-		case p.Type == "review":
-			s += fmt.Sprintf("Your review comment on %s must carry the marker %s%s: "+bsname.Cmd+" done looks for it.\n", p.Target, "bs:", logbook.SpawnID)
-		case p.Type == "push" && t != nil && t.c.URL == p.Target:
-			s += fmt.Sprintf("Your workspace starts at %s's head (%s). Push your commits for it onto it: %s\n", p.Target, short(t.c.HeadCommit), t.hint)
-		}
+	switch {
+	case g.Type == "review":
+		s += fmt.Sprintf("Your review comment on %s must carry the marker %s%s: "+bsname.Cmd+" done looks for it.\n", g.Target, "bs:", logbook.SpawnID)
+	case g.Type == "push" && t != nil:
+		s += fmt.Sprintf("Your workspace starts at %s's head (%s). Push your commits for it onto it: %s\n", g.Target, short(t.c.HeadCommit), t.hint)
 	}
 	return s + "\n" + b.Description
 }
@@ -495,15 +480,8 @@ func refusedOrCant(err error, next, format string, a ...any) *Exit {
 // herdr's answer. Nothing is recorded yet: a failure leaves nothing behind.
 func (c *Core) makeWorkspace(ctx context.Context, session string, ws *logbook.Workspace, t *target, label string) (herdr.Workspace, error) {
 	name := filepath.Base(ws.Dir)
-	if t == nil || t.branch {
-		from := ws.Base
-		if t != nil { // a mixed goal: its own branch, cut at the push target's head
-			if err := c.Review.Fetch(ctx, ws.Repo, t.c); err != nil {
-				return herdr.Workspace{}, exit(ExitCantCheck, "", err, "%s: can't fetch %s's head; nothing was made", name, t.c.URL)
-			}
-			from = t.c.HeadCommit
-		}
-		hw, err := c.herdr(session).CreateWorktree(ctx, ws.Repo, from, ws.Branch, ws.Dir, label)
+	if t == nil {
+		hw, err := c.herdr(session).CreateWorktree(ctx, ws.Repo, ws.Base, ws.Branch, ws.Dir, label)
 		if err != nil {
 			return hw, exit(ExitFail, "", err, "%s: herdr couldn't make its worktree; nothing was recorded", name)
 		}

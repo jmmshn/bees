@@ -69,7 +69,7 @@ func (r *run) queen(fs *flag.FlagSet, args []string) error {
 
 // spawnArgs is bs spawn's arguments.
 type spawnArgs struct {
-	goals     list
+	goal      oneGoal
 	label, as string
 	bead      string
 }
@@ -78,7 +78,7 @@ type spawnArgs struct {
 // its bead exists, before the logbook is opened or made (bees-13.9 review S3).
 func (r *run) spawnArgs(fs *flag.FlagSet, args []string) error {
 	a := &r.spawnReq
-	fs.Var(&a.goals, "goal", "what the worker hands off (repeatable)")
+	fs.Var(&a.goal, "goal", "what the worker hands off (one)")
 	fs.StringVar(&a.label, "label", "", "its herdr label (default: the bead's title)")
 	fs.StringVar(&a.as, "as", "", "the queen, outside a recorded herdr pane")
 	if err := parse(fs, args); err != nil {
@@ -88,7 +88,7 @@ func (r *run) spawnArgs(fs *flag.FlagSet, args []string) error {
 		return fmt.Errorf("%w: "+bsname.Cmd+" spawn --goal <goal> <bead>", errUsage)
 	}
 	a.bead = fs.Arg(0)
-	if _, err := goal.Parse(a.goals); err != nil { // Spawn says the same; here before a logbook is made
+	if _, err := goal.Parse(string(a.goal)); err != nil { // Spawn says the same; here before a logbook is made
 		return &core.Exit{Code: core.ExitRefused, Msg: a.bead, Err: err}
 	}
 	if _, err := os.Stat(r.s.Logbook); errors.Is(err, os.ErrNotExist) && r.ports.Beads != nil {
@@ -103,7 +103,7 @@ func (r *run) spawnArgs(fs *flag.FlagSet, args []string) error {
 
 func (r *run) spawn(_ *flag.FlagSet, _ []string) error {
 	a := r.spawnReq
-	goals, label, as := a.goals, &a.label, &a.as
+	label, as := &a.label, &a.as
 	if err := r.s.unpinned("spawn"); err != nil {
 		return err
 	}
@@ -123,7 +123,7 @@ func (r *run) spawn(_ *flag.FlagSet, _ []string) error {
 		return err
 	}
 	sp, resumed, err := r.c.Spawn(r.ctx, core.SpawnReq{By: w.Name, Session: cmp.Or(core.Getenv(r.env.Vars, "HERDR_SESSION"), logbook.DefaultSession),
-		Bead: a.bead, Label: *label, Goals: goals})
+		Bead: a.bead, Label: *label, Goal: string(a.goal)})
 	if err != nil {
 		return err
 	}
@@ -223,7 +223,7 @@ func (r *run) goal(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	if fs.NArg() < 1 {
-		return fmt.Errorf("%w: "+bsname.Cmd+" goal <worker> <goal>... | discard | --waive <check>", errUsage)
+		return fmt.Errorf("%w: "+bsname.Cmd+" goal <worker> <goal> | discard | --waive <check>", errUsage)
 	}
 	name := core.Name(fs.Arg(0))
 	// ADR-0010 spells it bs goal <name> --waive <check>: flags after the worker too.
@@ -562,11 +562,7 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 			if discarded || gerr != nil { // nothing to resume for: only the end
 				note("stuck", sp.Name, "its process is gone but it isn't ended → %s", next)
 			} else {
-				var flags []string
-				for _, p := range e.Parts {
-					flags = append(flags, "--goal "+p.String())
-				}
-				note("stuck", sp.Name, "its process is gone but it isn't ended → %s spawn %s %s resumes it in its pane, or %s", bsname.Cmd, strings.Join(flags, " "), sp.Bead, next)
+				note("stuck", sp.Name, "its process is gone but it isn't ended → %s spawn --goal %s %s resumes it in its pane, or %s", bsname.Cmd, e.Goal, sp.Bead, next)
 			}
 		case lerr != nil || gerr != nil || derr != nil: // couldn't read it: never read as "no" (Rule G)
 		case sp.Ended && !landed && !sp.Legacy() && !discarded && !handed:

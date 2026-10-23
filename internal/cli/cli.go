@@ -320,6 +320,18 @@ type list []string
 func (l *list) String() string     { return strings.Join(*l, " ") }
 func (l *list) Set(v string) error { *l = append(*l, v); return nil }
 
+// oneGoal is --goal, refused a second time: one goal per spawn (ADR-0010 Amendment 4).
+type oneGoal string
+
+func (o *oneGoal) String() string { return string(*o) }
+func (o *oneGoal) Set(v string) error {
+	if *o != "" {
+		return errors.New("--goal given twice: one goal per spawn")
+	}
+	*o = oneGoal(v)
+	return nil
+}
+
 // who is the caller: its recorded pane inside one, else --as (ADR-0010 identity), in an
 // unrecorded herdr pane too (bees-13.14). load has already ignored, with a warning, every
 // BS_* variable inside a recorded pane.

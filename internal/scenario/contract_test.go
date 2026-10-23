@@ -133,9 +133,8 @@ func TestContractSpawnRefusals(t *testing.T) {
 		{"spawn-bad-value", "", []string{"--goal", "verdict=x"}, []string{"verdict takes no target"}},
 		{"spawn-push-dash", "", []string{"--goal", "push=-x"}, []string{"a target can't start with -"}},
 		{"spawn-review-no-remote", "", []string{"--goal", "review=https://github.com/cli/cli/pull/1"}, []string{"belongs to no github repo"}},
-		// Last: until T4 the two-goal spawn is accepted, and spawns toy-1.
-		{"spawn-two-bad", "T4", []string{"--goal", "verdict=x", "--goal", "nope"}, []string{"one goal per spawn"}},
-		{"spawn-two-goals", "T4", []string{"--goal", "verdict", "--goal", "note"}, []string{"one goal per spawn"}},
+		{"spawn-two-bad", "", []string{"--goal", "verdict=x", "--goal", "nope"}, []string{"one goal per spawn"}},
+		{"spawn-two-goals", "", []string{"--goal", "verdict", "--goal", "note"}, []string{"one goal per spawn"}},
 	} {
 		k.c(c.id, c.ticket, func(t *testing.T, x *toy) {
 			must(t, x.queen(append(append([]string{"spawn"}, c.args...), "toy-1")...), 2, c.want...)
@@ -356,7 +355,7 @@ func TestContractAmendWaiveDiscard(t *testing.T) {
 	k.c("amend-waive", "", func(t *testing.T, x *toy) {
 		must(t, x.queen("goal", A, "--waive", "pr_pushed"), 0, "waived: pr_pushed")
 	})
-	k.c("amend-two-values", "T4", func(t *testing.T, x *toy) {
+	k.c("amend-two-values", "", func(t *testing.T, x *toy) {
 		must(t, x.queen("goal", A, "verdict", "note"), 2, "one goal per spawn")
 	})
 	k.c("amend-as-worker", "T1", func(t *testing.T, x *toy) {
@@ -849,10 +848,10 @@ func TestContractOldMixedEntry(t *testing.T) {
 	sp2 := k.x.spawn("toy-2", "verdict") // the amend case's own, so a failed refusal leaves toy-1 mixed
 	k.x.rawEntry("goal", "keeper", "toy-2", sp2.ID, mixed)
 	k.c("mixed-status", "", func(t *testing.T, x *toy) { must(t, x.keeper("status"), 0, "verdict note") })
-	k.c("mixed-refuses-amend", "T4", func(t *testing.T, x *toy) {
+	k.c("mixed-refuses-amend", "", func(t *testing.T, x *toy) {
 		must(t, x.queen("goal", "toy-2", "verdict"), 2, "one goal per spawn", "discard")
 	})
-	k.c("mixed-refuses-done", "T4", func(t *testing.T, x *toy) {
+	k.c("mixed-refuses-done", "", func(t *testing.T, x *toy) {
 		x.beads.Add(port.Bead{ID: "toy-1", Title: "work on toy-1", Description: "do work on toy-1", Notes: "n"})
 		must(t, k.w(x, "toy-1", "done", "--answer", "yes", "--report", "ok"), 2, "spawned before one goal per spawn: end it")
 	})

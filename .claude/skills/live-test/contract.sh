@@ -110,9 +110,8 @@ c spawn-bad-value 2 'verdict takes no target' -- bs spawn --goal verdict=x --as 
 c spawn-push-dash 2 "a target can't start with -" -- bs spawn --goal push=-x --as "$queen" "$b0"
 c spawn-review-no-remote 2 'belongs to no github repo' -- bs spawn --goal review=https://github.com/cli/cli/pull/1 --as "$queen" "$b0"
 c spawn-unknown-bead 2 "no bead $toy-99" -- bs spawn --goal verdict --as "$queen" "$toy-99"
-# Last: until T4 the two-goal spawn is accepted, and spawns b0.
-c spawn-two-bad 2 'one goal per spawn' xfail=T4 -- bs spawn --goal verdict=x --goal nope --as "$queen" "$b0"
-c spawn-two-goals 2 'one goal per spawn' xfail=T4 -- bs spawn --goal verdict --goal note --as "$queen" "$b0"
+c spawn-two-bad 2 'one goal per spawn' -- bs spawn --goal verdict=x --goal nope --as "$queen" "$b0"
+c spawn-two-goals 2 'one goal per spawn' -- bs spawn --goal verdict --goal note --as "$queen" "$b0"
 
 echo "== spawning idle workers"
 # label → goal; each on a bead of its own, spawned together.
@@ -215,7 +214,7 @@ c amend-waive-unrun 2 '--waive pr_pushed: --goal verdict runs no such check' -- 
 c amend-pr-draft 0 '--goal pr:draft' -- bs goal --as "$queen" "$A" pr:draft
 c amend-mailed 0 'changed your goal: it is now --goal pr:draft' -- lb "SELECT data FROM entries WHERE kind = 'message' AND subject = ?" "$A"
 c amend-waive 0 'waived: pr_pushed' -- bs goal --as "$queen" "$A" --waive pr_pushed
-c amend-two-values 2 'one goal per spawn' xfail=T4 -- bs goal --as "$queen" "$A" verdict note
+c amend-two-values 2 'one goal per spawn' -- bs goal --as "$queen" "$A" verdict note
 c amend-as-worker 2 'worker' xfail=T1 -- bs goal --as "$A" "$A" verdict
 c amend-after-landed 2 '' -- bs goal --as "$queen" "$V" note
 c discard-as-queen 2 'only the keeper discards' xfail=T1 -- bs goal --as "$queen" "$A" discard

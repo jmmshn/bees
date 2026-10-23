@@ -328,6 +328,29 @@ func TestAFailedTagLeavesNoWorktreeOrBranch(t *testing.T) {
 	x.spawn("toy-1", "branch")
 }
 
+// A launch too long to type into a pane, or a worker name herdr can't give an agent, is
+// refused before anything is made: no worktree, no branch, no spawn (motif 8, bees-13.73.4).
+func TestAnUnstartableLaunchMakesNothing(t *testing.T) {
+	x := newToy(t)
+	x.bead("toy-1", "x")
+	cache := x.ports.CacheDir
+	x.ports.CacheDir = filepath.Join(cache, strings.Repeat(strings.Repeat("d", 99)+"/", 7)) // the start files' paths: the launch passes 768 bytes
+	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 2, "the launch can't be typed into a pane; nothing was made", "launch line too long")
+	long := "toy-1234567890123456789012345678901" // toy-1234567890123456789012345678901: 35 characters
+	x.bead(long, "x")
+	must(t, x.queen("spawn", "--goal", "branch", long), 2, long+" can't be a worker's name; nothing was made", "at most 32 characters")
+	for _, name := range []string{"toy-1", long} {
+		if x.hasBranch(name) {
+			t.Fatalf("branch %s left", name)
+		}
+		if _, err := os.Stat(filepath.Join(filepath.Dir(x.repo), "toy-WT", name)); !os.IsNotExist(err) {
+			t.Fatalf("worktree %s left: %v", name, err)
+		}
+	}
+	x.ports.CacheDir = cache
+	x.spawn("toy-1", "branch")
+}
+
 // A workspace kind set to one not built yet is refused, saying where it was set.
 func TestSpawnRefusesAKindNotBuiltYet(t *testing.T) {
 	x := newToy(t)

@@ -38,6 +38,7 @@ type Sent struct {
 	ID       logbook.ID
 	Stranger bool          // neither P's queen nor one of its spawns: stored, never rung
 	Started  logbook.Queen // the queen this send started; Pane "" when it started none
+	Bs       string        // the bs that started her
 	// NotStarted is why a crossing send found P's queen down and didn't start her;
 	// ErrStarting when another send's start of her is still in progress.
 	NotStarted error
@@ -71,10 +72,18 @@ func (c *Core) Send(ctx context.Context, in SendIn) (Sent, error) {
 		case err != nil:
 			out.NotStarted = err
 		case started:
-			out.Started = q
+			out.Started, out.Bs = q, in.Bs
 		}
 	}
 	out.Rung = c.Ring(ctx, in.From.Name, in.To, in.Priority)
+	// A queen just started may not take a ring yet (her harness still booting, or at a
+	// prompt such as folder trust): try again until Timing.Confirm runs out.
+	for deadline := time.Now().Add(c.timing().Confirm); out.Started.Pane != "" && out.Rung != nil && time.Now().Before(deadline); {
+		if err := sleep(ctx, c.timing().Poll); err != nil {
+			return out, nil
+		}
+		out.Rung = c.Ring(ctx, in.From.Name, in.To, in.Priority)
+	}
 	return out, nil
 }
 

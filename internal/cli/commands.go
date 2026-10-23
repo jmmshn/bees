@@ -376,7 +376,11 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 	}
 	switch q := sent.Started; {
 	case q.Pane != "":
-		fmt.Fprintf(r.out, "started %s in pane %s on herdr session %s (%s queen)\n", to, q.Pane, q.Session, q.Exe)
+		fmt.Fprintf(r.out, "started %s in pane %s on herdr session %s (%s queen)\n", to, q.Pane, q.Session, sent.Bs)
+		if sent.Rung != nil && !errors.Is(sent.Rung, core.ErrEnded) {
+			fmt.Fprintf(r.out, "stored, not rung: %s doesn't take a ring yet (%v); her pane may be at a prompt, such as folder trust: herdr --session %s pane read %s --source recent\n", to, sent.Rung, q.Session, q.Pane)
+			return nil
+		}
 	case errors.Is(sent.NotStarted, core.ErrStarting):
 		fmt.Fprintf(r.out, "stored; %s, by another send\n", sent.NotStarted)
 	case sent.NotStarted != nil:

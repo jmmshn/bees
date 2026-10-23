@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# setup.sh [--no-queen] [--harness agy] [<dir holding a bs build>]: a throwaway project for a
+# setup.sh [--no-queen] [--harness agy] [--cl] [<dir holding a bs build>]: a throwaway project for a
 # live test, on its own herdr --session server, with its session config dir written and (unless
 # --no-queen) its queen running that build. Prints the run's live.json.
 # --harness agy: the queen stays on Claude Code and spawns agy workers (bs spawn --harness agy);
@@ -7,13 +7,17 @@
 # AGY_SETTINGS agy's settings.json (default ~/.gemini/antigravity-cli/settings.json).
 # LIVE_SSH=1 starts the toy's herdr server as one started over ssh is, its panes handed
 # SSH_CONNECTION, SSH_CLIENT and SSH_TTY (bees-13.13.13).
+# --cl: the toy is CL-shaped (bees-14.6): cltoy/cl, a toy monorepo client and CL tool, is the
+# command workspace ([workspace.command]) and the command review host ([review.command]), on
+# every toy pane's PATH; config.toml says how, and cl-host.md is the host's prompt section.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
-queen=1 harness=claude_code
+queen=1 harness=claude_code cl=0
 while :; do
 	case ${1:-} in
 	--no-queen) queen=0 && shift ;;
 	--harness) [ "${2:-}" = agy ] || { echo "setup: --harness takes agy (claude_code is the default)" >&2; exit 1; }; harness=agy && shift 2 ;;
+	--cl) cl=1 && shift ;;
 	*) break ;;
 	esac
 done
@@ -65,7 +69,17 @@ done
 # unset under set -u.
 detach=setsid
 command -v setsid >/dev/null || detach=nohup
-toyenv=(env -i PATH="$bin:$PATH" HOME="$HOME" TERM="${TERM:-xterm-256color}" LANG="${LANG:-C.UTF-8}" SHELL="${SHELL:-/bin/sh}" ${xdg[@]+"${xdg[@]}"})
+clbin=
+if [ $cl = 1 ]; then
+	# Named after the toy, so teardown.sh removes it: the tool and its state, and the clients.
+	clbin=$run/$toy-cl/bin
+	mkdir -p "$clbin" && cp "$here/cltoy/cl" "$clbin/cl" && "$clbin/cl" init "$repo"
+	record cl "$clbin/cl"
+	sed "s|{{cl}}|$clbin/cl|g" "$here/cltoy/cl-host.md" >"$config/cl-host.md"
+	sed -e "s|{{clients}}|$run/$toy-clients|g" -e "s|{{config}}|$config|g" "$here/cltoy/config.toml" >>"$config/config.toml"
+	clbin=$clbin:
+fi
+toyenv=(env -i PATH="$bin:$clbin$PATH" HOME="$HOME" TERM="${TERM:-xterm-256color}" LANG="${LANG:-C.UTF-8}" SHELL="${SHELL:-/bin/sh}" ${xdg[@]+"${xdg[@]}"})
 if [ $harness = agy ]; then
 	record harness agy
 	# teardown.sh removes the toy's trust entries and agy files from here, and checks it

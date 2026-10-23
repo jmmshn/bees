@@ -71,6 +71,7 @@ func (c Caller) Recorded() bool { return c.Role != KeeperR && c.Role != "" }
 type ResolveIn struct {
 	Project string   // P: the project of the repo bs runs in; "" outside any
 	Logbook string   // P's logbook; "" when P is
+	Cwd     string   // where bs runs: in another project's worker's workspace, that project is P
 	Dirs    []string // every logbook dir bs can see: the config in effect's, then the default config's
 	Self    int
 	// Session and Pane are HERDR_SESSION (or default) and HERDR_PANE_ID: hints for the
@@ -87,7 +88,10 @@ type ResolveIn struct {
 // harness runs in the hinted pane above self (Confirm heals it), else the tripwire (the
 // hinted herdr pane, recorded by nobody, is in a live spawn's herdr workspace or
 // directory: that worker), else the nearest ancestor another project recorded (Foreign;
-// outside any repo, that session acting in its own project), else the keeper. Two
+// outside any repo, that session acting in its own project), else the keeper. A cwd in
+// another project's open worker's workspace makes that project P first: a command
+// workspace that is a checkout of its own (a clone, a client) names no project of its own
+// (bees-14.6). Two
 // sessions at the same distance is exit 1 naming both (motif 4); any lookup that fails is
 // exit 6, never the keeper (motif 7).
 func Resolve(ctx context.Context, in ResolveIn) (Caller, error) {
@@ -129,6 +133,14 @@ func Resolve(ctx context.Context, in ResolveIn) (Caller, error) {
 				return Caller{}, err
 			}
 			others = append(others, cs...)
+		}
+	}
+	if in.Cwd != "" {
+		for _, o := range others {
+			if o.Role == WorkerR && within(in.Cwd, o.dir, o.Repo) {
+				in.Project, in.Logbook, in.Cwd = o.Project, o.Logbook, ""
+				return Resolve(ctx, in)
+			}
 		}
 	}
 	c, ok, err := nearest(in.Proc, up, others)

@@ -1,0 +1,221 @@
+#!/usr/bin/env python3
+"""cl: a toy monorepo client and CL tool for a live test (bees-14.6), with nothing internal.
+
+The depot is the toy's git repo; a client is a clone of it, named after its worker; a CL is a
+client's HEAD uploaded into the depot as refs/cl/<n>; submitting one merges it into the
+depot's main. Its state lives in state.json beside this script's bin/ dir, so it needs no env
+(bs runs commands with only PATH, HOME and LANG).
+
+  cl init <depot>                    the state, once (setup.sh --cl)
+  cl client new|delete|clean <name> [<dir>]   [workspace.command] create, remove, clean
+  cl head|uploaded <name>            [workspace.command] branch, pushed: {"tip": ...}
+  cl has <commit> / cl descends <ancestor> <commit>   (cwd: the client)
+  cl upload                          a worker sends its client's HEAD as a CL (cwd: the client)
+  cl repo | list <dir> | show <url> | checks <url> | comment <url> <file> <marker> | fetch <url>
+                                     [review.command], one JSON value each
+  cl submit <url>                    lands a CL (the queen's or keeper's; workers are denied it)
+
+Any failure exits non-zero with a message on stderr: bs reads that as "couldn't ask".
+"""
+import datetime
+import fcntl
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+HOME = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+STATE = os.path.join(HOME, "state.json")
+URL = "https://cl.toy/{repo}/{n}"
+
+
+def die(msg):
+    sys.exit("cl: " + msg)
+
+
+def git(*args, cwd=None, check=True):
+    r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+    if check and r.returncode != 0:
+        die(f"git {' '.join(args)}: {r.stderr.strip()}")
+    return r
+
+
+class State:
+    """state.json under an exclusive lock, written back on exit when changed."""
+
+    def __enter__(self):
+        self.lock = open(STATE + ".lock", "a")
+        fcntl.flock(self.lock, fcntl.LOCK_EX)
+        try:
+            with open(STATE) as f:
+                self.s = json.load(f)
+        except FileNotFoundError:
+            self.s = None
+        self.before = json.dumps(self.s)
+        return self
+
+    def __exit__(self, *exc):
+        if exc[0] is None and json.dumps(self.s) != self.before:
+            with open(STATE + ".new", "w") as f:
+                json.dump(self.s, f, indent=1)
+            os.replace(STATE + ".new", STATE)
+        self.lock.close()
+
+
+def depot(s):
+    if not s:
+        die(f"no {STATE}: run cl init <depot> first")
+    return s["depot"]
+
+
+def client(s, name):
+    c = s["clients"].get(name)
+    if not c:
+        die(f"no client {name}")
+    return c
+
+
+def client_at(s, cwd):
+    real = os.path.realpath(cwd)
+    for name, c in s["clients"].items():
+        d = os.path.realpath(c["dir"])
+        if real == d or real.startswith(d + os.sep):
+            return name, c
+    die(f"{cwd} is in no client")
+
+
+def number(s, url):
+    for n, c in s["cls"].items():
+        if c["url"] == url:
+            return n, c
+    return None, None
+
+
+def change(s, cl):
+    d = depot(s)
+    out = {k: cl[k] for k in ("url", "state", "head", "head_commit", "base", "created")}
+    out["draft"] = False
+    ref = f"refs/cl/{cl['n']}"
+    if cl["state"] == "open":
+        out["commits"] = git("rev-list", "--reverse", f"main..{ref}", cwd=d).stdout.split()
+        out["behind"] = int(git("rev-list", "--count", f"{ref}..main", cwd=d).stdout)
+    else:
+        out["commits"] = cl.get("commits", [])
+        out["behind"] = 0
+    return out
+
+
+def emit(v):
+    print(json.dumps(v))
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(__doc__)
+        return
+    cmd, args = argv[0], argv[1:]
+    with State() as st:
+        s = st.s
+        if cmd == "init":
+            st.s = {"depot": os.path.realpath(args[0]), "repo": "toy", "clients": {}, "cls": {}, "next": 1}
+            return
+        d = depot(s)
+        if cmd == "client":
+            sub, name = args[0], args[1]
+            if sub == "new":
+                if name in s["clients"]:
+                    die(f"client {name} exists")
+                dest = os.path.abspath(os.path.expanduser(args[2]))
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                git("clone", "-q", d, dest)
+                for k in ("user.name", "user.email", "commit.gpgsign"):
+                    v = git("config", k, cwd=d, check=False).stdout.strip()
+                    if v:
+                        git("config", k, v, cwd=dest)
+                s["clients"][name] = {"dir": dest}
+            elif sub == "delete":
+                c = s["clients"].pop(name, None)
+                if c:
+                    shutil.rmtree(c["dir"], ignore_errors=True)
+            elif sub == "clean":
+                c = client(s, name)
+                dirty = git("status", "--porcelain", "--ignored", cwd=c["dir"]).stdout.strip()
+                if dirty:
+                    die(f"client {name} has files no CL holds:\n{dirty}")
+                head = git("rev-parse", "HEAD", cwd=c["dir"]).stdout.strip()
+                if git("cat-file", "-e", head + "^{commit}", cwd=d, check=False).returncode != 0:
+                    die(f"client {name}'s HEAD {head[:12]} was never uploaded")
+            else:
+                die(f"no command client {sub}")
+            return
+        if cmd == "head":
+            c = client(s, args[0])
+            emit({"tip": git("rev-parse", "HEAD", cwd=c["dir"]).stdout.strip()})
+        elif cmd == "uploaded":
+            cls = [c for c in s["cls"].values() if c["head"] == args[0]]
+            emit({"tip": cls[-1]["head_commit"] if cls else None})
+        elif cmd == "has":
+            ok = git("cat-file", "-e", args[0] + "^{commit}", check=False).returncode == 0
+            emit({"has": ok})
+        elif cmd == "descends":
+            r = git("merge-base", "--is-ancestor", args[0], args[1], check=False)
+            if r.returncode not in (0, 1):
+                die(r.stderr.strip())
+            emit({"descends": r.returncode == 0})
+        elif cmd == "upload":
+            name, c = client_at(s, os.getcwd())
+            head = git("rev-parse", "HEAD", cwd=c["dir"]).stdout.strip()
+            open_ = [cl for cl in s["cls"].values() if cl["head"] == name and cl["state"] == "open"]
+            if open_:
+                cl = open_[-1]
+            else:
+                n = s["next"]
+                s["next"] += 1
+                now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                cl = {"n": n, "url": URL.format(repo=s["repo"], n=n), "state": "open", "head": name, "base": "main", "created": now, "comments": []}
+                s["cls"][str(n)] = cl
+            git("fetch", "-q", c["dir"], f"+HEAD:refs/cl/{cl['n']}", cwd=d)
+            cl["head_commit"] = head
+            print(cl["url"])
+        elif cmd == "repo":
+            emit({"repo": s["repo"], "protected": True})
+        elif cmd == "list":
+            real = os.path.realpath(args[0])
+            names = [n for n, c in s["clients"].items() if os.path.realpath(c["dir"]) == real]
+            emit([change(s, cl) for cl in s["cls"].values() if cl["head"] in names])
+        elif cmd == "show":
+            _, cl = number(s, args[0])
+            emit(change(s, cl) if cl else None)
+        elif cmd == "checks":
+            _, cl = number(s, args[0])
+            if not cl:
+                die(f"no CL {args[0]}")
+            emit({"checks": [{"name": "presubmit", "bucket": "pass"}], "required": ["presubmit"]})
+        elif cmd == "comment":
+            _, cl = number(s, args[0])
+            if not cl:
+                die(f"no CL {args[0]}")
+            for i, m in enumerate(cl["comments"]):
+                if args[2] in m:
+                    emit({"url": f"{cl['url']}#c{i + 1}"})
+                    return
+            with open(args[1]) as f:
+                cl["comments"].append(f.read())
+            emit({"url": f"{cl['url']}#c{len(cl['comments'])}"})
+        elif cmd == "fetch":
+            emit({})
+        elif cmd == "submit":
+            _, cl = number(s, args[0])
+            if not cl or cl["state"] != "open":
+                die(f"no open CL {args[0]}")
+            cl["commits"] = change(s, cl)["commits"]
+            git("merge", "-q", "--no-ff", "-m", f"Submit {cl['url']}", f"refs/cl/{cl['n']}", cwd=d)
+            cl["state"] = "merged"
+            print(f"submitted {cl['url']}")
+        else:
+            die(f"no command {cmd}")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

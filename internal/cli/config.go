@@ -128,7 +128,9 @@ func load(ctx context.Context, env Env, ports Ports) (*settings, error) {
 			s.Warnings = append(s.Warnings, fmt.Sprintf("ignoring %s: %s, a recorded session, runs this bs, so the repo it runs in decides", k, s.Caller.Name))
 		}
 		clear(overrides)
-		if s.Project == "" { // outside any repo, a session acts in its own project (OQ-K6)
+		// Outside any repo, a session acts in its own project (OQ-K6); so does a worker in its
+		// own workspace when that is a checkout of its own, which Resolve found (bees-14.6).
+		if s.Project == "" || s.Caller.Role != core.Foreign && s.Caller.Project != s.Project {
 			s.Project, s.ProjectFrom = s.Caller.Project, "the project whose logbook ("+s.Caller.Logbook+") records "+s.Caller.Name
 			s.Repo, s.RepoFrom = s.Caller.Repo, "the repo "+s.Caller.Name+"'s entry recorded"
 		}
@@ -450,7 +452,7 @@ func (s *settings) resolve(ctx context.Context, env Env, ports Ports, dir, home 
 			dirs = append(dirs, ld)
 		}
 	}
-	in := core.ResolveIn{Project: s.Project, Dirs: dirs, Self: env.Self, Session: s.Session, Pane: getenv("HERDR_PANE_ID"),
+	in := core.ResolveIn{Project: s.Project, Cwd: env.Dir, Dirs: dirs, Self: env.Self, Session: s.Session, Pane: getenv("HERDR_PANE_ID"),
 		Run: ports.Run, Proc: ports.Proc, Harness: ports.recorded}
 	if s.Project != "" {
 		in.Logbook = filepath.Join(dirs[0], s.Project+".db")

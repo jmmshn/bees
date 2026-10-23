@@ -108,7 +108,11 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	if err := c.refuse(g, ws); err != nil {
 		return logbook.Spawn{}, false, err
 	}
-	if err := c.refuseCmds(ctx, g, name, bead.ID, ws); err != nil {
+	var create []string
+	if ws.Kind == config.CommandKind && !reused {
+		create = c.Command.Create
+	}
+	if err := c.refuseCmds(ctx, g, name, bead.ID, ws, create); err != nil {
 		return logbook.Spawn{}, false, err
 	}
 	deny, err := c.deny(ctx)

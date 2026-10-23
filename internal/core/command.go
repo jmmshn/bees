@@ -137,8 +137,9 @@ func (c *Core) getenv(key string) string {
 // would run can't: argv[0] on no PATH a command gets (a relative path with a / is looked
 // for only where it runs), or a placeholder this workspace has nothing for ({branch} in a
 // workspace with no branch). A custom goal's built-in check that reads a branch is refused
-// in a workspace with none. A ref git couldn't check is exit 6.
-func (c *Core) refuseCmds(ctx context.Context, g goal.Goal, name, bead string, ws logbook.Workspace) error {
+// in a workspace with none. create is the argv a spawn will make ws with; none for an amend
+// or a reused workspace. A ref git couldn't check is exit 6.
+func (c *Core) refuseCmds(ctx context.Context, g goal.Goal, name, bead string, ws logbook.Workspace, create []string) error {
 	if ws.Branch == "" {
 		if on := g.OnBranch(); len(on) > 0 {
 			return exit(ExitRefused, "", nil, "--goal %s: a %s workspace has no branch for %s to read", g, ws.Kind, strings.Join(on, ", "))
@@ -151,6 +152,9 @@ func (c *Core) refuseCmds(ctx context.Context, g goal.Goal, name, bead string, w
 	var all []named
 	for _, n := range slices.Sorted(maps.Keys(g.Cmds)) {
 		all = append(all, named{"checks." + n + ".run", g.Cmds[n].Argv})
+	}
+	if len(create) > 0 {
+		all = append(all, named{"workspace.command.create", create})
 	}
 	if ws.Command != nil {
 		all = append(all, named{"workspace.command.clean", ws.Command.Clean.Argv}, named{"workspace.command.remove", ws.Command.Remove.Argv})

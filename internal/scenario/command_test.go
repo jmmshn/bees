@@ -170,6 +170,7 @@ func TestCommandSpawnRefusals(t *testing.T) {
 		"no branch to fill": {"", "[checks.br]\nrun = [\"true\", \"{branch}\"]\n[goal.br]\nhandoff = [\"cmd:br\"]\n", "br", "checks.br.run can't run in a command workspace"},
 		"a branch check":    {"", "[goal.ahead]\nhandoff = [\"branch_ahead\"]\n", "ahead", "a command workspace has no branch for branch_ahead to read"},
 		"a branch goal":     {"", "", "branch", "a command workspace with no branch has none to hand off"},
+		"create missing":    {`create = ["bs-no-such-mk", "{dir}"]` + "\n" + `remove = ["rm", "-rf", "{dir}"]` + "\n" + `clean = ["true"]`, "", "cl", "workspace.command.create: bs-no-such-mk is not on PATH"},
 		"a custom state":    {"", "", "cl:ready", "the custom type cl takes no :<state> or =<target>"},
 	} {
 		t.Run(name, func(t *testing.T) {

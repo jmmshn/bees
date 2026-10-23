@@ -141,7 +141,7 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 		if err := c.refuse(g, sp.Workspace); err != nil {
 			return logbook.Effective{}, err
 		}
-		if err := c.refuseCmds(ctx, g, sp.Name, sp.Bead, sp.Workspace); err != nil {
+		if err := c.refuseCmds(ctx, g, sp.Name, sp.Bead, sp.Workspace, nil); err != nil {
 			return logbook.Effective{}, err
 		}
 		// Only a spawn from before bs froze its bead has none: nothing to tell a change from.

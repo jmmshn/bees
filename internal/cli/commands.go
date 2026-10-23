@@ -88,7 +88,11 @@ func (r *run) spawnArgs(fs *flag.FlagSet, args []string) error {
 		return fmt.Errorf("%w: "+bsname.Cmd+" spawn --goal <goal> <bead>", errUsage)
 	}
 	a.bead = fs.Arg(0)
-	if _, err := goal.Parse(string(a.goal)); err != nil { // Spawn says the same; here before a logbook is made
+	head, _, _ := strings.Cut(string(a.goal), "=")
+	typ, _, _ := strings.Cut(head, ":")
+	if _, custom := r.s.Goal[typ]; custom {
+		// Spawn resolves a custom type against the config, and says what's wrong with it.
+	} else if _, err := goal.Parse(string(a.goal)); err != nil { // Spawn says the same; here before a logbook is made
 		return &core.Exit{Code: core.ExitRefused, Msg: a.bead, Err: err}
 	}
 	if a.label != "" {
@@ -118,6 +122,12 @@ func (r *run) spawn(_ *flag.FlagSet, _ []string) error {
 	}
 	if kind, why, chosen := r.s.Kind(r.s.GitTop); chosen && unmade(kind) != "" {
 		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("workspace kind %s (%s): %s", kind, why, unmade(kind))}
+	} else if c := r.s.Workspace.Command; kind == config.CommandKind && (c == nil || len(c.Missing()) > 0) {
+		miss := "a [workspace.command] table"
+		if c != nil {
+			miss = strings.Join(c.Missing(), ", ")
+		}
+		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("workspace kind command (%s): [workspace.command] has no %s (clean exits 0 when nothing in the workspace would be lost: it is what lets prune remove one); nothing was made", why, miss), Next: bsname.Cmd + " config"}
 	}
 	// The keeper's spawn too is the queen's: its worker hands off to her.
 	sp, resumed, err := r.c.Spawn(r.ctx, core.SpawnReq{By: core.Queen(r.s.Project), Session: cmp.Or(core.Getenv(r.env.Vars, "HERDR_SESSION"), logbook.DefaultSession),
@@ -580,7 +590,7 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 			note("stuck", sp.Name, "ended with nothing handed off, so its goal can't complete → the keeper discards it (%s goal %s discard, bees-13.6)", bsname.Cmd, sp.Name)
 		case sp.Ended && !landed && !sp.Legacy() && !discarded:
 			note("stuck", sp.Name, "ended with its goal incomplete → %s prune completes it once --goal %s holds; if its change closed unmerged it never will, so the keeper discards it (%s goal %s discard)", bsname.Cmd, g, bsname.Cmd, sp.Name)
-		case sp.Ended && (landed || discarded) && sp.Workspace.Kind == "git_worktree" && sp.Workspace.Dir != "":
+		case sp.Ended && (landed || discarded) && (sp.Workspace.Kind == config.GitWorktree || sp.Workspace.Kind == config.CommandKind) && sp.Workspace.Dir != "":
 			why := "its goal is complete"
 			if discarded {
 				why = "its goal is discarded"

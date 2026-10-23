@@ -212,18 +212,19 @@ func TestBSProject(t *testing.T) {
 	wantIn(t, out, "# project: other (env BS_PROJECT)") // an unrecorded pane is outside one (bees-13.14)
 }
 
-// A key bs doesn't act on yet says so in bs config, and doctor warns when a file sets
-// one: a guards.deny that does nothing is a guard the keeper thinks is on.
-func TestUnreadKeysAreMarked(t *testing.T) {
+// bees-13.11 reads [checks], [goal.<name>] and [workspace.command]: neither bs config nor
+// doctor calls them unread, and doctor fails a [checks] argv[0] it can't find.
+func TestTheCommandKeysAreRead(t *testing.T) {
 	r := newRig(t)
-	r.write("projects/mytoy.toml", "[checks.lint]\nrun = [\"make\", \"lint\"]\n")
+	r.write("projects/mytoy.toml", "[checks.lint]\nrun = [\"bs-no-such-lint\", \"lint\"]\n")
 	_, out, _ := r.run(r.repo, nil, "config")
-	wantIn(t, out, `checks.lint.run = ["make", "lint"]  # project `, "; not read by bs yet (bees-13.11)\n",
-		`worker.claude_code.model = ""  # default`+"\n",
-		"# [workspace.command] unset; not read by bs yet (bees-13.11)\n", "# [goal.<name>] unset; ")
+	wantIn(t, out, `checks.lint.run = ["bs-no-such-lint", "lint"]  # project `, "# [workspace.command] unset\n", "# [goal.<name>] unset\n")
+	if strings.Contains(out, "not read by") {
+		t.Errorf("bs config calls a key unread:\n%s", out)
+	}
 	_, out, _ = r.run(r.repo, nil, "doctor")
-	wantIn(t, out, "set, but not read by bs yet (bees-13.11): bs ignores it")
-	if strings.Contains(out, "guards") {
+	wantIn(t, out, "FAIL checks.lint.run: bs-no-such-lint is not on")
+	if strings.Contains(out, "not read by") || strings.Contains(out, "guards") {
 		t.Errorf("doctor calls the guards unread; bees-13.6 reads them:\n%s", out)
 	}
 	if strings.Contains(out, "model set") || strings.Contains(out, "workspace.command") {
@@ -235,7 +236,10 @@ func TestUnreadKeysAreMarked(t *testing.T) {
 // becomes a git_worktree behind the config's back.
 func TestSpawnRefusesAKindItCantMake(t *testing.T) {
 	r := newRig(t)
-	for _, body := range []string{"[workspace]\nkind = \"none\"\n", "[workspace.command]\ncreate = [\"mk\"]\n"} {
+	for body, want := range map[string]string{
+		"[workspace]\nkind = \"none\"\n":           "bs spawn makes git_worktree and command workspaces, and none only once bees-13.10",
+		"[workspace.command]\ncreate = [\"mk\"]\n": "[workspace.command] has no remove, clean, dir",
+	} {
 		r.write("projects/mytoy.toml", body)
 		var out, errb bytes.Buffer
 		ports := Ports{Run: port.Exec{}, Harness: noHarness{}, CacheDir: filepath.Join(r.home, "cache")}
@@ -243,7 +247,7 @@ func TestSpawnRefusesAKindItCantMake(t *testing.T) {
 		if code != 2 {
 			t.Errorf("%q: exit %d %s", body, code, errb.String())
 		}
-		wantIn(t, errb.String(), "bs spawn makes only git_worktree workspaces until bees-13.1")
+		wantIn(t, errb.String(), want)
 	}
 }
 
@@ -398,9 +402,10 @@ func TestConfigInit(t *testing.T) {
 			t.Errorf("%v: exit %d %s", args, code, stderr)
 		}
 	}
-	// A kind spawn won't make yet is never written (bees-13.10, 13.11).
-	for _, kind := range []string{"none", "command"} {
-		if code, _, stderr := r.run(r.repo, nil, "config", "init", "--project", "--workspace", kind); code != 2 || !strings.Contains(stderr, "until bees-13.1") {
+	// A kind spawn won't make yet is never written (bees-13.10), nor a command kind with
+	// no table to make it from.
+	for kind, want := range map[string]string{"none": "once bees-13.10 brings it", "command": "which config init doesn't write"} {
+		if code, _, stderr := r.run(r.repo, nil, "config", "init", "--project", "--workspace", kind); code != 2 || !strings.Contains(stderr, want) {
 			t.Errorf("--workspace %s: exit %d %s", kind, code, stderr)
 		}
 	}

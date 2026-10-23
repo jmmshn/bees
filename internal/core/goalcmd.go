@@ -99,6 +99,7 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 		}
 	}
 	change := logbook.GoalChange{By: req.By}
+	var own prompt.Own // a custom type's fragment, as the amend recorded its hash
 	switch {
 	case discard:
 		change.Discard = true
@@ -120,11 +121,11 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 		if len(req.Values) > 1 {
 			return logbook.Effective{}, exit(ExitRefused, "", nil, "%s --goal %s: one goal per spawn; give one value", what, strings.Join(req.Values, " "))
 		}
-		g, err := goal.Parse(req.Values[0])
+		g, o, err := c.parseGoal(req.Values[0])
 		if err != nil {
 			return logbook.Effective{}, exit(ExitRefused, "", err, "%s", what)
 		}
-		g.Fragment = prompt.Hash(g.Type)
+		own = o
 		if r, err := c.Review.Parse(g.Target); g.Target != "" && err == nil {
 			g.Target = r.URL // its one spelling, as e's was recorded
 		}
@@ -138,6 +139,9 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 			return logbook.Effective{}, err
 		}
 		if err := c.refuse(g, sp.Workspace); err != nil {
+			return logbook.Effective{}, err
+		}
+		if err := c.refuseCmds(ctx, g, sp.Name, sp.Bead, sp.Workspace); err != nil {
 			return logbook.Effective{}, err
 		}
 		// Only a spawn from before bs froze its bead has none: nothing to tell a change from.
@@ -155,7 +159,12 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 		return e, err
 	}
 	body := fmt.Sprintf("%s changed your goal: it is now --goal %s. Hand it off with %s done when it holds.\n", req.By, e.Goal, bsname.Cmd)
-	body += prompt.Goal(prompt.Worker, e.Types()) // the fragments its hash records
+	if own == nil && change.Goal == nil { // a waiver keeps the recorded goal: its fragment as recorded
+		if own, err = c.ownOf(e.Goal, sp.Name); err != nil {
+			c.warn("%v", err)
+		}
+	}
+	body += prompt.Goal(prompt.Worker, e.Types(), own) // the fragments its hash records
 	if e.Reviewed() {
 		body += prompt.Host(prompt.Worker, c.Review.Name())
 	}

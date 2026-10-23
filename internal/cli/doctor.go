@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jmmshn/bees/internal/bsname"
+	"github.com/jmmshn/bees/internal/checks"
 	"github.com/jmmshn/bees/internal/config"
 	"github.com/jmmshn/bees/internal/core"
 	"github.com/jmmshn/bees/internal/herdr"
@@ -172,13 +173,15 @@ func (d *doctor) project() {
 	}
 	// A kind spawn won't make yet is a spawn refused, said here first.
 	switch kind, why, _ := s.Kind(s.GitTop); {
+	case kind == config.CommandKind && s.Workspace.Command == nil:
+		d.line("FAIL", "workspace", "command (%s) with no [workspace.command] table: every spawn refuses it; set the table, or drop the override", why)
+	case kind == config.CommandKind && len(s.Workspace.Command.Missing()) > 0:
+		d.line("FAIL", "workspace", "[workspace.command] has no %s: every spawn refuses it", strings.Join(s.Workspace.Command.Missing(), ", "))
 	case unmade(kind) == "" || s.Repo == "" || s.RepoMissing:
 	case kind == config.NoWorkspace && s.GitTop:
 		d.line("FAIL", "workspace", "workspace.kind = none over a git checkout (%s): %s, and workers would share %s with no branch of their own (bees-12.28); drop the override for git_worktree", why, unmade(kind), s.Repo)
-	case kind == config.NoWorkspace:
-		d.line("FAIL", "workspace", "none (%s): %s; make the project a git checkout, or wait for none", why, unmade(kind))
 	default:
-		d.line("FAIL", "workspace", "%s (%s): %s; drop [workspace.command] and workspace.kind", kind, why, unmade(kind))
+		d.line("FAIL", "workspace", "none (%s): %s; make the project a git checkout, or wait for none", why, unmade(kind))
 	}
 	dir := filepath.Dir(s.Logbook)
 	switch err := s.checkLogbook(d.r.env); {
@@ -417,16 +420,4 @@ func (s *settings) argvs() [][2]string {
 }
 
 // lookPath finds program on path, the caller's PATH rather than bs's own.
-func lookPath(path, program string) (string, bool) {
-	if strings.Contains(program, "/") {
-		fi, err := os.Stat(program)
-		return program, err == nil && fi.Mode()&0o111 != 0
-	}
-	for _, d := range filepath.SplitList(path) {
-		at := filepath.Join(d, program)
-		if fi, err := os.Stat(at); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
-			return at, true
-		}
-	}
-	return "", false
-}
+func lookPath(path, program string) (string, bool) { return checks.LookPath(path, program) }

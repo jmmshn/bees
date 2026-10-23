@@ -68,6 +68,9 @@ func (k *look) run(ctx context.Context, g goal.Goal, name string) (outcome, stri
 	if isPRCheck(name) {
 		return k.prCheck(ctx, g, name)
 	}
+	if goal.Cmd(name) != "" {
+		return k.runCmd(ctx, g, name)
+	}
 	switch name {
 	case goal.VerdictGiven, goal.ReviewComment:
 		set := strings.Join(g.Answers(), "|")
@@ -85,6 +88,9 @@ func (k *look) run(ctx context.Context, g goal.Goal, name string) (outcome, stri
 	case goal.BeadCreated:
 		return k.beadCreated(ctx)
 	case goal.Clean:
+		if ws.Command != nil { // a command workspace: the keeper's clean says
+			return k.clean(ctx)
+		}
 		// Not c.git: trimming would cut the first line's status column.
 		b, err := c.Run.Run(ctx, ws.Dir, "git", "-C", ws.Dir, "status", "--porcelain")
 		if err != nil {

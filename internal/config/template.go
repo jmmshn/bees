@@ -13,8 +13,8 @@ import (
 // keys come from the struct, but its shape only shows in use.
 var examples = map[string]string{
 	"workspace.command": `[workspace.command]
-create  = ["jj", "workspace", "add", "{dir}", "--name", "{name}"]
-remove  = ["jj", "workspace", "forget", "{name}"]
+create  = ["jj", "workspace", "add", "--name", "{name}", "{dir}"]
+remove  = ["sh", "-c", "jj workspace forget \"$1\"; rm -rf \"$2\"", "sh", "{name}", "{dir}"]
 clean   = ["sh", "-c", "test -z \"$(jj diff --summary)\""]
 dir     = "{repo}-WS/{name}"
 timeout = "60s"`,

@@ -157,7 +157,7 @@ dir = "{repo}-WS/{name}"
 timeout = "60s"
 
 [checks.cl_submitted]
-run = ["cl", "status", "{cl}"]
+run = ["cl", "status", "{name}"]
 
 [goal.cl]
 handoff = ["clean", "cmd:cl_submitted"]
@@ -190,7 +190,7 @@ replace = true
 		keys = append(keys, f.Key+"="+f.Value)
 	}
 	all := strings.Join(keys, "\n")
-	for _, want := range []string{`goal.cl.handoff=["clean", "cmd:cl_submitted"]`, `checks.cl_submitted.run=["cl", "status", "{cl}"]`,
+	for _, want := range []string{`goal.cl.handoff=["clean", "cmd:cl_submitted"]`, `checks.cl_submitted.run=["cl", "status", "{name}"]`,
 		`workspace.command.dir="/w/{name}"`, "guards.replace=true"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("fields lack %s:\n%s", want, all)
@@ -234,13 +234,19 @@ func TestTableErrors(t *testing.T) {
 	global := filepath.Join(dir, "config.toml")
 	write(t, global, `
 [workspace.command]
-create = ["jj"]
+create = ["jj", "workspace", "add", "{dir}", "--name", "{branch}"]
 remove = ["jj"]
 dir = "x"
 timeout = "soon"
 
 [checks.empty]
 run = []
+
+[checks.handed]
+run = ["cl", "status", "{pr}"]
+
+[checks.spliced]
+run = ["cl", "status", "cl-{name}"]
 
 [goal.pr]
 handoff = ["clean"]
@@ -251,6 +257,8 @@ handoff = ["cmd:nope", "made_up"]
 	_, err := Load(Input{Dir: dir, Home: "/h"})
 	wantErr(t, err, `[workspace.command] timeout = "soon"`,
 		"[checks.empty] run: an argv is required", "[goal.pr] pr is a built-in goal type",
+		"create: argument 5 {branch}: no such placeholder", `dir = "x": it must name {name}`,
+		"[checks.handed] run: argument 2 {pr}: a worker names no change", `argument 2 "cl-{name}": a placeholder fills one whole argument`,
 		`[goal.cl] handoff: "cmd:nope" names no [checks.nope]`, `"made_up" is no built-in check`)
 }
 

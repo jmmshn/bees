@@ -27,7 +27,7 @@ func (r *run) configInit(fs *flag.FlagSet, args []string) error {
 		{"logbook-dir", "paths.logbook_dir", "paths.logbook_dir (global file): where the logbooks live"},
 		{"repos", "paths.repos", "paths.repos (global file): a directory of repos"},
 		{"worktrees", "paths.worktrees", "paths.worktrees: where git_worktree workspaces go"},
-		{"workspace", "workspace.kind", "workspace.kind: git_worktree (default: worked out; none waits for bees-13.10, command for bees-13.11)"},
+		{"workspace", "workspace.kind", "workspace.kind: git_worktree (default: worked out; none waits for bees-13.10; a [workspace.command] table, set by hand, makes it command)"},
 		{"repo", "paths.repo", "paths.repo (project file): the project's directory, when " + bsname.Cmd + " isn't run in it"},
 	} {
 		fs.Func(f.name, f.usage, func(v string) error { set[f.key] = v; return nil })
@@ -111,6 +111,10 @@ func (r *run) initRefusals(scope string, set map[string]string, text string) err
 	l, err := config.Load(in)
 	if err != nil {
 		return &core.Exit{Code: core.ExitRefused, Msg: bsname.Cmd + " config init: nothing was written", Err: errors.New(strings.ReplaceAll(err.Error(), dir, r.s.Dir))}
+	}
+	if set["workspace.kind"] == config.CommandKind {
+		return &core.Exit{Code: core.ExitRefused, Msg: bsname.Cmd + " config init: --workspace command: a command workspace is its [workspace.command] table (create, remove, clean, dir), which config init doesn't write; nothing was written",
+			Next: "leave --workspace off, then write the table into the file it makes (docs/SETUP.md has examples)"}
 	}
 	if k := set["workspace.kind"]; k != "" && unmade(k) != "" {
 		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("%s config init: --workspace %s: %s; nothing was written", bsname.Cmd, k, unmade(k)),

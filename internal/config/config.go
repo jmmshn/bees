@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jmmshn/bees/internal/checks"
 	"github.com/jmmshn/bees/internal/goal"
 )
 
@@ -33,8 +34,8 @@ type Config struct {
 	Harness   string              `toml:"harness" scope:"global" default:"claude_code" enum:"claude_code" doc:"the harness every queen and worker on this machine starts on (omp and agy arrive with bees-12.8 and bees-12.12)"`
 	Paths     Paths               `toml:"paths"`
 	Workspace Workspace           `toml:"workspace"`
-	Goal      map[string]GoalType `toml:"goal" scope:"both" unread:"bees-13.11" doc:"custom goal types, by name"`
-	Checks    map[string]Check    `toml:"checks" scope:"both" unread:"bees-13.11" doc:"argv a custom goal's cmd:<name> check runs"`
+	Goal      map[string]GoalType `toml:"goal" scope:"both" doc:"custom goal types, by name: --goal <name> runs their checks"`
+	Checks    map[string]Check    `toml:"checks" scope:"both" doc:"argv a custom goal's cmd:<name> check runs in the workspace: exit 0 is yes, any other exit no"`
 	Guards    Guards              `toml:"guards"`
 	Review    Review              `toml:"review"`
 	Queen     Role                `toml:"queen"`
@@ -53,8 +54,8 @@ type Paths struct {
 // Workspace says what a worker's workspace is. The kind is worked out (Kind); the key
 // only overrides it.
 type Workspace struct {
-	Kind    string   `toml:"kind" scope:"both" enum:"git_worktree|none|command" doc:"overrides the worked-out kind: command when [workspace.command] is set, else git_worktree in a git checkout's top level, else none; spawn makes only git_worktree until bees-13.10 (none) and bees-13.11 (command)"`
-	Command *Command `toml:"command" scope:"both" unread:"bees-13.11" doc:"argv that make and remove a command workspace (cwd: paths.repo)"`
+	Kind    string   `toml:"kind" scope:"both" enum:"git_worktree|none|command" doc:"overrides the worked-out kind: command when [workspace.command] is set, else git_worktree in a git checkout's top level, else none; spawn makes none only once bees-13.10 lands"`
+	Command *Command `toml:"command" scope:"both" doc:"argv that make (create), remove (remove) and check (clean: exit 0 when nothing would be lost) a command workspace at dir; create and remove run in paths.repo, clean in the workspace"`
 }
 
 // Command is [workspace.command]: its presence makes the kind command.
@@ -137,9 +138,50 @@ func (l *Loaded) Kind(gitTop bool) (kind, why string, chosen bool) {
 	return NoWorkspace, "worked out: no repo that is a git checkout's top level", false
 }
 
-// check checks only what config can know. A missing argv or dir is refused where it
-// would run, at spawn (ADR-0010), so bs config and doctor still show the table.
-func (c *Command) check() error { return checkTimeout(c.Timeout) }
+// WorkspaceKeys are the placeholders a [workspace.command] argv may name: a command
+// workspace has no branch, so none of a git_worktree's.
+var WorkspaceKeys = []string{"dir", "name", "bead", "project", "repo"}
+
+// DirKeys are the placeholders [workspace.command] dir may name, anywhere in it.
+var DirKeys = []string{"repo", "name"}
+
+// check checks only what config can know: each argv's placeholders, the dir's, the
+// timeout. A missing argv or dir is refused where it would run, at spawn (ADR-0010), so
+// bs config and doctor still show the table.
+func (c *Command) check() error {
+	errs := []error{checkTimeout(c.Timeout)}
+	for _, a := range []struct {
+		key  string
+		argv []string
+	}{{"create", c.Create}, {"remove", c.Remove}, {"clean", c.Clean}} {
+		if len(a.argv) == 0 {
+			continue
+		}
+		if err := checks.Check(a.argv, WorkspaceKeys); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", a.key, err))
+		}
+	}
+	if c.Dir != "" {
+		errs = append(errs, checkDir(c.Dir))
+	}
+	return errors.Join(errs...)
+}
+
+// checkDir refuses a [workspace.command] dir that names a placeholder other than {repo}
+// and {name}, or that doesn't name {name}: every worker gets a directory of its own.
+func checkDir(dir string) error {
+	rest := dir
+	for _, k := range DirKeys {
+		rest = strings.ReplaceAll(rest, "{"+k+"}", "")
+	}
+	switch {
+	case strings.ContainsAny(rest, "{}"):
+		return fmt.Errorf("dir = %q: only {repo} and {name} are filled in", dir)
+	case !strings.Contains(dir, "{name}"):
+		return fmt.Errorf("dir = %q: it must name {name}, so each worker gets a directory of its own", dir)
+	}
+	return nil
+}
 
 // Missing names each of c's required keys left unset: create, remove, clean (exits 0
 // when nothing would be lost) and dir.
@@ -182,8 +224,8 @@ func (g GoalType) check(name string, checks map[string]Check) error {
 }
 
 func (c Check) check() error {
-	if len(c.Run) == 0 || c.Run[0] == "" {
-		return errors.New("run: an argv is required")
+	if err := checks.Check(c.Run, checks.Keys); err != nil {
+		return fmt.Errorf("run: %w", err)
 	}
 	return checkTimeout(c.Timeout)
 }

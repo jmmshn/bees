@@ -217,8 +217,8 @@ func TestDoctorTools(t *testing.T) {
 		t.Errorf("exit %d", code)
 	}
 	wantIn(t, out, "FAIL harness claude_code: "+filepath.Join(r.bin, "claude")+" 2.1.200 is older than 2.1.296",
-		"FAIL bd: bd is not on PATH", "WARN checks.sent.run: cl-status is not on this shell's PATH (a check runs on the PATH of the bs that runs it", "bs doesn't read checks.sent.run yet")
-	if strings.Contains(out, "checks.local.run: ") || strings.Contains(out, "FAIL checks") {
+		"FAIL bd: bd is not on PATH", "FAIL checks.sent.run: cl-status is not on this shell's PATH (a check runs on the PATH of the bs that runs it")
+	if strings.Contains(out, "checks.local.run: ") {
 		t.Errorf("./scripts/chk from the repo top, or an unread key failed:\n%s", out)
 	}
 	r.stub("cl-status", "exit 0")
@@ -247,13 +247,13 @@ func TestDoctorNoConfigDir(t *testing.T) {
 	wantIn(t, out, "FAIL config dir: "+r.session+" is missing for herdr session toy: bs config init writes it")
 }
 
-// A workspace kind spawn refuses until bees-13.10/13.11 fails doctor, never an ok line;
+// A workspace kind spawn refuses (none until bees-13.10, a command table missing a key) fails doctor, never an ok line;
 // [workspace.command] isn't called ignored, since spawn refuses it.
 func TestDoctorFailsAKindSpawnRefuses(t *testing.T) {
 	r := newDoctorRig(t)
 	for body, want := range map[string]string{
 		"[workspace]\nkind = \"none\"\n":           "FAIL workspace: workspace.kind = none over a git checkout",
-		"[workspace.command]\ncreate = [\"jj\"]\n": "FAIL workspace: command ([workspace.command] is set",
+		"[workspace.command]\ncreate = [\"jj\"]\n": "FAIL workspace: [workspace.command] has no remove, clean, dir: every spawn refuses it",
 	} {
 		r.write("projects/mytoy.toml", body)
 		code, out := r.doctor()

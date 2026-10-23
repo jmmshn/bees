@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jmmshn/bees/internal/checks"
 	"github.com/jmmshn/bees/internal/goal"
 )
 
@@ -47,6 +48,15 @@ type Workspace struct {
 	// Push is a push goal's target change's head branch, which the worker pushes its
 	// branch onto. A spawn recorded before bees-13.78.1 has none.
 	Push string `json:"push,omitempty"`
+	// Command is a command workspace's remove and clean argv, frozen at spawn: prune runs
+	// these, never config's.
+	Command *Command `json:"command,omitempty"`
+}
+
+// Command is the [workspace.command] argv a command workspace is checked and removed by.
+type Command struct {
+	Remove checks.Cmd `json:"remove"`
+	Clean  checks.Cmd `json:"clean"`
 }
 
 // Spawn is a spawned entry: everything bs end, prune and a handoff read about a worker,

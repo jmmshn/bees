@@ -27,13 +27,17 @@ type Core struct {
 	HarnessName string                         // the config name entries record: claude_code
 	Proc        port.Proc
 	Beads       port.Beads
-	Repo        string   // paths.repo: the project's checkout
-	Worktrees   string   // where git_worktree workspaces go: <Worktrees>/<name>
-	Kind        string   // the workspace kind, worked out or set (config.Kind)
-	KindWhy     string   // how config came to it
-	ConfigDir   string   // the config dir the spawn ran under, recorded
-	CacheDir    string   // per-start files
-	WorkerPath  []string // worker.path: dirs first on a worker's PATH
+	Repo        string                     // paths.repo: the project's checkout
+	Worktrees   string                     // where git_worktree workspaces go: <Worktrees>/<name>
+	Kind        string                     // the workspace kind, worked out or set (config.Kind)
+	KindWhy     string                     // how config came to it
+	Command     *config.Command            // [workspace.command], ~ expanded: a command workspace's argv
+	Goals       map[string]config.GoalType // custom goal types, fragment paths expanded
+	Checks      map[string]config.Check    // the argv their cmd: checks run
+	Getenv      func(string) string        // bs's own environment, which commands bs runs take PATH from; nil is the process's
+	ConfigDir   string                     // the config dir the spawn ran under, recorded
+	CacheDir    string                     // per-start files
+	WorkerPath  []string                   // worker.path: dirs first on a worker's PATH
 	Guards      config.Guards
 	PruneIgnore []string    // prune.ignore, which spawn freezes: ignored files prune removes with a worktree
 	Review      port.Review // review.host: where changes are reviewed and land; never nil

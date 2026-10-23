@@ -44,7 +44,7 @@ func TestRunScrubsTheEnvAndUsesTheDir(t *testing.T) {
 	t.Setenv("BS_PROJECT", "leak")
 	t.Setenv("GH_TOKEN", "secret")
 	dir := t.TempDir()
-	r, err := checks.Run(context.Background(), checks.Cmd{Argv: []string{"sh", "-c", "pwd; env | sort; exit 3"}}, dir, nil)
+	r, err := checks.Run(context.Background(), checks.Cmd{Argv: []string{"sh", "-c", "pwd; env | sort; exit 3"}}, dir, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestRunKillsTheProcessGroupAtItsTimeout(t *testing.T) {
 	_, err := checks.Run(context.Background(), checks.Cmd{
 		Argv:    []string{"sh", "-c", "sleep 30 & echo $! > " + pidfile + "; wait"},
 		Timeout: 300 * time.Millisecond,
-	}, t.TempDir(), nil)
+	}, t.TempDir(), nil, nil)
 	if !errors.Is(err, checks.ErrTimeout) || !errors.Is(err, checks.ErrCantRun) {
 		t.Fatalf("err = %v", err)
 	}
@@ -95,7 +95,7 @@ func TestRunKillsWhatTheCommandLeftBehind(t *testing.T) {
 	start := time.Now()
 	res, err := checks.Run(context.Background(), checks.Cmd{
 		Argv: []string{"sh", "-c", "sleep 31 & echo $! > " + pidfile + "; echo hi"},
-	}, t.TempDir(), nil)
+	}, t.TempDir(), nil, nil)
 	if err != nil || res.Code != 0 || strings.TrimSpace(string(res.Output)) != "hi" {
 		t.Fatalf("res = %+v, err = %v; want exit 0 and its output", res, err)
 	}
@@ -115,10 +115,10 @@ func TestRunKillsWhatTheCommandLeftBehind(t *testing.T) {
 }
 
 func TestRunOfAMissingProgramCantRun(t *testing.T) {
-	if _, err := checks.Run(context.Background(), checks.Cmd{Argv: []string{"bs-no-such-program"}}, t.TempDir(), nil); !errors.Is(err, checks.ErrCantRun) {
+	if _, err := checks.Run(context.Background(), checks.Cmd{Argv: []string{"bs-no-such-program"}}, t.TempDir(), nil, nil); !errors.Is(err, checks.ErrCantRun) {
 		t.Fatalf("err = %v", err)
 	}
-	if _, err := checks.Run(context.Background(), checks.Cmd{Argv: []string{"true"}}, "", nil); !errors.Is(err, checks.ErrCantRun) {
+	if _, err := checks.Run(context.Background(), checks.Cmd{Argv: []string{"true"}}, "", nil, nil); !errors.Is(err, checks.ErrCantRun) {
 		t.Fatalf("no dir: %v", err)
 	}
 }
@@ -135,5 +135,27 @@ func TestFillOfARefWithNoGitCantRun(t *testing.T) {
 	_, err := checks.Fill(context.Background(), []string{"git", "{branch}"}, map[string]checks.Value{"branch": {S: "toy-1", Ref: true}})
 	if !errors.Is(err, checks.ErrCantRun) || errors.Is(err, checks.ErrBadArgv) {
 		t.Fatalf("Fill = %v; want ErrCantRun", err)
+	}
+}
+
+// A bare argv[0] is looked up on the PATH the command gets, never on bs's own: an
+// in-process caller's environment is the one that counts.
+func TestRunLooksArgv0UpOnTheCallersPATH(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "bs-only-here"), []byte("#!/bin/sh\necho found\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	getenv := func(k string) string {
+		if k == "PATH" {
+			return bin + ":" + os.Getenv("PATH")
+		}
+		return ""
+	}
+	res, err := checks.Run(context.Background(), checks.Cmd{Argv: []string{"bs-only-here"}}, t.TempDir(), nil, getenv)
+	if err != nil || strings.TrimSpace(string(res.Output)) != "found" {
+		t.Fatalf("res = %+v, err = %v", res, err)
+	}
+	if _, err := checks.Run(context.Background(), checks.Cmd{Argv: []string{"bs-only-here"}}, t.TempDir(), nil, nil); !errors.Is(err, checks.ErrCantRun) {
+		t.Fatalf("on bs's own PATH: err = %v, want ErrCantRun", err)
 	}
 }

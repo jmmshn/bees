@@ -45,18 +45,27 @@ func Hash(typ string) string {
 	if err != nil {
 		return ""
 	}
-	return fmt.Sprintf("%x", sha256.Sum256(b))
+	return HashText(string(b))
 }
+
+// HashText is the sha256 of fragment text, hex: a custom goal type's fragment, the
+// keeper's file, as a spawn freezes it.
+func HashText(text string) string { return fmt.Sprintf("%x", sha256.Sum256([]byte(text))) }
+
+// Own is the fragment text of each custom goal type that has one ([goal.<name>]
+// fragment, the keeper's file), by type.
+type Own map[string]string
 
 // Text is r's prompt for project on harness (port.Harness Kind: claude, omp, agy): the
 // role prompt, r's part of the harness's pitfalls (harness/<harness>.md: what only that
 // harness does, such as Claude Code's auto-mode denials), PITFALLS.md and BEADS.md, then
 // r's part of the workspace fragment of kind under "## Workspace" and of each goal type's
 // fragment under "## Goal" (a worker: its own goal's types) or "## Goals" (the queen), with
-// {{project}} and {{bs}} (the command, bsname.Cmd) filled in. A goal type with no fragment yet gets a line saying bs done
-// checks it. A kind with no fragment yet (none, command: bees-13.10, 13.11) gets no
-// workspace section; "" is no workspace known. A harness with no fragment adds no lines.
-func Text(r Role, project, harness, kind string, goals []string) string {
+// {{project}} and {{bs}} (the command, bsname.Cmd) filled in. A custom type's fragment is
+// own's; a goal type with no fragment gets a line saying bs done checks it. A kind with no
+// fragment yet (none: bees-13.10) gets no workspace section; "" is no workspace known. A
+// harness with no fragment adds no lines.
+func Text(r Role, project, harness, kind string, goals []string, own Own) string {
 	role, heading := worker, "## Goal"
 	if r == Queen {
 		role, heading = queen, "## Goals"
@@ -70,7 +79,7 @@ func Text(r Role, project, harness, kind string, goals []string) string {
 	if ws, err := fragments.ReadFile("workspace/" + kind + ".md"); kind != "" && err == nil {
 		b.WriteString("\n## Workspace\n\n" + part(r, string(ws)))
 	}
-	b.WriteString(goalSection(r, heading, goals))
+	b.WriteString(goalSection(r, heading, goals, own))
 	return fill(b.String(), project)
 }
 
@@ -81,9 +90,11 @@ func fill(s, project string) string {
 
 // Goal is r's part of each goal type's fragment under "## Goal": what bs goal sends a
 // worker whose goal it amended, so the fragments it works to are the ones recorded.
-func Goal(r Role, goals []string) string { return fill(goalSection(r, "## Goal", goals), "") }
+func Goal(r Role, goals []string, own Own) string {
+	return fill(goalSection(r, "## Goal", goals, own), "")
+}
 
-func goalSection(r Role, heading string, goals []string) string {
+func goalSection(r Role, heading string, goals []string, own Own) string {
 	var b strings.Builder
 	if len(goals) > 0 {
 		b.WriteString("\n" + heading + "\n")
@@ -94,6 +105,10 @@ func goalSection(r Role, heading string, goals []string) string {
 			continue
 		}
 		seen = append(seen, g)
+		if text, ok := own[g]; ok {
+			b.WriteString("\n" + part(r, text))
+			continue
+		}
 		f, err := fragments.ReadFile("goal/" + g + ".md")
 		if err != nil {
 			fmt.Fprintf(&b, "\n`--goal %s`: `{{bs}} done` checks it and says what is missing.\n", g)

@@ -345,6 +345,26 @@ func (s *settings) unpinned(cmd string) error {
 		Next: "env -u BS_LOGBOOK_DIR " + bsname.Cmd + " " + cmd + " ..., or set paths.logbook_dir in the session's config"}
 }
 
+// command is [workspace.command] with its dir's ~ expanded; nil when unset.
+func (s *settings) command() *config.Command {
+	if s.Workspace.Command == nil {
+		return nil
+	}
+	c := *s.Workspace.Command
+	c.Dir = s.Expand(c.Dir)
+	return &c
+}
+
+// goals is the custom goal types with each fragment's ~ expanded.
+func (s *settings) goals() map[string]config.GoalType {
+	out := map[string]config.GoalType{}
+	for name, g := range s.Goal {
+		g.Fragment = s.Expand(g.Fragment)
+		out[name] = g
+	}
+	return out
+}
+
 // workerPath is worker.path with ~ expanded.
 func (s *settings) workerPath() []string {
 	var out []string
@@ -355,17 +375,13 @@ func (s *settings) workerPath() []string {
 }
 
 // unmade says why spawn won't make a workspace of kind yet, "" for one it makes: until
-// bees-13.10 and 13.11 it makes only git worktrees. Spawn refuses on it, doctor fails on
-// it and config init won't write it.
+// bees-13.10 it makes no none workspace. Spawn refuses on it, doctor fails on it and
+// config init won't write it.
 func unmade(kind string) string {
-	switch kind {
-	case config.GitWorktree:
-		return ""
-	case config.NoWorkspace:
-		return bsname.Cmd + " spawn makes only git_worktree workspaces until bees-13.10 brings none"
-	default:
-		return bsname.Cmd + " spawn makes only git_worktree workspaces until bees-13.11 brings command"
+	if kind == config.NoWorkspace {
+		return bsname.Cmd + " spawn makes git_worktree and command workspaces, and none only once bees-13.10 brings it"
 	}
+	return ""
 }
 
 // resolve finds who runs bs (core.Resolve): in the project of the repo bs runs in, then

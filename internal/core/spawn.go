@@ -37,11 +37,10 @@ type SpawnReq struct {
 // after the record leaves an unconfirmed spawn (exit 8) that bs end clears. An open spawn
 // whose process died is resumed instead (resumed true).
 func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resumed bool, err error) {
-	g, err := goal.Parse(req.Goal)
+	g, own, err := c.parseGoal(req.Goal)
 	if err != nil {
 		return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s", req.Bead)
 	}
-	g.Fragment = prompt.Hash(g.Type)
 	if req.Label != "" {
 		if err := CheckLabel(req.Label); err != nil {
 			return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s: --label", req.Bead)
@@ -109,9 +108,19 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	if err := c.refuse(g, ws); err != nil {
 		return logbook.Spawn{}, false, err
 	}
+	if err := c.refuseCmds(ctx, g, name, bead.ID, ws); err != nil {
+		return logbook.Spawn{}, false, err
+	}
 	deny, err := c.deny(ctx)
 	if err != nil {
 		return logbook.Spawn{}, false, err
+	}
+	if ws.Kind == config.CommandKind { // its guards come from git only in a git checkout: said (ADR-0010 Config)
+		if in, err := c.guardIn(ctx); err == nil && in.Git {
+			c.warn("%s: a command workspace in a git checkout: its worker is denied pushes to the default branch and force pushes", name)
+		} else if err == nil {
+			c.warn("%s: a command workspace in a repo that isn't a git checkout: no git guard applies, only [guards] deny", name)
+		}
 	}
 	kind := cmp.Or(req.Harness, c.HarnessName)
 	h := c.harnessOf(kind)
@@ -123,7 +132,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	if err != nil {
 		return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s: its harness refused the launch; nothing was made", name)
 	}
-	text := prompt.Text(prompt.Worker, c.Project, c.Harness.Kind(), ws.Kind, g.Types())
+	text := prompt.Text(prompt.Worker, c.Project, c.Harness.Kind(), ws.Kind, g.Types(), own)
 	if g.Reviewed() {
 		text += prompt.Host(prompt.Worker, c.Review.Name())
 	}
@@ -140,7 +149,11 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	session := cmp.Or(req.Session, logbook.DefaultSession)
 	var hw herdr.Workspace
 	remade := false // a reused branch whose worktree was gone, checked out again here
-	if reused {
+	if ws.Kind == config.CommandKind {
+		if hw, err = c.openCommand(ctx, session, ws, name, bead.ID, label, reused); err != nil {
+			return logbook.Spawn{}, false, err
+		}
+	} else if reused {
 		if _, err := os.Stat(ws.Dir); errors.Is(err, os.ErrNotExist) {
 			if _, err := c.git(ctx, ws.Repo, "worktree", "add", ws.Dir, ws.Branch); err != nil {
 				return logbook.Spawn{}, false, exit(ExitFail, "", err, "%s: couldn't check out branch %s again at %s; nothing was recorded", name, ws.Branch, ws.Dir)
@@ -165,6 +178,13 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	// undo takes back what this spawn made: a reused branch stays, and its worktree unless
 	// this spawn checked it out again.
 	undo := func() error {
+		if ws.Kind == config.CommandKind {
+			err := c.herdr(session).CloseWorkspace(context.WithoutCancel(ctx), hw.ID)
+			if !reused {
+				err = errors.Join(err, c.remove(context.WithoutCancel(ctx), name, bead.ID, ws))
+			}
+			return err
+		}
 		if reused {
 			err := c.herdr(session).CloseWorkspace(context.WithoutCancel(ctx), hw.ID)
 			if remade {
@@ -229,7 +249,7 @@ func (c *Core) resume(ctx context.Context, sp logbook.Spawn, bead port.Bead, req
 	if err != nil {
 		return err
 	}
-	if g, err := goal.Parse(req.Goal); err == nil && g.String() != e.String() {
+	if g, _, err := c.parseGoal(req.Goal); err == nil && g.String() != e.String() {
 		return exit(ExitRefused, bsname.Cmd+" goal "+sp.Name+" "+req.Goal, nil,
 			"%s is spawned and not ended, and it was spawned with --goal %s, not --goal %s; a resume keeps its goal", sp.Name, e.Goal, g)
 	}
@@ -273,7 +293,11 @@ func (c *Core) resume(ctx context.Context, sp logbook.Spawn, bead port.Bead, req
 	if err != nil {
 		return exit(ExitRefused, "", err, "%s: its harness refused the restart; nothing started", sp.Name)
 	}
-	text := prompt.Text(prompt.Worker, c.Project, c.Harness.Kind(), sp.Workspace.Kind, e.Types())
+	own, err := c.ownOf(e.Goal, sp.Name)
+	if err != nil {
+		return err
+	}
+	text := prompt.Text(prompt.Worker, c.Project, c.Harness.Kind(), sp.Workspace.Kind, e.Types(), own)
 	if e.Reviewed() {
 		text += prompt.Host(prompt.Worker, c.Review.Name())
 	}
@@ -459,8 +483,8 @@ func (c *Core) unmake(ctx context.Context, session, workspace string, ws logbook
 }
 
 // workspace works out the spawn's workspace (Rule D): the project dir the top level of a
-// git checkout is git_worktree, always on a branch of its own (none and command arrive
-// with bees-13.10 and 13.11). Its trunk is the branch the repo has checked out; it is
+// git checkout is git_worktree, always on a branch of its own; [workspace.command] makes it
+// command (commandWorkspace); none arrives with bees-13.10. Its trunk is the branch the repo has checked out; it is
 // measured against that, or against t's head ref when it stacks on t. When ended, name's
 // last spawn, left its branch (its worktree kept, or gone with the branch kept), it is
 // reused (reused true): the work there is the new spawn's to build on, never refused with
@@ -468,6 +492,9 @@ func (c *Core) unmake(ctx context.Context, session, workspace string, ws logbook
 func (c *Core) workspace(ctx context.Context, name string, t *target, ended *logbook.Spawn) (ws logbook.Workspace, reused bool, err error) {
 	if c.Repo == "" {
 		return logbook.Workspace{}, false, exit(ExitRefused, "", nil, "project %s has no repo: run it in the repo, or set paths.repo", c.Project)
+	}
+	if c.Kind == config.CommandKind {
+		return c.commandWorkspace(name, ended)
 	}
 	top, err := c.git(ctx, c.Repo, "rev-parse", "--show-toplevel")
 	if err != nil {
@@ -482,8 +509,8 @@ func (c *Core) workspace(ctx context.Context, name string, t *target, ended *log
 	}
 	// The checks above say what to fix when the kind was worked out as none; this one
 	// names a kind set by hand.
-	if c.Kind != "" && c.Kind != "git_worktree" {
-		return logbook.Workspace{}, false, exit(ExitRefused, bsname.Cmd+" config", nil, "workspace kind %s (%s) isn't built yet (none: bees-13.10, command: bees-13.11)", c.Kind, c.KindWhy)
+	if c.Kind != "" && c.Kind != config.GitWorktree {
+		return logbook.Workspace{}, false, exit(ExitRefused, bsname.Cmd+" config", nil, "workspace kind %s (%s) isn't built yet (none: bees-13.10)", c.Kind, c.KindWhy)
 	}
 	trunk, err := c.git(ctx, c.Repo, "symbolic-ref", "--short", "HEAD")
 	if err != nil {

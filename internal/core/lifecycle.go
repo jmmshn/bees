@@ -341,7 +341,7 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 // process this logbook recorded is named by its session. Any lookup that fails is an
 // error, never "none" (motif 7).
 func (c *Core) guests(ctx context.Context, sp logbook.Spawn) ([]string, error) {
-	kind, err := c.kindOf(sp)
+	rh, err := c.recorded(sp)
 	if err != nil {
 		return nil, err
 	}
@@ -362,7 +362,7 @@ func (c *Core) guests(ctx context.Context, sp logbook.Spawn) ([]string, error) {
 			return nil, err
 		}
 		for _, p := range pi.Foreground {
-			if p.Name != kind {
+			if p.Name != rh.Kind() {
 				continue
 			}
 			who, err := c.recordedAs(ctx, p.PID)

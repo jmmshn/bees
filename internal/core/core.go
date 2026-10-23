@@ -55,13 +55,13 @@ func (c *Core) harnessOf(name string) port.Harness {
 	return nil
 }
 
-// kindOf is the process name of sp's recorded harness.
-func (c *Core) kindOf(sp logbook.Spawn) (string, error) {
+// recorded is the adapter of sp's recorded harness.
+func (c *Core) recorded(sp logbook.Spawn) (port.Harness, error) {
 	h := c.harnessOf(sp.Harness)
 	if h == nil {
-		return "", fmt.Errorf("%s was started on harness %s, which this bs has no adapter for", sp.Name, sp.Harness)
+		return nil, fmt.Errorf("%s was started on harness %s, which this bs has no adapter for", sp.Name, sp.Harness)
 	}
-	return h.Kind(), nil
+	return h, nil
 }
 
 // warn says a fallback bs took.

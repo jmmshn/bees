@@ -43,6 +43,7 @@ func (e *ExitError) Error() string {
 type Harness interface {
 	Kind() string                                 // herdr --kind and the process name in the pane: claude | omp | agy
 	Prepare(st Start) (Launch, error)             // pure: argv, per-start files, guards rendered, Record
+	Owns(argv []string, name string) bool         // argv, of a Kind process, is session name's launch
 	Ring(t Target, text string, p Priority) error // ErrNotRunning | ErrNoRing | a write error
 }
 

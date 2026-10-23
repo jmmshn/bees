@@ -148,3 +148,21 @@ func TestAutoModeKnowsTheWorkersOwnBranch(t *testing.T) {
 		t.Fatalf("no branch: autoMode = %q,\nwant %q", got, want)
 	}
 }
+
+// A claude process is session name's when --name name is on its line, as Prepare puts it.
+func TestOwnsIsTheNameFlag(t *testing.T) {
+	a := claude.Adapter{}
+	for _, c := range []struct {
+		argv []string
+		want bool
+	}{
+		{[]string{"claude", "--model=x", "--name", "bees-8", "[bs] hi"}, true},
+		{[]string{"claude", "--name", "bees-80"}, false},
+		{[]string{"claude", "bees-8"}, false},
+		{[]string{"claude", "--name"}, false},
+	} {
+		if got := a.Owns(c.argv, "bees-8"); got != c.want {
+			t.Errorf("Owns(%q) = %v, want %v", c.argv, got, c.want)
+		}
+	}
+}

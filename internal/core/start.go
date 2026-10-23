@@ -86,6 +86,8 @@ func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch, repl
 	case errors.Is(startErr, herdr.ErrUnready):
 		// The normal path: a harness handed its first prompt is busy at once, so herdr never
 		// sees it ready; the watch is bs's confirmation (bees-13.78.3).
+	case errors.Is(startErr, herdr.ErrBlocked):
+		c.warn("%s started (pid %d) but is blocked at a prompt, such as folder trust: answer it in its pane: herdr --session %s pane read %s --source recent", sp.Name, got.pid, sp.Herdr.Session, sp.Herdr.Pane)
 	case startErr != nil:
 		c.warn("herdr said %v, but %s started all the same (pid %d): adopted", startErr, sp.Name, got.pid)
 	}

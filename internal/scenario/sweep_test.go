@@ -132,6 +132,15 @@ func TestAStartHerdrTimedOutIsAdopted(t *testing.T) {
 	}
 }
 
+// bees-13.78.3: a harness blocked at a prompt (folder trust) is adopted, with a warning
+// that says where to answer it.
+func TestAStartBlockedAtAPromptWarns(t *testing.T) {
+	x := newToy(t)
+	x.herdr.StartFails = "blocked"
+	x.bead("toy-1", "work on toy-1")
+	must(t, x.queen("spawn", "--goal", "branch", "--label", label("toy-1"), "toy-1"), 0, "blocked at a prompt", "pane read")
+}
+
 // Any other herdr failure that bs's watch outlives is adopted with a warning naming it.
 func TestAStartHerdrLostIsAdoptedWithAWarning(t *testing.T) {
 	x := newToy(t)

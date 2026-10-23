@@ -86,7 +86,7 @@ func TestStatusShowsLabelAndUnread(t *testing.T) {
 	x := newToy(t)
 	x.spawn("toy-1", "verdict")
 	r := x.keeper("status")
-	if cell(r.out, "toy-1", "LABEL") != "work on toy-1" || cell(r.out, "toy-1", "UNREAD") != "1" {
+	if cell(r.out, "toy-1", "LABEL") != "toy 1" || cell(r.out, "toy-1", "UNREAD") != "1" {
 		t.Fatalf("an unread brief:\n%s", r)
 	}
 	must(t, x.worker("toy-1", 1, "inbox"), 0)

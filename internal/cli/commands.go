@@ -136,10 +136,6 @@ func (r *run) spawn(_ *flag.FlagSet, _ []string) error {
 }
 
 func (r *run) done(fs *flag.FlagSet, args []string) error {
-	var prs list
-	fs.Var(&prs, "pr", "a PR you hand off (repeatable)")
-	var replaces list
-	fs.Var(&replaces, "replaces", "a PR you handed off before that this handoff replaces (repeatable)")
 	answer := fs.String("answer", "", "a verdict goal's answer: yes or no")
 	report := fs.String("report", "", "a verdict goal's report, or - to read it from stdin")
 	force := fs.Bool("force", false, "hand off while background work runs (waives that gate only)")
@@ -172,7 +168,7 @@ func (r *run) done(fs *flag.FlagSet, args []string) error {
 	if err != nil {
 		return err
 	}
-	d, err := r.c.Done(r.ctx, w, r.env.Self, core.Handed{PRs: prs, Replaces: replaces, Answer: *answer, Report: *report}, core.DoneOpts{Force: *force, Wait: waitFor(*wait, *timeout)})
+	d, err := r.c.Done(r.ctx, w, r.env.Self, core.Handed{Answer: *answer, Report: *report}, core.DoneOpts{Force: *force, Wait: waitFor(*wait, *timeout)})
 	if err != nil {
 		return err
 	}

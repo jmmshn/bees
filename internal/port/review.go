@@ -25,8 +25,13 @@ type Change struct {
 	Foreign     bool
 	ForeignRepo string
 	Editable    bool
-	Notes       []Note // comments and reviews
+	Notes       []Note    // comments and reviews
+	Created     time.Time // when it was opened
 }
+
+// Where is a workspace as a review host sees it: the project's checkout (where the host's
+// tool runs), the workspace, and the worker's branch ("" on a branchless kind).
+type Where struct{ Repo, Dir, Branch string }
 
 // A change's states.
 const (
@@ -78,10 +83,13 @@ type Review interface {
 	Behind(ctx context.Context, dir string, c Change) (int, error)
 	// Protected reports whether the host protects repo's default branch.
 	Protected(ctx context.Context, dir, repo string) (bool, error)
-	// Landed is the head commit of each merged change whose head is dir's branch: the
-	// third proof that a branch landed, after a squash or rebase (none, with no repo).
-	// skipped says why the host wasn't asked of a repo it can't read.
-	Landed(ctx context.Context, dir, branch string) (heads []string, skipped string, err error)
+	// Changes is every change from workspace w on this host, of the project's repo and
+	// never a fork's, created at or after since, newest first, in any state: how bs finds a
+	// worker's change, which the worker never names (ADR-0010 Amendment 4). skipped says why
+	// the host wasn't asked of a repo it can't read (none, with no repo).
+	Changes(ctx context.Context, w Where, since time.Time) (cs []Change, skipped string, err error)
+	// Create is the command that opens a change from w, for a worker that has none.
+	Create(w Where) string
 	// MergeDeny is the guard globs that keep a worker from landing a change itself on this
 	// host (ADR-0010 guards: no merge); allow_merge_into lifts them.
 	MergeDeny() []string

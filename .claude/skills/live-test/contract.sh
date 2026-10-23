@@ -146,7 +146,7 @@ c verdict-no-answer 7 'verdict_given: --answer yes\|no is missing' -- done_ "$V"
 c verdict-maybe 7 'must be yes or no \(got "maybe"\)' -- done_ "$V" --answer maybe --report x
 c verdict-blank-report 7 'report <text>\|- is missing' -- done_ "$V" --answer yes --report "   "
 c verdict-no-report 7 'report <text>\|- is missing' -- done_ "$V" --answer yes
-c verdict-pr 2 'flag provided but not defined: -pr' xfail=T3 -- done_ "$V" --pr https://github.com/a/b/pull/1 --answer yes --report x
+c verdict-pr 2 'flag provided but not defined: -pr' -- done_ "$V" --pr https://github.com/a/b/pull/1 --answer yes --report x
 c verdict-end-early 9 "next: bs end --incomplete $V" -- end_ "$V"
 c verdict-stdin 0 'answer no && the report from stdin' -- q "echo 'the report from stdin' | bs done --as $V --answer no --report -"
 c verdict-done-after-landed 2 '' -- done_ "$V" --answer yes --report changed
@@ -211,10 +211,10 @@ echo "== amend, waive, discard ($A, $D)"
 git remote add origin https://github.com/jmmshn/bees-livetest-offline.git # parsed, never contacted
 c amend-other-repo 2 'that is a change of cli/cli' -- bs goal --as "$queen" "$A" review=https://github.com/cli/cli/pull/1
 c amend-unknown 2 'no goal type "nope"' -- bs goal --as "$queen" "$A" nope
-c amend-waive-unrun 2 '--waive pr_pushed: --goal verdict runs no such check' -- bs goal --as "$queen" "$A" --waive pr_pushed
+c amend-waive-unrun 2 '--waive pr_head: --goal verdict runs no such check' -- bs goal --as "$queen" "$A" --waive pr_head
 c amend-pr-draft 0 '--goal pr:draft' -- bs goal --as "$queen" "$A" pr:draft
 c amend-mailed 0 'changed your goal: it is now --goal pr:draft' -- lb "SELECT data FROM entries WHERE kind = 'message' AND subject = ?" "$A"
-c amend-waive 0 'waived: pr_pushed' -- bs goal --as "$queen" "$A" --waive pr_pushed
+c amend-waive 0 'waived: pr_head' -- bs goal --as "$queen" "$A" --waive pr_head
 c amend-two-values 2 'one goal per spawn' xfail=T4 -- bs goal --as "$queen" "$A" verdict note
 c amend-as-worker 2 'worker' xfail=T1 -- bs goal --as "$A" "$A" verdict
 c amend-after-landed 2 '' -- bs goal --as "$queen" "$V" note

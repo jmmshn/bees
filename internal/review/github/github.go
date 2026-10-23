@@ -126,7 +126,7 @@ type view struct {
 }
 
 // ponytail: gh pr view may read only one GraphQL page (100) of commits, comments and
-// reviews (not probed); past that pr_workspace_commit and review_comment may miss one. gh api --paginate on
+// reviews (not probed); past that review_comment may miss one. gh api --paginate on
 // pulls/<n>/commits, issues/<n>/comments and pulls/<n>/reviews would replace it.
 const fields = "url,state,isDraft,headRefName,headRefOid,baseRefName,isCrossRepository,maintainerCanModify,headRepository,commits,comments,reviews"
 
@@ -269,13 +269,19 @@ func (h Host) Protected(ctx context.Context, dir, repo string) (bool, error) {
 	return v.Protected, err
 }
 
-// Landed is gh pr list --repo <origin's> --state merged --head branch: origin's repo, never
-// the upstream gh would pick for a fork. With no origin no pull request could have merged
-// it; an origin not on github.com (an ssh alias, GitHub Enterprise) is skipped, and says so.
-func (h Host) Landed(ctx context.Context, dir, branch string) ([]string, string, error) {
-	out, err := h.Run.Run(ctx, dir, "git", "-C", dir, "config", "--get", "remote.origin.url")
+// listFields is what Changes reads of each pull request gh pr list finds.
+const listFields = "number,url,state,isDraft,headRefName,headRefOid,baseRefName,isCrossRepository,createdAt"
+
+// Changes is gh pr list --repo <origin's> --head <branch> --state all: origin's repo, never
+// the upstream gh would pick for a fork. gh's --head also matches a fork's pull request
+// from a branch of the same name (and refuses owner:branch), so isCrossRepository drops
+// those (bees-13.60 V2). --limit 100 bounds one page; a branch has a handful at most. With no
+// origin no pull request could come from it; an origin not on github.com (an ssh alias,
+// GitHub Enterprise) is skipped, and says so.
+func (h Host) Changes(ctx context.Context, w port.Where, since time.Time) ([]port.Change, string, error) {
+	out, err := h.Run.Run(ctx, w.Repo, "git", "-C", w.Repo, "config", "--get", "remote.origin.url")
 	var ee *port.ExitError
-	if errors.As(err, &ee) && ee.Code == 1 {
+	if errors.As(err, &ee) && ee.Code == 1 || w.Branch == "" {
 		return nil, "", nil
 	} else if err != nil {
 		return nil, "", err
@@ -283,23 +289,35 @@ func (h Host) Landed(ctx context.Context, dir, branch string) ([]string, string,
 	origin := strings.TrimSpace(string(out))
 	repo, ok := RepoOf(origin)
 	if !ok {
-		return nil, "origin " + origin + " is not on github.com, so no merged pull request was looked for", nil
+		return nil, "origin " + origin + " is not on github.com, so no pull request was looked for", nil
 	}
-	out, err = h.gh(ctx, dir, "pr", "list", "--repo", repo, "--head", branch, "--state", "merged", "--json", "headRefOid")
+	out, err = h.gh(ctx, w.Repo, "pr", "list", "--repo", repo, "--head", w.Branch, "--state", "all", "--limit", "100", "--json", listFields)
 	if err != nil {
 		return nil, "", err
 	}
 	var prs []struct {
-		OID string `json:"headRefOid"`
+		view
+		Number    int       `json:"number"`
+		CreatedAt time.Time `json:"createdAt"`
 	}
 	if err := json.Unmarshal(out, &prs); err != nil {
 		return nil, "", fmt.Errorf("gh pr list: %w", err)
 	}
-	var heads []string
+	var cs []port.Change
 	for _, p := range prs {
-		heads = append(heads, p.OID)
+		if p.IsCrossRepository || p.CreatedAt.Before(since) {
+			continue
+		}
+		cs = append(cs, port.Change{URL: p.URL, Repo: repo, Number: p.Number, State: strings.ToLower(p.State), Draft: p.IsDraft,
+			Head: p.HeadRefName, HeadCommit: p.HeadRefOid, Base: p.BaseRefName, Editable: true, Created: p.CreatedAt})
 	}
-	return heads, "", nil
+	slices.SortStableFunc(cs, func(a, b port.Change) int { return b.Created.Compare(a.Created) })
+	return cs, "", nil
+}
+
+// Create opens a pull request from the branch, once pushed.
+func (Host) Create(w port.Where) string {
+	return "gh pr create, once " + w.Branch + " is pushed (git push -u origin " + w.Branch + ")"
 }
 
 // ghs is each glob as gh, command gh or a path to gh (*/gh) starts it.

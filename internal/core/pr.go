@@ -36,7 +36,7 @@ func (c *Core) workspaceCommits(ctx context.Context, sp logbook.Spawn) ([]string
 type look struct {
 	c     *Core
 	sp    logbook.Spawn
-	h     Handed // h.PRs: every change handed off so far
+	h     Handed // h.PRs: the changes a done recorded before Amendment 4 named
 	views map[string]port.Change
 	errs  map[string]error
 	wc    []string
@@ -44,6 +44,70 @@ type look struct {
 	wcErr error
 	wcOK  bool
 	lags  map[string]string // change URL → lag's answer
+	found *found            // the worker's change, once looked for
+}
+
+// found is the change a pr goal is judged by, or why there is none (and what to run).
+type found struct {
+	c         port.Change
+	why, next string
+	err       error
+}
+
+// where is ws as a review host sees it: one spelling (motif 3).
+func where(ws logbook.Workspace) port.Where {
+	return port.Where{Repo: cmp.Or(ws.Repo, ws.Dir), Dir: ws.Dir, Branch: ws.Branch}
+}
+
+// theChange is the change sp's pr goal is judged by, found from its branch: the worker
+// names none (ADR-0010 Amendment 4). Candidates are the changes created since the spawn,
+// plus any still open whatever its age (a re-spawn on a kept branch fixing its open
+// change); an old merged one never counts (motif 2). One open is it; two or more is a
+// failure naming each (GitHub's unit is one change); none open is the newest; none at all
+// says how to make one.
+func (c *Core) theChange(ctx context.Context, sp logbook.Spawn) found {
+	w := where(sp.Workspace)
+	cs, skipped, err := c.Review.Changes(ctx, w, sp.TS.Truncate(time.Second))
+	if err != nil {
+		return found{err: err}
+	}
+	isOpen := func(ch port.Change) bool { return ch.State == port.Open }
+	if !slices.ContainsFunc(cs, isOpen) {
+		old, _, err := c.Review.Changes(ctx, w, time.Time{})
+		if err != nil {
+			return found{err: err}
+		}
+		cs = append(cs, slices.DeleteFunc(old, func(ch port.Change) bool { return !isOpen(ch) })...)
+	}
+	var open []string
+	for _, ch := range cs {
+		if isOpen(ch) {
+			open = append(open, ch.URL)
+		}
+	}
+	switch {
+	case len(open) > 1:
+		return found{why: fmt.Sprintf("%d open changes from %s: %s; hand off one", len(open), w.Branch, strings.Join(open, ", ")),
+			next: "close all but one, then " + bsname.Cmd + " done"}
+	case len(open) == 1:
+		return found{c: cs[slices.IndexFunc(cs, isOpen)]}
+	case len(cs) > 0:
+		return found{c: cs[0]}
+	}
+	why := "no change from " + w.Branch + " since this spawn"
+	if skipped != "" {
+		why += " (" + skipped + ")"
+	}
+	return found{why: why, next: c.Review.Create(w)}
+}
+
+// change is the worker's change, looked for once.
+func (k *look) change(ctx context.Context) found {
+	if k.found == nil {
+		f := k.c.theChange(ctx, k.sp)
+		k.found = &f
+	}
+	return *k.found
 }
 
 // outcome is a check's answer: failed, passed, or pending (not failed, not passed yet).
@@ -144,28 +208,40 @@ func (k *look) madeHere(ctx context.Context, v port.Change, cs []string) ([]stri
 	return out, nil
 }
 
-// refs is the changes part p's checks read: a pr part's handed-off ones, a push or
-// review part's target.
-func (k *look) refs(p goal.Part) ([]port.Ref, error) {
+// changes is the changes part p's checks read: a pr part's change found from the branch
+// (or the ones a done recorded before Amendment 4 named), a push or review part's target.
+// why says why there is none to read.
+func (k *look) changes(ctx context.Context, p goal.Part) (vs []port.Change, why string, err error) {
 	urls := k.h.PRs
+	if p.Type == "pr" && len(urls) == 0 {
+		f := k.change(ctx)
+		return []port.Change{f.c}, f.why, f.err
+	}
 	if p.Type != "pr" {
 		urls = []string{p.Target}
 	}
-	var out []port.Ref
+	var whys []string
 	for _, u := range urls {
 		r, err := k.c.Review.Parse(u)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
-		out = append(out, r)
+		v, err := k.view(ctx, r)
+		if errors.Is(err, port.ErrNoChange) {
+			whys = append(whys, r.URL+": no such change in "+r.Repo)
+			continue
+		} else if err != nil {
+			return nil, "", fmt.Errorf("%s: %w", r.URL, err)
+		}
+		vs = append(vs, v)
 	}
-	return out, nil
+	return vs, strings.Join(whys, "; "), nil
 }
 
 // isPRCheck reports whether name reads changes on the review host.
 func isPRCheck(name string) bool {
 	switch name {
-	case goal.PRExists, goal.PROpen, goal.PRNotDraft, goal.PRWorkspaceCommit, goal.PRPushed, goal.PRCurrent,
+	case goal.PRExists, goal.PROpen, goal.PRNotDraft, goal.PRHead, goal.PRWorkspaceCommit, goal.PRPushed, goal.PRCurrent,
 		goal.CIGreen, goal.PRMerged, goal.PRClosed, goal.PushMoved, goal.ReviewComment:
 		return true
 	}
@@ -176,27 +252,24 @@ func isPRCheck(name string) bool {
 // and is pending when the rest are; a change that couldn't be looked at is an error, never
 // a fail (Rule G).
 func (k *look) prCheck(ctx context.Context, p goal.Part, name string) (outcome, string, error) {
-	refs, err := k.refs(p)
-	if err != nil {
-		return failed, "", err
-	}
-	if len(refs) == 0 {
-		return failed, "no PR handed off: " + bsname.Cmd + " done --pr <url>", nil
+	vs, why, err := k.changes(ctx, p)
+	if err != nil || why != "" {
+		return failed, why, err
 	}
 	var fails, oks []string
 	o := passed
-	for _, r := range refs {
-		ro, why, err := k.one(ctx, name, r)
+	for _, v := range vs {
+		ro, why, err := k.one(ctx, name, v)
 		switch {
 		case err != nil:
-			return failed, "", fmt.Errorf("%s: %w", r.URL, err)
+			return failed, "", fmt.Errorf("%s: %w", v.URL, err)
 		case ro != passed:
 			if o != failed {
 				o = ro
 			}
-			fails = append(fails, r.URL+": "+why)
+			fails = append(fails, v.URL+": "+why)
 		case why != "":
-			oks = append(oks, r.URL+": "+why)
+			oks = append(oks, v.URL+": "+why)
 		}
 	}
 	if o != passed {
@@ -205,14 +278,8 @@ func (k *look) prCheck(ctx context.Context, p goal.Part, name string) (outcome, 
 	return passed, strings.Join(oks, "; "), nil
 }
 
-func (k *look) one(ctx context.Context, name string, r port.Ref) (outcome, string, error) {
-	v, err := k.view(ctx, r)
-	if errors.Is(err, port.ErrNoChange) {
-		return failed, "no such change in " + r.Repo, nil
-	} else if err != nil {
-		return failed, "", err
-	}
-	c, dir := k.c, k.sp.Workspace.Dir
+func (k *look) one(ctx context.Context, name string, v port.Change) (outcome, string, error) {
+	c := k.c
 	switch name {
 	case goal.PRExists:
 		return passed, "", nil
@@ -224,35 +291,8 @@ func (k *look) one(ctx context.Context, name string, r port.Ref) (outcome, strin
 		return unless(v.State == port.Merged, v.State)
 	case goal.PRClosed:
 		return unless(v.State == port.Merged || v.State == port.Closed, v.State)
-	case goal.PRWorkspaceCommit:
-		mine, err := k.madeHere(ctx, v, v.Commits)
-		if err != nil {
-			return failed, "", err
-		}
-		if len(mine) > 0 {
-			return passed, "", nil
-		}
-		return failed, fmt.Sprintf("none of its %d commits was made in %s: is it another worker's?", len(v.Commits), dir), nil
-	case goal.PRPushed:
-		tip, ok, err := c.VCS.Branch(ctx, dir, v.Head)
-		switch {
-		case err != nil:
-			return failed, "", err
-		case ok && tip != v.HeadCommit:
-			return k.unpushed(ctx, v, tip)
-		case ok:
-			return passed, "", nil
-		}
-		// No local branch of that name (pushed from a detached HEAD, or a host with no
-		// branches): its head must be a commit made here.
-		mine, err := k.madeHere(ctx, v, []string{v.HeadCommit})
-		if err != nil {
-			return failed, "", err
-		}
-		if len(mine) == 0 {
-			return failed, fmt.Sprintf("its head %s is no commit made in %s", oid(v.HeadCommit), dir), nil
-		}
-		return passed, "", nil
+	case goal.PRHead, goal.PRWorkspaceCommit, goal.PRPushed:
+		return k.prHead(ctx, v)
 	case goal.PRCurrent, goal.CIGreen:
 		// What the host says of a head the workspace has pushed past is about the old one.
 		if up, err := k.lag(ctx, v); err != nil {
@@ -280,9 +320,43 @@ func (k *look) one(ctx context.Context, name string, r port.Ref) (outcome, strin
 	return failed, "", fmt.Errorf("no check %s", name)
 }
 
+// prHead is the change's head being the worker's branch tip, and the tip ahead of where
+// the branch started at spawn (Workspace.Start): bs found the change from the branch, so
+// that is all a handoff needs of it (ADR-0010 Amendment 4). A head the host lags on is
+// pending; one holding commits the branch lacks says pull (unpushed). A spawn recorded
+// before bs kept a start is said to be unchecked there, never silently passed (Rule G).
+func (k *look) prHead(ctx context.Context, v port.Change) (outcome, string, error) {
+	c, ws := k.c, k.sp.Workspace
+	tip, ok, err := c.VCS.Branch(ctx, ws.Dir, ws.Branch)
+	switch {
+	case err != nil:
+		return failed, "", err
+	case !ok:
+		return failed, fmt.Sprintf("branch %s is gone from %s", ws.Branch, ws.Dir), nil
+	}
+	note := ""
+	switch {
+	case ws.Start == "":
+		note = "spawned before bs recorded where " + ws.Branch + " started: not checked that it moved since"
+	case tip == ws.Start:
+		return failed, fmt.Sprintf("%s is where it started at spawn (%s): commit your work, then push it", ws.Branch, oid(tip)), nil
+	default:
+		if ahead, err := c.VCS.Descends(ctx, ws.Dir, ws.Start, tip); err != nil {
+			return failed, "", err
+		} else if !ahead {
+			return failed, fmt.Sprintf("%s at %s doesn't descend from %s, where it started at spawn", ws.Branch, oid(tip), oid(ws.Start)), nil
+		}
+	}
+	if v.HeadCommit != tip {
+		return k.unpushed(ctx, v, tip)
+	}
+	return passed, note, nil
+}
+
 // lag is the commit the workspace pushed v's head to while the host still shows an older
-// head (GitHub lags a push by seconds, seen live): a commit made here that descends from
-// the host's head. "" when the host shows what was pushed, or the workspace can't say.
+// head (GitHub lags a push by seconds, seen live): the branch's tip (a push target's: a
+// commit made here) that descends from the host's head. "" when the host shows what was
+// pushed, or the workspace can't say.
 func (k *look) lag(ctx context.Context, v port.Change) (string, error) {
 	if up, ok := k.lags[v.URL]; ok {
 		return up, nil
@@ -295,7 +369,11 @@ func (k *look) lag(ctx context.Context, v port.Change) (string, error) {
 	if has, err := c.VCS.Has(ctx, dir, v.HeadCommit); err != nil || !has {
 		return "", err
 	}
-	if mine, err := k.madeHere(ctx, v, []string{up}); err != nil || len(mine) == 0 {
+	if b := k.sp.Workspace.Branch; b != "" {
+		if tip, ok, err := c.VCS.Branch(ctx, dir, b); err != nil || !ok || tip != up {
+			return "", err
+		}
+	} else if mine, err := k.madeHere(ctx, v, []string{up}); err != nil || len(mine) == 0 {
 		return "", err
 	}
 	ahead, err := c.VCS.Descends(ctx, dir, v.HeadCommit, up)

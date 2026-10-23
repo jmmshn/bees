@@ -13,12 +13,13 @@ import (
 )
 
 // Handed is what a handoff gives besides the record: the worker's only freedom at exit,
-// its PR URLs or a verdict (ADR-0010).
+// a verdict (ADR-0010). bs finds a pr goal's change itself (Amendment 4).
 type Handed struct {
-	PRs      []string
-	Replaces []string // PRs handed off before that these replace
-	Answer   string
-	Report   string
+	// PRs is what a done recorded before Amendment 4 named: read for one release
+	// (bees-13.60 Q11), never given by a worker.
+	PRs    []string
+	Answer string
+	Report string
 }
 
 // check runs one built-in check of sp outside any goal part (prune's clean check).
@@ -46,6 +47,9 @@ func (k *look) stage(ctx context.Context, e logbook.Effective, of func(goal.Part
 	for _, p := range e.Parts {
 		for _, name := range of(p) {
 			key := name
+			if name == goal.PRWorkspaceCommit || name == goal.PRPushed { // a goal frozen before pr_head
+				key = goal.PRHead
+			}
 			if isPRCheck(name) && p.Type != "pr" {
 				key += " " + p.Target
 			}

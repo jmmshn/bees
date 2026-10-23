@@ -37,6 +37,7 @@ type Core struct {
 	Guards      config.Guards
 	PruneIgnore []string    // prune.ignore, which spawn freezes: ignored files prune removes with a worktree
 	Review      port.Review // review.host: where changes are reviewed and land; never nil
+	HostPrompt  string      // review.fragment, expanded: the keeper's review host section; "" is the built-in one
 	VCS         port.VCS    // the workspace's version control, as the goal checks read it
 	Timing      Timing
 	Warn        func(msg string) // prints a fallback bs took (Rule G); nil drops it

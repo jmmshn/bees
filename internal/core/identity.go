@@ -369,8 +369,7 @@ func May(w Caller, cmd, p, subject string) error {
 	switch {
 	case ok && w.Role == WorkerR && cmd == "check" && subject != "" && subject != w.Name:
 		return exit(ExitRefused, bsname.Cmd+" check "+w.Name, nil, "%s runs this as a worker; a worker checks only its own work", w.Name)
-	case ok && w.Role == Foreign && cmd == "send" && subject != "" && subject != Queen(p):
-		ok = false
+	case ok && w.Role == Foreign && cmd == "send" && subject != "" && subject != Queen(p): // refused below
 	case ok:
 		return nil
 	}

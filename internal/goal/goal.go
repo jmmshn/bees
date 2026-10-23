@@ -170,15 +170,16 @@ func (g Goal) IsLegacy() bool { return g.Type == LegacyType }
 // The built-in checks. Each names one fact bs finds (Rule D).
 const (
 	NoBackground      = "no_background"       // no process under the harness its start didn't see
-	PRExists          = "pr_exists"           // each handed-off PR exists in the spawn's repo
-	PROpen            = "pr_open"             // each is open
-	PRNotDraft        = "pr_not_draft"        // each is not a draft
-	PRWorkspaceCommit = "pr_workspace_commit" // each one's range holds a workspace commit
-	PRPushed          = "pr_pushed"           // the PR's head is the pushed workspace commit
+	PRExists          = "pr_exists"           // bs finds the worker's change from its branch
+	PROpen            = "pr_open"             // it is open
+	PRNotDraft        = "pr_not_draft"        // it is not a draft
+	PRHead            = "pr_head"             // its head is the branch tip, ahead of the branch's start
+	PRWorkspaceCommit = "pr_workspace_commit" // before Amendment 4: runs as pr_head
+	PRPushed          = "pr_pushed"           // before Amendment 4: runs as pr_head
 	PRCurrent         = "pr_current"          // current with its own base
 	CIGreen           = "ci_green"            // every required CI check passes
-	PRMerged          = "pr_merged"           // every handed-off PR merged
-	PRClosed          = "pr_merged_or_closed" // every handed-off PR merged or closed
+	PRMerged          = "pr_merged"           // the change merged
+	PRClosed          = "pr_merged_or_closed" // the change merged or closed
 	PushMoved         = "push_moved"          // the target's head descends from a workspace commit
 	ReviewComment     = "review_comment"      // a comment on the target since spawn carries bs:<spawn id>
 	VerdictGiven      = "verdict_given"       // --answer yes or no, and a report not blank
@@ -191,7 +192,7 @@ const (
 
 // builtins are the built-in checks, for IsCheck; TestEveryCheckAGoalRunsIsBuiltIn keeps
 // it in step with the goal table.
-var builtins = []string{NoBackground, PRExists, PROpen, PRNotDraft, PRWorkspaceCommit, PRPushed, PRCurrent,
+var builtins = []string{NoBackground, PRExists, PROpen, PRNotDraft, PRHead, PRWorkspaceCommit, PRPushed, PRCurrent,
 	CIGreen, PRMerged, PRClosed, PushMoved, ReviewComment, VerdictGiven, NoteChanged, BeadCreated, BranchAhead,
 	Clean, BranchMerged}
 
@@ -209,8 +210,8 @@ func IsType(name string) bool {
 	return ok || name == LegacyType || name == DiscardType || name == MixedType
 }
 
-// prHandoff is what bs checks of each handed-off PR for pr and pr:ready.
-var prHandoff = []string{PROpen, PRNotDraft, PRWorkspaceCommit, PRPushed, PRCurrent, CIGreen}
+// prHandoff is what bs checks of the worker's change for pr and pr:ready.
+var prHandoff = []string{PROpen, PRNotDraft, PRHead, PRCurrent, CIGreen}
 
 // types are the built-in goal types: each state, and whether it takes a target.
 var types = map[string]struct {
@@ -235,7 +236,7 @@ func resolve(typ, state, target string) Goal {
 	case "pr:ready":
 		p.Handoff, p.AtHandoff, p.Prune = prHandoff, true, []string{PRMerged}
 	case "pr:draft":
-		p.Handoff, p.AtHandoff, p.Prune = []string{PRExists, PRWorkspaceCommit, PRPushed}, true, []string{PRClosed}
+		p.Handoff, p.AtHandoff, p.Prune = []string{PRExists, PRHead}, true, []string{PRClosed}
 	case "push:":
 		p.Handoff, p.Complete, p.Prune = []string{PushMoved, PRCurrent, CIGreen}, []string{PRMerged}, []string{PRMerged}
 	case "push:ready":

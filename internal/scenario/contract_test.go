@@ -166,7 +166,7 @@ func TestContractVerdict(t *testing.T) {
 		must(t, k.w(x, V, "done", "--answer", "yes"), 7, "report <text>|- is missing")
 	})
 	// Amendment 4: --pr is gone, from every goal.
-	k.c("verdict-pr", "T3", func(t *testing.T, x *toy) {
+	k.c("verdict-pr", "", func(t *testing.T, x *toy) {
 		must(t, k.w(x, V, "done", "--pr", "https://github.com/a/b/pull/1", "--answer", "yes", "--report", "x"), 2, "flag provided but not defined: -pr")
 	})
 	k.c("verdict-end-early", "", func(t *testing.T, x *toy) {
@@ -346,14 +346,14 @@ func TestContractAmendWaiveDiscard(t *testing.T) {
 	})
 	k.c("amend-unknown", "", func(t *testing.T, x *toy) { must(t, x.queen("goal", A, "nope"), 2, `no goal type "nope"`) })
 	k.c("amend-waive-unrun", "", func(t *testing.T, x *toy) {
-		must(t, x.queen("goal", A, "--waive", "pr_pushed"), 2, "--waive pr_pushed: --goal verdict runs no such check")
+		must(t, x.queen("goal", A, "--waive", "pr_head"), 2, "--waive pr_head: --goal verdict runs no such check")
 	})
 	k.c("amend-pr-draft", "", func(t *testing.T, x *toy) { must(t, x.queen("goal", A, "pr:draft"), 0, "--goal pr:draft") })
 	k.c("amend-mailed", "", func(t *testing.T, x *toy) {
 		must(t, k.w(x, A, "inbox"), 0, "changed your goal: it is now --goal pr:draft")
 	})
 	k.c("amend-waive", "", func(t *testing.T, x *toy) {
-		must(t, x.queen("goal", A, "--waive", "pr_pushed"), 0, "waived: pr_pushed")
+		must(t, x.queen("goal", A, "--waive", "pr_head"), 0, "waived: pr_head")
 	})
 	k.c("amend-two-values", "", func(t *testing.T, x *toy) {
 		must(t, x.queen("goal", A, "verdict", "note"), 2, "one goal per spawn")
@@ -721,26 +721,26 @@ func gcase(t *testing.T, id, ticket string, f func(t *testing.T, x *toy, b ghBac
 // T3 (Amendment 4 Finding the change): the worker names nothing; bs finds its change from
 // its branch: created since this spawn (or still open), never a fork's.
 func TestContractFindTheChange(t *testing.T) {
-	gcase(t, "find-the-change", "T3", func(t *testing.T, x *toy, b ghBackend) {
+	gcase(t, "find-the-change", "", func(t *testing.T, x *toy, b ghBackend) {
 		sp := x.spawn("toy-1", "pr")
 		b.commit(x, sp.Workspace.Dir)
 		url := b.open(x, 1, sp.Workspace.Dir, "toy-1", false)
 		must(t, x.worker("toy-1", 1, "done"), 0, "handed off to queen-toy", url)
 	})
-	gcase(t, "done-no-change", "T3", func(t *testing.T, x *toy, b ghBackend) {
+	gcase(t, "done-no-change", "", func(t *testing.T, x *toy, b ghBackend) {
 		sp := x.spawn("toy-1", "pr")
 		b.commit(x, sp.Workspace.Dir)
 		x.push(sp.Workspace.Dir, "toy-1")
 		must(t, x.worker("toy-1", 1, "done"), 7, "next: gh pr create")
 	})
-	gcase(t, "name-another-workers-pr", "T3", func(t *testing.T, x *toy, b ghBackend) {
+	gcase(t, "name-another-workers-pr", "", func(t *testing.T, x *toy, b ghBackend) {
 		x.spawn("toy-1", "pr")
 		sp2 := x.spawn("toy-2", "pr")
 		b.commit(x, sp2.Workspace.Dir)
 		theirs := b.open(x, 2, sp2.Workspace.Dir, "toy-2", false)
 		must(t, x.worker("toy-1", 1, "done", "--pr", theirs), 2, "flag provided but not defined: -pr")
 	})
-	gcase(t, "fork-pr-ignored", "T3", func(t *testing.T, x *toy, b ghBackend) {
+	gcase(t, "fork-pr-ignored", "", func(t *testing.T, x *toy, b ghBackend) {
 		sp := x.spawn("toy-1", "pr")
 		b.commit(x, sp.Workspace.Dir)
 		x.push(sp.Workspace.Dir, "toy-1")
@@ -749,7 +749,7 @@ func TestContractFindTheChange(t *testing.T) {
 		must(t, r, 7, "next: gh pr create")
 		lacks(t, r, fork)
 	})
-	gcase(t, "old-merged-pr-ignored", "T3", func(t *testing.T, x *toy, b ghBackend) {
+	gcase(t, "old-merged-pr-ignored", "", func(t *testing.T, x *toy, b ghBackend) {
 		sp := x.spawn("toy-1", "pr")
 		b.commit(x, sp.Workspace.Dir)
 		x.push(sp.Workspace.Dir, "toy-1")
@@ -762,27 +762,27 @@ func TestContractFindTheChange(t *testing.T) {
 		lacks(t, r, old)
 		must(t, x.queen("end", "toy-1"), 9)
 	})
-	gcase(t, "two-open-refused", "T3", func(t *testing.T, x *toy, b ghBackend) {
+	gcase(t, "two-open-refused", "", func(t *testing.T, x *toy, b ghBackend) {
 		sp := x.spawn("toy-1", "pr")
 		b.commit(x, sp.Workspace.Dir)
 		one := b.open(x, 1, sp.Workspace.Dir, "toy-1", false)
 		two := x.openPR(2, "toy-1", func(pr *fake.PR) { pr.Created = time.Now() })
 		must(t, x.worker("toy-1", 1, "done"), 7, one, two)
 	})
-	gcase(t, "draft", "T3", func(t *testing.T, x *toy, b ghBackend) {
+	gcase(t, "draft", "", func(t *testing.T, x *toy, b ghBackend) {
 		sp := x.spawn("toy-1", "pr")
 		b.commit(x, sp.Workspace.Dir)
 		b.open(x, 1, sp.Workspace.Dir, "toy-1", true)
 		must(t, x.worker("toy-1", 1, "done"), 7, "pr_not_draft")
 	})
-	gcase(t, "not-pushed", "T3", func(t *testing.T, x *toy, b ghBackend) {
+	gcase(t, "not-pushed", "", func(t *testing.T, x *toy, b ghBackend) {
 		sp := x.spawn("toy-1", "pr")
 		b.commit(x, sp.Workspace.Dir)
 		b.open(x, 1, sp.Workspace.Dir, "toy-1", false)
 		b.commit(x, sp.Workspace.Dir)
 		must(t, x.worker("toy-1", 1, "done"), 7, "push it")
 	})
-	gcase(t, "host-lag", "T3", func(t *testing.T, x *toy, b ghBackend) {
+	gcase(t, "host-lag", "", func(t *testing.T, x *toy, b ghBackend) {
 		sp := x.spawn("toy-1", "pr")
 		dir := sp.Workspace.Dir
 		b.commit(x, dir)
@@ -793,7 +793,7 @@ func TestContractFindTheChange(t *testing.T) {
 		x.git(dir, "push", "-q", "-u", "origin", "toy-1")
 		must(t, x.worker("toy-1", 1, "done"), 10, "pending")
 	})
-	gcase(t, "host-ahead", "T3", func(t *testing.T, x *toy, b ghBackend) {
+	gcase(t, "host-ahead", "", func(t *testing.T, x *toy, b ghBackend) {
 		sp := x.spawn("toy-1", "pr")
 		dir := sp.Workspace.Dir
 		b.commit(x, dir)
@@ -805,7 +805,7 @@ func TestContractFindTheChange(t *testing.T) {
 		x.push(other, "toy-1")
 		must(t, x.worker("toy-1", 1, "done"), 7, "pull them, then push")
 	})
-	gcase(t, "end-before-merge", "T3", func(t *testing.T, x *toy, b ghBackend) {
+	gcase(t, "end-before-merge", "", func(t *testing.T, x *toy, b ghBackend) {
 		sp := x.spawn("toy-1", "pr")
 		b.commit(x, sp.Workspace.Dir)
 		url := b.open(x, 1, sp.Workspace.Dir, "toy-1", false)

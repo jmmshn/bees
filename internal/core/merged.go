@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/jmmshn/bees/internal/logbook"
+	"github.com/jmmshn/bees/internal/port"
 )
 
 // merged reports whether ws's branch is merged into its recorded base, and how bs knows or
@@ -45,7 +47,7 @@ func (c *Core) merged(ctx context.Context, ws logbook.Workspace) (bool, string, 
 			return true, "the files it changed are identical on " + short(b) + " (a squash or rebase merge)", nil
 		}
 	}
-	heads, skipped, err := c.Review.Landed(ctx, ws.Repo, ws.Branch)
+	heads, skipped, err := c.landedHeads(ctx, ws)
 	switch {
 	case err != nil:
 		return false, "", fmt.Errorf("not merged locally, and %s couldn't be asked: %w", c.Review.Name(), err)
@@ -61,6 +63,19 @@ func (c *Core) merged(ctx context.Context, ws logbook.Workspace) (bool, string, 
 		why += " (" + skipped + ")"
 	}
 	return false, why, nil
+}
+
+// landedHeads is the head commit of each merged change from ws's branch, of any age:
+// merged's third proof, after a squash or rebase.
+func (c *Core) landedHeads(ctx context.Context, ws logbook.Workspace) ([]string, string, error) {
+	cs, skipped, err := c.Review.Changes(ctx, where(ws), time.Time{})
+	var heads []string
+	for _, ch := range cs {
+		if ch.State == port.Merged {
+			heads = append(heads, ch.HeadCommit)
+		}
+	}
+	return heads, skipped, err
 }
 
 // base is the first of ws's bases: the ref its branch is measured against.

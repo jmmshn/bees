@@ -35,7 +35,7 @@ func (x *toy) github() string {
 // openPR opens PR n on the fake GitHub from branch head onto main.
 func (x *toy) openPR(n int, head string, mods ...func(*fake.PR)) string {
 	url := fmt.Sprintf("%s/pull/%d", toyRepo, n)
-	pr := &fake.PR{URL: url, Author: "jmmshn", Head: head, Base: "main", State: "OPEN"}
+	pr := &fake.PR{URL: url, Author: "jmmshn", Head: head, Base: "main", State: "OPEN", Created: time.Now()}
 	for _, m := range mods {
 		m(pr)
 	}
@@ -250,15 +250,15 @@ func TestPRGoalHandoffChecks(t *testing.T) {
 		ctx := context.Background()
 		sp := x.spawn("toy-1", "pr")
 		dir := sp.Workspace.Dir
-		must(t, x.worker("toy-1", 1, "done"), 2, "none is handed off", "next: bs done --pr <url>")
+		must(t, x.worker("toy-1", 1, "done"), 7, "no change from toy-1 since this spawn", "next: ")
 		b.commit(x, dir)
 		url := b.open(x, 1, dir, "toy-1", false)
 		b.ci(x, 1, "pass", "fail")
-		must(t, x.worker("toy-1", 2, "done", "--pr", url), 7, "1 handoff checks failed", "ci_green", "failing: job2")
+		must(t, x.worker("toy-1", 2, "done"), 7, "1 handoff checks failed", "ci_green", "failing: job2")
 		b.ci(x, 1, "pending")
-		must(t, x.worker("toy-1", 3, "done", "--pr", url), 10, "still pending", "pending: job1", "next: bs done --wait")
+		must(t, x.worker("toy-1", 3, "done"), 10, "still pending", "pending: job1", "next: bs done --wait")
 		b.ci(x, 1, "fail?") // only required checks count (keeper, 2026-10-22)
-		must(t, x.worker("toy-1", 4, "done", "--pr", url), 0, "handed off to queen-toy", url, "vacuous pass:", "requires no checks")
+		must(t, x.worker("toy-1", 4, "done"), 0, "handed off to queen-toy", url, "vacuous pass:", "requires no checks")
 		b.behind(x)
 		must(t, x.keeper("check", "toy-1"), 7, "FAIL pr_current", "1 commits behind")
 		must(t, x.queen("end", "toy-1"), 9, url+": open")
@@ -274,18 +274,17 @@ func TestPRGoalHandoffChecks(t *testing.T) {
 	})
 }
 
-// A draft PR fails --goal pr's handoff; a PR of another repo, or one handed off to a goal
-// with no pr part, is refused before any check runs.
-func TestPRGoalRefusesDraftsAndOtherRepos(t *testing.T) {
+// A draft PR fails --goal pr's handoff; two open changes from the workspace are refused,
+// naming both: bs judges one (ADR-0010 Amendment 4).
+func TestPRGoalRefusesDraftsAndTwoOpen(t *testing.T) {
 	both(t, func(t *testing.T, x *toy, b backend) {
 		sp := x.spawn("toy-1", "pr")
 		b.commit(x, sp.Workspace.Dir)
 		url := b.open(x, 1, sp.Workspace.Dir, "toy-1", true)
 		b.ci(x, 1, "pending")
-		must(t, x.worker("toy-1", 1, "done", "--pr", url), 7, "2 handoff checks failed", "pr_not_draft", "a draft", "pending: job1")
-		must(t, x.worker("toy-1", 2, "done", "--pr", b.other()), 2, "not of this spawn's repo")
-		x.spawn("toy-2", "verdict")
-		must(t, x.worker("toy-2", 1, "done", "--pr", url, "--answer", "yes", "--report", "r"), 2, "takes no --pr")
+		must(t, x.worker("toy-1", 1, "done"), 7, "2 handoff checks failed", url+": a draft", "pr_not_draft", "pending: job1")
+		two := b.open(x, 2, sp.Workspace.Dir, "toy-1", false)
+		must(t, x.worker("toy-1", 2, "done"), 7, "2 open changes from toy-1", url, two, "next: close all but one")
 	})
 }
 
@@ -298,7 +297,7 @@ func TestPRReadyAndDraft(t *testing.T) {
 		sp := x.spawn("toy-1", "pr:ready")
 		b.commit(x, sp.Workspace.Dir)
 		url := b.open(x, 1, sp.Workspace.Dir, "toy-1", false)
-		must(t, x.worker("toy-1", 1, "done", "--pr", url), 0)
+		must(t, x.worker("toy-1", 1, "done"), 0)
 		if ld, ok, _ := x.open().LandedOf(ctx, sp.ID); !ok || ld.By != "done" {
 			t.Fatalf("pr:ready landed = %+v, %v", ld, ok)
 		}
@@ -311,7 +310,7 @@ func TestPRReadyAndDraft(t *testing.T) {
 		b.commit(x, sp.Workspace.Dir)
 		url = b.open(x, 2, sp.Workspace.Dir, "toy-2", true)
 		b.ci(x, 2, "fail") // a draft gets no CI check at all (keeper, 2026-10-22)
-		must(t, x.worker("toy-2", 1, "done", "--pr", url), 0)
+		must(t, x.worker("toy-2", 1, "done"), 0)
 		if d, _, _ := x.open().LatestDone(ctx, sp.ID); slices.ContainsFunc(d.Checks, func(r logbook.CheckResult) bool { return r.Name == goal.CIGreen }) {
 			t.Fatalf("a draft's handoff ran ci_green: %+v", d.Checks)
 		}
@@ -319,53 +318,6 @@ func TestPRReadyAndDraft(t *testing.T) {
 		must(t, x.queen("prune"), 3, url+": open")
 		b.close(x, 2)
 		must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir+" and branch toy-2", "its work is on "+url)
-	})
-}
-
-// Handed-off PRs accumulate across bs done calls; --replaces drops one, and a PR never
-// handed off can't be replaced.
-func TestPRsAccumulateAndReplace(t *testing.T) {
-	both(t, func(t *testing.T, x *toy, b backend) {
-		ctx := context.Background()
-		sp := x.spawn("toy-1", "pr")
-		dir := sp.Workspace.Dir
-		b.commit(x, dir)
-		one := b.open(x, 1, dir, "toy-1", false)
-		must(t, x.worker("toy-1", 1, "done", "--pr", one), 0)
-		b.stack(x, dir, "toy-1-b")
-		b.commit(x, dir)
-		two := b.open(x, 2, dir, "toy-1-b", false)
-		must(t, x.worker("toy-1", 2, "done", "--pr", two), 0, one, two)
-		b.stack(x, dir, "toy-1-c")
-		b.commit(x, dir)
-		three := b.open(x, 3, dir, "toy-1-c", false)
-		must(t, x.worker("toy-1", 3, "done", "--pr", three, "--replaces", one), 0)
-		if d, _, _ := x.open().LatestDone(ctx, sp.ID); !slices.Equal(d.PRs, []string{two, three}) {
-			t.Fatalf("handed off %q, want %q", d.PRs, []string{two, three})
-		}
-		must(t, x.worker("toy-1", 4, "done", "--replaces", one), 2, "never handed off")
-		b.land(x, 2)
-		must(t, x.queen("end", "toy-1"), 9, three+": open")
-		b.land(x, 3)
-		must(t, x.queen("end", "toy-1"), 0)
-	})
-}
-
-// A PR's commits must hold one made in the workspace (bees-13.6): another worker's PR is
-// refused, and so is one whose commits the workspace only reset or checked out to.
-func TestAPRMustHoldAWorkspaceCommit(t *testing.T) {
-	both(t, func(t *testing.T, x *toy, b backend) {
-		sp1 := x.spawn("toy-1", "pr")
-		sp2 := x.spawn("toy-2", "pr")
-		b.commit(x, sp2.Workspace.Dir)
-		theirs := b.open(x, 2, sp2.Workspace.Dir, "toy-2", false)
-		must(t, x.worker("toy-1", 1, "done", "--pr", theirs), 7, "pr_workspace_commit", "none of its 1 commits was made in "+sp1.Workspace.Dir)
-		b.adopt(x, sp1.Workspace.Dir, 2)
-		mine := b.open(x, 1, sp1.Workspace.Dir, "toy-1", false)
-		must(t, x.worker("toy-1", 2, "done", "--pr", mine), 7, "pr_workspace_commit")
-		b.commit(x, sp1.Workspace.Dir)
-		b.update(x, 1, sp1.Workspace.Dir)
-		must(t, x.worker("toy-1", 3, "done", "--pr", mine), 0)
 	})
 }
 
@@ -469,14 +421,14 @@ func TestDoneWaitsForCI(t *testing.T) {
 		b.commit(x, sp.Workspace.Dir)
 		url := b.open(x, 1, sp.Workspace.Dir, "toy-1", false)
 		b.ci(x, 1, "pending")
-		must(t, x.worker("toy-1", 1, "done", "--pr", url), 10, "next: bs done --wait")
-		must(t, x.worker("toy-1", 2, "done", "--wait", "--timeout", "1s", "--pr", url), 11, "still pending after 1s", "pending: job1")
-		must(t, x.worker("toy-1", 3, "done", "--wait", "--timeout", "20m", "--pr", url), 2, "at most 9m0s")
+		must(t, x.worker("toy-1", 1, "done"), 10, "next: bs done --wait")
+		must(t, x.worker("toy-1", 2, "done", "--wait", "--timeout", "1s"), 11, "still pending after 1s", "pending: job1")
+		must(t, x.worker("toy-1", 3, "done", "--wait", "--timeout", "20m"), 2, "at most 9m0s")
 		b.ciLater(x, 1, "pass", "fail")
-		must(t, x.worker("toy-1", 4, "done", "--wait", "--pr", url), 7, "failing: job2", "still pending (")
+		must(t, x.worker("toy-1", 4, "done", "--wait"), 7, "failing: job2", "still pending (")
 		b.ci(x, 1, "pending")
 		b.ciLater(x, 1, "pass")
-		must(t, x.worker("toy-1", 5, "handoff", "--pr", url), 0, "handed off to queen-toy") // handoff is done --wait
+		must(t, x.worker("toy-1", 5, "handoff"), 0, "handed off to queen-toy", url) // handoff is done --wait
 		b.ci(x, 1, "pending")
 		must(t, x.keeper("check", "toy-1"), 10, "WAIT ci_green", "pending: job1")
 	})
@@ -490,9 +442,9 @@ func TestAHungHostIsCantCheckNotPending(t *testing.T) {
 	b.setup(x, true)
 	sp := x.spawn("toy-1", "pr")
 	b.commit(x, sp.Workspace.Dir)
-	url := b.open(x, 1, sp.Workspace.Dir, "toy-1", false)
+	b.open(x, 1, sp.Workspace.Dir, "toy-1", false)
 	x.gh.Hang = true
-	must(t, x.worker("toy-1", 1, "done", "--wait", "--timeout", "1s", "--pr", url), 6, "couldn't run")
+	must(t, x.worker("toy-1", 1, "done", "--wait", "--timeout", "1s"), 6, "can't ask github")
 }
 
 // A waiver holds at end and prune as at handoff; an amend re-runs the spawn refusals on
@@ -503,7 +455,7 @@ func TestWaiversHoldAtEndAndAmendsAreRefused(t *testing.T) {
 		sp := x.spawn("toy-1", "pr")
 		b.commit(x, sp.Workspace.Dir)
 		url := b.open(x, 1, sp.Workspace.Dir, "toy-1", false)
-		must(t, x.worker("toy-1", 1, "done", "--pr", url), 0)
+		must(t, x.worker("toy-1", 1, "done"), 0)
 		// An amend tells the worker its new goal's fragments, and a review's marker.
 		must(t, x.keeper("goal", "toy-1", "review="+url), 0)
 		must(t, x.worker("toy-1", 2, "inbox"), 0, "now --goal review="+url, "bs:"+string(sp.ID), "## Goal", "--goal review=<url>")
@@ -532,15 +484,15 @@ func TestAPushTheHostHasntSeenYetIsPending(t *testing.T) {
 	dir := sp.Workspace.Dir
 	b.commit(x, dir)
 	url := b.open(x, 1, dir, "toy-1", false)
-	must(t, x.worker("toy-1", 1, "done", "--pr", url), 0)
+	must(t, x.worker("toy-1", 1, "done"), 0)
 	x.gh.Edit(url, func(pr *fake.PR) { pr.Stale = true })
 	b.commit(x, dir)
 	x.git(dir, "push", "-q", "-u", "origin", "toy-1")
-	must(t, x.worker("toy-1", 2, "done", "--pr", url), 10, "pending: toy-1 was pushed at", "still shows")
+	must(t, x.worker("toy-1", 2, "done"), 10, "pending: toy-1 was pushed at", "still shows")
 	time.AfterFunc(300*time.Millisecond, func() { x.gh.Edit(url, func(pr *fake.PR) { pr.Stale = false }) })
-	must(t, x.worker("toy-1", 3, "done", "--wait", "--pr", url), 0)
+	must(t, x.worker("toy-1", 3, "done", "--wait"), 0)
 	b.commit(x, dir)
-	must(t, x.worker("toy-1", 4, "done", "--wait", "--pr", url), 7, "push it")
+	must(t, x.worker("toy-1", 4, "done", "--wait"), 7, "push it")
 
 	// Someone pushed onto the PR (or "Update branch"): the host is ahead, never pending.
 	x.git(dir, "push", "-q", "origin", "toy-1")
@@ -549,7 +501,7 @@ func TestAPushTheHostHasntSeenYetIsPending(t *testing.T) {
 	x.git(x.repo, "worktree", "add", "-q", "--detach", other, "origin/toy-1")
 	b.commit(x, other)
 	x.push(other, "toy-1")
-	must(t, x.worker("toy-1", 5, "done", "--wait", "--timeout", "1s", "--pr", url), 7, "has commits toy-1 lacks", "pull them, then push")
+	must(t, x.worker("toy-1", 5, "done", "--wait", "--timeout", "1s"), 7, "has commits toy-1 lacks", "pull them, then push")
 }
 
 // While the host still shows the old head of a pushed branch, what it says of that head
@@ -565,12 +517,12 @@ func TestTheOldHeadsCIIsPendingWhileTheHostLags(t *testing.T) {
 	b.commit(x, dir)
 	url := b.open(x, 1, dir, "toy-1", false)
 	b.ci(x, 1, "fail")
-	must(t, x.worker("toy-1", 1, "done", "--pr", url), 7, "failing: job1")
+	must(t, x.worker("toy-1", 1, "done"), 7, "failing: job1")
 	x.gh.Edit(url, func(pr *fake.PR) { pr.Stale = true })
 	b.behind(x)
 	b.commit(x, dir)
 	x.git(dir, "push", "-q", "-u", "origin", "toy-1")
-	must(t, x.worker("toy-1", 2, "done", "--pr", url), 10, "pending: toy-1 was pushed at", "ci_green", "pr_current")
+	must(t, x.worker("toy-1", 2, "done"), 10, "pending: toy-1 was pushed at", "ci_green", "pr_current")
 
 	other := filepath.Join(filepath.Dir(x.repo), "theirs")
 	x.git(x.repo, "worktree", "add", "-q", "-b", "feature", other)
@@ -587,10 +539,9 @@ func TestTheOldHeadsCIIsPendingWhileTheHostLags(t *testing.T) {
 	must(t, x.worker("toy-2", 2, "done", "--wait"), 0)
 }
 
-// A pull brings in work other workers already landed, which must never count as this
-// worker's: a commit is made here when it was written here or is a rebased copy of one
-// (patch-id). After a pull --rebase the worker's PR passes on its rebased commit; a PR
-// holding only the pulled-in commit is refused (keeper, 2026-10-22).
+// A pull brings in work another worker opened a change for, which is never this worker's:
+// bs finds the change from the worker's own branch only (ADR-0010 Amendment 4), so the
+// other one is never judged, and after a pull --rebase the worker's own passes.
 func TestAPulledCommitIsNeverTheWorkers(t *testing.T) {
 	both(t, func(t *testing.T, x *toy, b backend) {
 		sp := x.spawn("toy-1", "pr")
@@ -605,9 +556,11 @@ func TestAPulledCommitIsNeverTheWorkers(t *testing.T) {
 			t.Fatal("the pull didn't rebase the worker's commit")
 		}
 		theirs := b.open(x, 2, other, "theirs", false)
-		must(t, x.worker("toy-1", 1, "done", "--pr", theirs), 7, "pr_workspace_commit", "none of its 1 commits was made")
+		r := x.worker("toy-1", 1, "done")
+		must(t, r, 7, "no change from toy-1")
+		lacks(t, r, theirs)
 		url := b.open(x, 1, dir, "toy-1", false)
-		must(t, x.worker("toy-1", 2, "done", "--pr", url), 0, "handed off")
+		must(t, x.worker("toy-1", 2, "done"), 0, "handed off", url)
 	})
 }
 
@@ -617,11 +570,11 @@ func TestARequiredCheckNotReportedYetIsPending(t *testing.T) {
 	both(t, func(t *testing.T, x *toy, b backend) {
 		sp := x.spawn("toy-1", "pr")
 		b.commit(x, sp.Workspace.Dir)
-		url := b.open(x, 1, sp.Workspace.Dir, "toy-1", false)
+		b.open(x, 1, sp.Workspace.Dir, "toy-1", false)
 		b.requires(x, "job1")
-		must(t, x.worker("toy-1", 1, "done", "--pr", url), 10, "pending: job1 (not reported yet)")
+		must(t, x.worker("toy-1", 1, "done"), 10, "pending: job1 (not reported yet)")
 		b.ci(x, 1, "pending")
 		b.ciLater(x, 1, "pass")
-		must(t, x.worker("toy-1", 2, "handoff", "--pr", url), 0, "handed off")
+		must(t, x.worker("toy-1", 2, "handoff"), 0, "handed off")
 	})
 }

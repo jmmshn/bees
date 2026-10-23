@@ -13,7 +13,6 @@ A case of behavior not built yet names its rebuild ticket: `xfail(t, "T3")` in G
 |---|---|
 | T1 identity and permissions; logbook creation | `amend-as-worker`, `as-check-other`, `as-check-own`, `as-end-as-worker`, `as-inbox-peeks`, `discard-as-queen`, `discard-as-queen-by`, `ident-as-other`, `ident-check-other`, `ident-end-incomplete-sibling`, `ident-end-sibling`, `ident-outside-reads-keeper`, `ident-prune`, `ident-tripwire`, `parallel-first-spawns`, `status-first-line-keeper`, `status-first-line-worker` |
 | T2 cross-project send starts the queen | `foreign-end`, `foreign-send-starts-queen`, `foreign-sends-race-one-queen`, `foreign-spawn`, `queen-reply-to-worker`, `send-no-logbook` |
-| T3 bs finds the change; `--pr` goes | `done-no-change`, `draft`, `end-before-merge`, `find-the-change`, `fork-pr-ignored`, `host-ahead`, `host-lag`, `name-another-workers-pr`, `not-pushed`, `old-merged-pr-ignored`, `two-open-refused`, `verdict-pr` |
 | T4 one goal per spawn | `amend-two-values`, `mixed-refuses-amend`, `mixed-refuses-done`, `spawn-two-bad`, `spawn-two-goals` |
 | T5 stacked `pr=`, narrow `push=` | `pr-target-closed`, `pr-target-fork`, `pr-target-merged`, `push-discarded-pruned`, `push-own-branch`, `push-owned-refused`, `stacked-cut`, `stacked-handoff-after-target-merged`, `stacked-lower-end-refused`, `stacked-merged-into-live-target`, `stacked-prune-falls-back-to-trunk` |
 | T6 bs posts the review | `review-answer-yes`, `review-never-approves`, `review-posts-once`, `review-retry-posts-nothing` |

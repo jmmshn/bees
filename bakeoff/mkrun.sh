@@ -8,6 +8,7 @@ arm=$1 s=$2 id=t$2$1${BAKEOFF_TAG:-}
 runs=${BAKEOFF_RUNS:-$HOME/.cache/bees-bakeoff/runs} # outside any repo: an ancestor CLAUDE.md would leak into the leads
 dir=$runs/$id repo=$runs/$id/$id
 [ -e "$dir" ] && { echo "exists: $dir" >&2; exit 1; }
+[ "$2" != 19 ] || [ "$1" != c ] || [ ! -e "${XDG_CONFIG_HOME:-$HOME/.config}/bees/projects/$id.toml" ] || { echo "exists: the config's projects/$id.toml" >&2; exit 1; }
 mkdir -p "$dir"
 git init -q -b main "$repo"
 git -C "$repo" config commit.gpgsign false # toy repo: the signing key is configured only under ~/repos
@@ -43,6 +44,9 @@ case $arm in
 			else
 				printf 'worker.path = ["%s"]\n' "$bin"
 			fi >"$xdg/bees/projects/$id.toml"
+			# A worker's own bs reads the real config home (spawn passes no XDG_CONFIG_HOME): S19's
+			# workers need the command host too, so the real projects dir links to the run's file.
+			[ -z "$cl" ] || { mkdir -p "$real/bees/projects" && ln -s "$xdg/bees/projects/$id.toml" "$real/bees/projects/$id.toml"; }
 			cmd="XDG_CONFIG_HOME=$(printf %q "$xdg") PATH=$(printf %q "${bin:+$bin:}${cl:+$dir/bin:}")\$PATH bs queen"
 		fi ;;
 esac

@@ -74,12 +74,21 @@ func (h Harness) Prepare(st port.Start) (port.Launch, error) {
 	}
 	l := port.Launch{Args: []string{"--name", st.Name, "--state", h.Dir(st.Name)},
 		Record: map[string]string{"state": h.Dir(st.Name), "path": strings.Join(st.Path, ":")}}
+	// The prompt file and doorbell go on the line as Claude's do, so the launch's length is
+	// the real one's (beesfake ignores them).
+	if st.PromptFile != "" {
+		l.Args = append(l.Args, "--append-system-prompt-file", st.PromptFile)
+	}
+	if st.Doorbell != "" {
+		l.Args = append(l.Args, st.Doorbell)
+	}
 	if st.Role == port.Worker {
 		b, err := json.Marshal(st.Deny)
 		if err != nil {
 			return l, err
 		}
 		l.Files = map[string]string{"deny.json": string(b)}
+		l.Args = append(l.Args, "--settings", "{{deny.json}}")
 	}
 	return l, nil
 }

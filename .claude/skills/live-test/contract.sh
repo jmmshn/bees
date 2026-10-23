@@ -195,7 +195,7 @@ echo "== background gate ($G)"
 h agent prompt "$(pane gate)" "Run the shell command: sleep 900 -- with run_in_background set to true. Then stop; do nothing else." >/dev/null
 for _ in $(seq 90); do grep -q 'sleep 900' <<<"$(bs check "$G" 2>&1)" && break; sleep 1; done # no pipe: bs check exits 7 under pipefail
 c gate-check 7 'FAIL no_background: .*background process && sleep 900' -- bs check "$G"
-c gate-done 5 'still runs background work && pid [0-9]+ sleep 900' -- done_ "$G" --answer yes --report r
+c gate-done 5 'still runs background work && pid [0-9]+ +sleep 900' -- done_ "$G" --answer yes --report r
 c gate-end-incomplete 5 'still runs background work' -- end_ --incomplete "$G"
 c gate-end-incomplete-next 5 "next: bs end --incomplete --force $G" xfail=T7 -- end_ --incomplete "$G"
 # The next: above (today bs end --force), followed: it must not point back at --incomplete alone.

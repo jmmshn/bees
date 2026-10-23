@@ -58,7 +58,7 @@ func (c *Core) Queen(ctx context.Context, req QueenReq) ([]string, error) {
 	if err != nil {
 		return nil, exit(ExitCantCheck, bsname.Cmd+" doctor", err, "can't read its own start time")
 	}
-	text := prompt.Text(prompt.Queen, c.Project, c.Kind, goal.BuiltinTypes()) + prompt.Host(prompt.Queen, c.Review.Name())
+	text := prompt.Text(prompt.Queen, c.Project, c.Harness.Kind(), c.Kind, goal.BuiltinTypes()) + prompt.Host(prompt.Queen, c.Review.Name())
 	l, err := c.Harness.Prepare(port.Start{Role: port.Queen, Name: name, Dir: c.Repo, PromptFile: "{{prompt.md}}", Prompt: text})
 	if err != nil {
 		return nil, exit(ExitRefused, bsname.Cmd+" config", err, "its harness refused the launch")

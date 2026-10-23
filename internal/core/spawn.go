@@ -118,7 +118,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	if h == nil {
 		return logbook.Spawn{}, false, exit(ExitRefused, bsname.Cmd+" config", nil, "%s: this bs has no adapter for harness %s; nothing was made", name, kind)
 	}
-	text := prompt.Text(prompt.Worker, c.Project, ws.Kind, g.Types())
+	text := prompt.Text(prompt.Worker, c.Project, h.Kind(), ws.Kind, g.Types())
 	if g.Reviewed() {
 		text += prompt.Host(prompt.Worker, c.Review.Name())
 	}
@@ -267,7 +267,7 @@ func (c *Core) resume(ctx context.Context, sp logbook.Spawn, bead port.Bead, req
 	if err != nil {
 		return err
 	}
-	text := prompt.Text(prompt.Worker, c.Project, sp.Workspace.Kind, e.Types())
+	text := prompt.Text(prompt.Worker, c.Project, h.Kind(), sp.Workspace.Kind, e.Types())
 	if e.Reviewed() {
 		text += prompt.Host(prompt.Worker, c.Review.Name())
 	}

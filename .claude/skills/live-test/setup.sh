@@ -1,11 +1,20 @@
 #!/usr/bin/env bash
-# setup.sh [--no-queen] [<dir holding a bs build>]: a throwaway project for a live test, on
-# its own herdr --session server, with its session config dir written and (unless
+# setup.sh [--no-queen] [--harness agy] [<dir holding a bs build>]: a throwaway project for a
+# live test, on its own herdr --session server, with its session config dir written and (unless
 # --no-queen) its queen running that build. Prints the run's live.json.
+# --harness agy: the queen stays on Claude Code and spawns agy workers (bs spawn --harness agy);
+# setup checks agy is signed in from the toy's panes first. AGY_MODEL sets [worker.agy] model,
+# AGY_SETTINGS agy's settings.json (default ~/.gemini/antigravity-cli/settings.json).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
-queen=1
-[ "${1:-}" = --no-queen ] && { queen=0; shift; }
+queen=1 harness=claude_code
+while :; do
+	case ${1:-} in
+	--no-queen) queen=0 && shift ;;
+	--harness) [ "${2:-}" = agy ] || { echo "setup: --harness takes agy (claude_code is the default)" >&2; exit 1; }; harness=agy && shift 2 ;;
+	*) break ;;
+	esac
+done
 bin=$(cd "${1:-$here/../../../bin}" 2>/dev/null && pwd) || bin=
 [ -n "$bin" ] && [ -x "$bin/bs" ] || { echo "no bs build in ${1:-bin/}: run go build -o bin/bs ./cmd/bs in the checkout under test" >&2; exit 1; }
 [[ $HOME == /* ]] || { echo "HOME=$HOME is not absolute" >&2; exit 1; }
@@ -54,8 +63,27 @@ done
 # unset under set -u.
 detach=setsid
 command -v setsid >/dev/null || detach=nohup
-env -i PATH="$bin:$PATH" HOME="$HOME" TERM="${TERM:-xterm-256color}" LANG="${LANG:-C.UTF-8}" SHELL="${SHELL:-/bin/sh}" ${xdg[@]+"${xdg[@]}"} \
-	"$detach" herdr --session "$toy" server </dev/null >"$run/keeper/herdr-server.log" 2>&1 &
+toyenv=(env -i PATH="$bin:$PATH" HOME="$HOME" TERM="${TERM:-xterm-256color}" LANG="${LANG:-C.UTF-8}" SHELL="${SHELL:-/bin/sh}" ${xdg[@]+"${xdg[@]}"})
+if [ $harness = agy ]; then
+	record harness agy
+	# teardown.sh removes the toy's trust entries and agy files from here, and checks it
+	# against its own AGY_SETTINGS as it does the config dir.
+	record agy_settings "${AGY_SETTINGS:-$HOME/.gemini/antigravity-cli/settings.json}"
+	[ -z "${AGY_MODEL:-}" ] || printf '\n[worker.agy]\nmodel = "%s"\n' "$AGY_MODEL" >>"$config/config.toml"
+	# Signed in as the toy's panes will be: agy reads SSH_CONNECTION/SSH_CLIENT as a remote
+	# session and is "not signed in" there, which the bare env drops (bees-13.13.8).
+	agy=$("${toyenv[@]}" sh -c 'command -v agy') || { echo "setup: no agy on the toy's PATH" >&2; exit 1; }
+	record agy_version "$("$agy" --version 2>/dev/null || echo unknown)" # agy updates itself (motif 14)
+	out=$(cd "$run/keeper" && "${toyenv[@]}" timeout 60 "$agy" models 2>&1) || true
+	grep -qi 'sign in' <<<"$out" && { echo "setup: agy isn't signed in from the toy's env; run agy once to sign in: $out" >&2; exit 1; }
+	jq -e '.permissions.allow // [] | index("command(bs)")' "$(jq -r .agy_settings "$run/live.json")" >/dev/null 2>&1 ||
+		echo "setup: agy's permissions.allow has no command(bs): the agy worker's pane asks the keeper before every bs call" >&2
+fi
+# The ( … & ) double fork reparents the server off this script at once: setsid in a
+# script's background job doesn't fork, so the server stayed this script's child, and a
+# worker running setup was the toy queen's nearest recorded ancestor (bees-13.13.8).
+("${toyenv[@]}" \
+	"$detach" herdr --session "$toy" server </dev/null >"$run/keeper/herdr-server.log" 2>&1 &)
 for _ in $(seq 50); do h workspace list >/dev/null 2>&1 && break; sleep 0.2; done
 h workspace list >/dev/null || { echo "setup: herdr --session $toy never answered; see $run/keeper/herdr-server.log" >&2; exit 1; }
 ws=$(h workspace create --cwd "$repo" --label "live $toy" --no-focus)

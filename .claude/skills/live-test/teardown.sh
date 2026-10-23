@@ -27,6 +27,63 @@ store=$HOME/.local/share/bees
 if [ "$(uname)" = Darwin ]; then cache=$HOME/Library/Caches/bees; else cache=${XDG_CACHE_HOME:-$HOME/.cache}/bees; fi
 projects=$HOME/.claude/projects enc=$(sed 's/[^A-Za-z0-9]/-/g' <<<"$run") # Claude's name for a project dir
 fail() { echo "teardown: $*; fix it and run teardown.sh $run again" >&2; exit 1; }
+# agy's settings and data dir, checked against setup's like the config dir. agy keeps the
+# toy's trust entries and conversations there, outside the run dir (bees-13.13.8).
+agy_settings=${AGY_SETTINGS:-$HOME/.gemini/antigravity-cli/settings.json} agy_data=
+recorded=$(jq -r '.agy_settings // empty' "$run/live.json" 2>/dev/null)
+[ -z "$recorded" ] || [ "$recorded" = "$agy_settings" ] || { echo "setup used agy settings $recorded, but this shell's AGY_SETTINGS names $agy_settings: run teardown with setup's environment" >&2; exit 1; }
+[ -d "$(dirname "$agy_settings")/log" ] && agy_data=$(dirname "$agy_settings")
+# agy_logs: agy's logs of a start whose workspace (its cwd, its --add-dir) is in the run dir;
+# agy_cids: the conversations those starts created.
+agy_logs() {
+	[ -n "$agy_data" ] || return 0
+	for l in "$agy_data"/log/cli-*.log; do
+		[ -f "$l" ] && grep -m1 'workspaceDirs=' "$l" | grep -qF -e "[$run/" -e " $run/" && echo "$l"
+	done
+}
+agy_cids() { agy_logs | while read -r l; do sed -n 's/.*Created conversation \([0-9a-f-]\{36\}\) .*/\1/p' "$l"; done | sort -u; }
+# agy_files <cid>...: what agy keeps of each conversation.
+agy_files() { for c in "$@"; do ls -d "$agy_data/conversations/$c".db* "$agy_data/brain/$c" "$agy_data/annotations/$c.pbtxt" "$agy_data/implicit/$c.pb" 2>/dev/null; done; }
+# untrust [--check]: removes (or with --check, lists) agy's trustedWorkspaces entries in the run
+# dir, under the lock bs's own edits take, rewriting the file only if it is unchanged since read.
+untrust() {
+	[ -f "$agy_settings" ] || return 0
+	python3 -I - "$agy_settings" "$run" "$@" <<'PY'
+import fcntl, json, os, sys, tempfile, time
+path, run, check = sys.argv[1], sys.argv[2], "--check" in sys.argv
+mine = lambda p: p == run or p.startswith(run + "/")
+with open(path + ".lock", "a") as lock:
+    for _ in range(200):
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError:
+            time.sleep(0.05)
+    else:
+        sys.exit(f"{path}.lock: another bs held it for 10 s")
+    for _ in range(3):
+        old = open(path, "rb").read()
+        keys = json.loads(old or b"{}")
+        ds = keys.get("trustedWorkspaces") or []
+        gone = [d for d in ds if mine(d)]
+        if check or not gone:
+            if gone:
+                print(" ".join(gone))
+            sys.exit(0)
+        keys["trustedWorkspaces"] = [d for d in ds if not mine(d)]
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=os.path.basename(path) + ".lt-")
+        with os.fdopen(fd, "w") as f:
+            f.write(json.dumps(keys, indent=2) + "\n")
+        os.chmod(tmp, os.stat(path).st_mode & 0o777)
+        if open(path, "rb").read() != old:  # agy rewrote it meanwhile: read it again
+            os.remove(tmp)
+            continue
+        os.rename(tmp, path)
+        print("untrusted in agy:", " ".join(gone))
+        sys.exit(0)
+    sys.exit(f"{path} kept changing")
+PY
+}
 
 # 1. The toy's herdr server, which holds every pane and process the toy started: the
 # session is named after the toy, so this stops nothing of the keeper's (motif 12).
@@ -76,6 +133,17 @@ for t in "$projects/$enc"-*; do
 	[ ! -e "$dest" ] || dest=$dest.$(date +%s) # a rerun after the session wrote more
 	mkdir -p "$run/keeper/transcripts" && mv -- "$t" "$dest" || fail "couldn't move $t"
 done
+# agy's trust entries for the run dir (spawn's, or a keeper's answer to agy's prompt), and its
+# logs and conversations of the toy's starts: moved into the run's record like the transcripts.
+untrust || fail "couldn't remove the toy's trust entries from $agy_settings"
+if [ -n "$agy_data" ]; then
+	# shellcheck disable=SC2046 # one cid per word
+	set -- $(agy_logs) $(agy_files $(agy_cids))
+	if [ $# -gt 0 ]; then
+		mkdir -p "$run/keeper/agy" && mv -- "$@" "$run/keeper/agy/" || fail "couldn't move agy's files of $toy"
+		echo "moved $# agy logs and conversation files into $run/keeper/agy"
+	fi
+fi
 # bs's per-start files (prompt, settings) are <session>-<key>-* in $cache/bs (bees-13.4);
 # $cache/bsx held them before the swap (bees-13.9).
 del "$store/$toy.db" "$store/$toy.db-wal" "$store/$toy.db-shm" "$run/logbooks" "$cache/$toy"-* "$cache/bs/$toy"-* "$cache/bs/queen-$toy"-* "$cache/bsx/$toy"-* "$cache/bsx/queen-$toy"-* "$config" || fail "couldn't remove $toy's logbooks, cache files or config dir"
@@ -115,6 +183,9 @@ else
 fi
 left=$(ls -d "$store/$toy".db* "$cache/$toy"-* "$cache/bs/$toy"-* "$cache/bs/queen-$toy"-* "$cache/bsx/$toy"-* "$cache/bsx/queen-$toy"-* "$repo" "$config" "$projects/$enc"-* 2>/dev/null | tr '\n' ' ')
 [ -z "$left" ] || leak "files left: $left"
+left=$(untrust --check) && [ -z "$left" ] || leak "agy trust entries left in $agy_settings: ${left:-unreadable}"
+# shellcheck disable=SC2046
+[ -z "$agy_data" ] || { left=$(agy_logs; agy_files $(agy_cids)) && [ -z "$left" ]; } || leak "agy files left: $left"
 
 # 5. Leftovers outside the toy: noted, never an exit code, and left for a later cleanup.
 # Beads its sessions filed elsewhere (bd's created_by is git user.name, which setup.sh sets
@@ -134,6 +205,11 @@ for db in "$store"/*.db; do
 	n=$(python3 -I "$here/logbook.py" "$db" "SELECT count(*) FROM entries WHERE actor = ? OR actor LIKE ?" "queen-$toy" "$toy-%") || { note "couldn't read $db"; continue; }
 	[ "$n" = 0 ] || note "$n rows written by $toy's sessions in $db"
 done
+# agy's shared files the toy's starts wrote lines into, which agy rewrites itself.
+if [ -n "$agy_data" ]; then
+	n=$(grep -cF "\"workspace\":\"$run/" "$agy_data/history.jsonl" 2>/dev/null) && [ "$n" != 0 ] && note "$n lines of $toy's prompts in $agy_data/history.jsonl"
+	n=$(jq -r --arg d "$run/" '[keys[] | select(startswith($d))] | length' "$agy_data/cache/last_conversations.json" 2>/dev/null) && [ "$n" != 0 ] && note "$n of $toy's folders in $agy_data/cache/last_conversations.json"
+fi
 # The keeper's own workspaces, as setup.sh listed them: teardown never touches one, so a
 # missing one was closed by someone else. Reported, never a leak: this shows the keeper's
 # server is still answering for them, not a check teardown can fail.

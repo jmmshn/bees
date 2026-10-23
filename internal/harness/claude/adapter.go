@@ -127,10 +127,13 @@ func workerSettings(st port.Start) (string, error) {
 	return string(b), err
 }
 
-// environment tells the classifier whose workspace this is; a workspace with no branch
-// (a push goal's, detached at someone else's change) claims none.
+// environment tells the classifier whose workspace this is, and a push goal's where its
+// branch goes; a workspace with no branch claims none.
 func environment(st port.Start) string {
-	if st.Branch == "" {
+	switch {
+	case st.Branch != "" && st.PushTo != "":
+		return fmt.Sprintf("Host containment: a bees worker, working in its own git worktree %s on its own branch %s of the repository %s; its goal is to push that branch onto branch %s, the head of a pull request it was handed.", st.Dir, st.Branch, st.Repo, st.PushTo)
+	case st.Branch == "":
 		return fmt.Sprintf("Host containment: a bees worker, working in its own git worktree %s of the repository %s.", st.Dir, st.Repo)
 	}
 	return fmt.Sprintf("Host containment: a bees worker, working in its own git worktree %s on its own branch %s of the repository %s.", st.Dir, st.Branch, st.Repo)

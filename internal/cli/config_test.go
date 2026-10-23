@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/jmmshn/bees/internal/core"
+	"github.com/jmmshn/bees/internal/harness/agy"
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/port"
 )
@@ -471,4 +472,17 @@ func TestRefusesAMovedLogbookDir(t *testing.T) {
 	if code, _, stderr := r.run(r.repo, nil, "status"); code != 0 {
 		t.Errorf("bs status with both: exit %d: %s", code, stderr)
 	}
+}
+
+// bees-14.1: bs queen on harness agy looks for agy.bin, ~ expanded, not agy on PATH.
+func TestQueenLooksForAgyBin(t *testing.T) {
+	r := newRig(t)
+	r.write("config.toml", "harness = \"agy\"\n[agy]\nbin = \"~/opt/agy\"\n[paths]\nlogbook_dir = \""+r.logbook+"\"\n")
+	var out, errb bytes.Buffer
+	ports := Ports{Run: port.Exec{}, CacheDir: filepath.Join(r.home, "cache"), Harness: agy.Adapter{Bs: "/bin/bs"}}
+	code := Run(context.Background(), Env{Vars: append(append([]string{}, r.env...), "HERDR_PANE_ID=w1:p1"), Dir: r.repo, Self: os.Getpid()}, ports, []string{"queen"}, &out, &errb)
+	if code != 2 {
+		t.Errorf("exit %d", code)
+	}
+	wantIn(t, errb.String(), filepath.Join(r.home, "opt", "agy")+" is missing or not executable (agy.bin)")
 }

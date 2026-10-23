@@ -289,7 +289,22 @@ func (l *Loaded) check(f leaf, val string) error {
 	if kind := f.tag.Get("path"); kind != "" {
 		return l.checkPath(f.key, val, kind)
 	}
+	if name := f.tag.Get("program"); name != "" {
+		return l.checkProgram(f.key, val, name)
+	}
 	return nil
+}
+
+// checkProgram checks a program value: name itself, found on PATH, or an absolute path
+// (~ expanded) whose base name is name, the program herdr's --kind starts.
+func (l *Loaded) checkProgram(key, val, name string) error {
+	switch {
+	case filepath.Base(val) != name:
+		return fmt.Errorf("%s = %q: its base name must be %s: herdr's --kind %s starts only a program of that name (bees-14.7); point a symlink named %s at it", key, val, name, name, name)
+	case val == name:
+		return nil
+	}
+	return l.checkPath(key, val, "dir")
 }
 
 // checkPath checks a path value of kind "dir", or "{repo}" when it may begin with the

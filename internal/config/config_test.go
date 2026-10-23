@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -97,6 +98,20 @@ func TestEnvOverridesFiles(t *testing.T) {
 	}
 	_, err = Load(Input{Dir: dir, Home: "/h", Env: map[string]string{"BS_LOGBOOK_DIR": "rel"}})
 	wantErr(t, err, "env BS_LOGBOOK_DIR", "not an absolute path")
+}
+
+// Shadowed lists the values a setting held before the one that won, so bs can tell a moved
+// paths.logbook_dir from a new one.
+func TestShadowedListsTheLowerValues(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "config.toml"), "[paths]\nlogbook_dir = \"/g\"\n")
+	l, err := Load(Input{Dir: dir, Home: "/h", Env: map[string]string{"BS_LOGBOOK_DIR": "/e"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := l.Shadowed["paths.logbook_dir"], []string{"~/.local/share/bees", "/g"}; !slices.Equal(got, want) {
+		t.Errorf("shadowed = %q, want %q", got, want)
+	}
 }
 
 // Every error in both files is reported at once, each naming its file and key.

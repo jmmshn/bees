@@ -34,9 +34,6 @@ func (r *run) queen(fs *flag.FlagSet, args []string) error {
 	if pane == "" { // before anything else bs queen needs: no pane, no queen
 		return &core.Exit{Code: core.ExitRefused, Msg: "not in a herdr pane (HERDR_PANE_ID is unset): start the queen in a herdr pane, so her workers can find and ring her"}
 	}
-	if err := r.s.unpinned("queen"); err != nil {
-		return err
-	}
 	if w := r.s.Caller; w.Recorded() {
 		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("%s runs this bs already", w.Name), Next: "start the queen in a pane of her own"}
 	}
@@ -103,9 +100,6 @@ func (r *run) spawnArgs(fs *flag.FlagSet, args []string) error {
 func (r *run) spawn(_ *flag.FlagSet, _ []string) error {
 	a := r.spawnReq
 	label := &a.label
-	if err := r.s.unpinned("spawn"); err != nil {
-		return err
-	}
 	if r.c.Harness == nil {
 		return &core.Exit{Code: core.ExitRefused, Msg: "no harness adapter for harness = " + r.s.Harness, Next: bsname.Cmd + " config"}
 	}

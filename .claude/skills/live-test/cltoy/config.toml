@@ -1,0 +1,29 @@
+
+# setup.sh --cl: the toy's command workspace and review host, both the toy cl (bees-14.6).
+[workspace.command]
+create   = ["cl", "client", "new", "{name}", "{dir}"]
+remove   = ["cl", "client", "delete", "{name}"]
+clean    = ["cl", "client", "clean", "{name}"]
+dir      = "{{clients}}/{name}"
+branch   = ["cl", "head", "{branch}"]
+pushed   = ["cl", "uploaded", "{branch}"]
+has      = ["cl", "has", "{commit}"]
+descends = ["cl", "descends", "{ancestor}", "{commit}"]
+
+[review]
+host     = "command"
+fragment = "{{config}}/cl-host.md"
+
+[review.command]
+url          = 'https://cl\.toy/(?P<repo>[^/]+)/(?P<number>[0-9]+)'
+repo         = ["cl", "repo"]
+changes      = ["cl", "list", "{dir}"]
+view         = ["cl", "show", "{url}"]
+ci           = ["cl", "checks", "{url}"]
+post_review  = ["cl", "comment", "{url}", "{body_file}", "{marker}"]
+fetch        = ["cl", "fetch", "{url}"]
+create       = "cl upload"
+retarget     = "cl upload"
+push_hint    = "cl upload"
+merge_deny   = ["cl submit*", "cl * submit*"]
+approve_deny = ["cl approve*", "cl * approve*"]

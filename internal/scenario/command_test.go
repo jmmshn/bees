@@ -381,3 +381,18 @@ merge_deny = ["cl submit*"]
 		t.Fatalf("posted reviews: %q, %v", b, err)
 	}
 }
+
+// A command workspace that is a checkout of its own (a clone, a monorepo client) is its
+// worker's project, not one named after the clone's directory: the worker's bs calls there
+// act as that worker (bees-14.6, seen live).
+func TestAWorkerActsInItsOwnCloneAsItself(t *testing.T) {
+	x := newCLToy(t, `create = ["git", "clone", "-q", "{repo}", "{dir}"]
+remove = ["rm", "-rf", "{dir}"]
+clean = ["true"]`, "")
+	x.bead("toy-1", "work on toy-1")
+	must(t, x.queen("spawn", "--goal", "cl", "--label", "toy one", "toy-1"), 0)
+	x.queen("send", "toy-1", "hello from the queen")
+	must(t, x.worker("toy-1", 1, "inbox"), 0, "hello from the queen")
+	must(t, x.worker("toy-1", 2, "send", "queen-toy", "hi back"), 0)
+	must(t, x.queen("inbox"), 0, "hi back")
+}

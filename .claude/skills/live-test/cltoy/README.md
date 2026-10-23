@@ -1,0 +1,1 @@
+A CL-shaped toy for `setup.sh --cl` (bees-14.6): `cl` is a monorepo client and CL tool in one small script, so a live test drives bs's command workspace, command VCS and command review host with nothing internal. `config.toml` and `cl-host.md` are the config and host prompt section setup fills in.

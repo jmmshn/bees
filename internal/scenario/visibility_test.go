@@ -80,6 +80,23 @@ func TestStatusWorksWithHerdrDown(t *testing.T) {
 	must(t, x.queen("spawn", "--goal", "verdict", "toy-2"), 1, "nothing was recorded", "server_not_running")
 }
 
+// Status shows each worker's label and every session's unread mail (bees-13.73.1): a
+// brief nobody read, and mail for a session no spawn names, the queen included.
+func TestStatusShowsLabelAndUnread(t *testing.T) {
+	x := newToy(t)
+	x.spawn("toy-1", "verdict")
+	r := x.keeper("status")
+	if cell(r.out, "toy-1", "LABEL") != "work on toy-1" || cell(r.out, "toy-1", "UNREAD") != "1" {
+		t.Fatalf("an unread brief:\n%s", r)
+	}
+	must(t, x.worker("toy-1", 1, "inbox"), 0)
+	must(t, x.worker("toy-1", 2, "send", "queen-toy", "a question"), 0)
+	r = x.keeper("status")
+	if cell(r.out, "toy-1", "UNREAD") != "0" || cell(r.out, "queen-toy", "UNREAD") != "1" || cell(r.out, "queen-toy", "STATE") != "no spawn" {
+		t.Fatalf("after the brief is read and the queen is mailed:\n%s", r)
+	}
+}
+
 // T11 between two queens on one herdr server: a send with --project writes only the
 // recipient's logbook, keeping the sender and its project; the doorbell and bs inbox give
 // the reply command with --project; the reply routes back. Inside a pane, inbox and done

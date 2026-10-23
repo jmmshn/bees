@@ -18,7 +18,7 @@ bs reads `~/.config/bees/config.toml` and `projects/<project>.toml` beside it ([
 bs config                          # every value and where it came from
 bs doctor                          # config, project, logbook dir, harness and ring-socket modes, herdr server vs client,
                                    # herdr socket, bd store, gh and a GitHub remote, cmd argv, stray BS_*
-bs status                          # one line per spawn (GOAL STATE HANDOFF COMPLETE RUNNING), then stuck/kept/waived/discarded/late
+bs status                          # one line per spawn (LABEL GOAL STATE HANDOFF COMPLETE RUNNING UNREAD), then stuck/kept/waived/discarded/late
 bs send --project <other> queen-<other> "..."   # cross-project mail; the reply hint carries --project back
 ```
 

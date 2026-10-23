@@ -286,11 +286,11 @@ func TestUnknownFlagIsRefusal(t *testing.T) {
 	}
 }
 
-// bees-14.1: harness agy checks agy.bin, refusing one that's missing; a worker's agy is
-// the one herdr finds on PATH, so a bin path that isn't it is said, and none fails.
+// bees-14.1: harness agy checks agy.bin, refusing one that's missing. A worker runs
+// agy.bin itself, as the queen does, any base name (bees-14.7): nothing more to say.
 func TestDoctorAgyBin(t *testing.T) {
 	r := newDoctorRig(t)
-	opt := filepath.Join(t.TempDir(), "agy")
+	opt := filepath.Join(t.TempDir(), "jetski")
 	r.write("config.toml", "harness = \"agy\"\n[agy]\nbin = \""+opt+"\"\n[paths]\nlogbook_dir = \""+r.logbook+"\"\n")
 	code, out := r.doctor()
 	if code != 1 {
@@ -300,18 +300,10 @@ func TestDoctorAgyBin(t *testing.T) {
 	if err := os.WriteFile(opt, []byte("#!/bin/sh\necho 1.4.6\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	_, out = r.doctor()
-	wantIn(t, out, "ok   harness agy: "+opt+" 1.4.6", "FAIL agy.bin: workers start agy from PATH (herdr's --kind agy), and this shell's PATH has none")
+	if _, out = r.doctor(); strings.Contains(out, "agy.bin") || !strings.Contains(out, "ok   harness agy: "+opt+" 1.4.6") {
+		t.Errorf("agy.bin %s, no agy on PATH:\n%s", opt, out)
+	}
 	r.stub("agy", "echo 1.4.6")
-	_, out = r.doctor()
-	wantIn(t, out, "WARN agy.bin: workers start "+filepath.Join(r.bin, "agy")+", the agy on this shell's PATH (herdr's --kind agy), not "+opt)
-	os.Remove(filepath.Join(r.bin, "agy"))
-	if err := os.Symlink(opt, filepath.Join(r.bin, "agy")); err != nil {
-		t.Fatal(err)
-	}
-	if _, out = r.doctor(); strings.Contains(out, "agy.bin") {
-		t.Errorf("PATH's agy links to agy.bin:\n%s", out)
-	}
 	r.write("config.toml", "harness = \"agy\"\n[paths]\nlogbook_dir = \""+r.logbook+"\"\n")
 	if _, out = r.doctor(); strings.Contains(out, "agy.bin") || !strings.Contains(out, "ok   harness agy: "+filepath.Join(r.bin, "agy")+" 1.4.6") {
 		t.Errorf("agy on PATH:\n%s", out)

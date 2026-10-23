@@ -346,7 +346,7 @@ func (s *settings) model(harness string, queen bool) string {
 
 // opts is what config sets on harness's adapter, for a worker or with queen the queen.
 func (s *settings) opts(harness string, queen bool) HarnessOpts {
-	return HarnessOpts{Model: s.model(harness, queen), Settings: s.Expand(s.Agy.Settings)}
+	return HarnessOpts{Model: s.model(harness, queen), Settings: s.Expand(s.Agy.Settings), Bin: s.program(harness)}
 }
 
 // program is the program a config harness name starts: for agy, agy.bin (bees-14.1).

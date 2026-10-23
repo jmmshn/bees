@@ -300,13 +300,11 @@ func (l *Loaded) check(f leaf, val string) error {
 	return nil
 }
 
-// checkProgram checks a program value: name itself, found on PATH, or an absolute path
-// (~ expanded) whose base name is name, the program herdr's --kind starts.
-func (l *Loaded) checkProgram(key, val, name string) error {
-	switch {
-	case filepath.Base(val) != name:
-		return fmt.Errorf("%s = %q: its base name must be %s: herdr's --kind %s starts only a program of that name (bees-14.7); point a symlink named %s at it", key, val, name, name, name)
-	case val == name:
+// checkProgram checks a program value: a name, found on PATH, or an absolute path (~
+// expanded). Any name will do: one that isn't name, the program herdr's --kind starts,
+// is typed into the pane instead (bees-14.7).
+func (l *Loaded) checkProgram(key, val, _ string) error {
+	if !strings.ContainsRune(val, '/') && !strings.HasPrefix(val, "~") {
 		return nil
 	}
 	return l.checkPath(key, val, "dir")

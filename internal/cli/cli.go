@@ -54,6 +54,7 @@ type Ports struct {
 type HarnessOpts struct {
 	Model    string // the role's model
 	Settings string // agy.settings, ~ expanded: agy's settings.json, which holds its trusted folders
+	Bin      string // the program it runs: agy.bin, ~ expanded, for agy
 }
 
 // recorded is the adapter of a harness some entry recorded, any model: it only rings and

@@ -34,6 +34,9 @@ var _ port.Harness = Adapter{}
 // Kind is herdr's --kind for Claude, and the program bs queen execs.
 func (Adapter) Kind() string { return "claude" }
 
+// Program is claude, the program herdr's --kind claude starts.
+func (Adapter) Program() string { return "claude" }
+
 // Owns reports whether argv carries --name name, as every launch Prepare builds does.
 func (Adapter) Owns(argv []string, name string) bool {
 	i := slices.Index(argv, "--name")

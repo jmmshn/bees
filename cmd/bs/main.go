@@ -31,7 +31,7 @@ func main() {
 			case claude.Name:
 				return claude.Adapter{Model: o.Model}
 			case agy.Name:
-				return agy.Adapter{Model: o.Model, Bs: exe, Settings: o.Settings} // its guard hook runs this bs
+				return agy.Adapter{Model: o.Model, Bin: o.Bin, Bs: exe, Settings: o.Settings} // its guard hook runs this bs
 			}
 			return nil
 		},

@@ -1,9 +1,11 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -30,19 +32,20 @@ func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch, repl
 	if err != nil {
 		return exit(ExitStart, next, err, "%s: nothing started", sp.Name)
 	}
-	kind := h.Kind()
+	kind, prog := h.Kind(), program(sp.Program, h)
 	args, err := c.writeFiles(sp.Name, l)
 	if err != nil {
 		return exit(ExitStart, next, err, "%s: couldn't write its start files", sp.Name)
 	}
-	if err := herdr.CheckAgentArgs(args); err != nil {
+	line, err := typed(kind, prog, args, l.Unset)
+	if err != nil {
 		return exit(ExitStart, next, err, "%s: the launch can't be typed into a pane", sp.Name)
 	}
 	// A harness already in the pane: this worker's own is adopted; any other would get a
 	// twin beside it (motif 7). A pane bs can't look into starts nothing.
 	switch p, ok, err := c.own(ctx, sp); {
 	case err != nil:
-		return exit(ExitStart, next, err, "%s: can't tell whether pane %s already runs %s", sp.Name, sp.Herdr.Pane, kind)
+		return exit(ExitStart, next, err, "%s: can't tell whether pane %s already runs %s", sp.Name, sp.Herdr.Pane, prog)
 	case ok:
 		if _, _, err := c.recordStart(ctx, sp, p, false, replaces); err != nil {
 			return exit(ExitStart, next, err, "%s: its start (pid %d) couldn't be recorded", sp.Name, p.PID)
@@ -51,13 +54,14 @@ func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch, repl
 	}
 	switch p, ok, err := c.harnessIn(ctx, sp); {
 	case err != nil:
-		return exit(ExitStart, next, err, "%s: can't tell whether pane %s already runs %s", sp.Name, sp.Herdr.Pane, kind)
+		return exit(ExitStart, next, err, "%s: can't tell whether pane %s already runs %s", sp.Name, sp.Herdr.Pane, prog)
 	case ok:
-		return exit(ExitStart, next, nil, "%s: pane %s already runs %s (pid %d), which bs has no start of: a second would be its twin", sp.Name, sp.Herdr.Pane, kind, p.PID)
+		return exit(ExitStart, next, nil, "%s: pane %s already runs %s (pid %d), which bs has no start of: a second would be its twin", sp.Name, sp.Herdr.Pane, prog, p.PID)
 	}
 	// herdr types the launch into the pane's shell, whose env a herdr server started over
-	// ssh filled: what the harness must not inherit is unset there first (bees-13.13.13).
-	if len(l.Unset) > 0 {
+	// ssh filled: what the harness must not inherit is unset there first (bees-13.13.13),
+	// on a typed line's own.
+	if len(l.Unset) > 0 && line == "" {
 		line, err := unsetLine(l.Unset)
 		if err == nil {
 			err = c.herdr(sp.Herdr.Session).RunInPane(ctx, sp.Herdr.Pane, line)
@@ -80,7 +84,12 @@ func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch, repl
 		}
 		seen <- got
 	}()
-	startErr := c.startAgent(ctx, sp, kind, args)
+	var startErr error
+	if line == "" {
+		startErr = c.startAgent(ctx, sp, kind, args)
+	} else {
+		startErr = c.herdr(sp.Herdr.Session).RunInPane(ctx, sp.Herdr.Pane, line)
+	}
 	switch {
 	case errors.Is(startErr, herdr.ErrPaneBusy), errors.Is(startErr, herdr.ErrNameTaken):
 		cancel() // herdr typed nothing, or a live agent has the name: no start of ours to find
@@ -97,7 +106,7 @@ func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch, repl
 	case got.pid == 0 && got.err != nil: // never a clean look: a miss it can't claim (Rule G)
 		return exit(ExitCantCheck, bsname.Cmd+" status, then "+next, errors.Join(startErr, got.err), "%s: can't look for its harness in pane %s, so its start is unconfirmed", sp.Name, sp.Herdr.Pane)
 	case got.pid == 0:
-		return exit(ExitStart, next, startErr, "%s: start unconfirmed: no %s of %s's in pane %s", sp.Name, kind, sp.Name, sp.Herdr.Pane)
+		return exit(ExitStart, next, startErr, "%s: start unconfirmed: no %s of %s's in pane %s", sp.Name, prog, sp.Name, sp.Herdr.Pane)
 	case got.err != nil:
 		return exit(ExitStart, next, got.err, "%s: its start (pid %d) couldn't be recorded", sp.Name, got.pid)
 	case errors.Is(startErr, herdr.ErrUnready):
@@ -122,6 +131,42 @@ func unsetLine(vars []string) (string, error) {
 }
 
 var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// typed is how a launch of prog reaches the pane: "" when herdr agent start --kind kind
+// types it, prog being kind's own program; else the shell line bs types with herdr pane
+// run, unsetting unset first, since herdr's --kind starts only its own program (no flag
+// for another in 0.9.5, bees-14.7). Either is refused when herdr or the tty would refuse it.
+func typed(kind, prog string, args, unset []string) (string, error) {
+	if prog == kind {
+		return "", herdr.CheckAgentArgs(args)
+	}
+	words := []string{shellQuote(prog)}
+	for _, a := range args {
+		words = append(words, shellQuote(a))
+	}
+	line := strings.Join(words, " ")
+	if len(unset) > 0 {
+		u, err := unsetLine(unset)
+		if err != nil {
+			return "", err
+		}
+		line = u + "; " + line
+	}
+	return line, herdr.CheckAgentArgs([]string{line}) // one line through the same tty
+}
+
+// program is the program a spawn's launches run: recorded, the one its entry recorded,
+// else, for a spawn recorded before bs kept it, its harness's kind (motif 3: never the
+// config's now).
+func program(recorded string, h port.Harness) string { return cmp.Or(recorded, h.Kind()) }
+
+// runs reports whether f runs prog: its argv[0] or its command name has prog's base name.
+// herdr's name is the kernel's, cut to 15 bytes on Linux (probed, bees-14.7), so a longer
+// one is told by argv[0].
+func runs(f herdr.PaneProcess, prog string) bool {
+	base := filepath.Base(prog)
+	return f.Name == base || len(f.Argv) > 0 && filepath.Base(f.Argv[0]) == base
+}
 
 // startAgent is StartAgent of harness program kind, tried again while herdr finds the
 // pane busy, within Timing.Busy (bees-12.33).
@@ -197,15 +242,15 @@ func (c *Core) foreground(ctx context.Context, sp logbook.Spawn) ([]herdr.PanePr
 	return pi.Foreground, h, err
 }
 
-// own finds sp's own harness in its recorded pane: a foreground process of the harness's
-// kind whose argv the harness owns as sp's, as every launch of it is.
+// own finds sp's own harness in its recorded pane: a foreground process running its
+// program whose argv the harness owns as sp's, as every launch of it is.
 func (c *Core) own(ctx context.Context, sp logbook.Spawn) (proc.Process, bool, error) {
 	fg, h, err := c.foreground(ctx, sp)
 	if err != nil {
 		return proc.Process{}, false, err
 	}
 	for _, p := range fg {
-		if !isOwn(p, h, sp.Name) {
+		if !isOwn(p, h, program(sp.Program, h), sp.Name) {
 			continue
 		}
 		start, err := c.Proc.Start(p.PID)
@@ -217,24 +262,24 @@ func (c *Core) own(ctx context.Context, sp logbook.Spawn) (proc.Process, bool, e
 	return proc.Process{}, false, nil
 }
 
-// harnessIn finds any foreground process of the harness's kind in sp's pane.
+// harnessIn finds any foreground process running sp's program in its pane.
 func (c *Core) harnessIn(ctx context.Context, sp logbook.Spawn) (proc.Process, bool, error) {
 	fg, h, err := c.foreground(ctx, sp)
 	if err != nil {
 		return proc.Process{}, false, err
 	}
 	for _, p := range fg {
-		if p.Name == h.Kind() {
+		if runs(p, program(sp.Program, h)) {
 			return proc.Process{PID: p.PID}, true, nil
 		}
 	}
 	return proc.Process{}, false, nil
 }
 
-// isOwn reports whether f is session name's harness: a process of h's kind whose argv h
+// isOwn reports whether f is session name's harness: a process running prog whose argv h
 // owns as name's (claude: --name name).
-func isOwn(f herdr.PaneProcess, h port.Harness, name string) bool {
-	return f.Name == h.Kind() && h.Owns(f.Argv, name)
+func isOwn(f herdr.PaneProcess, h port.Harness, prog, name string) bool {
+	return runs(f, prog) && h.Owns(f.Argv, name)
 }
 
 // recordStart records p, found already running, as sp's start; late marks a heal, and

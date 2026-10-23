@@ -199,7 +199,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 		if ws.Kind == config.CommandKind {
 			err := c.herdr(session).CloseWorkspace(context.WithoutCancel(ctx), hw.ID)
 			if !reused {
-				err = errors.Join(err, c.remove(context.WithoutCancel(ctx), name, bead.ID, ws))
+				err = errors.Join(err, c.remove(context.WithoutCancel(ctx), name, bead.ID, ws), untrust(h, ws.Dir))
 			}
 			return err
 		}
@@ -217,7 +217,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	// it exists: only the path bs just made (bees-13.13.5).
 	if err := trust(h, ws.Dir); err != nil {
 		err = errors.Join(err, undo())
-		return logbook.Spawn{}, false, exit(ExitFail, "", err, "%s: %s couldn't trust its worktree %s; nothing was recorded", name, kind, ws.Dir)
+		return logbook.Spawn{}, false, exit(ExitFail, "", err, "%s: %s couldn't trust its folder %s; nothing was recorded", name, kind, ws.Dir)
 	}
 	if err := c.track(ctx, ws, target); err != nil {
 		err = errors.Join(err, undo())
@@ -338,7 +338,7 @@ func (c *Core) resume(ctx context.Context, sp logbook.Spawn, bead port.Bead, req
 	}
 	launch.Files = withPrompt(launch.Files, text)
 	if err := trust(h, sp.Workspace.Dir); err != nil {
-		return exit(ExitFail, "", err, "%s: %s couldn't trust its worktree %s; nothing started", sp.Name, sp.Harness, sp.Workspace.Dir)
+		return exit(ExitFail, "", err, "%s: %s couldn't trust its folder %s; nothing started", sp.Name, sp.Harness, sp.Workspace.Dir)
 	}
 	var replaces logbook.ID
 	if started {

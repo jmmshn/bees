@@ -3,6 +3,7 @@ package scenario_test
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -47,7 +48,19 @@ func TestSpawnHandoffEndPruneOnABranchGoal(t *testing.T) {
 	if _, err := os.Stat(sp.Workspace.Dir); err != nil {
 		t.Fatalf("bs end removed the workspace: %v", err)
 	}
+	if fs, _ := filepath.Glob(filepath.Join(x.ports.CacheDir, "toy-1-*")); len(fs) != 0 {
+		t.Fatalf("bs end left start files: %q", fs)
+	}
+	// A start dir bs end couldn't remove goes at prune.
+	left := filepath.Join(x.ports.CacheDir, "toy-1-dir-7", ".agents")
+	if err := os.MkdirAll(left, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	x.write(filepath.Join(left, "deny.json"), "[]")
 	must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir+" and branch toy-1 (toy-1)")
+	if _, err := os.Stat(filepath.Dir(left)); !os.IsNotExist(err) {
+		t.Fatalf("prune kept the start dir: %v", err)
+	}
 	if _, err := os.Stat(sp.Workspace.Dir); !os.IsNotExist(err) {
 		t.Fatalf("prune kept %s", sp.Workspace.Dir)
 	}

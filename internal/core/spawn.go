@@ -124,7 +124,11 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	launch.Files = withPrompt(launch.Files, text)
 	// A launch too long to type would fail after the record (motif 8): check its longest
 	// form now, before anything is made.
-	if err := herdr.CheckAgentArgs(c.worstArgs(name, launch)); err != nil {
+	worst, err := c.worstArgs(name, launch)
+	if err != nil {
+		return logbook.Spawn{}, false, exit(ExitRefused, bsname.Cmd+" config", err, "%s: its harness's start files can't be written; nothing was made", name)
+	}
+	if err := herdr.CheckAgentArgs(worst); err != nil {
 		return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s: the launch can't be typed into a pane; nothing was made", name)
 	}
 	session := cmp.Or(req.Session, logbook.DefaultSession)
@@ -513,12 +517,16 @@ func pushTo(t *target) string {
 	return t.c.Head
 }
 
-// writeFiles writes l.Files to the cache dir as <name>-<key>-* (0600), replacing each
-// {{key}} in l.Args with its path, after removing this session's earlier files.
+// writeFiles writes l.Files to the cache dir as <name>-<key>-* (0600) and l.Dir as one
+// <name>-dir-* tree (0700 dirs, 0600 files), replacing each {{key}} and {{dir}} in l.Args
+// with its path, after removing this session's earlier files.
 func (c *Core) writeFiles(name string, l port.Launch) ([]string, error) {
 	args := slices.Clone(l.Args)
-	if len(l.Files) == 0 {
+	if len(l.Files) == 0 && len(l.Dir) == 0 {
 		return args, nil
+	}
+	if err := checkDir(l.Dir); err != nil {
+		return nil, err
 	}
 	if err := c.removeFiles(name); err != nil {
 		return nil, err
@@ -540,17 +548,47 @@ func (c *Core) writeFiles(name string, l port.Launch) ([]string, error) {
 		}
 		fill(args, key, f.Name())
 	}
+	if len(l.Dir) == 0 {
+		return args, nil
+	}
+	dir, err := os.MkdirTemp(c.CacheDir, filePattern(name, "dir"))
+	if err != nil {
+		return nil, err
+	}
+	for _, rel := range slices.Sorted(maps.Keys(l.Dir)) {
+		path := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(path, []byte(l.Dir[rel]), 0o600); err != nil {
+			return nil, err
+		}
+	}
+	fill(args, "dir", dir)
 	return args, nil
 }
 
+// checkDir refuses a Launch.Dir path that would land outside its directory.
+func checkDir(d map[string]string) error {
+	for rel := range d {
+		if !filepath.IsLocal(rel) {
+			return fmt.Errorf("start dir path %q isn't a relative path inside it", rel)
+		}
+	}
+	return nil
+}
+
 // worstArgs is l.Args as writeFiles would make them at their longest: each file's * as
-// os.CreateTemp's longest, a uint32's 10 digits.
-func (c *Core) worstArgs(name string, l port.Launch) []string {
+// os.CreateTemp's longest, a uint32's 10 digits; an error for a Dir writeFiles refuses.
+func (c *Core) worstArgs(name string, l port.Launch) ([]string, error) {
 	args := slices.Clone(l.Args)
 	for key := range l.Files {
 		fill(args, key, filepath.Join(c.CacheDir, strings.Replace(filePattern(name, key), "*", "4294967295", 1)))
 	}
-	return args
+	if len(l.Dir) > 0 {
+		fill(args, "dir", filepath.Join(c.CacheDir, strings.Replace(filePattern(name, "dir"), "*", "4294967295", 1)))
+	}
+	return args, checkDir(l.Dir)
 }
 
 // filePattern is the os.CreateTemp pattern of name's start file key: <name>-<key>-*.

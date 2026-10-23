@@ -414,17 +414,26 @@ func (c *Core) recordedAs(ctx context.Context, pid int) (string, error) {
 	return "", nil
 }
 
-// removeFiles removes worker name's per-start files, <name>-<stem>-*: a stem starts with
-// a letter, so this never takes the files of a worker whose name extends name (bees-12
-// and bees-12-3).
+// removeFiles removes worker name's per-start files, <name>-<stem>-*, and its start dir
+// tree, <name>-dir-*: a stem starts with a letter, so this never takes the files of a
+// worker whose name extends name (bees-12 and bees-12-3). Only bs's cache dir is looked
+// in, and only a dir named as writeFiles names one is removed whole (motif 12).
 func (c *Core) removeFiles(name string) error {
 	fs, err := filepath.Glob(filepath.Join(c.CacheDir, name+"-[a-z]*-*"))
 	if err != nil {
 		return err
 	}
+	dirs, err := filepath.Glob(filepath.Join(c.CacheDir, filePattern(name, "dir")))
+	if err != nil {
+		return err
+	}
 	var errs []error
 	for _, f := range fs {
-		if err := os.Remove(f); err != nil && !os.IsNotExist(err) {
+		rm := os.Remove
+		if slices.Contains(dirs, f) {
+			rm = os.RemoveAll
+		}
+		if err := rm(f); err != nil && !os.IsNotExist(err) {
 			errs = append(errs, err)
 		}
 	}
@@ -578,6 +587,10 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 		} else if alive {
 			return keep(false, "its ended worker still runs (pid %d): stop it, then %s prune again", st.PID, bsname.Cmd)
 		}
+	}
+	// bs end removed its start files; one it couldn't goes now.
+	if err := c.removeFiles(sp.Name); err != nil {
+		c.warn("couldn't remove %s's start files: %v", sp.Name, err)
 	}
 	// The remote branch is named whatever happens to the local one (bees-1.34).
 	switch _, err := c.git(ctx, ws.Repo, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+ws.Branch); {

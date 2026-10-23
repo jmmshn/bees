@@ -91,10 +91,13 @@ type Start struct {
 
 // Launch is what Prepare returns. The core writes each of Files (0600, in the cache dir,
 // named <name>-<key>-*), fills the {{key}} it stands for in Args with that file's path,
-// and removes <name>-[a-z]*-* on bs end and before each start.
+// and removes <name>-[a-z]*-* on bs end, at prune and before each start. Dir is a tree the
+// same way: one per-start directory, <name>-dir-* (0700), holding each file at its
+// relative path (0600), its path filling {{dir}}.
 type Launch struct {
 	Args   []string          // after `herdr agent start … --`
 	Files  map[string]string // key → content
+	Dir    map[string]string // relative path → content
 	Record map[string]string // facts known before the start that a later start needs (a conversation id bs chose)
 }
 

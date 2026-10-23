@@ -12,7 +12,7 @@ import (
 // deny is the deny list worker name's harness was started with.
 func (x *toy) deny(name string) []string {
 	x.t.Helper()
-	fs, _ := filepath.Glob(filepath.Join(x.ports.CacheDir, name+"-deny-*.json"))
+	fs, _ := filepath.Glob(filepath.Join(x.ports.CacheDir, name+"-dir-*", ".agents", "deny.json"))
 	if len(fs) != 1 {
 		x.t.Fatalf("deny files of %s: %v", name, fs)
 	}

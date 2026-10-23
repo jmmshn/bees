@@ -93,7 +93,8 @@ type Guards struct {
 
 // Review says where a project's changes (pr, push and review goals) are reviewed and land.
 type Review struct {
-	Host string `toml:"host" scope:"both" default:"github" enum:"github" doc:"the review host pr, push and review goals check against: github (pull requests through gh, the repo's git remotes)"`
+	Host     string `toml:"host" scope:"both" default:"github" enum:"github" doc:"the review host pr, push and review goals check against: github (pull requests through gh, the repo's git remotes)"`
+	Fragment string `toml:"fragment" scope:"both" path:"dir" doc:"a markdown file that is the review host's section of the prompt, in place of the built-in one: how a worker uploads, revises and hands off a change there, and how the queen lands it (lines <!-- worker --> and <!-- queen --> start each role's part). A host with no built-in section (a command host) gets its instructions only from here, so no host's workflow ships in bs"`
 }
 
 // Role holds the queen's harness tables.

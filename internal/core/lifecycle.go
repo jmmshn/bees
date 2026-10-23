@@ -363,7 +363,7 @@ func (c *Core) guests(ctx context.Context, sp logbook.Spawn) ([]string, error) {
 			return nil, err
 		}
 		for _, p := range pi.Foreground {
-			if p.Name != rh.Kind() {
+			if !runs(p, program(sp.Program, rh)) {
 				continue
 			}
 			who, err := c.recordedAs(ctx, p.PID)

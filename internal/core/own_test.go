@@ -28,7 +28,7 @@ func TestIsOwnAsksTheHarness(t *testing.T) {
 		{herdr.PaneProcess{Name: "agy", Argv: []string{"agy", "--name", "bees-8"}}, false},
 		{herdr.PaneProcess{Name: "claude", Argv: []string{"claude", "--cid", "bees-8"}}, false},
 	} {
-		if got := isOwn(c.f, h, "bees-8"); got != c.want {
+		if got := isOwn(c.f, h, "agy", "bees-8"); got != c.want {
 			t.Errorf("isOwn(%v) = %v, want %v", c.f, got, c.want)
 		}
 	}

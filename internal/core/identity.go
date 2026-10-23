@@ -57,6 +57,7 @@ type Caller struct {
 	Peek          bool   // --as from the keeper's shell: bs inbox marks nothing read
 
 	harness, herdrWS, dir string // a worker's recorded harness, herdr workspace and workspace dir
+	program               string // the program its spawn recorded its launches run
 	legacy                bool   // the old bs's spawn, never healed
 }
 
@@ -204,7 +205,7 @@ func heal(ctx context.Context, in ResolveIn, up []int, mine []Caller) (Caller, b
 		}
 		if slices.ContainsFunc(probe.Foreground, func(f herdr.PaneProcess) bool {
 			h := in.Harness(c.harness)
-			return h != nil && isOwn(f, h, c.Name) && slices.Contains(up, f.PID)
+			return h != nil && isOwn(f, h, program(c.program, h), c.Name) && slices.Contains(up, f.PID)
 		}) {
 			c.Unconfirmed = true
 			found = append(found, c)
@@ -294,6 +295,7 @@ func sessions(ctx context.Context, path, project string) ([]Caller, error) {
 				return nil, cant(err)
 			}
 			c.Spawned, c.Repo, c.herdrWS, c.dir, c.legacy = sp.TS, sp.Workspace.Repo, sp.Herdr.Workspace, sp.Workspace.Dir, sp.Legacy()
+			c.program = sp.Program
 		}
 		out = append(out, c)
 	}

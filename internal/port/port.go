@@ -41,9 +41,10 @@ func (e *ExitError) Error() string {
 // Harness is one agent program bs can start and ring (ADR-0010, the pilot's three
 // methods kept).
 type Harness interface {
-	Kind() string                                 // herdr --kind and the process name in the pane: claude | omp | agy
+	Kind() string                                 // herdr --kind and the prompts' harness: claude | omp | agy
+	Program() string                              // the program a launch runs, a name on PATH or an absolute path: Kind's own, or another (agy.bin); a spawn records it
 	Prepare(st Start) (Launch, error)             // pure: argv, per-start files, guards rendered, Record
-	Owns(argv []string, name string) bool         // argv, of a Kind process, is session name's launch
+	Owns(argv []string, name string) bool         // argv, of a process running the spawn's program, is session name's launch
 	Ring(t Target, text string, p Priority) error // ErrNotRunning | ErrNoRing | a write error
 	Observe(env []string) map[string]string       // pure: post-start facts a later start needs, read from the env of a bs the session runs
 }

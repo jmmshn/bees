@@ -2,6 +2,7 @@ package fake
 
 import (
 	"bufio"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -58,10 +59,13 @@ func RemoveBuild() {
 }
 
 // Harness is the harness adapter for beesfake: kind claude, a state dir per session
-// under State (short, so its socket path fits sun_path).
-type Harness struct{ State string }
+// under State (short, so its socket path fits sun_path). Bin is the program it runs, as
+// agy.bin is agy's: "" is claude, the program herdr's --kind claude starts.
+type Harness struct{ State, Bin string }
 
 func (Harness) Kind() string { return "claude" }
+
+func (h Harness) Program() string { return cmp.Or(h.Bin, "claude") }
 
 // Owns reports whether argv carries --name name, as claude_code's does.
 func (Harness) Owns(argv []string, name string) bool {

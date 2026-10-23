@@ -388,12 +388,12 @@ func TestTheSetupExamplesLoad(t *testing.T) {
 	}
 }
 
-// agy.bin is agy on PATH or an absolute path to one, ~ expanded; any other base name is
-// refused, since herdr's --kind agy starts only a program named agy (bees-14.7).
+// agy.bin is a name on PATH or an absolute path, ~ expanded, any base name: an
+// agy-compatible build needn't be named agy (bees-14.7).
 func TestAgyBin(t *testing.T) {
 	for _, c := range []struct{ bin, home, want string }{
 		{"agy", "", ""}, {"/opt/x/agy", "", ""}, {"~/bin/agy", "/h", ""},
-		{"jetski", "/h", "its base name must be agy"}, {"/opt/x/jetski", "/h", "its base name must be agy"},
+		{"jetski", "/h", ""}, {"/opt/x/jetski", "/h", ""},
 		{"bin/agy", "/h", "not an absolute path"}, {"~/agy", "", "can't expand ~: HOME is unset"},
 	} {
 		dir := t.TempDir()

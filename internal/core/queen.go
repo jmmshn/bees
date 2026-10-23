@@ -86,7 +86,7 @@ func (c *Core) Queen(ctx context.Context, req QueenReq) (argv, unset []string, e
 	if err != nil {
 		return nil, nil, exit(ExitFail, bsname.Cmd+" queen", err, "couldn't write her start files (her entry names this pid, which exits: harmless)")
 	}
-	return append([]string{c.Harness.Kind()}, args...), l.Unset, nil
+	return append([]string{c.Harness.Program()}, args...), l.Unset, nil
 }
 
 // host is r's review host section of the prompt: review.fragment's file when the keeper

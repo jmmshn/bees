@@ -146,7 +146,9 @@ func (h *Herdr) agentStart(s *server, session string, f flags) ([]byte, error) {
 }
 
 // processInfo is the pane's shell (the test process stands in for it) and, while its
-// agent runs, the agent as the foreground process; else the idle shell.
+// agent runs, the agent as the foreground process; else the idle shell. A pane run line's
+// sh stands for the shell: the program it started is the foreground one, named as the
+// kernel names it (comm, cut to 15 bytes on Linux), as real herdr names it (probed, bees-14.7).
 func (h *Herdr) processInfo(s *server, _ string, f flags) ([]byte, error) {
 	id, _ := f.get("--pane")
 	if h.infoFails > 0 {
@@ -160,11 +162,26 @@ func (h *Herdr) processInfo(s *server, _ string, f flags) ([]byte, error) {
 	shell := os.Getpid()
 	fg := []any{map[string]any{"pid": shell, "name": "zsh", "argv": []string{"/usr/bin/zsh"}}}
 	if a := p.agent; a != nil && a.alive() {
-		name, _ := proc.Name(a.cmd.Process.Pid)
-		fg = []any{map[string]any{"pid": a.cmd.Process.Pid, "name": name, "argv": a.argv}}
+		pid, argv := a.cmd.Process.Pid, a.argv
+		if a.name == "" { // a pane run line: its job, once sh has started one
+			if d, err := proc.Descendants(pid); err == nil && len(d) > 0 {
+				pid, argv = d[0].PID, cmdline(d[0].PID)
+			}
+		}
+		name, _ := proc.Name(pid)
+		fg = []any{map[string]any{"pid": pid, "name": name, "argv": argv}}
 	}
 	return result("pane:process_info", map[string]any{"type": "pane_process_info", "process_info": map[string]any{
 		"pane_id": id, "shell_pid": shell, "foreground_processes": fg}})
+}
+
+// cmdline is pid's argv: /proc's where there is one, else ps's command split on spaces.
+func cmdline(pid int) []string {
+	if b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline"); err == nil {
+		return strings.Split(strings.TrimSuffix(string(b), "\x00"), "\x00")
+	}
+	c, _ := proc.Command(pid)
+	return strings.Fields(c)
 }
 
 // Close ends every agent on every server: a test's cleanup.

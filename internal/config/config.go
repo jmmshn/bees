@@ -25,7 +25,8 @@ import (
 //   - env: the variable that overrides both files outside a recorded herdr pane (optional);
 //   - enum: its allowed values, separated by | ("" always passes where it is the default);
 //   - path: a path: "dir", or "{repo}" when it may begin with the {repo} placeholder;
-//   - program: a program, its base name the value: that name on PATH, or an absolute path;
+//   - program: a program, its value the one herdr's --kind starts: a name on PATH, or an
+//     absolute path; any other is typed into the pane (bees-14.7);
 //   - glob: present on a pattern over paths relative to a worktree (path.Match syntax);
 //   - unread: present when bs doesn't act on the key yet; its value names the bead that
 //     wires it. bs config marks it and bs doctor warns when a file sets it;
@@ -160,7 +161,7 @@ type Agy struct {
 // AgyInstall is the machine's agy: an agy-compatible build lives at its own path and
 // keeps its own settings, so neither is hard-coded (bees-14.1).
 type AgyInstall struct {
-	Bin      string `toml:"bin" scope:"global" default:"agy" program:"agy" doc:"the agy program: a name on PATH or an absolute path (~ expanded); its base name must be agy, the program herdr's --kind agy starts"`
+	Bin      string `toml:"bin" scope:"global" default:"agy" program:"agy" doc:"the agy program, or an agy-compatible one of any name: a name on PATH or an absolute path (~ expanded)"`
 	Settings string `toml:"settings" scope:"global" default:"~/.gemini/antigravity-cli/settings.json" path:"dir" doc:"agy's settings.json, whose trustedWorkspaces lists the folders agy trusts"`
 }
 

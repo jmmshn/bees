@@ -637,7 +637,7 @@ func TestContractCrossProject(t *testing.T) {
 		}
 		return 1
 	}
-	k.c("foreign-send-starts-queen", "T2", func(t *testing.T, x *toy) {
+	k.c("foreign-send-starts-queen", "", func(t *testing.T, x *toy) {
 		must(t, k.w(x, "toy-1", "send", "queen-other", "your API changed?"), 0, "queen-other")
 		if queens(x) != 1 {
 			fatalf(t, "no running queen-other after a send from toy-1")
@@ -648,7 +648,7 @@ func TestContractCrossProject(t *testing.T) {
 			fatalf(t, "other's inbox: %+v %v", ms, err)
 		}
 	})
-	k.c("foreign-sends-race-one-queen", "T2", func(t *testing.T, x *toy) {
+	k.c("foreign-sends-race-one-queen", "", func(t *testing.T, x *toy) {
 		for _, w := range []string{"toy-1", "toy-2"} {
 			k.steps[w]++
 			x.harness.Step(t, w, "bs", "send", "queen-other", "racing "+w)
@@ -675,7 +675,7 @@ func TestContractCrossProject(t *testing.T) {
 		must(t, k.w(x, "toy-1", "spawn", "--goal", "verdict", "other-1"), 2, "you are toy-1 of toy; message queen-other")
 	})
 	k.c("foreign-status", "", func(t *testing.T, x *toy) { must(t, k.w(x, "toy-1", "status"), 0) })
-	k.c("send-no-logbook", "T2", func(t *testing.T, x *toy) {
+	k.c("send-no-logbook", "", func(t *testing.T, x *toy) {
 		k.step(x, "toy-1", "cd", plain)
 		r := k.w(x, "toy-1", "send", "queen-plain", "hi")
 		k.step(x, "toy-1", "cd", other)
@@ -697,7 +697,7 @@ func TestContractQueenToQueen(t *testing.T) {
 	k.c("queen-reply", "", func(t *testing.T, x *toy) {
 		must(t, k.w(x, "queen-other", "send", "--project", "toy", "queen-toy", "hello back"), 0, "rung queen-toy")
 	})
-	k.c("queen-reply-to-worker", "T2", func(t *testing.T, x *toy) {
+	k.c("queen-reply-to-worker", "", func(t *testing.T, x *toy) {
 		must(t, k.w(x, "queen-other", "send", "--project", "toy", "toy-1", "direct"), 2, "message queen-toy")
 	})
 }

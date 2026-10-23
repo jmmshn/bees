@@ -327,11 +327,15 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 		}
 		body = strings.TrimRight(string(b), "\n")
 	}
-	c, fromProject := r.c, ""
+	// A send crossing projects records the sender's project, so the reply needs no project
+	// read back out of a name (T11, motif 3): a session's own, else the keeper's repo's.
+	c, from := r.c, r.s.Project
+	if w.Recorded() {
+		from = w.Project
+	}
 	if p := config.Normalise(*project); p != "" && p != r.s.Project {
-		// Cross-project mail (T11): written into p's logbook, recording the sender's project
-		// so the reply needs no project read back out of a name (motif 3). Only the
-		// recipient's logbook changes: the sender stays who it is in its own project.
+		// --project writes into p's logbook; only that logbook changes: the sender stays
+		// who it is.
 		path := filepath.Join(filepath.Dir(r.s.Logbook), p+".db")
 		// The other logbook gets the same old-session refusal, before Open migrates it.
 		if what, err := oldSessionsAt(r.ctx, path); err != nil {
@@ -342,42 +346,80 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 		}
 		lb, err := logbook.Open(r.ctx, path)
 		if errors.Is(err, logbook.ErrNoLogbook) {
-			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf(bsname.Cmd+" send --project %s: no logbook at %s; nothing stored", p, path),
+			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf(bsname.Cmd+" send --project %s: %s is no bees project (no logbook at %s); nothing stored", p, p, path),
 				Next: "check the project name against the logbooks: ls " + filepath.Dir(path)}
 		} else if err != nil {
 			return &core.Exit{Code: core.ExitCantCheck, Msg: fmt.Sprintf(bsname.Cmd+" send --project %s: can't read %s; nothing stored", p, path), Err: err, Next: bsname.Cmd + " doctor"}
 		}
 		defer lb.Close()
 		cc := *r.c
-		cc.Logbook, cc.Project = lb, p
-		c, fromProject = &cc, r.s.Project
+		cc.Logbook, cc.Project, cc.Repo = lb, p, "" // p's repo: her last queen entry's
+		c = &cc
 	}
-	stranger, err := c.Addressed(r.ctx, to, filepath.Dir(r.s.Logbook))
-	if err != nil {
-		return err
-	}
-	id, err := c.Logbook.SendFrom(r.ctx, w.Name, fromProject, to, body)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(r.out, "sent %s to %s\n", id, to)
-	if stranger {
-		fmt.Fprintf(r.err, bsname.Cmd+" send: warning: %s is neither %s nor a worker spawned in project %s: stored, not rung; it reads it only as a session of %s, and a worker spawned as %s later reads only mail sent after its spawn\n",
-			to, core.Queen(c.Project), c.Project, c.Project, to)
-		return nil
+	if from == c.Project {
+		from = ""
 	}
 	priority := port.Next
 	if *now {
 		priority = port.Now
 	}
-	r.ring(c, w.Name, to, priority)
+	sent, err := c.Send(r.ctx, core.SendIn{From: w, FromProject: from, To: to, Body: body, Priority: priority,
+		LogbookDir: filepath.Dir(r.s.Logbook), Bs: r.sharedBs(), Session: r.s.Session})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(r.out, "sent %s to %s\n", sent.ID, to)
+	if sent.Stranger {
+		fmt.Fprintf(r.err, bsname.Cmd+" send: warning: %s is neither %s nor a worker spawned in project %s: stored, not rung; it reads it only as a session of %s, and a worker spawned as %s later reads only mail sent after its spawn\n",
+			to, core.Queen(c.Project), c.Project, c.Project, to)
+		return nil
+	}
+	switch q := sent.Started; {
+	case q.Pane != "":
+		fmt.Fprintf(r.out, "started %s in pane %s on herdr session %s (%s queen)\n", to, q.Pane, q.Session, sent.Bs)
+		if sent.Rung != nil && !errors.Is(sent.Rung, core.ErrEnded) {
+			fmt.Fprintf(r.out, "stored, not rung: %s doesn't take a ring yet (%v); her pane may be at a prompt, such as folder trust: herdr --session %s pane read %s --source recent\n", to, sent.Rung, q.Session, q.Pane)
+			return nil
+		}
+	case errors.Is(sent.NotStarted, core.ErrStarting):
+		fmt.Fprintf(r.out, "stored; %s, by another send\n", sent.NotStarted)
+	case sent.NotStarted != nil:
+		fmt.Fprintf(r.err, bsname.Cmd+" send: warning: %s isn't running and wasn't started: %v\n  next: "+bsname.Cmd+" queen, in a herdr pane in %s's repo\n", to, sent.NotStarted, c.Project)
+	}
+	r.rang(to, sent.Rung)
 	return nil
 }
 
-// ring rings to and says how it went. The message is already stored, so no outcome fails
-// the command: the logbook entry is the delivery, the ring only when it is read (motif 10).
+// sharedBs is the bs on the caller's PATH a crossing send starts another project's queen
+// with (OQ-K7): never a worker's build, so worker.path's dirs and the caller's own
+// workspace are skipped. "" when there is none.
+func (r *run) sharedBs() string {
+	skip := append(r.s.workerPath(), r.caller.Dir())
+	var dirs []string
+	for _, d := range filepath.SplitList(core.Getenv(r.env.Vars, "PATH")) {
+		if !slices.ContainsFunc(skip, func(s string) bool { return s != "" && within(d, s) }) {
+			dirs = append(dirs, d)
+		}
+	}
+	at, _ := lookPath(strings.Join(dirs, string(filepath.ListSeparator)), bsname.Cmd)
+	return at
+}
+
+// within reports whether dir is root or under it.
+func within(dir, root string) bool {
+	rel, err := filepath.Rel(root, dir)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// ring rings to and says how it went.
 func (r *run) ring(c *core.Core, from, to string, p port.Priority) {
-	switch err := c.Ring(r.ctx, from, to, p); {
+	r.rang(to, c.Ring(r.ctx, from, to, p))
+}
+
+// rang says how ringing to went. The message is already stored, so no outcome fails the
+// command: the logbook entry is the delivery, the ring only when it is read (motif 10).
+func (r *run) rang(to string, err error) {
+	switch {
 	case err == nil:
 		fmt.Fprintf(r.out, "rung %s\n", to)
 	case errors.Is(err, port.ErrNotRunning), errors.Is(err, port.ErrNoRing):
@@ -405,8 +447,8 @@ func (r *run) inbox(fs *flag.FlagSet, args []string) error {
 	var ids []logbook.ID
 	for _, m := range ms {
 		fmt.Fprintf(r.out, "── %s from %s · %s\n%s\n\n", m.ID, m.From, m.TS.Local().Format("2006-01-02 15:04:05"), m.Body)
-		if m.FromProject != "" { // cross-project mail: the sender reads its own project's logbook
-			fmt.Fprintf(r.out, "   (reply with: "+bsname.Cmd+" send --project %s %s \"...\")\n\n", m.FromProject, m.From)
+		if m.FromProject != "" { // cross-project mail: the reply goes queen to queen, into the sender's project
+			fmt.Fprintf(r.out, "   (reply with: "+bsname.Cmd+" send --project %s %s \"...\")\n\n", m.FromProject, core.Queen(m.FromProject))
 		}
 		ids = append(ids, m.ID)
 	}

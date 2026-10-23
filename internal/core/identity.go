@@ -60,6 +60,9 @@ type Caller struct {
 	legacy                bool   // the old bs's spawn, never healed
 }
 
+// Dir is a worker's workspace dir as its spawn recorded it; "" for any other caller.
+func (c Caller) Dir() string { return c.dir }
+
 // Recorded reports whether c is a session some logbook recorded, not the keeper.
 func (c Caller) Recorded() bool { return c.Role != KeeperR && c.Role != "" }
 

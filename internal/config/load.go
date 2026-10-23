@@ -78,9 +78,10 @@ type File struct {
 // Loaded is the effective config: the values, each one's source, and the files read.
 type Loaded struct {
 	Config
-	Sources map[string]Source // by dotted key; a table by its own key (goal.<name>)
-	Files   []File
-	home    string
+	Sources  map[string]Source   // by dotted key; a table by its own key (goal.<name>)
+	Shadowed map[string][]string // by dotted key: the values lower layers set, lowest first
+	Files    []File
+	home     string
 }
 
 // Load reads in's files over the defaults, default → global → project → env. Any error
@@ -111,6 +112,7 @@ func Load(in Input) (*Loaded, error) {
 			errs = append(errs, fmt.Errorf("env %s: %w", name, err))
 			continue
 		}
+		l.shadow(f.key, f.v)
 		f.v.SetString(val)
 		l.Sources[f.key] = Source{Kind: "env", Where: name}
 	}
@@ -130,7 +132,7 @@ func Load(in Input) (*Loaded, error) {
 // Defaults is the config no file sets: what bs doctor checks against when the files
 // can't be read.
 func Defaults(home string) *Loaded {
-	l := &Loaded{Sources: map[string]Source{}, home: home}
+	l := &Loaded{Sources: map[string]Source{}, Shadowed: map[string][]string{}, home: home}
 	for _, f := range leaves(reflect.ValueOf(&l.Config).Elem(), "") {
 		f.v.SetZero()
 		if d := f.tag.Get("default"); d != "" && f.v.Kind() == reflect.Slice {
@@ -255,9 +257,18 @@ func (l *Loaded) set(f, dst leaf, src Source) error {
 			return err
 		}
 	}
+	l.shadow(f.key, dst.v)
 	dst.v.Set(f.v)
 	l.Sources[f.key] = src
 	return nil
+}
+
+// shadow records v, a string setting's value about to be overridden, under key, so bs
+// can tell a moved paths.logbook_dir from a new one.
+func (l *Loaded) shadow(key string, v reflect.Value) {
+	if v.Kind() == reflect.String {
+		l.Shadowed[key] = append(l.Shadowed[key], v.String())
+	}
 }
 
 // check refuses a value off its enum, or a path ADR-0008 doesn't allow: after Expand it

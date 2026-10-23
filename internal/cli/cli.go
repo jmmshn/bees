@@ -8,7 +8,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/jmmshn/bees/internal/bsname"
@@ -227,9 +229,22 @@ var errUsage = errors.New("usage")
 // openLogbook opens the project's logbook. Only bs queen and bs spawn, which start a
 // project, open a missing one, made at their first write, so a refused one makes none
 // (OQ-K1); any other command is refused, since a deleted logbook would come back empty
-// without a word (R48, bees-8.12, motif 14).
+// without a word (R48, bees-8.12, motif 14). A missing logbook is refused for every
+// command when paths.logbook_dir moved away from one that exists: starting afresh would
+// split the store.
 func (r *run) openLogbook() (*logbook.Logbook, error) {
-	if r.name == "queen" || r.name == "spawn" {
+	starts := r.name == "queen" || r.name == "spawn"
+	if starts { // a pin is the likelier move, and the one to name
+		if err := r.s.unpinned(r.name); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := os.Stat(r.s.Logbook); errors.Is(err, fs.ErrNotExist) {
+		if err := r.moved(); err != nil {
+			return nil, err
+		}
+	}
+	if starts {
 		return logbook.AtFirstWrite(r.ctx, r.s.Logbook)
 	}
 	lb, err := logbook.Open(r.ctx, r.s.Logbook)
@@ -238,6 +253,20 @@ func (r *run) openLogbook() (*logbook.Logbook, error) {
 			Next: bsname.Cmd + " queen starts the project; if it had a queen or workers, the logbook was deleted or paths.logbook_dir moved: restore the file rather than start afresh"}
 	}
 	return lb, err
+}
+
+// moved refuses a missing logbook when a value paths.logbook_dir overrides (the default,
+// or the global file's under an env pin) holds the project's logbook.
+func (r *run) moved() error {
+	for _, dir := range r.s.Shadowed["paths.logbook_dir"] {
+		old := filepath.Join(r.s.Expand(dir), r.s.Project+".db")
+		if _, err := os.Stat(old); err == nil && old != r.s.Logbook {
+			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("no logbook for project %s at %s, but paths.logbook_dir moved there (%s) from %s, which has one; nothing was read or written",
+				r.s.Project, r.s.Logbook, r.s.Sources["paths.logbook_dir"], dir),
+				Next: "move " + old + " into " + filepath.Dir(r.s.Logbook) + ", or set paths.logbook_dir back"}
+		}
+	}
+	return nil
 }
 
 // authorize settles who runs this command (ADR-0010 Amendment 4 Identity): the caller

@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jmmshn/bees/internal/cli"
 	"github.com/jmmshn/bees/internal/core"
 	"github.com/jmmshn/bees/internal/fake"
 	"github.com/jmmshn/bees/internal/goal"
@@ -722,7 +723,7 @@ func TestSendAcrossProjectsToAnUnreadableLogbook(t *testing.T) {
 // kinds: a harness outside them has no adapter here.
 func (x *toy) adapters(kinds ...string) {
 	x.ports.Harness = nil
-	x.ports.NewHarness = func(name, _ string) port.Harness {
+	x.ports.NewHarness = func(name string, _ cli.HarnessOpts) port.Harness {
 		if slices.Contains(kinds, name) {
 			return x.harness
 		}

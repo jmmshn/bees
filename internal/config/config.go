@@ -22,6 +22,7 @@ import (
 //   - env: the variable that overrides both files outside a recorded herdr pane (optional);
 //   - enum: its allowed values, separated by | ("" always passes where it is the default);
 //   - path: a path: "dir", or "{repo}" when it may begin with the {repo} placeholder;
+//   - program: a program, its base name the value: that name on PATH, or an absolute path;
 //   - glob: present on a pattern over paths relative to a worktree (path.Match syntax);
 //   - unread: present when bs doesn't act on the key yet; its value names the bead that
 //     wires it. bs config marks it and bs doctor warns when a file sets it;
@@ -31,6 +32,7 @@ import (
 // sets it sets all of it, and its own check method validates it.
 type Config struct {
 	Harness   string              `toml:"harness" scope:"global" default:"claude_code" enum:"claude_code|agy" doc:"the harness every queen and worker on this machine starts on: claude_code (Claude Code) or agy (Antigravity's CLI; omp arrives with bees-12.8)"`
+	Agy       AgyInstall          `toml:"agy"`
 	Paths     Paths               `toml:"paths"`
 	Workspace Workspace           `toml:"workspace"`
 	Goal      map[string]GoalType `toml:"goal" scope:"both" unread:"bees-13.11" doc:"custom goal types, by name"`
@@ -121,6 +123,13 @@ type ClaudeCode struct {
 // Agy holds the settings bs passes to agy.
 type Agy struct {
 	Model string `toml:"model" scope:"both" doc:"the model agy starts on (agy --model); empty: agy's default"`
+}
+
+// AgyInstall is the machine's agy: an agy-compatible build lives at its own path and
+// keeps its own settings, so neither is hard-coded (bees-14.1).
+type AgyInstall struct {
+	Bin      string `toml:"bin" scope:"global" default:"agy" program:"agy" doc:"the agy program: a name on PATH or an absolute path (~ expanded); its base name must be agy, the program herdr's --kind agy starts"`
+	Settings string `toml:"settings" scope:"global" default:"~/.gemini/antigravity-cli/settings.json" path:"dir" unread:"bees-13.13.5" doc:"agy's settings.json, whose trustedWorkspaces lists the folders agy trusts"`
 }
 
 // The workspace kinds.

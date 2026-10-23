@@ -320,3 +320,27 @@ func TestPruneIgnore(t *testing.T) {
 	_, err = Load(Input{Dir: dir, Project: "toy", Home: "/h"})
 	wantErr(t, err, proj+`: prune.ignore = "[bin": not a path pattern`, `prune.ignore = "/bin/"`, `prune.ignore = "a//b"`)
 }
+
+// agy.bin is agy on PATH or an absolute path to one, ~ expanded; any other base name is
+// refused, since herdr's --kind agy starts only a program named agy (bees-14.7).
+func TestAgyBin(t *testing.T) {
+	for _, c := range []struct{ bin, home, want string }{
+		{"agy", "", ""}, {"/opt/x/agy", "", ""}, {"~/bin/agy", "/h", ""},
+		{"jetski", "/h", "its base name must be agy"}, {"/opt/x/jetski", "/h", "its base name must be agy"},
+		{"bin/agy", "/h", "not an absolute path"}, {"~/agy", "", "can't expand ~: HOME is unset"},
+	} {
+		dir := t.TempDir()
+		write(t, filepath.Join(dir, "config.toml"), "[agy]\nbin = \""+c.bin+"\"\n")
+		l, err := Load(Input{Dir: dir, Home: c.home})
+		if c.want == "" && err != nil || c.want != "" && (err == nil || !strings.Contains(err.Error(), "agy.bin = \""+c.bin+"\": "+c.want)) {
+			t.Errorf("bin %q, HOME %q: %v", c.bin, c.home, err)
+		}
+		if c.want == "" && l.Agy.Bin != c.bin {
+			t.Errorf("bin %q read as %q", c.bin, l.Agy.Bin)
+		}
+	}
+	l, err := Load(Input{Dir: t.TempDir(), Home: "/h"})
+	if err != nil || l.Agy.Bin != "agy" || l.Agy.Settings != "~/.gemini/antigravity-cli/settings.json" {
+		t.Errorf("defaults: %+v, %v", l.Agy, err)
+	}
+}

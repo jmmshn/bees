@@ -19,6 +19,7 @@ import (
 	"github.com/jmmshn/bees/internal/bsname"
 	"github.com/jmmshn/bees/internal/config"
 	"github.com/jmmshn/bees/internal/core"
+	"github.com/jmmshn/bees/internal/harness/agy"
 	"github.com/jmmshn/bees/internal/herdr"
 	"github.com/jmmshn/bees/internal/port"
 	"github.com/jmmshn/bees/internal/proc"
@@ -121,7 +122,9 @@ var minVersion = map[string]string{
 // it prints and where the program is, refusing one older than minVersion.
 func (d *doctor) version(program string) (at, v string, err error) {
 	at, ok := lookPath(d.path, program)
-	if !ok {
+	if !ok && strings.Contains(program, "/") {
+		return "", "", fmt.Errorf("%s is missing or not executable", program)
+	} else if !ok {
 		return "", "", fmt.Errorf("%s is not on PATH: install it (docs/SETUP-AGENT.md, step 3)", program)
 	}
 	ctx, cancel := context.WithTimeout(d.r.ctx, 5*time.Second)
@@ -133,7 +136,7 @@ func (d *doctor) version(program string) (at, v string, err error) {
 	if v = semver.FindString(string(out)); v == "" {
 		return at, "", fmt.Errorf("%s --version printed no version: %s", at, strings.TrimSpace(string(out)))
 	}
-	if min, ok := minVersion[program]; ok && older(v, min) {
+	if min, ok := minVersion[filepath.Base(program)]; ok && older(v, min) {
 		return at, v, fmt.Errorf("%s %s is older than %s, the oldest bees works with: upgrade it (docs/SETUP-AGENT.md, step 3)", at, v, min)
 	}
 	return at, v, nil
@@ -201,11 +204,14 @@ func (d *doctor) project() {
 func (d *doctor) harness() {
 	s := d.r.s
 	name := "harness " + s.Harness
-	at, v, err := d.version(harnessProgram(s.Harness))
+	at, v, err := d.version(s.program(s.Harness))
 	if err != nil {
 		d.line("FAIL", name, "%v", err)
 	} else {
 		d.line("ok", name, "%s %s", at, v)
+	}
+	if s.Harness == agy.Name && at != "" {
+		d.agyBin(at)
 	}
 	h := d.r.ports.Harness
 	if h == nil && d.r.ports.NewHarness != nil {
@@ -221,6 +227,18 @@ func (d *doctor) harness() {
 		d.line("FAIL", "ring sockets", "%v: another user could ring a session; chmod it (0700 a dir, 0600 a file)", err)
 	} else {
 		d.line("ok", "ring sockets", "%s", what)
+	}
+}
+
+// agyBin checks that at, agy.bin found, is the agy workers run: herdr's --kind agy starts
+// whatever agy the pane's PATH finds (bees-14.7), while bs queen execs agy.bin.
+func (d *doctor) agyBin(at string) {
+	const how = "herdr's --kind agy"
+	switch path, ok := lookPath(d.path, agy.Name); {
+	case !ok:
+		d.line("FAIL", "agy.bin", "workers start agy from PATH (%s), and this shell's PATH has none: put %s's dir first on it", how, at)
+	case !samePath(path, at):
+		d.line("WARN", "agy.bin", "workers start %s, the agy on this shell's PATH (%s), not %s, the queen's: put %s's dir first on PATH", path, how, at, at)
 	}
 }
 

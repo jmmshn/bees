@@ -136,6 +136,14 @@ func Owner(name string) string {
 	return p
 }
 
+// BeadOwner is the project a bead id belongs to, <p>-<n>[.<m>…] (R27); "" for any other id.
+func BeadOwner(bead string) string {
+	if strings.HasPrefix(bead, "queen-") {
+		return ""
+	}
+	return Owner(Name(bead))
+}
+
 // Addressed checks that to may be written into this logbook, whose dir holds every
 // project's: a session another project owns, whose logbook is there, would never read it
 // here, so it is refused with nothing stored (bees-12.38, motifs 4 and 11), as is a

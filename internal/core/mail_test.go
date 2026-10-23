@@ -38,3 +38,13 @@ func TestOwner(t *testing.T) {
 		}
 	}
 }
+
+func TestBeadOwner(t *testing.T) {
+	for bead, want := range map[string]string{
+		"bees-13.73.3": "bees", "dotfiles-3.1": "dotfiles", "bees-1": "bees", "queen-bees": "", "bees-x": "", "bees-1.": "", "bees": "",
+	} {
+		if got := core.BeadOwner(bead); got != want {
+			t.Errorf("BeadOwner(%q) = %q, want %q", bead, got, want)
+		}
+	}
+}

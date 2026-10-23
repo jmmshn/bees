@@ -345,6 +345,10 @@ func (d *doctor) review() {
 			d.line("ok", "review", "the review host's section from %s", f)
 		}
 	}
+	if s.Review.Host == config.CommandHost {
+		d.commandHost()
+		return
+	}
 	if s.Review.Host != github.Name {
 		return
 	}
@@ -380,6 +384,36 @@ func (d *doctor) review() {
 		d.line("WARN", "remote", "%s has no GitHub remote: %s spawn refuses --goal pr, push= and review= here (branch, verdict, note and beads work); add one with git remote add origin <url>", s.Repo, bsname.Cmd)
 	default:
 		d.line("ok", "remote", "%s for pr goals", repo)
+	}
+}
+
+// commandHost checks a [review.command] host: its prompt section, which only
+// review.fragment gives it, and its repo command's answer for the project.
+func (d *doctor) commandHost() {
+	s := d.r.s
+	if s.hostPrompt() == "" {
+		d.line("FAIL", "review", `review.host = "command" has no built-in prompt section: set review.fragment to a file saying how a worker uploads a change and the queen lands it`)
+	}
+	if s.Repo == "" {
+		return
+	}
+	rev := d.r.ports.Review
+	if rev == nil {
+		var err error
+		if rev, err = s.review(d.r.ports.Run, func(k string) string { return core.Getenv(d.r.env.Vars, k) }); err != nil {
+			d.line("FAIL", "review", "%v", err)
+			return
+		}
+	}
+	ctx, cancel := context.WithTimeout(d.r.ctx, 70*time.Second)
+	defer cancel()
+	switch repo, ok, err := rev.Repo(ctx, s.Repo); {
+	case err != nil:
+		d.line("FAIL", "review", "can't ask the review host which repo %s is: %v", s.Repo, err)
+	case !ok:
+		d.line("WARN", "review", "[review.command] repo says %s belongs to no repo on the review host: %s spawn refuses --goal pr, push= and review= here", s.Repo, bsname.Cmd)
+	default:
+		d.line("ok", "review", "%s for pr goals, through [review.command]", repo)
 	}
 }
 
@@ -455,6 +489,14 @@ func (s *settings) argvs() [][2]string {
 	}
 	for _, name := range slices.Sorted(maps.Keys(s.Checks)) {
 		add("checks."+name+".run", s.Checks[name].Run)
+	}
+	if c := s.Review.Command; c != nil && s.Review.Host == config.CommandHost {
+		for _, a := range []struct {
+			key  string
+			argv []string
+		}{{"repo", c.Repo}, {"changes", c.Changes}, {"view", c.View}, {"ci", c.CI}, {"post_review", c.PostReview}, {"fetch", c.Fetch}} {
+			add("review.command."+a.key, a.argv)
+		}
 	}
 	return out
 }

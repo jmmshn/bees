@@ -17,7 +17,6 @@ import (
 	"github.com/jmmshn/bees/internal/core"
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/port"
-	"github.com/jmmshn/bees/internal/review/github"
 	"github.com/jmmshn/bees/internal/vcs/git"
 )
 
@@ -196,8 +195,10 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 		}
 		kind, why, _ := s.Kind(s.GitTop)
 		review, vcs := ports.Review, ports.VCS
-		if review == nil { // review.host's enum has github only (config)
-			review = github.Host{Run: ports.Run}
+		if review == nil {
+			if review, err = s.review(ports.Run, func(k string) string { return core.Getenv(env.Vars, k) }); err != nil {
+				return report(stderr, args[0], err)
+			}
 		}
 		if vcs == nil {
 			vcs = git.VCS{Run: ports.Run}

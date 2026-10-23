@@ -27,6 +27,19 @@ run     = ["cl", "sent", "{name}"]
 timeout = "30s"
 [checks.cl_submitted]
 run     = ["cl", "submitted", "{name}"]`,
+	"review.command": `[review.command]
+url          = 'https://cl\.example/(?P<repo>[^/]+)/(?P<number>[0-9]+)'
+repo         = ["cl", "repo", "--json"]
+changes      = ["cl", "list", "--client", "{dir}", "--json"]
+view         = ["cl", "show", "{url}", "--json"]
+ci           = ["cl", "checks", "{url}", "--json"]
+post_review  = ["cl", "comment", "{url}", "--file", "{body_file}", "--dedupe", "{marker}", "--json"]
+create       = "cl upload"
+retarget     = "cl rebase {url} --onto {base}"
+push_hint    = "cl upload --change {number}"
+merge_deny   = ["cl submit*", "cl * submit*"]
+approve_deny = ["cl approve*", "cl * approve*"]
+timeout      = "60s"`,
 }
 
 // Template is a config file for scope (global or project) holding every key that file may

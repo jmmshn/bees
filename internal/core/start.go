@@ -20,7 +20,8 @@ import (
 // of the worker's first bs call, which would otherwise heal it as late. herdr's
 // agent_pane_busy (a new pane's shell not at its prompt) is retried, since herdr typed
 // nothing (bees-12.33); any other herdr error still looks for the harness for
-// Timing.AfterErr, since herdr can give up while it runs (bees-12.49, adopted). replaces is
+// Timing.AfterErr, since herdr can give up while it runs (bees-12.49, adopted; silently when
+// it only gave up waiting for ready, bees-13.78.3). replaces is
 // the dead start a resume restarts, "" on a first start.
 func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch, replaces logbook.ID) error {
 	next := bsname.Cmd + " end --incomplete " + sp.Name
@@ -82,6 +83,9 @@ func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch, repl
 		return exit(ExitStart, next, startErr, "%s: start unconfirmed: no %s named %s in pane %s", sp.Name, c.Harness.Kind(), sp.Name, sp.Herdr.Pane)
 	case got.err != nil:
 		return exit(ExitStart, next, got.err, "%s: its start (pid %d) couldn't be recorded", sp.Name, got.pid)
+	case errors.Is(startErr, herdr.ErrUnready):
+		// The normal path: a harness handed its first prompt is busy at once, so herdr never
+		// sees it ready; the watch is bs's confirmation (bees-13.78.3).
 	case startErr != nil:
 		c.warn("herdr said %v, but %s started all the same (pid %d): adopted", startErr, sp.Name, got.pid)
 	}

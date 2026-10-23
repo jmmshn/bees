@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jmmshn/bees/internal/core"
 	"github.com/jmmshn/bees/internal/fake"
 )
 
@@ -110,14 +111,33 @@ func TestABusyPaneIsRetried(t *testing.T) {
 }
 
 // bees-12.49: herdr gave up waiting (timeout) while the worker started: the start is
-// found and recorded, and spawn succeeds.
+// found and recorded, and spawn succeeds. bees-13.78.3: a harness given its first prompt
+// is busy at once, so herdr never sees it ready: that timeout is the normal path, and
+// spawn says nothing of it.
 func TestAStartHerdrTimedOutIsAdopted(t *testing.T) {
 	x := newToy(t)
 	x.herdr.StartFails = "timeout"
-	sp := x.spawn("toy-1", "branch")
+	x.bead("toy-1", "work on toy-1")
+	r := x.queen("spawn", "--goal", "branch", "--label", label("toy-1"), "toy-1")
+	must(t, r, 0)
+	if strings.Contains(r.String(), "warning") {
+		t.Fatalf("a readiness timeout bs confirmed itself warns:\n%s", r)
+	}
+	sp, ok, _ := x.open().LatestSpawn(context.Background(), core.Name("toy-1"))
+	if !ok {
+		t.Fatal("no spawn recorded")
+	}
 	if _, ok, _ := x.open().LatestStart(context.Background(), sp.ID); !ok {
 		t.Fatal("no start recorded")
 	}
+}
+
+// Any other herdr failure that bs's watch outlives is adopted with a warning naming it.
+func TestAStartHerdrLostIsAdoptedWithAWarning(t *testing.T) {
+	x := newToy(t)
+	x.herdr.StartFails = "lost"
+	x.bead("toy-1", "work on toy-1")
+	must(t, x.queen("spawn", "--goal", "branch", "--label", label("toy-1"), "toy-1"), 0, "warning", "adopted")
 }
 
 // bees-12.47: inside a recorded pane the pane decides; a stray BS_* is ignored, with a

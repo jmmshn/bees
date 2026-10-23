@@ -141,7 +141,7 @@ func (a Adapter) Ring(t port.Target, _ string, _ port.Priority) error {
 	case !armed:
 		return fmt.Errorf("no %s inbox --wait armed, so it's held until its next turn: %w", bsname.Cmd, port.ErrNoRing)
 	}
-	return fmt.Errorf("%s inbox --wait, pid %d: %w", bsname.Cmd, pid, port.ErrArmed)
+	return fmt.Errorf("%w (%s inbox --wait, pid %d)", port.ErrArmed, bsname.Cmd, pid)
 }
 
 // Observe reads the conversation agy runs a bs in from that bs's env: a resume continues

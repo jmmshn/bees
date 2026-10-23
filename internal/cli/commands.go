@@ -441,7 +441,7 @@ func (r *run) rang(to string, err error) {
 	case err == nil:
 		fmt.Fprintf(r.out, "rung %s\n", to)
 	case errors.Is(err, port.ErrArmed):
-		fmt.Fprintf(r.out, "stored; %s's watcher wakes it to read it (%v)\n", to, err)
+		fmt.Fprintf(r.out, "stored; %s's %v to read it\n", to, err)
 	case errors.Is(err, port.ErrNotRunning), errors.Is(err, port.ErrNoRing):
 		fmt.Fprintf(r.out, "stored, not rung (%v): %s reads it at its next "+bsname.Cmd+" inbox\n", err, to)
 	case errors.Is(err, core.ErrEnded):

@@ -58,7 +58,7 @@ var ErrNoRing = errors.New("its harness has no ring")
 
 // ErrArmed means the harness typed nothing, since a watcher the session armed wakes it
 // when mail comes (agy's bs inbox --wait, bees-13.13.10): rung, by other means.
-var ErrArmed = errors.New("its watcher wakes it")
+var ErrArmed = errors.New("watcher wakes it")
 
 // Truster is a harness that only starts in a folder it was told to trust, exact path:
 // spawn trusts the workspace folder it just made, and prune untrusts it once removed.

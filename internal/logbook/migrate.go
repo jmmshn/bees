@@ -58,15 +58,97 @@ func Open(ctx context.Context, path string) (*Logbook, error) {
 	return open(ctx, path)
 }
 
-// Create opens the logbook at path, making the file, its directory and the schema when
-// missing (created true): only bs queen and bs spawn, which start a project, call it.
+// Create opens the logbook at path, making its directory and the file, schema built,
+// when missing (created true). The schema is built in a temp file beside it and linked
+// into place, never replacing one there: of parallel first calls exactly one creates, and
+// no reader ever sees a file without its table (bees-13.59, motif 8).
 func Create(ctx context.Context, path string) (lb *Logbook, created bool, err error) {
-	_, err = os.Stat(path)
-	if created = errors.Is(err, os.ErrNotExist); err != nil && !created {
+	switch _, err = os.Stat(path); {
+	case errors.Is(err, os.ErrNotExist):
+		if created, err = build(ctx, path); err != nil {
+			return nil, false, fmt.Errorf("make logbook %s: %w", path, err)
+		}
+	case err != nil:
 		return nil, false, err
 	}
 	lb, err = open(ctx, path)
 	return lb, created, err
+}
+
+// AtFirstWrite opens the logbook at path when it exists, else returns one that reads as
+// empty and is made (Create) by its first write: bs queen and bs spawn, which start a
+// project, open it so, and a command refused before it records anything leaves no file
+// (ADR-0010 Amendment 4, OQ-K1). Created says whether that write made it.
+func AtFirstWrite(ctx context.Context, path string) (*Logbook, error) {
+	switch _, err := os.Stat(path); {
+	case err == nil:
+		return open(ctx, path)
+	case !errors.Is(err, os.ErrNotExist):
+		return nil, err
+	}
+	db, err := empty(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &Logbook{db: db, path: path}, nil
+}
+
+// build makes the logbook file at path with the schema: built in <path>.<id>.tmp
+// (journal_mode DELETE, so no -wal sits beside the temp), then linked into place. created
+// is true for this call's file, false for one another call linked first.
+func build(ctx context.Context, path string) (created bool, err error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return false, err
+	}
+	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil { // other local users must not read the mail
+		return false, err
+	}
+	tmp := fmt.Sprintf("%s.%s.tmp", abs, newID(time.Now()))
+	defer os.Remove(tmp)
+	q := url.Values{}
+	q.Add("_pragma", "journal_mode(DELETE)")
+	db, err := sql.Open("sqlite", (&url.URL{Scheme: "file", Path: tmp, RawQuery: q.Encode()}).String())
+	if err != nil {
+		return false, err
+	}
+	err = schema(ctx, db)
+	if cerr := db.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := os.Chmod(tmp, 0o600); err != nil {
+		return false, err
+	}
+	existed, err := linkNew(tmp, abs)
+	return !existed && err == nil, err
+}
+
+// schema makes the version 2 table and indexes on db.
+func schema(ctx context.Context, db execer) error {
+	for _, q := range []string{table("entries"), indexes, fmt.Sprintf(`PRAGMA user_version = %d`, Version)} {
+		if _, err := db.ExecContext(ctx, q); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// empty is an in-memory database holding the schema and no entries: what a logbook not
+// made yet, or a file without its table, reads as.
+func empty(ctx context.Context) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", "file::memory:")
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1) // each connection to :memory: is a database of its own
+	if err := schema(ctx, db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return db, nil
 }
 
 // open opens the logbook at path, making it if missing.
@@ -218,6 +300,12 @@ func copyAside(ctx context.Context, db *sql.DB, path string) (existed bool, err 
 	if err := os.Chmod(tmp, 0o600); err != nil {
 		return false, err
 	}
+	return linkNew(tmp, path)
+}
+
+// linkNew puts tmp at path unless a file is there already (existed true), never
+// replacing it: a hard link, else, where the file system has none, a rename after a look.
+func linkNew(tmp, path string) (existed bool, err error) {
 	switch err := os.Link(tmp, path); {
 	case err == nil:
 		return false, nil
@@ -235,8 +323,9 @@ func copyAside(ctx context.Context, db *sql.DB, path string) (existed bool, err 
 
 // OpenReadOnly opens the logbook at path for reading only: it makes no logbook,
 // directory, schema or migration (SQLite may add its -shm and -wal beside it), so scanning
-// every logbook for a pane can't create, rebuild or split one. A missing file is an error.
-// An unmigrated file reads too: every reader maps old entries.
+// every logbook for a session can't create, rebuild or split one. A missing file is an
+// error. An unmigrated file reads too: every reader maps old entries. A file with no
+// entries table (one an older bs was still making) reads as an empty logbook.
 func OpenReadOnly(ctx context.Context, path string) (*Logbook, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, err
@@ -253,14 +342,16 @@ func OpenReadOnly(ctx context.Context, path string) (*Logbook, error) {
 		db.Close()
 		return nil, fmt.Errorf("open logbook %s: %w", path, err)
 	}
+	if ok, err := hasEntries(ctx, db); err != nil || !ok {
+		db.Close()
+		if err != nil {
+			return nil, fmt.Errorf("open logbook %s: %w", path, err)
+		}
+		if db, err = empty(ctx); err != nil {
+			return nil, err
+		}
+	}
 	return &Logbook{db: db}, nil
-}
-
-// Empty reports whether the logbook holds no entries.
-func (l *Logbook) Empty(ctx context.Context) (bool, error) {
-	var n int
-	err := l.db.QueryRowContext(ctx, `SELECT count(*) FROM entries`).Scan(&n)
-	return n == 0, err
 }
 
 // SchemaVersion is the file's PRAGMA user_version.

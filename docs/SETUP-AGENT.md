@@ -97,11 +97,11 @@ Then ask her for the round trip in one line, and say you will clean up yourself:
 
 `bs spawn` may warn that herdr timed out waiting for the agent and that bs `adopted` it: the worker started all the same, nothing to do. The worker opens in a new workspace, reads its brief and hands off with `bs done`, which rings the queen. Read her pane after your first wait: a quick worker's handoff may already show. If it doesn't, the queen went idle after `bs spawn`: wait again (`--until working --timeout 300000`, then `--timeout 600000`) for the turn the doorbell starts, and read her pane again. `bs status` from your shell, in the project's repo, then shows the worker with `HANDOFF done …` and `COMPLETE yes (done)`. **Check:** `bs doctor` passed, and the queen received the handoff through a doorbell.
 
-Clean up from your own shell inside the project's repo, as the queen (`--as`, since your shell is no recorded pane), not by hand:
+Clean up from your own shell inside the project's repo, as the keeper (no session started your shell), not by hand:
 
 ```sh
-bs end --as queen-<project> <project>-N-1    # complete (its verdict landed at handoff), so it ends
-bs prune --as queen-<project>                # removes its worktree and branch; a branch with unmerged commits it keeps, saying so
+bs end <project>-N-1    # complete (its verdict landed at handoff), so it ends
+bs prune                # removes its worktree and branch; a branch with unmerged commits it keeps, saying so
 bd close <project>-N.1 <project>-N
 ```
 

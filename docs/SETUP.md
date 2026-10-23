@@ -28,7 +28,7 @@ The first bs call on a logbook written by an older bs migrates it to schema 2, c
 
 ## Names
 
-- **Project:** the basename of the git repo you are in (a worktree counts as its main repo), lowercased with `-` and `_` dropped (`pymatgen-analysis-defects` → `pymatgenanalysisdefects`). Inside a recorded herdr pane, the project is the logbook that recorded the pane. Outside any repo, set `BS_PROJECT`.
+- **Project:** the basename of the git repo you are in (a worktree counts as its main repo), lowercased with `-` and `_` dropped (`pymatgen-analysis-defects` → `pymatgenanalysisdefects`). Every call acts in that project, whoever makes it; a queen or worker calling from outside any repo acts in its own. The keeper outside any repo sets `BS_PROJECT`.
 - **Queen:** `queen-<project>`.
 - **Bead ids:** `<project>-<n>` for epics (`bs epic "<title>"` makes the next one), `<project>-<n>.<m>` for their children (`bs bead new --parent <epic> "<title>"`). `bs bead ls` lists only this project's beads; the queen and workers are told to use these instead of `bd list`/`bd create`.
 - **Worker:** the bead id with `.` → `-` (`bees-2.1` → `bees-2-1`). That one name is its harness session, herdr agent, git branch, worktree directory (`<repo>-WT/<name>`) and address for `bs send`.
@@ -69,9 +69,9 @@ Claude asks whether to trust a repo the first time it opens one, and its worktre
 
 No sandbox: the keeper chose not to run workers in Claude's bubblewrap sandbox (bees-1.51).
 
-## Outside a pane
+## Who bs takes you for
 
-bs knows a queen or worker by its recorded herdr pane. From a shell outside one (tests, scripts, the keeper), name the session with `--as`: `bs inbox --as queen-<project>`, `bs end --as queen-<project> <worker>`.
+bs acts as its nearest ancestor process a session's entry recorded (a queen, a worker), else as the keeper; `bs status`'s first line says which. From the keeper's shell, `--as <session>` is a debug override that acts as that session, with its permissions: `bs done --as <worker> ...`, `bs send --as queen-<project> <worker> "..."` while her pane is down. `bs inbox --as <session>` only peeks: it marks nothing read.
 
 ## Check it works
 

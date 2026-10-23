@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jmmshn/bees/internal/bsname"
+	"github.com/jmmshn/bees/internal/core"
 	"github.com/jmmshn/bees/internal/port"
 )
 
@@ -85,7 +86,7 @@ func warnIfStale(ctx context.Context, env Env, ports Ports, s *settings, stderr 
 // staleFix says who rebuilds the shared bs: a worker asks its queen; the queen or the
 // keeper installs it from main.
 func staleFix(s *settings) string {
-	if s != nil && s.Pane != nil && !s.Pane.Who.Queen {
+	if s != nil && (s.Caller.Role == core.WorkerR || s.Caller.Role == core.Foreign) {
 		return fmt.Sprintf("don't install it yourself; tell the queen: %s send queen-%s \"bs is stale\"", bsname.Cmd, s.Project)
 	}
 	return "rebuild it from main: go install ./cmd/bs"

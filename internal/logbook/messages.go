@@ -31,7 +31,7 @@ func (l *Logbook) SendFrom(ctx context.Context, from, fromProject, to, body stri
 	if fromProject != "" {
 		d["from_project"] = fromProject
 	}
-	return insert(ctx, l.db, entry{kind: "message", actor: from, subject: to, data: d})
+	return l.insert(ctx, entry{kind: "message", actor: from, subject: to, data: d})
 }
 
 // forOpenSpawn scopes a message m to its recipient's open spawn, at read time (bees-13.9):
@@ -129,7 +129,7 @@ SELECT name, SUM(unread) FROM (
 func (l *Logbook) RecordReceipts(ctx context.Context, session string, ids []ID) error {
 	return l.write(ctx, func(tx *sql.Tx) error {
 		for _, id := range ids {
-			if _, err := insert(ctx, tx, entry{id: "rcv:" + string(id) + ":" + session, kind: "received", actor: session, ref: id}); err != nil {
+			if _, err := insertOn(ctx, tx, entry{id: "rcv:" + string(id) + ":" + session, kind: "received", actor: session, ref: id}); err != nil {
 				return err
 			}
 		}

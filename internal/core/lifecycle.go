@@ -103,8 +103,11 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 		return d, err
 	}
 	d.Checks = append(d.Checks, r)
+	var f *found // the change, found once before the first look; a --wait's later looks find it again
 	if slices.ContainsFunc(e.Parts, func(p goal.Part) bool { return p.Type == "pr" }) {
-		switch f := c.theChange(lookCtx, sp); {
+		ff := c.theChange(lookCtx, sp)
+		f = &ff
+		switch {
 		case f.err != nil:
 			return d, exit(ExitCantCheck, bsname.Cmd+" done again once it can", f.err, "can't ask %s for %s's change", c.Review.Name(), sp.Workspace.Branch)
 		case f.why != "":
@@ -116,7 +119,11 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 	var rs []logbook.CheckResult
 	for {
 		var cant *logbook.CheckResult
-		rs, cant = c.look(sp, Handed{Answer: h.Answer, Report: h.Report}).stage(lookCtx, e, func(p goal.Part) []string { return p.Handoff })
+		k := c.look(sp, Handed{Answer: h.Answer, Report: h.Report})
+		if !waited {
+			k.found = f
+		}
+		rs, cant = k.stage(lookCtx, e, func(p goal.Part) []string { return p.Handoff })
 		// Out of time after waiting is still pending; a first look that couldn't run is 6.
 		if cant != nil && waited && lookCtx.Err() != nil {
 			return d, exit(ExitWaited, bsname.Cmd+" done --wait, or ask the queen", nil, "still pending after %s (%s ran out of time)", o.Wait, cant.Name)

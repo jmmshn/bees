@@ -18,8 +18,7 @@ import (
 
 // workspaceCommits is every commit written in sp's workspace since the first spawn that
 // recorded its directory, as its VCS reads them: with their rebased copies (madeHere),
-// the only commits a handed-off change may be judged by, so a typo can't name another
-// worker's PR (ADR-0010).
+// what push_moved needs a push target to hold (it goes with detached workspaces, T5).
 func (c *Core) workspaceCommits(ctx context.Context, sp logbook.Spawn) ([]string, error) {
 	since, ok, err := c.Logbook.FirstSpawnAt(ctx, sp.Workspace.Dir)
 	if err != nil {

@@ -279,9 +279,12 @@ const listFields = "number,url,state,isDraft,headRefName,headRefOid,baseRefName,
 // origin no pull request could come from it; an origin not on github.com (an ssh alias,
 // GitHub Enterprise) is skipped, and says so.
 func (h Host) Changes(ctx context.Context, w port.Where, since time.Time) ([]port.Change, string, error) {
+	if w.Branch == "" {
+		return nil, "", nil
+	}
 	out, err := h.Run.Run(ctx, w.Repo, "git", "-C", w.Repo, "config", "--get", "remote.origin.url")
 	var ee *port.ExitError
-	if errors.As(err, &ee) && ee.Code == 1 || w.Branch == "" {
+	if errors.As(err, &ee) && ee.Code == 1 {
 		return nil, "", nil
 	} else if err != nil {
 		return nil, "", err

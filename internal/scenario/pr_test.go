@@ -354,6 +354,36 @@ func TestPushGoal(t *testing.T) {
 	must(t, x.queen("prune"), 0, "removed "+dir+" and branch toy-1 (toy-1)")
 }
 
+// A push goal's worker hears its target's head branch, on a resume too, so its harness's
+// permissions let the push onto it through (bees-13.78.1: auto mode allowed only the
+// worker's own branch, and denied git push origin HEAD:<head>).
+func TestPushGoalNamesItsHeadToTheHarness(t *testing.T) {
+	x := newToy(t)
+	rec := &startsRec{Harness: x.harness} // installed before any relay reads the ports
+	x.ports.Harness = rec
+	b := ghBackend{}
+	b.setup(x, true)
+	other := filepath.Join(filepath.Dir(x.repo), "theirs")
+	x.git(x.repo, "worktree", "add", "-q", "-b", "feature", other)
+	b.commit(x, other)
+	target := b.open(x, 5, other, "feature", false)
+
+	sp := x.spawn("toy-1", "push="+target)
+	if sp.Workspace.Push != "feature" {
+		t.Fatalf("workspace %+v, want push feature", sp.Workspace)
+	}
+	must(t, x.worker("toy-1", 1, "inbox"), 0)
+	x.kill("toy-1")
+	must(t, x.queen("spawn", "--goal", "push="+target, "toy-1"), 0, "resumed toy-1")
+	if st := rec.all(); len(st) != 2 || st[0].PushTo != "feature" || st[1].PushTo != "feature" {
+		t.Fatalf("starts = %+v, want both pushing onto feature", st)
+	}
+	x.spawn("toy-2", "pr")
+	if st := rec.all(); len(st) != 3 || st[2].PushTo != "" {
+		t.Fatalf("a pr goal's start = %+v, want no push target", st[2])
+	}
+}
+
 // --goal review=<url>: the handoff takes --answer approve|changes and a report, and bs
 // posts the report on the target as a comment review carrying bs:<spawn id>.
 func TestReviewGoal(t *testing.T) {

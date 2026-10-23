@@ -300,7 +300,7 @@ func goalFlags(g goal.Goal) string {
 // spawn's and a resume's alike: one place for its workspace, prompt file, PATH, guards and
 // shell timeout.
 func (c *Core) workerStart(name string, ws logbook.Workspace, bell string, deny []string) port.Start {
-	return port.Start{Role: port.Worker, Name: name, Dir: ws.Dir, Branch: ws.Branch, Repo: ws.Repo, PromptFile: "{{prompt.md}}", Doorbell: bell,
+	return port.Start{Role: port.Worker, Name: name, Dir: ws.Dir, Branch: ws.Branch, PushTo: ws.Push, Repo: ws.Repo, PromptFile: "{{prompt.md}}", Doorbell: bell,
 		Path: c.WorkerPath, Deny: deny, ShellTimeout: ShellTimeout}
 }
 
@@ -477,7 +477,7 @@ func (c *Core) workspace(ctx context.Context, name string, t *target, ended *log
 		return logbook.Workspace{}, false, exit(ExitCantCheck, "", err, "can't tell whether %s is %s's kept worktree", dir, name)
 	} else if ok {
 		ws = ended.Workspace
-		ws.Trunk = trunk
+		ws.Trunk, ws.Push = trunk, pushTo(t)
 		if t != nil {
 			ws.Base = base
 		}
@@ -486,7 +486,7 @@ func (c *Core) workspace(ctx context.Context, name string, t *target, ended *log
 	if _, err := os.Stat(dir); err == nil {
 		return logbook.Workspace{}, false, exit(ExitRefused, bsname.Cmd+" prune", nil, "%s already exists", dir)
 	}
-	ws = logbook.Workspace{Kind: config.GitWorktree, Dir: dir, Repo: c.Repo, Branch: name, Base: base, Trunk: trunk}
+	ws = logbook.Workspace{Kind: config.GitWorktree, Dir: dir, Repo: c.Repo, Branch: name, Base: base, Trunk: trunk, Push: pushTo(t)}
 	// The branch is the spawn's own, whatever its goal, so prune may delete it later: one
 	// left by an earlier spawn holds work bs would build on unseen (motif 12).
 	switch ok, err := c.hasBranch(ctx, ws); {
@@ -498,6 +498,14 @@ func (c *Core) workspace(ctx context.Context, name string, t *target, ended *log
 			"%s already has a branch %s", c.Repo, name)
 	}
 	return ws, false, nil
+}
+
+// pushTo is the head branch a push goal's worker pushes onto: t's, unless it stacks.
+func pushTo(t *target) string {
+	if t == nil || t.stacks {
+		return ""
+	}
+	return t.c.Head
 }
 
 // writeFiles writes l.Files to the cache dir as <name>-<key>-* (0600), replacing each

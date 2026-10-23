@@ -569,3 +569,15 @@ func TestSendToABeadIDReachesItsWorker(t *testing.T) {
 	must(t, x.queen("send", "toy-1.2", "hi"), 0, " to toy-1-2", "rung toy-1-2")
 	must(t, x.worker("toy-1-2", 1, "inbox"), 0, "from queen-toy", "hi")
 }
+
+// Another project's bead refuses the spawn before anything is made (exit 2, bees-13.73.3):
+// its worker would be named for that project, so this queen's mail to it is refused
+// (motif 3). The route is that project's queen.
+func TestSpawnOfAnotherProjectsBeadIsRefused(t *testing.T) {
+	x := newToy(t)
+	x.bead("other-3.1", "x")
+	must(t, x.queen("spawn", "--goal", "verdict", "other-3.1"), 2, "other-3.1 is not a toy bead", `next: bs send --project other queen-other "..."`)
+	if _, err := os.Stat(x.logbook); !os.IsNotExist(err) {
+		t.Fatalf("a refused spawn left a logbook: %v", err)
+	}
+}

@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/jmmshn/bees/internal/checks"
 )
 
 // ErrNoGoal is a spawn with no --goal: the queen always names the goal (Rule D).
@@ -20,8 +22,8 @@ var ErrBad = errors.New("bad --goal")
 
 // Goal is a resolved goal: one --goal value, its type, state and target as given, and the
 // checks each stage runs, by name (ADR-0010 Amendment 4: one goal per spawn). A check
-// name is a built-in check (Builtin); custom types and their cmd: checks arrive with
-// bees-13.11. Its JSON stays {"parts":[…]}, so every entry ever written decodes.
+// name is a built-in check (IsCheck), or cmd:<name>, a custom type's argv, frozen in Cmds.
+// Its JSON stays {"parts":[…]}, so every entry ever written decodes.
 type Goal struct {
 	Type, State, Target string
 	// Handoff runs at bs done. The no_background gate is implicit in every handoff and
@@ -33,6 +35,9 @@ type Goal struct {
 	Complete  []string
 	// Prune must pass before bs prune removes the workspace; none means at once.
 	Prune []string
+	// Cmds is each cmd:<name> check's argv and timeout, by <name>, as config had them at
+	// spawn: bs runs these, never config's.
+	Cmds map[string]checks.Cmd
 	// Fragment is the sha256 of its type's fragment file at spawn (both roles' parts, before
 	// {{…}} is filled: prompt.Hash); "" when its type has none yet.
 	Fragment string
@@ -56,13 +61,15 @@ type part struct {
 	Prune     []string `json:"prune"`
 	Fragment  string   `json:"fragment,omitempty"`
 	Repo      string   `json:"repo,omitempty"`
+	// Cmds is a custom type's frozen argv, by check name.
+	Cmds map[string]checks.Cmd `json:"cmds,omitempty"`
 }
 
 // MarshalJSON is g as the logbook records it: {"parts":[g]}.
 func (g Goal) MarshalJSON() ([]byte, error) {
 	ps := g.parts
 	if g.Mixed == nil {
-		ps = []part{{g.Type, g.State, g.Target, g.Handoff, g.AtHandoff, g.Complete, g.Prune, g.Fragment, g.Repo}}
+		ps = []part{{g.Type, g.State, g.Target, g.Handoff, g.AtHandoff, g.Complete, g.Prune, g.Fragment, g.Repo, g.Cmds}}
 	}
 	return json.Marshal(struct {
 		Parts []part `json:"parts"`
@@ -85,7 +92,7 @@ func (g *Goal) UnmarshalJSON(b []byte) error {
 	case 1:
 		p := ps[0]
 		*g = Goal{Type: p.Type, State: p.State, Target: p.Target, Handoff: p.Handoff, AtHandoff: p.AtHandoff,
-			Complete: p.Complete, Prune: p.Prune, Fragment: p.Fragment, Repo: p.Repo}
+			Complete: p.Complete, Prune: p.Prune, Fragment: p.Fragment, Repo: p.Repo, Cmds: p.Cmds}
 	default:
 		*g = Goal{Type: MixedType, AtHandoff: true, Handoff: []string{}, Complete: []string{}, Prune: []string{}, parts: ps}
 		for _, p := range ps {
@@ -212,6 +219,47 @@ var builtins = []string{NoBackground, PRExists, PROpen, PRNotDraft, PRHead, PRWo
 // IsCheck reports whether name is a built-in check.
 func IsCheck(name string) bool { return slices.Contains(builtins, name) }
 
+// CmdPrefix starts a check that runs a [checks.<name>] argv: cmd:<name>.
+const CmdPrefix = "cmd:"
+
+// Cmd is the [checks.<name>] a check runs, or "" for a built-in one.
+func Cmd(check string) string {
+	name, _ := strings.CutPrefix(check, CmdPrefix)
+	if name == check {
+		return ""
+	}
+	return name
+}
+
+// onBranch are the built-in checks that read a branch, or a change made from one: a
+// workspace with none can't run them.
+var onBranch = []string{PRExists, PROpen, PRNotDraft, PRHead, PRWorkspaceCommit, PRPushed, PRCurrent, CIGreen,
+	PRMerged, PRLanded, PRClosed, PRTargetOpen, PushMoved, BranchAhead, BranchMerged}
+
+// OnBranch names the checks of g that need a branch to read, each once.
+func (g Goal) OnBranch() []string {
+	var out []string
+	for _, c := range slices.Concat(g.Handoff, g.Complete, g.Prune) {
+		if slices.Contains(onBranch, c) && !slices.Contains(out, c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// Custom is the frozen goal of custom type typ ([goal.<typ>]): its checks by stage, each
+// cmd: check's argv in cmds. It is complete at handoff when it names no complete checks.
+func Custom(typ string, handoff, complete, prune []string, cmds map[string]checks.Cmd) Goal {
+	g := Goal{Type: typ, Handoff: slices.Clone(handoff), Complete: slices.Clone(complete), Prune: slices.Clone(prune), Cmds: cmds}
+	g.AtHandoff = len(g.Complete) == 0
+	for _, s := range []*[]string{&g.Handoff, &g.Complete, &g.Prune} {
+		if *s == nil {
+			*s = []string{}
+		}
+	}
+	return g
+}
+
 // BuiltinTypes is every built-in goal type a queen may give at spawn, in a fixed order.
 func BuiltinTypes() []string {
 	return []string{"pr", "push", "review", "verdict", "note", "beads", "branch"}
@@ -312,6 +360,13 @@ func landed(cs []string) []string {
 	return out
 }
 
+// TypeOf is the type --goal value v names: what comes before its :<state> or =<target>.
+func TypeOf(v string) string {
+	head, _, _ := strings.Cut(v, "=")
+	typ, _, _ := strings.Cut(head, ":")
+	return typ
+}
+
 // Parse resolves a spawn's --goal value, <type>[:<state>][=<target>] with the target
 // everything after the first =; "" is ErrNoGoal. The CLI refuses a second --goal.
 func Parse(v string) (Goal, error) {
@@ -324,7 +379,7 @@ func Parse(v string) (Goal, error) {
 	case typ == LegacyType, typ == DiscardType, typ == MixedType:
 		return Goal{}, fmt.Errorf("%w %q: %s is never given at spawn", ErrBad, v, typ)
 	case !ok:
-		return Goal{}, fmt.Errorf("%w %q: no goal type %q (built in: pr, push, review, verdict, note, beads, branch; custom types arrive with bees-13.11)", ErrBad, v, typ)
+		return Goal{}, fmt.Errorf("%w %q: no goal type %q (built in: pr, push, review, verdict, note, beads, branch; a custom type is a [goal.<name>] table in config)", ErrBad, v, typ)
 	case !slices.Contains(t.states, state):
 		return Goal{}, fmt.Errorf("%w %q: %s has no state %q", ErrBad, v, typ, state)
 	case t.target == needsTarget && (!hasTarget || target == ""):

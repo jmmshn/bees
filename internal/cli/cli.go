@@ -204,6 +204,7 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 		r.c = &core.Core{
 			Logbook: lb, Project: s.Project, Run: ports.Run, Harness: h, HarnessOf: other, HarnessName: s.Harness,
 			Proc: ports.Proc, Beads: ports.Beads, Repo: s.Repo, Worktrees: s.Worktrees, Kind: kind, KindWhy: why,
+			Command: s.command(), Goals: s.goals(), Checks: s.Checks, Getenv: func(k string) string { return core.Getenv(env.Vars, k) },
 			ConfigDir: s.Dir, CacheDir: ports.CacheDir, Timing: ports.Timing, WorkerPath: s.workerPath(), Guards: s.Guards, PruneIgnore: s.Prune.Ignore, Review: review, VCS: vcs, HostPrompt: s.hostPrompt(),
 			Warn: func(msg string) { fmt.Fprintf(stderr, bsname.Cmd+" %s: warning: %s\n", args[0], msg) },
 		}

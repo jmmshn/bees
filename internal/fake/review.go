@@ -20,7 +20,7 @@ import (
 // a change at its head. It shows the goal checks need neither git nor GitHub (keeper,
 // bees-13.6). ponytail: the workspace itself is still git_worktree's, cut by herdr at git's
 // base, so a target's head (a commit only this host has) can't be cut at: pr= and push=
-// on a CL host wait for the command workspace kind (bees-13.11).
+// on a CL host wait for a command workspace's VCS port (bees-14.4).
 type CLHost struct {
 	mu       sync.Mutex
 	RepoName string // the repo every checkout belongs to; "" is none

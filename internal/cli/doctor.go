@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jmmshn/bees/internal/bsname"
+	"github.com/jmmshn/bees/internal/checks"
 	"github.com/jmmshn/bees/internal/config"
 	"github.com/jmmshn/bees/internal/core"
 	"github.com/jmmshn/bees/internal/harness/agy"
@@ -121,7 +122,7 @@ var minVersion = map[string]string{
 // version runs program --version, found on the caller's PATH, and returns the first x.y.z
 // it prints and where the program is, refusing one older than minVersion.
 func (d *doctor) version(program string) (at, v string, err error) {
-	at, ok := lookPath(d.path, program)
+	at, ok := checks.LookPath(d.path, program)
 	if !ok && strings.Contains(program, "/") {
 		return "", "", fmt.Errorf("%s is missing or not executable", program)
 	} else if !ok {
@@ -176,13 +177,13 @@ func (d *doctor) project() {
 	}
 	// A kind spawn won't make yet is a spawn refused, said here first.
 	switch kind, why, _ := s.Kind(s.GitTop); {
+	case kind == config.CommandKind && s.Workspace.Command.Incomplete() != nil:
+		d.line("FAIL", "workspace", "command (%s): %v: every spawn refuses it", why, s.Workspace.Command.Incomplete())
 	case unmade(kind) == "" || s.Repo == "" || s.RepoMissing:
 	case kind == config.NoWorkspace && s.GitTop:
 		d.line("FAIL", "workspace", "workspace.kind = none over a git checkout (%s): %s, and workers would share %s with no branch of their own (bees-12.28); drop the override for git_worktree", why, unmade(kind), s.Repo)
-	case kind == config.NoWorkspace:
-		d.line("FAIL", "workspace", "none (%s): %s; make the project a git checkout, or wait for none", why, unmade(kind))
 	default:
-		d.line("FAIL", "workspace", "%s (%s): %s; drop [workspace.command] and workspace.kind", kind, why, unmade(kind))
+		d.line("FAIL", "workspace", "none (%s): %s; make the project a git checkout, or wait for none", why, unmade(kind))
 	}
 	dir := filepath.Dir(s.Logbook)
 	switch err := s.checkLogbook(d.r.env); {
@@ -234,7 +235,7 @@ func (d *doctor) harness() {
 // whatever agy the pane's PATH finds (bees-14.7), while bs queen execs agy.bin.
 func (d *doctor) agyBin(at string) {
 	const how = "herdr's --kind agy"
-	switch path, ok := lookPath(d.path, agy.Name); {
+	switch path, ok := checks.LookPath(d.path, agy.Name); {
 	case !ok:
 		d.line("FAIL", "agy.bin", "workers start agy from PATH (%s), and this shell's PATH has none: put %s's dir first on it", how, at)
 	case !samePath(path, at):
@@ -249,7 +250,7 @@ func (d *doctor) agyBin(at string) {
 func (d *doctor) herdr() {
 	s := d.r.s
 	name := "herdr session " + s.Session
-	if at, ok := lookPath(d.path, "herdr"); !ok {
+	if at, ok := checks.LookPath(d.path, "herdr"); !ok {
 		d.line("FAIL", "herdr", "herdr is not on PATH: install it (docs/SETUP-AGENT.md, step 3)")
 		return
 	} else {
@@ -408,7 +409,7 @@ func (d *doctor) commands() {
 		if strings.Contains(program, "/") && !filepath.IsAbs(program) && d.r.s.Repo != "" {
 			program = filepath.Join(d.r.s.Repo, program)
 		}
-		switch _, ok := lookPath(d.path, program); {
+		switch _, ok := checks.LookPath(d.path, program); {
 		case ok:
 		case unread[a[0]]:
 			d.line("WARN", a[0], "%s is not on %s; %s doesn't read %s yet, so nothing runs it until it does", a[1], where, bsname.Cmd, a[0])
@@ -443,19 +444,4 @@ func (s *settings) argvs() [][2]string {
 		add("checks."+name+".run", s.Checks[name].Run)
 	}
 	return out
-}
-
-// lookPath finds program on path, the caller's PATH rather than bs's own.
-func lookPath(path, program string) (string, bool) {
-	if strings.Contains(program, "/") {
-		fi, err := os.Stat(program)
-		return program, err == nil && fi.Mode()&0o111 != 0
-	}
-	for _, d := range filepath.SplitList(path) {
-		at := filepath.Join(d, program)
-		if fi, err := os.Stat(at); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
-			return at, true
-		}
-	}
-	return "", false
 }

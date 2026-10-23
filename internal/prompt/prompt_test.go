@@ -19,7 +19,7 @@ var gitWords = regexp.MustCompile(`(?i)\b(git|branch(es)?|commits?|worktrees?|me
 // workspace with a goal that isn't git's reads no git wording (bees-12.29).
 // The queen's side, every goal type under none, is bees-13.19.
 func TestANonGitWorkerReadsNoGitWording(t *testing.T) {
-	got := prompt.Text(prompt.Worker, "web2", "claude", "none", []string{"verdict", "note", "beads"})
+	got := prompt.Text(prompt.Worker, "web2", "claude", "none", []string{"verdict", "note", "beads"}, nil)
 	if m := gitWords.FindAllString(got, -1); m != nil {
 		t.Errorf("worker prompt under none with --goal verdict, note, beads says %q:\n%s", m, got)
 	}
@@ -27,8 +27,8 @@ func TestANonGitWorkerReadsNoGitWording(t *testing.T) {
 
 // Each role reads the shared lead and its own part of each fragment, never the other's.
 func TestFragmentsSplitPerRole(t *testing.T) {
-	w := prompt.Text(prompt.Worker, "web2", "claude", "git_worktree", []string{"branch"})
-	q := prompt.Text(prompt.Queen, "web2", "claude", "git_worktree", goal.BuiltinTypes())
+	w := prompt.Text(prompt.Worker, "web2", "claude", "git_worktree", []string{"branch"}, nil)
+	q := prompt.Text(prompt.Queen, "web2", "claude", "git_worktree", goal.BuiltinTypes(), nil)
 	for _, c := range []struct {
 		text string
 		has  []string
@@ -65,7 +65,7 @@ func TestPitfallsArePerHarness(t *testing.T) {
 			"agy":    {[]string{agy, "denied by `bs guard`"}, []string{claude, "Claude"}},
 			"omp":    {nil, []string{claude, agy, "Claude"}},
 		} {
-			got := prompt.Text(r, "web2", h, "git_worktree", []string{"pr"})
+			got := prompt.Text(r, "web2", h, "git_worktree", []string{"pr"}, nil)
 			for _, s := range c.has {
 				if i := strings.Index(got, s); i < 0 || i > strings.Index(got, shared) || i < strings.Index(got, "## Known pitfalls") {
 					t.Errorf("%s on %s: %q missing or outside Known pitfalls before the shared lines:\n%s", r, h, s, got)
@@ -85,7 +85,7 @@ func TestPitfallsArePerHarness(t *testing.T) {
 
 // A goal type with no fragment yet still names how to hand it off; each type appears once.
 func TestAGoalWithNoFragmentStillSaysBsDone(t *testing.T) {
-	got := prompt.Text(prompt.Worker, "web2", "claude", "git_worktree", []string{"cl", "branch", "branch"})
+	got := prompt.Text(prompt.Worker, "web2", "claude", "git_worktree", []string{"cl", "branch", "branch"}, nil)
 	if !strings.Contains(got, "`--goal cl`: `bs done` checks it") || strings.Count(got, "`--goal branch`:") != 1 {
 		t.Fatalf("prompt:\n%s", got)
 	}
@@ -99,7 +99,7 @@ func TestNonPRGoalsSayWhereTheReportGoes(t *testing.T) {
 		"note":    "bd update <bead> --append-notes",
 		"beads":   "bs bead new --parent <bead>",
 	} {
-		got := prompt.Text(prompt.Worker, "web2", "claude", "none", []string{g})
+		got := prompt.Text(prompt.Worker, "web2", "claude", "none", []string{g}, nil)
 		if !strings.Contains(got, want) || (g != "beads" && !strings.Contains(got, "never leave") && !strings.Contains(got, "Never leave")) {
 			t.Errorf("--goal %s worker prompt lacks %q or the scratch warning:\n%s", g, want, got)
 		}
@@ -108,7 +108,7 @@ func TestNonPRGoalsSayWhereTheReportGoes(t *testing.T) {
 
 // The goal fragments name no review host's commands; the host fragment does, by role.
 func TestGoalFragmentsLeaveCommandsToTheHost(t *testing.T) {
-	w := prompt.Text(prompt.Worker, "web2", "claude", "git_worktree", []string{"pr", "push", "review"})
+	w := prompt.Text(prompt.Worker, "web2", "claude", "git_worktree", []string{"pr", "push", "review"}, nil)
 	for _, host := range []string{"gh pr", "github"} {
 		if strings.Contains(strings.ToLower(w), host) {
 			t.Errorf("a goal fragment names %q:\n%s", host, w)
@@ -155,5 +155,23 @@ func TestPromptsNameTheCommandThroughBs(t *testing.T) {
 	}
 	if b, _ := os.ReadFile("goal/beads.md"); !strings.Contains(string(b), "{{bs}} bead new --parent <bead>") || strings.Contains(string(b), "bd create") {
 		t.Errorf("goal/beads.md:\n%s", b)
+	}
+}
+
+// A custom type's fragment is the keeper's text, split by role like a built-in one; a
+// command workspace gets its own section, naming no VCS.
+func TestACustomGoalsFragmentIsTheKeepers(t *testing.T) {
+	own := prompt.Own{"cl": "`--goal cl`: a CL, complete once submitted.\n<!-- worker -->\n- Mail it with `cl mail`.\n<!-- queen -->\n- Submit it with `cl submit`.\n"}
+	w := prompt.Text(prompt.Worker, "web2", "claude", "command", []string{"cl"}, own)
+	q := prompt.Text(prompt.Queen, "web2", "claude", "command", []string{"cl"}, own)
+	if !strings.Contains(w, "## Goal\n\n`--goal cl`: a CL") || !strings.Contains(w, "cl mail") || strings.Contains(w, "cl submit") || strings.Contains(w, "checks it and says") {
+		t.Fatalf("worker:\n%s", w)
+	}
+	if !strings.Contains(q, "cl submit") || strings.Contains(q, "cl mail") {
+		t.Fatalf("queen:\n%s", q)
+	}
+	ws := w[strings.Index(w, "\n## Workspace\n"):strings.Index(w, "\n## Goal\n")]
+	if !strings.Contains(ws, "[workspace.command]") || strings.Contains(strings.ToLower(ws), "git") {
+		t.Fatalf("command workspace section:\n%s", ws)
 	}
 }

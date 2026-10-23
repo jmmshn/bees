@@ -65,7 +65,8 @@ func (c *Core) Queen(ctx context.Context, req QueenReq) ([]string, error) {
 	if err != nil {
 		return nil, exit(ExitRefused, bsname.Cmd+" config", err, "her review host's section can't be read")
 	}
-	text := prompt.Text(prompt.Queen, c.Project, c.Harness.Kind(), c.Kind, goal.BuiltinTypes()) + host
+	custom, own := c.queenOwn()
+	text := prompt.Text(prompt.Queen, c.Project, c.Harness.Kind(), c.Kind, append(goal.BuiltinTypes(), custom...), own) + host
 	l, err := c.Harness.Prepare(port.Start{Role: port.Queen, Name: name, Dir: c.Repo, PromptFile: "{{prompt.md}}", Prompt: text})
 	if err != nil {
 		return nil, exit(ExitRefused, bsname.Cmd+" config", err, "its harness refused the launch")

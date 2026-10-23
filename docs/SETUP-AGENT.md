@@ -27,7 +27,7 @@ Settle these with the keeper, one batch of questions:
 |---|---|---|
 | Harness (machine-wide) | `claude_code` \| `agy` | The program every queen and worker starts (omp: bees-12.8). `agy` is staged (bees-13.13): no ring, no resume until bees-13.13.6, and each new worktree must be trusted until bees-13.13.5. |
 | Projects | a name and a git checkout each | Its name is the checkout's directory name, lowercased with `-` and `_` dropped; bs finds it from the directory it runs in. |
-| Workspace | `git_worktree` | Each worker gets its own worktree and branch under `<repo>-WT/`. That is the only kind bs makes yet: a directory that isn't a git checkout's top level (`none`, bees-13.10) and other VCS such as jj or a CitC client (`command`, bees-13.11) have no working path, and `bs doctor` and `bs spawn` refuse them. |
+| Workspace | `git_worktree` \| `command` | `git_worktree`: each worker gets its own worktree and branch under `<repo>-WT/`. `command`: another VCS (jj, hg, a cloud client with CLs) through the keeper's own argv and a custom goal ([SETUP.md](SETUP.md#other-vcs-a-command-workspace-and-a-custom-goal)). A directory that isn't a git checkout's top level (`none`, bees-13.10) has no working path yet: `bs doctor` and `bs spawn` refuse it. |
 | Goals | `pr`, `branch`, `verdict`, `note`, `beads`, … | The queen names one per spawn (`bs spawn --goal`). `pr`, `push=` and `review=` need the repo's GitHub remote; the others need no network. |
 
 **Check:** the keeper answered each question, and each project's directory is a git checkout's top level (`git -C <dir> rev-parse --show-toplevel` prints `<dir>`). For a project that will use `pr` goals, `git -C <dir> remote -v` names GitHub; if not, ask the keeper to add one (`git remote add origin <url>`) or to use only `branch`, `verdict`, `note` and `beads` goals for now (`bs doctor` warns until a remote exists).
@@ -60,7 +60,7 @@ bs config init
 bs config init --project
 ```
 
-Keys `bs config` marks `not read by bs yet` (custom goals, `[checks]`, `[workspace.command]`: bees-13.11) do nothing yet: leave them unset.
+For another VCS, add the `[workspace.command]`, `[checks.<name>]` and `[goal.<name>]` tables by hand ([SETUP.md](SETUP.md#other-vcs-a-command-workspace-and-a-custom-goal) has jj, hg and CL examples), then run `bs doctor`.
 
 Your own shell may carry `BS_*` variables from another bees session; `bs doctor` names each one. Run bs from your shell with them unset (`env -u BS_PROJECT …`). A key with no flag is in the written file, commented out: uncomment it there.
 

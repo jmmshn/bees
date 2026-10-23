@@ -12,7 +12,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -34,6 +36,7 @@ type Value struct {
 
 // Result is a command that ran to its exit.
 type Result struct {
+	Argv   []string // as it ran, placeholders filled
 	Code   int
 	Output []byte // stdout and stderr, interleaved
 }
@@ -50,6 +53,43 @@ var (
 
 // DefaultTimeout bounds a Cmd that names none.
 const DefaultTimeout = 60 * time.Second
+
+// Keys are the placeholders bs fills from a spawn's record: the workspace dir, the
+// worker's name, its bead, the project and its repo (paths.repo), and a git_worktree's
+// branch, base and start (its tip at spawn). A workspace kind with no branch fills none of
+// the last three. A worker names nothing (ADR-0010 Amendment 4), so no placeholder comes
+// from it.
+var Keys = append(slices.Clone(WorkspaceKeys), "branch", "base", "start")
+
+// WorkspaceKeys are the placeholders every workspace kind fills, and all a
+// [workspace.command] argv may name: a command workspace has no branch.
+var WorkspaceKeys = []string{"dir", "name", "bead", "project", "repo"}
+
+// Check refuses, before anything runs, an argv Fill could never fill: an empty one, a
+// placeholder argv[0], a brace that isn't a whole-argument placeholder, or one not
+// among keys.
+func Check(argv, keys []string) error {
+	if len(argv) == 0 || argv[0] == "" {
+		return errors.New("an argv is required")
+	}
+	if strings.ContainsAny(argv[0], "{}") {
+		return fmt.Errorf("argv[0] %q can't be a placeholder", argv[0])
+	}
+	var errs []error
+	for i, a := range argv[1:] {
+		m := placeholder.FindStringSubmatch(a)
+		switch {
+		case m == nil && strings.ContainsAny(a, "{}"):
+			errs = append(errs, fmt.Errorf("argument %d %q: a placeholder fills one whole argument", i+1, a))
+		case m == nil, slices.Contains(keys, m[1]):
+		case m[1] == "pr", m[1] == "change":
+			errs = append(errs, fmt.Errorf("argument %d %s: a worker names no change, so bs has none to fill; find it from the workspace ({dir} or {name})", i+1, a))
+		default:
+			errs = append(errs, fmt.Errorf("argument %d %s: no such placeholder (there are {%s})", i+1, a, strings.Join(keys, "}, {")))
+		}
+	}
+	return errors.Join(errs...)
+}
 
 // placeholder is a whole-argument placeholder; any other brace in an argument is refused.
 var placeholder = regexp.MustCompile(`^\{([a-z][a-z0-9_]*)\}$`)
@@ -104,21 +144,44 @@ func refOK(ctx context.Context, s string) (bool, error) {
 	return err == nil, err
 }
 
-// env is the only environment a command gets: PATH, HOME and LANG, as bs has them.
-func env() []string {
+// env is the only environment a command gets: PATH, HOME and LANG, as bs has them
+// (getenv: bs's own environment, which an in-process caller passes in).
+func env(getenv func(string) string) []string {
 	var out []string
 	for _, k := range []string{"PATH", "HOME", "LANG"} {
-		if v, ok := os.LookupEnv(k); ok {
+		if v := getenv(k); v != "" {
 			out = append(out, k+"="+v)
 		}
 	}
 	return out
 }
 
-// Run fills c's argv from vals and runs it in dir. A non-zero exit is a Result, not an
-// error; a refused argv is ErrBadArgv; a command that couldn't start, or ran past its
-// timeout (ErrTimeout, its whole process group killed), is ErrCantRun.
-func Run(ctx context.Context, c Cmd, dir string, vals map[string]Value) (Result, error) {
+// LookPath finds program on path (a PATH value), as a command bs runs would: a name
+// with a / is itself, when it is executable. ponytail: exec.LookPath searches only bs's own
+// PATH, and an in-process caller's (a test's toy, a pane's) is another; it skips empty
+// PATH entries, which exec would read as the cwd, and never reads PATHEXT.
+func LookPath(path, program string) (string, bool) {
+	if strings.Contains(program, "/") {
+		fi, err := os.Stat(program)
+		return program, err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0
+	}
+	for _, d := range filepath.SplitList(path) {
+		if d == "" {
+			continue
+		}
+		at := filepath.Join(d, program)
+		if fi, err := os.Stat(at); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
+			return at, true
+		}
+	}
+	return "", false
+}
+
+// Run fills c's argv from vals and runs it in dir, with getenv's PATH, HOME and LANG (nil:
+// bs's process environment). A non-zero exit is a Result, not an error; a refused argv is
+// ErrBadArgv; a command that couldn't start (argv[0] on no PATH among them), or ran past
+// its timeout (ErrTimeout, its whole process group killed), is ErrCantRun.
+func Run(ctx context.Context, c Cmd, dir string, vals map[string]Value, getenv func(string) string) (Result, error) {
 	argv, err := Fill(ctx, c.Argv, vals)
 	if err != nil {
 		return Result{}, err
@@ -126,24 +189,37 @@ func Run(ctx context.Context, c Cmd, dir string, vals map[string]Value) (Result,
 	if dir == "" {
 		return Result{}, fmt.Errorf("%w: no recorded dir to run %s in", ErrCantRun, argv[0])
 	}
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	// exec would look a bare name up on bs's own PATH, not the one the command gets.
+	prog := argv[0]
+	if !strings.Contains(prog, "/") {
+		at, ok := LookPath(getenv("PATH"), prog)
+		if !ok {
+			return Result{}, fmt.Errorf("%w: %s is not on PATH", ErrCantRun, prog)
+		}
+		prog = at
+	}
 	timeout := c.Timeout
 	if timeout <= 0 {
 		timeout = DefaultTimeout
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd := exec.CommandContext(ctx, prog, argv[1:]...)
+	cmd.Args[0] = argv[0]
 	var out bytes.Buffer
-	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = dir, env(), &out, &out
+	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = dir, env(getenv), &out, &out
 	err = port.RunGroup(cmd)
 	var ee *exec.ExitError
 	switch {
 	case ctx.Err() == context.DeadlineExceeded:
 		return Result{}, fmt.Errorf("%w: %s after %s: %w", ErrCantRun, strings.Join(argv, " "), timeout, ErrTimeout)
 	case errors.As(err, &ee) && ee.Exited():
-		return Result{Code: ee.ExitCode(), Output: out.Bytes()}, nil
+		return Result{Argv: argv, Code: ee.ExitCode(), Output: out.Bytes()}, nil
 	case err != nil:
 		return Result{}, fmt.Errorf("%w: %s: %w", ErrCantRun, strings.Join(argv, " "), err)
 	}
-	return Result{Output: out.Bytes()}, nil
+	return Result{Argv: argv, Output: out.Bytes()}, nil
 }

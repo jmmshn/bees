@@ -17,6 +17,17 @@ import (
 // "unprotected" or "no default branch" (Rule G).
 func (c *Core) guardIn(ctx context.Context) (guards.In, error) {
 	in := guards.In{Kind: cmp.Or(c.Kind, config.GitWorktree), Git: true}
+	// A command workspace is a git checkout's only when the repo is one: else no git
+	// guard applies, and there is no branch to name.
+	if in.Kind != config.GitWorktree {
+		switch _, err := c.git(ctx, c.Repo, "rev-parse", "--git-dir"); {
+		case isExit(err, 128):
+			in.Git = false
+			return in, nil
+		case err != nil:
+			return in, err
+		}
+	}
 	origin, err := c.git(ctx, c.Repo, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
 	if err != nil && !isExit(err, 1) {
 		return in, err

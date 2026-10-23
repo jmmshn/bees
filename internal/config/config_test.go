@@ -157,7 +157,7 @@ dir = "{repo}-WS/{name}"
 timeout = "60s"
 
 [checks.cl_submitted]
-run = ["cl", "status", "{cl}"]
+run = ["cl", "status", "{name}"]
 
 [goal.cl]
 handoff = ["clean", "cmd:cl_submitted"]
@@ -190,7 +190,7 @@ replace = true
 		keys = append(keys, f.Key+"="+f.Value)
 	}
 	all := strings.Join(keys, "\n")
-	for _, want := range []string{`goal.cl.handoff=["clean", "cmd:cl_submitted"]`, `checks.cl_submitted.run=["cl", "status", "{cl}"]`,
+	for _, want := range []string{`goal.cl.handoff=["clean", "cmd:cl_submitted"]`, `checks.cl_submitted.run=["cl", "status", "{name}"]`,
 		`workspace.command.dir="/w/{name}"`, "guards.replace=true"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("fields lack %s:\n%s", want, all)
@@ -234,13 +234,19 @@ func TestTableErrors(t *testing.T) {
 	global := filepath.Join(dir, "config.toml")
 	write(t, global, `
 [workspace.command]
-create = ["jj"]
+create = ["jj", "workspace", "add", "{dir}", "--name", "{branch}"]
 remove = ["jj"]
 dir = "x"
 timeout = "soon"
 
 [checks.empty]
 run = []
+
+[checks.handed]
+run = ["cl", "status", "{pr}"]
+
+[checks.spliced]
+run = ["cl", "status", "cl-{name}"]
 
 [goal.pr]
 handoff = ["clean"]
@@ -251,6 +257,8 @@ handoff = ["cmd:nope", "made_up"]
 	_, err := Load(Input{Dir: dir, Home: "/h"})
 	wantErr(t, err, `[workspace.command] timeout = "soon"`,
 		"[checks.empty] run: an argv is required", "[goal.pr] pr is a built-in goal type",
+		"create: argument 5 {branch}: no such placeholder", `dir = "x": it must name {name}`,
+		"[checks.handed] run: argument 2 {pr}: a worker names no change", `argument 2 "cl-{name}": a placeholder fills one whole argument`,
 		`[goal.cl] handoff: "cmd:nope" names no [checks.nope]`, `"made_up" is no built-in check`)
 }
 
@@ -319,6 +327,37 @@ func TestPruneIgnore(t *testing.T) {
 	write(t, proj, "[prune]\nignore = [\"[bin\", \"/bin/\", \"a//b\"]\n")
 	_, err = Load(Input{Dir: dir, Project: "toy", Home: "/h"})
 	wantErr(t, err, proj+`: prune.ignore = "[bin": not a path pattern`, `prune.ignore = "/bin/"`, `prune.ignore = "a//b"`)
+}
+
+// Every config SETUP.md shows for another VCS loads: its placeholders, dirs and checks are
+// ones bs accepts.
+func TestTheSetupExamplesLoad(t *testing.T) {
+	b, err := os.ReadFile("../../docs/SETUP.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, doc, ok := strings.Cut(string(b), "## Other VCS")
+	if !ok {
+		t.Fatal("SETUP.md has no Other VCS section")
+	}
+	doc, _, _ = strings.Cut(doc, "\n## ")
+	blocks := strings.Split(doc, "```toml\n")[1:]
+	if len(blocks) != 3 {
+		t.Fatalf("%d toml blocks, want 3 (jj, hg, CL)", len(blocks))
+	}
+	for _, blk := range blocks {
+		blk, _, _ = strings.Cut(blk, "```")
+		dir := t.TempDir()
+		write(t, filepath.Join(dir, "config.toml"), blk)
+		l, err := Load(Input{Dir: dir, Home: "/h"})
+		if err != nil {
+			t.Errorf("%v\n%s", err, blk)
+			continue
+		}
+		if k, _, _ := l.Kind(true); k != CommandKind || len(l.Workspace.Command.Missing()) > 0 || len(l.Goal) != 1 {
+			t.Errorf("kind %s, missing %v, goals %v:\n%s", k, l.Workspace.Command.Missing(), l.Goal, blk)
+		}
+	}
 }
 
 // agy.bin is agy on PATH or an absolute path to one, ~ expanded; any other base name is

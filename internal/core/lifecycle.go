@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jmmshn/bees/internal/bsname"
+	"github.com/jmmshn/bees/internal/config"
 	"github.com/jmmshn/bees/internal/goal"
 	"github.com/jmmshn/bees/internal/herdr"
 	"github.com/jmmshn/bees/internal/logbook"
@@ -482,7 +483,8 @@ type Pruned struct {
 }
 
 // Prune removes each ended spawn's workspace once its frozen prune rule passes (or it is
-// discarded) and it holds no uncommitted or untracked files, then its local branch once
+// discarded) and it holds no uncommitted or untracked files (a command workspace: its
+// frozen clean exits 0, and its frozen remove removes it), then its local branch once
 // that is proven merged (or discarded), completing a goal ended --incomplete on the way. A
 // workspace whose directory is already gone still has its branch pruned, so nothing is
 // kept forever (bees-12.41). It never touches a remote branch, and names what it kept and
@@ -495,7 +497,7 @@ func (c *Core) Prune(ctx context.Context, by string) ([]Pruned, error) {
 	var out []Pruned
 	for _, sp := range sps {
 		ws := sp.Workspace
-		if !sp.Ended || ws.Kind != "git_worktree" || ws.Dir == "" {
+		if !sp.Ended || ws.Kind != config.GitWorktree && ws.Kind != config.CommandKind || ws.Dir == "" {
 			continue
 		}
 		_, err := os.Stat(ws.Dir)
@@ -600,8 +602,12 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 	case !isExit(err, 1):
 		c.warn("can't tell whether origin/%s exists: %v", ws.Branch, err)
 	}
+	free := c.freeDir
+	if ws.Kind == config.CommandKind {
+		free = c.freeCommandDir
+	}
 	if dir {
-		if why, unknown := c.freeDir(ctx, sp); why != "" {
+		if why, unknown := free(ctx, sp); why != "" {
 			return keep(unknown, "%s", why)
 		}
 		p.Removed = true

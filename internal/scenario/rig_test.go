@@ -294,15 +294,11 @@ func (x *toy) open() *logbook.Logbook {
 	return lb
 }
 
-// spawn spawns bead as queen-toy with goals and fails the test unless it worked.
-func (x *toy) spawn(bead string, goals ...string) logbook.Spawn {
+// spawn spawns bead as queen-toy with --goal value and fails the test unless it worked.
+func (x *toy) spawn(bead, value string) logbook.Spawn {
 	x.t.Helper()
 	x.bead(bead, "work on "+bead)
-	args := []string{"spawn"}
-	for _, g := range goals {
-		args = append(args, "--goal", g)
-	}
-	if r := x.queen(append(args, bead)...); r.code != 0 {
+	if r := x.queen("spawn", "--goal", value, bead); r.code != 0 {
 		x.t.Fatalf("spawn %s: exit %d: %s", bead, r.code, r)
 	}
 	sp, ok, err := x.open().LatestSpawn(context.Background(), core.Name(bead))

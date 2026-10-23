@@ -170,7 +170,7 @@ func TestTheWorkspaceIsTaggedWithItsWorker(t *testing.T) {
 func TestTheWorkerPromptHasItsWorkspaceAndGoal(t *testing.T) {
 	x := newToy(t)
 	sp := x.spawn("toy-1", "branch")
-	if h := sp.Goal.Parts[0].Fragment; h == "" || h != prompt.Hash("branch") {
+	if h := sp.Goal.Fragment; h == "" || h != prompt.Hash("branch") {
 		t.Fatalf("spawned froze fragment hash %q, want %q", h, prompt.Hash("branch"))
 	}
 	fs, _ := filepath.Glob(filepath.Join(x.ports.CacheDir, "toy-1-prompt-*.md"))

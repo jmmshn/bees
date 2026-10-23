@@ -144,12 +144,12 @@ func (k *look) madeHere(ctx context.Context, v port.Change, cs []string) ([]stri
 	return out, nil
 }
 
-// refs is the changes part p's checks read: a pr part's handed-off ones, a push or
-// review part's target.
-func (k *look) refs(p goal.Part) ([]port.Ref, error) {
+// refs is the changes goal g's checks read: a push or review goal's target, else the
+// handed-off ones.
+func (k *look) refs(g goal.Goal) ([]port.Ref, error) {
 	urls := k.h.PRs
-	if p.Type != "pr" {
-		urls = []string{p.Target}
+	if g.Type == "push" || g.Type == "review" {
+		urls = []string{g.Target}
 	}
 	var out []port.Ref
 	for _, u := range urls {
@@ -172,11 +172,11 @@ func isPRCheck(name string) bool {
 	return false
 }
 
-// prCheck runs change check name over each of p's changes: it passes when every one does,
+// prCheck runs change check name over each of g's changes: it passes when every one does,
 // and is pending when the rest are; a change that couldn't be looked at is an error, never
 // a fail (Rule G).
-func (k *look) prCheck(ctx context.Context, p goal.Part, name string) (outcome, string, error) {
-	refs, err := k.refs(p)
+func (k *look) prCheck(ctx context.Context, g goal.Goal, name string) (outcome, string, error) {
+	refs, err := k.refs(g)
 	if err != nil {
 		return failed, "", err
 	}

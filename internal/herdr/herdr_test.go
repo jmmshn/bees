@@ -62,6 +62,38 @@ func TestCheckAgentArgsMatchesRealHerdr(t *testing.T) {
 	}
 }
 
+var agentNameCases = map[string]bool{
+	"bees-13-73-4": true, "a": true, "a_b-9": true, strings.Repeat("a", 32): true,
+	strings.Repeat("a", 33): false, "": false, "9a": false, "-a": false, "Bees": false, "a.b": false, "a b": false,
+}
+
+func TestCheckAgentName(t *testing.T) {
+	for name, ok := range agentNameCases {
+		if err := herdr.CheckAgentName(name); (err == nil) != ok || (err != nil && !errors.Is(err, herdr.ErrBadName)) {
+			t.Errorf("CheckAgentName(%q) = %v, want ok=%v", name, err, ok)
+		}
+	}
+}
+
+// TestCheckAgentNameMatchesRealHerdr holds CheckAgentName, and so the fake herdr, to the
+// installed herdr, which checks the name before it looks up the pane. Skipped without a
+// running herdr.
+func TestCheckAgentNameMatchesRealHerdr(t *testing.T) {
+	if exec.Command("herdr", "workspace", "list").Run() != nil {
+		t.Skip("no running herdr")
+	}
+	for name, ok := range agentNameCases {
+		out, _ := exec.Command("herdr", "agent", "start", name, "--kind", "claude", "--pane", "bs-contract-no-such-pane").CombinedOutput()
+		var he struct{ Error struct{ Code string } }
+		if json.Unmarshal(out, &he) != nil {
+			t.Fatalf("herdr output for %q: %s", name, out)
+		}
+		if refused := he.Error.Code == "invalid_agent_name"; refused == ok || (ok && he.Error.Code != "agent_pane_not_found") {
+			t.Errorf("herdr on %q: %s; CheckAgentName says ok=%v", name, he.Error.Code, ok)
+		}
+	}
+}
+
 // The client reads herdr's refusal envelope into an *Error that matches its sentinel,
 // and a herdr that can't run is ErrDown.
 func TestClientReadsHerdrsEnvelope(t *testing.T) {

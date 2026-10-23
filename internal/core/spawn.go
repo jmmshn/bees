@@ -49,6 +49,9 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 		return logbook.Spawn{}, false, exit(ExitCantCheck, "", err, "can't read bead %s", req.Bead)
 	}
 	name := Name(bead.ID)
+	if err := herdr.CheckAgentName(name); err != nil {
+		return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s can't be a worker's name; nothing was made", name)
+	}
 	var ended *logbook.Spawn // the last spawn, ended: its kept worktree and branch are reused
 	switch prev, ok, err := c.Logbook.LatestSpawn(ctx, name); {
 	case err != nil:
@@ -87,6 +90,11 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 		text += prompt.Host(prompt.Worker, c.Review.Name())
 	}
 	launch.Files = withPrompt(launch.Files, text)
+	// A launch too long to type would fail after the record (motif 8): check its longest
+	// form now, before anything is made.
+	if err := herdr.CheckAgentArgs(c.worstArgs(name, launch)); err != nil {
+		return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s: the launch can't be typed into a pane; nothing was made", name)
+	}
 	label := cmp.Or(req.Label, bead.Title)
 	session := cmp.Or(req.Session, logbook.DefaultSession)
 	var hw herdr.Workspace
@@ -480,9 +488,7 @@ func (c *Core) writeFiles(name string, l port.Launch) ([]string, error) {
 		return nil, err
 	}
 	for _, key := range slices.Sorted(maps.Keys(l.Files)) {
-		stem, ext := key, filepath.Ext(key)
-		stem = strings.TrimSuffix(stem, ext)
-		f, err := os.CreateTemp(c.CacheDir, name+"-"+strings.ReplaceAll(stem, "_", "-")+"-*"+ext)
+		f, err := os.CreateTemp(c.CacheDir, filePattern(name, key))
 		if err != nil {
 			return nil, err
 		}
@@ -493,11 +499,32 @@ func (c *Core) writeFiles(name string, l port.Launch) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		for i := range args {
-			args[i] = strings.ReplaceAll(args[i], "{{"+key+"}}", f.Name())
-		}
+		fill(args, key, f.Name())
 	}
 	return args, nil
+}
+
+// worstArgs is l.Args as writeFiles would make them at their longest: each file's * as
+// os.CreateTemp's longest, a uint32's 10 digits.
+func (c *Core) worstArgs(name string, l port.Launch) []string {
+	args := slices.Clone(l.Args)
+	for key := range l.Files {
+		fill(args, key, filepath.Join(c.CacheDir, strings.Replace(filePattern(name, key), "*", "4294967295", 1)))
+	}
+	return args
+}
+
+// filePattern is the os.CreateTemp pattern of name's start file key: <name>-<key>-*.
+func filePattern(name, key string) string {
+	ext := filepath.Ext(key)
+	return name + "-" + strings.ReplaceAll(strings.TrimSuffix(key, ext), "_", "-") + "-*" + ext
+}
+
+// fill replaces each {{key}} in args with path.
+func fill(args []string, key, path string) {
+	for i := range args {
+		args[i] = strings.ReplaceAll(args[i], "{{"+key+"}}", path)
+	}
 }
 
 func brief(b port.Bead, g goal.Goal, ws logbook.Workspace, t *target, hint string, mergeInto []string) string {

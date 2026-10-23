@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -48,6 +49,7 @@ var (
 	ErrDirty      = errors.New("worktree has modified or untracked files") // dirty_worktree_requires_force
 	ErrUnsafeArg  = errors.New("herdr can't pass an agent argument containing a control character")
 	ErrLongLaunch = errors.New("launch line too long to type into a pane")
+	ErrBadName    = errors.New("not a name herdr can give an agent") // invalid_agent_name
 )
 
 // codes maps herdr's error codes to the errors above.
@@ -61,6 +63,7 @@ var codes = map[string]error{
 	"agent_not_ready":               ErrUnready,
 	"dirty_worktree_requires_force": ErrDirty,
 	"invalid_agent_argument":        ErrUnsafeArg,
+	"invalid_agent_name":            ErrBadName,
 }
 
 // Unwrap lets errors.Is match a code to its error.
@@ -199,6 +202,19 @@ func CheckAgentArgs(args []string) error {
 	return nil
 }
 
+// agentName is herdr's rule for an agent's name (probed on 0.9.5; TestCheckAgentNameMatchesRealHerdr
+// re-checks the installed herdr).
+var agentName = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
+
+// CheckAgentName refuses a name herdr agent start would refuse with invalid_agent_name: a
+// lowercase letter, then lowercase letters, digits, - or _, 1-32 characters in all.
+func CheckAgentName(name string) error {
+	if !agentName.MatchString(name) {
+		return fmt.Errorf("%q (a lowercase letter, then lowercase letters, digits, - or _, at most 32 characters): %w", name, ErrBadName)
+	}
+	return nil
+}
+
 // Unsafe reports whether herdr refuses a as an agent argument: it holds a Unicode control
 // character (newline, tab, ESC, DEL, C1).
 func Unsafe(a string) bool { return strings.IndexFunc(a, unicode.IsControl) >= 0 }
@@ -209,6 +225,9 @@ const StartTimeout = 10 * time.Second
 // StartAgent starts kind with args in pane as agent name. ErrUnready means herdr gave up
 // waiting while the process may well run: the caller looks for it (bees-12.49).
 func (c Client) StartAgent(ctx context.Context, pane, name, kind string, args ...string) error {
+	if err := CheckAgentName(name); err != nil {
+		return err
+	}
 	if err := CheckAgentArgs(args); err != nil {
 		return err
 	}

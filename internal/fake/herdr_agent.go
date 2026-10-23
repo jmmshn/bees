@@ -63,6 +63,9 @@ func (h *Herdr) agentStart(s *server, session string, f flags) ([]byte, error) {
 	if !slices.Contains(kinds, kind) {
 		return nil, usage("unsupported interactive agent kind: %s", kind)
 	}
+	if herdr.CheckAgentName(name) != nil {
+		return nil, refusal("agent:start", "invalid_agent_name", "agent name must start with a lowercase letter and contain only lowercase letters, digits, '-' or '_' (1-32 characters)")
+	}
 	for _, a := range f.rest {
 		if herdr.Unsafe(a) {
 			return nil, refusal("agent:start", "invalid_agent_argument", "agent argument contains a control character")

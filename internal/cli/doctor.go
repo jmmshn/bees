@@ -114,6 +114,7 @@ func (d *doctor) line(level, name, format string, a ...any) {
 // minVersion is the oldest release of each tool bs works with, by program.
 var minVersion = map[string]string{
 	"claude": "2.1.296", // cross-session messaging, which the doorbell rides on
+	"agy":    "1.4.6",   // the version bees-13.80's probes ran on
 	"bd":     "1.1.0",   // bd query
 }
 
@@ -309,6 +310,16 @@ func (d *doctor) bd() {
 // bees-12.42).
 func (d *doctor) review() {
 	s := d.r.s
+	if f := s.hostPrompt(); f != "" {
+		switch b, err := os.ReadFile(f); {
+		case err != nil:
+			d.line("FAIL", "review", "review.fragment: %v: %s spawn refuses pr, push and review goals until it can be read", err, bsname.Cmd)
+		case strings.TrimSpace(string(b)) == "":
+			d.line("FAIL", "review", "review.fragment %s is blank: %s spawn refuses pr, push and review goals", f, bsname.Cmd)
+		default:
+			d.line("ok", "review", "the review host's section from %s", f)
+		}
+	}
 	if s.Review.Host != github.Name {
 		return
 	}

@@ -31,7 +31,7 @@ import (
 // A table (a pointer to a struct, or a map of them) is a unit: the nearest file that
 // sets it sets all of it, and its own check method validates it.
 type Config struct {
-	Harness   string              `toml:"harness" scope:"global" default:"claude_code" enum:"claude_code" doc:"the harness every queen and worker on this machine starts on (omp and agy arrive with bees-12.8 and bees-12.12)"`
+	Harness   string              `toml:"harness" scope:"global" default:"claude_code" enum:"claude_code|agy" doc:"the harness every queen and worker on this machine starts on: claude_code (Claude Code) or agy (Antigravity's CLI; omp arrives with bees-12.8)"`
 	Paths     Paths               `toml:"paths"`
 	Workspace Workspace           `toml:"workspace"`
 	Goal      map[string]GoalType `toml:"goal" scope:"both" doc:"custom goal types, by name: --goal <name> runs their checks"`
@@ -92,12 +92,14 @@ type Guards struct {
 
 // Review says where a project's changes (pr, push and review goals) are reviewed and land.
 type Review struct {
-	Host string `toml:"host" scope:"both" default:"github" enum:"github" doc:"the review host pr, push and review goals check against: github (pull requests through gh, the repo's git remotes)"`
+	Host     string `toml:"host" scope:"both" default:"github" enum:"github" doc:"the review host pr, push and review goals check against: github (pull requests through gh, the repo's git remotes)"`
+	Fragment string `toml:"fragment" scope:"both" path:"dir" doc:"a markdown file that is the review host's section of the prompt, in place of the built-in one: how a worker uploads, revises and hands off a change there, and how the queen lands it (lines <!-- worker --> and <!-- queen --> start each role's part). A host with no built-in section (a command host) gets its instructions only from here, so no host's workflow ships in bs"`
 }
 
 // Role holds the queen's harness tables.
 type Role struct {
 	ClaudeCode ClaudeCode `toml:"claude_code"`
+	Agy        Agy        `toml:"agy"`
 }
 
 // Prune is what bs prune lets go.
@@ -109,11 +111,17 @@ type Prune struct {
 type Worker struct {
 	Path       []string   `toml:"path" scope:"project" path:"dir" doc:"dirs put first on every worker's PATH (a live test's build under test)"`
 	ClaudeCode ClaudeCode `toml:"claude_code"`
+	Agy        Agy        `toml:"agy"`
 }
 
 // ClaudeCode holds the settings bs passes to Claude Code.
 type ClaudeCode struct {
 	Model string `toml:"model" scope:"both" doc:"the model Claude Code starts on (claude --model); empty: Claude Code's default"`
+}
+
+// Agy holds the settings bs passes to agy.
+type Agy struct {
+	Model string `toml:"model" scope:"both" doc:"the model agy starts on (agy --model); empty: agy's default"`
 }
 
 // The workspace kinds.

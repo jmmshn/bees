@@ -118,11 +118,11 @@ func TestShadowedListsTheLowerValues(t *testing.T) {
 func TestErrorsNameFileAndKey(t *testing.T) {
 	dir := t.TempDir()
 	global, proj := filepath.Join(dir, "config.toml"), filepath.Join(dir, "projects", "toy.toml")
-	write(t, global, "harness = \"agy\"\nbogus = 1\n[paths]\nrepo = \"/r\"\n[workspace]\nkind = \"nfs\"\n")
+	write(t, global, "harness = \"omp\"\nbogus = 1\n[paths]\nrepo = \"/r\"\n[workspace]\nkind = \"nfs\"\n")
 	write(t, proj, "harness = \"claude_code\"\n[paths]\nlogbook_dir = \"/x\"\nworktrees = \"/a/{repo}\"\n[worker]\npath = [\"\"]\n")
 	_, err := Load(Input{Dir: dir, Project: "toy", Home: "/h"})
 	wantErr(t, err,
-		global+`: harness = "agy": must be one of claude_code`,
+		global+`: harness = "omp": must be one of claude_code, agy`,
 		global+": unknown key bogus",
 		global+": paths.repo belongs in the project file, not the global one",
 		global+`: workspace.kind = "nfs"`,

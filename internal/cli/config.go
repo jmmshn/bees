@@ -14,6 +14,7 @@ import (
 	"github.com/jmmshn/bees/internal/bsname"
 	"github.com/jmmshn/bees/internal/config"
 	"github.com/jmmshn/bees/internal/core"
+	"github.com/jmmshn/bees/internal/harness/agy"
 	"github.com/jmmshn/bees/internal/port"
 )
 
@@ -329,6 +330,18 @@ func samePath(a, b string) bool {
 	return errA == nil && errB == nil && ra == rb
 }
 
+// model is harness's model for a worker, or with queen the queen's.
+func (s *settings) model(harness string, queen bool) string {
+	cc, a := s.Worker.ClaudeCode, s.Worker.Agy
+	if queen {
+		cc, a = s.Queen.ClaudeCode, s.Queen.Agy
+	}
+	if harness == agy.Name {
+		return a.Model
+	}
+	return cc.Model
+}
+
 // harnessProgram is the program a config harness name starts.
 func harnessProgram(name string) string {
 	return cmp.Or(map[string]string{"claude_code": "claude"}[name], name)
@@ -372,6 +385,14 @@ func (s *settings) workerPath() []string {
 		out = append(out, s.Expand(d))
 	}
 	return out
+}
+
+// hostPrompt is review.fragment, expanded: "" when unset.
+func (s *settings) hostPrompt() string {
+	if s.Review.Fragment == "" {
+		return ""
+	}
+	return s.Expand(s.Review.Fragment)
 }
 
 // unmade says why spawn won't make a workspace of kind yet, "" for one it makes: until

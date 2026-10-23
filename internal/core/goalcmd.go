@@ -151,6 +151,14 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 		}
 		change.Goal = &g
 	}
+	// The worker is told its new goal's host section: read it before anything is recorded.
+	var host string
+	if change.Goal != nil && change.Goal.Reviewed() {
+		var err error
+		if host, err = c.host(prompt.Worker); err != nil {
+			return logbook.Effective{}, exit(ExitRefused, bsname.Cmd+" config", err, "%s: its review host's section can't be read; the goal is unchanged", what)
+		}
+	}
 	if _, err := c.Logbook.RecordGoal(ctx, sp.ID, sp.Name, change); err != nil {
 		return logbook.Effective{}, err
 	}
@@ -166,7 +174,7 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 	}
 	body += prompt.Goal(prompt.Worker, e.Types(), own) // the fragments its hash records
 	if e.Reviewed() {
-		body += prompt.Host(prompt.Worker, c.Review.Name())
+		body += host
 	}
 	switch {
 	case change.Discard:

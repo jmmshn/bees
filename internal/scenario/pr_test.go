@@ -619,3 +619,41 @@ func TestARequiredCheckNotReportedYetIsPending(t *testing.T) {
 		must(t, x.worker("toy-1", 2, "handoff"), 0, "handed off")
 	})
 }
+
+// A host with no built-in fragment (a command host, bees-14.3) gets its worker
+// instructions from review.fragment, a file the keeper names in config: no host's workflow
+// ships in bs (bees-14.5). Unreadable, it refuses the spawn with nothing made.
+func TestReviewFragmentFromConfig(t *testing.T) {
+	x := newToy(t)
+	(&clBackend{}).setup(x, true)
+	cfg := filepath.Join(x.config, "config.toml")
+	frag := filepath.Join(t.TempDir(), "cl.md")
+	x.write(cfg, readFile(t, cfg)+"\n[review]\nfragment = \""+frag+"\"\n")
+	x.bead("toy-1", "work on toy-1")
+	must(t, x.queen("spawn", "--goal", "pr", "--label", "toy 1", "toy-1"), 2, "review.fragment", frag, "nothing was made")
+	x.write(frag, "Review host: a CL host.\n<!-- worker -->\n- Upload with `mytool upload`, then `{{bs}} done`.\n<!-- queen -->\n- Submit with `mytool submit`.\n")
+	sp := x.spawn("toy-1", "pr")
+	p := readFile(t, onePrompt(t, x, sp.Name))
+	for _, want := range []string{"## Review host", "a CL host", "`mytool upload`, then `bs done`"} {
+		if !strings.Contains(p, want) {
+			t.Fatalf("worker prompt lacks %q:\n%s", want, p)
+		}
+	}
+	if strings.Contains(p, "mytool submit") {
+		t.Fatalf("worker prompt has the queen's part:\n%s", p)
+	}
+	x.spawn("toy-2", "branch")
+	if p := readFile(t, onePrompt(t, x, "toy-2")); strings.Contains(p, "## Review host") {
+		t.Fatalf("a branch goal got the review host's section:\n%s", p)
+	}
+}
+
+// onePrompt is the path of name's one prompt file.
+func onePrompt(t *testing.T, x *toy, name string) string {
+	t.Helper()
+	fs, _ := filepath.Glob(filepath.Join(x.ports.CacheDir, name+"-prompt-*.md"))
+	if len(fs) != 1 {
+		t.Fatalf("%s's prompt files: %v", name, fs)
+	}
+	return fs[0]
+}

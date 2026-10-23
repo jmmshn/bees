@@ -114,12 +114,19 @@ func TestGoalFragmentsLeaveCommandsToTheHost(t *testing.T) {
 			t.Errorf("a goal fragment names %q:\n%s", host, w)
 		}
 	}
-	hw, hq := prompt.Host(prompt.Worker, "github"), prompt.Host(prompt.Queen, "github")
+	hw, hq := prompt.Host(prompt.Worker, "github", ""), prompt.Host(prompt.Queen, "github", "")
 	if !strings.Contains(hw, "gh pr create") || strings.Contains(hw, "gh pr merge") || !strings.Contains(hq, "gh pr merge") {
 		t.Errorf("github's host fragment by role:\nworker %s\nqueen %s", hw, hq)
 	}
-	if prompt.Host(prompt.Worker, "fakecl") != "" {
+	if prompt.Host(prompt.Worker, "fakecl", "") != "" {
 		t.Error("a host with no fragment got one")
+	}
+	// The keeper's fragment (review.fragment) replaces the built-in one, split by role.
+	own := "Review host: a CL host.\n<!-- worker -->\n- `{{bs}} done` after `mytool upload`.\n<!-- queen -->\n- `mytool submit`.\n"
+	ow, oq := prompt.Host(prompt.Worker, "github", own), prompt.Host(prompt.Queen, "fakecl", own)
+	if !strings.Contains(ow, "a CL host") || !strings.Contains(ow, "`bs done` after") || strings.Contains(ow, "gh pr") || strings.Contains(ow, "submit") ||
+		!strings.Contains(oq, "mytool submit") || strings.Contains(oq, "upload") {
+		t.Errorf("the keeper's host fragment by role:\nworker %s\nqueen %s", ow, oq)
 	}
 }
 

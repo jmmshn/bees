@@ -87,7 +87,7 @@ commands:
   epic    <title>                                          create the project's next epic (<project>-<n>)
   bead    ls [--all] [<bd query>] | new --parent <project>-N [--description D] [--type T] [--priority P] <title>
   version                                                  print the commit {cmd} was built from
-  guard   <glob>...                                        agy's PreToolUse hook: deny a tool call on stdin a glob matches
+  guard   --harness agy <glob>...                          a harness's PreToolUse hook: deny a tool call on stdin a glob matches
 
 {cmd} acts in the repo it runs in, as its nearest recorded ancestor (a queen, a worker),
 else as the keeper. --as <session>, a debug override from a shell no session started,
@@ -181,13 +181,12 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 		}
 		h := ports.Harness
 		if h == nil && ports.NewHarness != nil {
-			model := s.Worker.ClaudeCode.Model
-			if args[0] == "queen" {
-				model = s.Queen.ClaudeCode.Model
-			}
-			h = ports.NewHarness(s.Harness, model)
+			h = ports.NewHarness(s.Harness, s.model(s.Harness, args[0] == "queen"))
 		}
 		other := ports.recorded
+		if ports.Harness == nil && ports.NewHarness != nil { // spawn --harness starts one on its worker model
+			other = func(name string) port.Harness { return ports.NewHarness(name, s.model(name, false)) }
+		}
 		kind, why, _ := s.Kind(s.GitTop)
 		review, vcs := ports.Review, ports.VCS
 		if review == nil { // review.host's enum has github only (config)
@@ -200,7 +199,7 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 			Logbook: lb, Project: s.Project, Run: ports.Run, Harness: h, HarnessOf: other, HarnessName: s.Harness,
 			Proc: ports.Proc, Beads: ports.Beads, Repo: s.Repo, Worktrees: s.Worktrees, Kind: kind, KindWhy: why,
 			Command: s.command(), Goals: s.goals(), Checks: s.Checks, Getenv: func(k string) string { return core.Getenv(env.Vars, k) },
-			ConfigDir: s.Dir, CacheDir: ports.CacheDir, Timing: ports.Timing, WorkerPath: s.workerPath(), Guards: s.Guards, PruneIgnore: s.Prune.Ignore, Review: review, VCS: vcs,
+			ConfigDir: s.Dir, CacheDir: ports.CacheDir, Timing: ports.Timing, WorkerPath: s.workerPath(), Guards: s.Guards, PruneIgnore: s.Prune.Ignore, Review: review, VCS: vcs, HostPrompt: s.hostPrompt(),
 			Warn: func(msg string) { fmt.Fprintf(stderr, bsname.Cmd+" %s: warning: %s\n", args[0], msg) },
 		}
 		if err := r.authorize(as); err != nil {

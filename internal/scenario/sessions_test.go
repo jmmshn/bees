@@ -836,3 +836,46 @@ func TestSpawnHarnessIsRecordedAndResumed(t *testing.T) {
 		t.Fatalf("the resume's start: %+v (%v, %v)", st, ok, err)
 	}
 }
+
+// bees-13.13.13: a herdr server started over ssh hands SSH_* to every pane, and agy reads
+// them as a remote session ("not signed in"): what a harness must not inherit is unset in
+// the worker's pane before herdr types its launch there, and the rest stays.
+func TestAWorkerDoesNotInheritWhatItsHarnessUnsets(t *testing.T) {
+	x := newToy(t)
+	x.herdr.Env = append(x.herdr.Env, "SSH_TTY=/dev/pts/9", "SSH_AUTH_SOCK=/tmp/agent")
+	h := &unsetting{Harness: x.harness}
+	x.ports.Harness = h
+	x.spawn("toy-1", "branch")
+	must(t, x.worker("toy-1", 1, "status"), 0)
+	env := h.seen()
+	if slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "SSH_TTY=") }) || !slices.Contains(env, "SSH_AUTH_SOCK=/tmp/agent") {
+		t.Fatalf("the worker's env: %q", env)
+	}
+}
+
+// unsetting is the fake harness unsetting SSH_TTY, as agy does, keeping the env of its
+// worker's last bs call.
+type unsetting struct {
+	fake.Harness
+	mu  sync.Mutex
+	env []string
+}
+
+func (h *unsetting) Prepare(st port.Start) (port.Launch, error) {
+	l, err := h.Harness.Prepare(st)
+	l.Unset = []string{"SSH_TTY"}
+	return l, err
+}
+
+func (h *unsetting) Observe(env []string) map[string]string {
+	h.mu.Lock()
+	h.env = slices.Clone(env)
+	h.mu.Unlock()
+	return h.Harness.Observe(env)
+}
+
+func (h *unsetting) seen() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.env
+}

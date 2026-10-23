@@ -212,7 +212,9 @@ func (h *Herdr) server(session string) *server {
 // paneRun is herdr pane run PANE COMMAND...: the arguments, joined with spaces, typed into
 // the pane's shell as one line, and an empty answer at once (probed, 0.9.5): here the line
 // runs under sh as the pane's foreground process, in its own process group, with the
-// pane's env. A pane already running something isn't modelled (real herdr types into it).
+// pane's env, and the env it leaves is the shell's from then on, as an unset or export
+// typed into a real one is (bees-13.13.13). A pane already running something isn't
+// modelled (real herdr types into it).
 func (h *Herdr) paneRun(s *server, session string, f flags) ([]byte, error) {
 	if len(f.pos) < 2 {
 		return nil, usage("error: the following required arguments were not provided: <PANE_ID> <COMMAND>...")
@@ -225,22 +227,40 @@ func (h *Herdr) paneRun(s *server, session string, f flags) ([]byte, error) {
 		return nil, usage("fake herdr: pane run into pane %s, which runs %v, is not modelled", p.id, p.agent.argv)
 	}
 	line := strings.Join(f.pos[1:], " ")
-	cmd := exec.Command("sh", "-c", line)
+	envf, err := os.CreateTemp("", "fakeherdr-env-")
+	if err != nil {
+		return nil, err
+	}
+	envf.Close()
+	cmd := exec.Command("sh", "-c", line+"\nenv >\"$0\"", envf.Name())
 	cmd.Dir = p.cwd
 	cmd.Env = h.paneEnv(session, w, p)
 	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
+		os.Remove(envf.Name())
 		return nil, err
 	}
 	a := &agent{argv: []string{"sh", "-c", line}, cmd: cmd, done: make(chan struct{})}
-	go func() { _ = cmd.Wait(); close(a.done) }()
+	go func() {
+		_ = cmd.Wait()
+		if b, err := os.ReadFile(envf.Name()); err == nil && len(b) > 0 {
+			h.mu.Lock()
+			p.shell = strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
+			h.mu.Unlock()
+		}
+		os.Remove(envf.Name())
+		close(a.done)
+	}()
 	p.agent = a
 	return nil, nil
 }
 
 // paneEnv is the env a process in pane p of w on session starts with.
 func (h *Herdr) paneEnv(session string, w *workspace, p *pane) []string {
+	if p.shell != nil {
+		return slices.Clone(p.shell)
+	}
 	env := append(slices.Clone(h.Env), "HERDR_ENV=1", "HERDR_PANE_ID="+p.id, "HERDR_WORKSPACE_ID="+w.id)
 	if session != herdr.Default { // herdr sets HERDR_SESSION only on a named server (probed)
 		env = append(env, "HERDR_SESSION="+session)

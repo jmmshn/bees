@@ -5,6 +5,8 @@
 # --harness agy: the queen stays on Claude Code and spawns agy workers (bs spawn --harness agy);
 # setup checks agy is signed in from the toy's panes first. AGY_MODEL sets [worker.agy] model,
 # AGY_SETTINGS agy's settings.json (default ~/.gemini/antigravity-cli/settings.json).
+# LIVE_SSH=1 starts the toy's herdr server as one started over ssh is, its panes handed
+# SSH_CONNECTION, SSH_CLIENT and SSH_TTY (bees-13.13.13).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 queen=1 harness=claude_code
@@ -82,7 +84,9 @@ fi
 # The ( … & ) double fork reparents the server off this script at once: setsid in a
 # script's background job doesn't fork, so the server stayed this script's child, and a
 # worker running setup was the toy queen's nearest recorded ancestor (bees-13.13.8).
-("${toyenv[@]}" \
+serverenv=("${toyenv[@]}")
+[ "${LIVE_SSH:-}" != 1 ] || { serverenv+=("SSH_CONNECTION=100.64.0.1 50090 100.64.0.2 22" "SSH_CLIENT=100.64.0.1 50090 22" "SSH_TTY=/dev/pts/0") && record live_ssh 1; }
+("${serverenv[@]}" \
 	"$detach" herdr --session "$toy" server </dev/null >"$run/keeper/herdr-server.log" 2>&1 &)
 for _ in $(seq 50); do h workspace list >/dev/null 2>&1 && break; sleep 0.2; done
 h workspace list >/dev/null || { echo "setup: herdr --session $toy never answered; see $run/keeper/herdr-server.log" >&2; exit 1; }

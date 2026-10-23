@@ -58,6 +58,33 @@ INSERT INTO entries VALUES ('t1', '2026-10-20T00:00:02.000Z', 'started', 'toy-1'
 INSERT INTO entries VALUES ('d1', '2026-10-20T00:00:03.000Z', 'done', 'toy-1', 'queen-toy', 's1', '{"bead":"toy-1","pr":"https://github.com/o/r/pull/7"}');
 `
 
+// v2 is ADR-0010's schema, as the real bees.db had it (rows shaped from a copy of it): a
+// queen, an agy worker's spawn with its goal, its brief and receipt, its start, a done, a
+// goal change, an end and a landing.
+const v2 = `
+CREATE TABLE "entries" (
+  id      TEXT PRIMARY KEY,
+  ts      TEXT NOT NULL,
+  kind    TEXT NOT NULL CHECK (kind IN ('message','received','rang','spawned','ended','queen','started','done','goal','landed')),
+  actor   TEXT NOT NULL,
+  subject TEXT,
+  ref     TEXT REFERENCES "entries"(id),
+  data    TEXT CHECK (data IS NULL OR json_valid(data))
+) STRICT;
+CREATE INDEX k_subj ON entries (kind, subject, id);
+CREATE INDEX k_ref  ON entries (kind, ref);
+PRAGMA journal_mode = WAL;
+PRAGMA user_version = 2;
+INSERT INTO entries VALUES ('q1', '2026-10-23T00:00:00.000Z', 'queen', 'queen-bees', 'queen-bees', NULL, '{"harness":"claude_code","session":"default","pane":"w7:p1","pid":10,"start":"100","exe":"/bin/claude","repo":"/r/bees"}');
+INSERT INTO entries VALUES ('s1', '2026-10-23T00:00:01.000Z', 'spawned', 'queen-bees', 'bees-14-1', NULL,
+  '{"bead":"bees-14.1","label":"agy","harness":"agy","herdr":{"session":"default","workspace":"w35","pane":"w35:p1"},"workspace":{"kind":"git_worktree","dir":"/r/bees-WT/bees-14-1","repo":"/r/bees","branch":"bees-14-1","base":"main","start":"289c235","trunk":"main"},"goal":{"parts":[{"type":"pr","handoff":["pr_open"],"complete":["pr_merged"],"prune":["pr_merged"],"repo":"o/bees"}]},"config_dir":"/c/bees","bead_at":{"note":"6e34","children":[]},"prune_ignore":["bin/"]}');
+INSERT INTO entries VALUES ('m1', '2026-10-23T00:00:02.000Z', 'message', 'queen-bees', 'bees-14-1', 's1', '{"body":"brief"}');
+INSERT INTO entries VALUES ('rcv:m1:bees-14-1', '2026-10-23T00:00:03.000Z', 'received', 'bees-14-1', NULL, 'm1', NULL);
+INSERT INTO entries VALUES ('t1', '2026-10-23T00:00:04.000Z', 'started', 'bees-14-1', 'bees-14-1', 's1', '{"pid":20,"start":"200","harness":"agy","exe":"/bin/agy","baseline":[]}');
+INSERT INTO entries VALUES ('d1', '2026-10-23T00:00:05.000Z', 'done', 'bees-14-1', 'queen-bees', 's1', '{"bead":"bees-14.1","change":"https://github.com/o/bees/pull/149","checks":[{"name":"pr_open","pass":true}]}');
+INSERT INTO entries VALUES ('g1', '2026-10-23T00:00:06.000Z', 'goal', 'keeper', 'bees-14-1', 's1', '{"by":"keeper","waive":["ci_green"]}');
+`
+
 func write(t *testing.T, ddl string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "bees.db")
@@ -98,16 +125,16 @@ func open(t *testing.T, path string) *logbook.Logbook {
 	return lb
 }
 
-// A v0 logbook (main's) is copied aside to .pre-2, rebuilt with the CHECK grown (rang
+// A v0 logbook (main's) is copied aside to .pre-3, rebuilt with the CHECK grown (rang
 // kept), and its old spawn reads as --goal legacy with its data mapped explicitly.
 func TestOpenMigratesAVersion0Logbook(t *testing.T) {
 	ctx := context.Background()
 	path := write(t, v0)
 	lb := open(t, path)
-	if n, v := shape(t, path+".pre-2"); n != 4 || v != 0 {
+	if n, v := shape(t, path+".pre-3"); n != 4 || v != 0 {
 		t.Fatalf("copy aside: %d rows, version %d; want the 4 rows at version 0", n, v)
 	}
-	if fi, err := os.Stat(path + ".pre-2"); err != nil || fi.Mode().Perm() != 0o600 {
+	if fi, err := os.Stat(path + ".pre-3"); err != nil || fi.Mode().Perm() != 0o600 {
 		t.Fatalf("copy aside: %v, %v; want 0600", fi, err)
 	}
 	if n, v := shape(t, path); n != 4 || v != logbook.Version {
@@ -149,13 +176,13 @@ func TestOpenMigratesAVersion0Logbook(t *testing.T) {
 	}
 }
 
-// A v1 logbook (the pilot's, as the real bees.db is) reaches v2 the same way: its none
+// A v1 logbook (the pilot's, as the real bees.db was) is migrated the same way: its none
 // spawn maps dir and harness, its start and done read back, its single pr is a PR.
 func TestOpenMigratesAVersion1Logbook(t *testing.T) {
 	ctx := context.Background()
 	path := write(t, v1)
 	lb := open(t, path)
-	if n, v := shape(t, path+".pre-2"); n != 4 || v != 1 {
+	if n, v := shape(t, path+".pre-3"); n != 4 || v != 1 {
 		t.Fatalf("copy aside: %d rows, version %d", n, v)
 	}
 	if _, v := shape(t, path); v != logbook.Version {
@@ -184,10 +211,42 @@ func TestOpenMigratesAVersion1Logbook(t *testing.T) {
 	}
 }
 
+// A v2 logbook (ADR-0010's, as the real bees.db is) reaches v3 the same way, every row
+// kept, and takes observed entries, the foreign key intact (bees-13.13.6).
+func TestOpenMigratesAVersion2Logbook(t *testing.T) {
+	ctx := context.Background()
+	path := write(t, v2)
+	lb := open(t, path)
+	if n, v := shape(t, path+".pre-3"); n != 7 || v != 2 {
+		t.Fatalf("copy aside: %d rows, version %d; want the 7 rows at version 2", n, v)
+	}
+	if n, v := shape(t, path); n != 7 || v != 3 {
+		t.Fatalf("migrated: %d rows, version %d; want 7 at version 3", n, v)
+	}
+	sp, ok, err := lb.LatestSpawn(ctx, "bees-14-1")
+	if err != nil || !ok || sp.Legacy() || sp.Harness != "agy" || !sp.Read || sp.Observed != nil || sp.Workspace.Start != "289c235" {
+		t.Fatalf("spawn after migration = %+v, %v, %v", sp, ok, err)
+	}
+	if st, ok, err := lb.LatestStart(ctx, sp.ID); err != nil || !ok || st.PID != 20 {
+		t.Fatalf("start = %+v, %v, %v", st, ok, err)
+	}
+	if ok, err := lb.RecordObserved(ctx, sp.ID, sp.Name, map[string]string{"conversation": "c1"}); err != nil || !ok {
+		t.Fatalf("observed after migration: %v, %v", ok, err)
+	}
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=foreign_keys(1)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO entries (id, ts, kind, actor, ref) VALUES ('x', 't', 'observed', 'q', 'no-such-entry')`); err == nil {
+		t.Fatal("an entry referring to no entry was stored: the rebuilt table lost its foreign key")
+	}
+}
+
 // bees-12.23 kept: a second Open finds the work done, and many concurrent Opens of an old
 // logbook migrate it once, each seeing every row, leaving no temporary copies.
 func TestMigrationRunsOnceUnderConcurrentOpens(t *testing.T) {
-	for _, ddl := range []string{v0, v1} {
+	for ddl, rows := range map[string]int{v0: 4, v1: 4, v2: 7} {
 		path := write(t, ddl)
 		var wg sync.WaitGroup
 		errs := make([]error, 8)
@@ -206,10 +265,10 @@ func TestMigrationRunsOnceUnderConcurrentOpens(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if n, v := shape(t, path); n != 4 || v != logbook.Version {
+		if n, v := shape(t, path); n != rows || v != logbook.Version {
 			t.Fatalf("after concurrent opens: %d rows, version %d", n, v)
 		}
-		if left, _ := filepath.Glob(path + ".pre-2.*"); len(left) != 0 {
+		if left, _ := filepath.Glob(path + ".pre-3.*"); len(left) != 0 {
 			t.Fatalf("temporary copies left: %v", left)
 		}
 	}
@@ -239,7 +298,7 @@ func TestConcurrentFirstOpensOfANewLogbookAllSucceed(t *testing.T) {
 func TestANewLogbookStartsAtTheCurrentVersion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bees.db")
 	open(t, path)
-	if _, err := os.Stat(path + ".pre-2"); !os.IsNotExist(err) {
+	if _, err := os.Stat(path + ".pre-3"); !os.IsNotExist(err) {
 		t.Fatalf("copy aside of a new logbook: %v", err)
 	}
 	db, _ := sql.Open("sqlite", path)
@@ -269,7 +328,7 @@ func TestOpenReadOnlyNeverMigrates(t *testing.T) {
 	if _, err := lb.Send(ctx, "a", "b", "c"); err == nil {
 		t.Fatal("a read-only logbook took a write")
 	}
-	if _, err := os.Stat(path + ".pre-2"); !os.IsNotExist(err) {
+	if _, err := os.Stat(path + ".pre-3"); !os.IsNotExist(err) {
 		t.Fatal("OpenReadOnly copied aside")
 	}
 	missing := filepath.Join(t.TempDir(), "none.db")
@@ -338,18 +397,18 @@ func TestOpenRefusesAMissingFileAndCreateMakesIt(t *testing.T) {
 	}
 }
 
-// A migration that finds a .pre-2 already there keeps it, and says so: that copy may be
+// A migration that finds a .pre-3 already there keeps it, and says so: that copy may be
 // of another state than the one just migrated (bees-13.9 review SPEC6).
 func TestAMigrationSaysWhenItKeptAnEarlierCopy(t *testing.T) {
 	path := write(t, v0)
-	if err := os.WriteFile(path+".pre-2", []byte("earlier"), 0o600); err != nil {
+	if err := os.WriteFile(path+".pre-3", []byte("earlier"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	lb := open(t, path)
-	if lb.KeptCopy != path+".pre-2" {
+	if lb.KeptCopy != path+".pre-3" {
 		t.Fatalf("KeptCopy = %q", lb.KeptCopy)
 	}
-	if b, _ := os.ReadFile(path + ".pre-2"); string(b) != "earlier" {
+	if b, _ := os.ReadFile(path + ".pre-3"); string(b) != "earlier" {
 		t.Fatalf("the earlier copy changed: %q", b)
 	}
 	if again := open(t, path); again.KeptCopy != "" {

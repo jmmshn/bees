@@ -130,7 +130,7 @@ type Agy struct {
 // keeps its own settings, so neither is hard-coded (bees-14.1).
 type AgyInstall struct {
 	Bin      string `toml:"bin" scope:"global" default:"agy" program:"agy" doc:"the agy program: a name on PATH or an absolute path (~ expanded); its base name must be agy, the program herdr's --kind agy starts"`
-	Settings string `toml:"settings" scope:"global" default:"~/.gemini/antigravity-cli/settings.json" path:"dir" unread:"bees-13.13.5" doc:"agy's settings.json, whose trustedWorkspaces lists the folders agy trusts"`
+	Settings string `toml:"settings" scope:"global" default:"~/.gemini/antigravity-cli/settings.json" path:"dir" doc:"agy's settings.json, whose trustedWorkspaces lists the folders agy trusts"`
 }
 
 // The workspace kinds.

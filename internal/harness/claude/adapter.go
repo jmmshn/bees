@@ -76,6 +76,9 @@ func (a Adapter) Prepare(st port.Start) (port.Launch, error) {
 	return l, nil
 }
 
+// Observe tells nothing: a resume is --continue, which needs no id from the session.
+func (Adapter) Observe([]string) map[string]string { return nil }
+
 // Ring rings session t at the pid the core recorded: see AtPID.
 func (a Adapter) Ring(t port.Target, text string, p port.Priority) error {
 	home := a.Home

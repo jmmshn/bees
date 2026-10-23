@@ -155,6 +155,21 @@ func TestOwns(t *testing.T) {
 	}
 }
 
+// Observe reads the conversation agy hands its shells, the last setting winning, and
+// nothing else: the language server's token stays out of the record until a ring needs
+// it. A shell agy didn't start tells nothing.
+func TestObserveRecordsOnlyTheConversation(t *testing.T) {
+	env := []string{"ANTIGRAVITY_CONVERSATION_ID=old", "ANTIGRAVITY_LS_ADDRESS=127.0.0.1:4100", "ANTIGRAVITY_CSRF_TOKEN=s3cret", "ANTIGRAVITY_CONVERSATION_ID=7d33c4b2"}
+	if got := (agy.Adapter{}).Observe(env); !reflect.DeepEqual(got, map[string]string{agy.Conversation: "7d33c4b2"}) {
+		t.Errorf("Observe = %v", got)
+	}
+	for _, env := range [][]string{nil, {"ANTIGRAVITY_CONVERSATION_ID="}, {"HOME=/h"}} {
+		if got := (agy.Adapter{}).Observe(env); got != nil {
+			t.Errorf("Observe(%q) = %v, want nothing", env, got)
+		}
+	}
+}
+
 // agy has no ring yet: the message waits for the session's next bs inbox.
 func TestRingHasNone(t *testing.T) {
 	if err := (agy.Adapter{}).Ring(port.Target{Name: "bees-8", PID: 1}, "hi", port.Now); !errors.Is(err, port.ErrNoRing) {

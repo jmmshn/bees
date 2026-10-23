@@ -207,11 +207,17 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 			err := c.herdr(session).CloseWorkspace(context.WithoutCancel(ctx), hw.ID)
 			if remade {
 				_, rerr := c.git(context.WithoutCancel(ctx), ws.Repo, "worktree", "remove", ws.Dir)
-				err = errors.Join(err, rerr)
+				err = errors.Join(err, rerr, untrust(h, ws.Dir))
 			}
 			return err
 		}
-		return c.unmake(context.WithoutCancel(ctx), session, hw.ID, ws)
+		return errors.Join(c.unmake(context.WithoutCancel(ctx), session, hw.ID, ws), untrust(h, ws.Dir))
+	}
+	// A harness that starts only in a folder it trusts is told to trust this one, now that
+	// it exists: only the path bs just made (bees-13.13.5).
+	if err := trust(h, ws.Dir); err != nil {
+		err = errors.Join(err, undo())
+		return logbook.Spawn{}, false, exit(ExitFail, "", err, "%s: %s couldn't trust its worktree %s; nothing was recorded", name, kind, ws.Dir)
 	}
 	if err := c.track(ctx, ws, target); err != nil {
 		err = errors.Join(err, undo())
@@ -318,12 +324,22 @@ func (c *Core) resume(ctx context.Context, sp logbook.Spawn, bead port.Bead, req
 		text += host
 	}
 	st0 := c.workerStart(sp.Name, sp.Workspace, doorbell(sp.Name, bead.ID, sp.By), deny, text)
-	st0.Continue, st0.Record = sp.Read, sp.Record
+	// It has a conversation once it read its inbox, or told bs which (agy's, observed by
+	// its first bs call): the recorded facts and the observed ones, the observed newer.
+	st0.Continue = sp.Read || len(sp.Observed) > 0
+	st0.Record = maps.Clone(sp.Record)
+	if st0.Record == nil && len(sp.Observed) > 0 {
+		st0.Record = map[string]string{}
+	}
+	maps.Copy(st0.Record, sp.Observed)
 	launch, err := h.Prepare(st0)
 	if err != nil {
 		return exit(ExitRefused, "", err, "%s: its harness refused the restart; nothing started", sp.Name)
 	}
 	launch.Files = withPrompt(launch.Files, text)
+	if err := trust(h, sp.Workspace.Dir); err != nil {
+		return exit(ExitFail, "", err, "%s: %s couldn't trust its worktree %s; nothing started", sp.Name, sp.Harness, sp.Workspace.Dir)
+	}
 	var replaces logbook.ID
 	if started {
 		replaces = st.ID
@@ -739,4 +755,20 @@ func (c *Core) track(ctx context.Context, ws logbook.Workspace, t *target) error
 	}
 	_, err = c.git(ctx, ws.Repo, "config", "branch."+ws.Branch+".merge", "refs/heads/"+t.c.Head)
 	return err
+}
+
+// trust tells h to trust dir, when h starts only in a folder it trusts (port.Truster).
+func trust(h port.Harness, dir string) error {
+	if t, ok := h.(port.Truster); ok && dir != "" {
+		return t.Trust(dir)
+	}
+	return nil
+}
+
+// untrust takes back trust's entry for dir.
+func untrust(h port.Harness, dir string) error {
+	if t, ok := h.(port.Truster); ok && dir != "" {
+		return t.Untrust(dir)
+	}
+	return nil
 }

@@ -612,6 +612,12 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 		}
 		p.Removed = true
 	}
+	// Its folder is gone, so its harness's trust in it goes too (bees-13.13.5).
+	if h, err := c.recorded(sp); err != nil {
+		c.warn("%v: its trust in %s, if any, stays", err, ws.Dir)
+	} else if err := untrust(h, ws.Dir); err != nil {
+		c.warn("%s couldn't untrust %s: %v", sp.Harness, ws.Dir, err)
+	}
 	if !branch {
 		return p
 	}

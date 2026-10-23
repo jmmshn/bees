@@ -216,7 +216,7 @@ func (d *doctor) harness() {
 	}
 	h := d.r.ports.Harness
 	if h == nil && d.r.ports.NewHarness != nil {
-		h = d.r.ports.NewHarness(s.Harness, "")
+		h = d.r.ports.NewHarness(s.Harness, s.opts(s.Harness, false))
 	}
 	m, ok := h.(interface {
 		Modes(home string) (string, error)

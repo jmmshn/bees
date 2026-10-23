@@ -45,6 +45,7 @@ type Harness interface {
 	Prepare(st Start) (Launch, error)             // pure: argv, per-start files, guards rendered, Record
 	Owns(argv []string, name string) bool         // argv, of a Kind process, is session name's launch
 	Ring(t Target, text string, p Priority) error // ErrNotRunning | ErrNoRing | a write error
+	Observe(env []string) map[string]string       // pure: post-start facts a later start needs, read from the env of a bs the session runs
 }
 
 // ErrNotRunning means the session rung is not running: its recorded process is gone.
@@ -53,6 +54,14 @@ var ErrNotRunning = errors.New("not running")
 // ErrNoRing means the harness has no way to ring a running session: the message waits for
 // the session's next bs inbox.
 var ErrNoRing = errors.New("its harness has no ring")
+
+// Truster is a harness that only starts in a folder it was told to trust, exact path:
+// spawn trusts the worktree it just made, and prune untrusts it once removed. Both
+// are no-ops when already so. A harness whose trust is the keeper's (claude) has none.
+type Truster interface {
+	Trust(dir string) error
+	Untrust(dir string) error
+}
 
 // Priority is when the receiving session acts on a ring.
 type Priority string

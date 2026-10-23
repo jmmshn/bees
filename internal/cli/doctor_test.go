@@ -83,7 +83,7 @@ func (r *doctorRig) doctorIn(dir string, extra ...string) (int, string) {
 	r.t.Helper()
 	var out, errb bytes.Buffer
 	ports := Ports{Run: cantStart{fake.Commands{Herdr: r.herdr, Real: port.Exec{}}, r.cantRun}, CacheDir: filepath.Join(r.home, "cache"),
-		NewHarness: func(string, string) port.Harness { return claude.Adapter{} }}
+		NewHarness: func(string, HarnessOpts) port.Harness { return claude.Adapter{} }}
 	code := Run(context.Background(), Env{Vars: append(append([]string{}, r.env...), extra...), Dir: dir, Self: os.Getpid()}, ports, []string{"doctor"}, &out, &errb)
 	return code, out.String() + errb.String()
 }

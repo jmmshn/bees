@@ -30,12 +30,12 @@ type Env struct {
 }
 
 // Ports are the world the core runs on. Harness, when set (tests), is every role's;
-// else NewHarness builds the configured one for a role's model, and a harness it doesn't
-// know (nil) refuses every command that starts or rings one.
+// else NewHarness builds the configured one with what config sets on it, and a harness it
+// doesn't know (nil) refuses every command that starts or rings one.
 type Ports struct {
 	Run        port.Runner
 	Harness    port.Harness
-	NewHarness func(name, model string) port.Harness
+	NewHarness func(name string, o HarnessOpts) port.Harness
 	Proc       port.Proc
 	Beads      port.Beads
 	// Review and VCS, when set (tests), replace the configured review host and git.
@@ -51,6 +51,12 @@ type Ports struct {
 	Revision, Exe string
 }
 
+// HarnessOpts is what config sets on a harness's adapter.
+type HarnessOpts struct {
+	Model    string // the role's model
+	Settings string // agy.settings, ~ expanded: agy's settings.json, which holds its trusted folders
+}
+
 // recorded is the adapter of a harness some entry recorded, any model: it only rings and
 // is looked for. nil when this bs has none.
 func (p Ports) recorded(name string) port.Harness {
@@ -58,7 +64,7 @@ func (p Ports) recorded(name string) port.Harness {
 		return p.Harness
 	}
 	if p.NewHarness != nil {
-		return p.NewHarness(name, "")
+		return p.NewHarness(name, HarnessOpts{})
 	}
 	return nil
 }
@@ -181,11 +187,11 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 		}
 		h := ports.Harness
 		if h == nil && ports.NewHarness != nil {
-			h = ports.NewHarness(s.Harness, s.model(s.Harness, args[0] == "queen"))
+			h = ports.NewHarness(s.Harness, s.opts(s.Harness, args[0] == "queen"))
 		}
 		other := ports.recorded
 		if ports.Harness == nil && ports.NewHarness != nil { // spawn --harness starts one on its worker model
-			other = func(name string) port.Harness { return ports.NewHarness(name, s.model(name, false)) }
+			other = func(name string) port.Harness { return ports.NewHarness(name, s.opts(name, false)) }
 		}
 		kind, why, _ := s.Kind(s.GitTop)
 		review, vcs := ports.Review, ports.VCS
@@ -282,7 +288,8 @@ func (r *run) moved() error {
 
 // authorize settles who runs this command (ADR-0010 Amendment 4 Identity): the caller
 // load found, its start healed (core.Confirm), --as applied, then the permission table
-// (core.May) for the command. A command acting on a worker asks May again with it.
+// (core.May) for the command; a worker's session then tells what it observes of itself
+// (core.Observe). A command acting on a worker asks May again with it.
 func (r *run) authorize(as string) error {
 	c, err := r.c.Confirm(r.ctx, r.caller)
 	if err != nil {
@@ -291,7 +298,11 @@ func (r *run) authorize(as string) error {
 	if r.caller, err = r.c.As(r.ctx, c, as); err != nil {
 		return err
 	}
-	return r.may("")
+	if err := r.may(""); err != nil {
+		return err
+	}
+	r.c.Observe(r.ctx, r.caller, r.env.Vars)
+	return nil
 }
 
 // may asks the permission table whether the caller runs this command on subject.

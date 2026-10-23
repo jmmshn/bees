@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"time"
 
 	"github.com/jmmshn/bees/internal/checks"
@@ -86,6 +87,9 @@ type Spawn struct {
 	PruneIgnore []string `json:"prune_ignore,omitempty"`
 	Ended       bool     `json:"-"`
 	Read        bool     `json:"-"` // the worker has read a message since this spawn, so it has a conversation
+	// Observed is what the worker last told bs about itself from inside its session
+	// (RecordObserved): agy's conversation id; nil when it told nothing.
+	Observed map[string]string `json:"-"`
 }
 
 // BeadAt is a spawn's bead as spawn found it: every spawn freezes it, so a goal amended
@@ -182,25 +186,61 @@ func (l *Logbook) RecordSpawn(ctx context.Context, by string, s Spawn, brief str
 	return id, err
 }
 
-// spawnCols selects a spawned entry s with whether it has ended and whether its worker
-// has read a message since.
+// spawnCols selects a spawned entry s with whether it has ended, whether its worker has
+// read a message since, and its newest observation.
 const spawnCols = `s.id, s.ts, s.subject, s.actor, s.data,
   EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = s.id),
-  EXISTS (SELECT 1 FROM entries r WHERE r.kind = 'received' AND r.actor = s.subject AND r.rowid > s.rowid)`
+  EXISTS (SELECT 1 FROM entries r WHERE r.kind = 'received' AND r.actor = s.subject AND r.rowid > s.rowid),
+  (SELECT o.data FROM entries o WHERE o.kind = 'observed' AND o.ref = s.id ORDER BY o.rowid DESC LIMIT 1)`
 
 type scanner interface{ Scan(dest ...any) error }
 
 func scanSpawn(r scanner) (Spawn, error) {
 	var s Spawn
 	var data, ts string
-	if err := r.Scan(&s.ID, &ts, &s.Name, &s.By, &data, &s.Ended, &s.Read); err != nil {
+	var observed sql.NullString
+	if err := r.Scan(&s.ID, &ts, &s.Name, &s.By, &data, &s.Ended, &s.Read, &observed); err != nil {
 		return Spawn{}, err
 	}
 	var err error
 	if s.TS, err = time.Parse(tsLayout, ts); err != nil {
 		return Spawn{}, fmt.Errorf("spawn record %s: %w", s.ID, err)
 	}
+	if observed.Valid {
+		if err := json.Unmarshal([]byte(observed.String), &s.Observed); err != nil {
+			return Spawn{}, fmt.Errorf("observed for spawn %s: %w", s.ID, err)
+		}
+	}
 	return s, s.decode(data)
+}
+
+// RecordObserved records what worker name, of open spawn spawn, told bs about itself
+// (port.Harness.Observe), unless its newest observation already says exactly that: one
+// entry per change, not per bs call. The check and the record share one write
+// transaction. recorded says whether it wrote.
+func (l *Logbook) RecordObserved(ctx context.Context, spawn ID, name string, facts map[string]string) (recorded bool, err error) {
+	if len(facts) == 0 {
+		return false, nil
+	}
+	err = l.write(ctx, func(tx *sql.Tx) error {
+		var data string
+		switch err := tx.QueryRowContext(ctx, `SELECT data FROM entries WHERE kind = 'observed' AND ref = ? ORDER BY rowid DESC LIMIT 1`, string(spawn)).Scan(&data); {
+		case err == nil:
+			var last map[string]string
+			if err := json.Unmarshal([]byte(data), &last); err != nil {
+				return fmt.Errorf("observed for spawn %s: %w", spawn, err)
+			}
+			if maps.Equal(last, facts) {
+				return nil
+			}
+		case !errors.Is(err, sql.ErrNoRows):
+			return err
+		}
+		_, err := insertOn(ctx, tx, entry{kind: "observed", actor: name, subject: name, ref: spawn, data: facts})
+		recorded = err == nil
+		return err
+	})
+	return recorded, err
 }
 
 // LatestSpawn returns the most recent spawn of the named worker; ok is false when the

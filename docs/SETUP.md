@@ -24,7 +24,7 @@ bs send --project <other> queen-<other> "..."   # cross-project mail; the reply 
 
 `bs doctor` runs even when the config or the project can't be worked out: that is its first FAIL, the checks that need no project still run, and it prints a `skip` line for each it couldn't make. A `none` workspace waits for bees-13.10: doctor fails it and `config init` won't write it; a `command` workspace is a `[workspace.command]` table ([below](#other-vcs-a-command-workspace-and-a-custom-goal)), which doctor fails while it lacks a key. `bs status` reads the logbook, the process table and the disk, and asks herdr only to heal an unconfirmed start, so with herdr down that start reads `unknown` and the rest still prints.
 
-The first bs call on a logbook written by an older bs migrates it to schema 2, copying it aside to `<project>.db.pre-2` first. bs refuses a logbook where a session the old bs started is still open (it can neither ring nor see it run), naming each: end them first (`bs end <worker>` and `bs status` still run, warning).
+The first bs call on a logbook written by an older bs migrates it to schema 3, copying it aside to `<project>.db.pre-3` first. bs refuses a logbook where a session the old bs started is still open (it can neither ring nor see it run), naming each: end them first (`bs end <worker>` and `bs status` still run, warning).
 
 ## Names
 

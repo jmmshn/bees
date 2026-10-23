@@ -113,6 +113,7 @@ func (d *doctor) line(level, name, format string, a ...any) {
 // minVersion is the oldest release of each tool bs works with, by program.
 var minVersion = map[string]string{
 	"claude": "2.1.296", // cross-session messaging, which the doorbell rides on
+	"agy":    "1.4.6",   // the version bees-13.80's probes ran on
 	"bd":     "1.1.0",   // bd query
 }
 

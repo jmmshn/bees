@@ -23,7 +23,7 @@ func (r *run) configInit(fs *flag.FlagSet, args []string) error {
 	project := fs.Bool("project", false, "write the project's file, projects/<project>.toml, instead of the global config.toml")
 	set := map[string]string{}
 	for _, f := range []struct{ name, key, usage string }{
-		{"harness", "harness", "harness (global file): claude_code"},
+		{"harness", "harness", "harness (global file): claude_code | agy"},
 		{"logbook-dir", "paths.logbook_dir", "paths.logbook_dir (global file): where the logbooks live"},
 		{"repos", "paths.repos", "paths.repos (global file): a directory of repos"},
 		{"worktrees", "paths.worktrees", "paths.worktrees: where git_worktree workspaces go"},

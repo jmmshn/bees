@@ -118,14 +118,14 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	if h == nil {
 		return logbook.Spawn{}, false, exit(ExitRefused, bsname.Cmd+" config", nil, "%s: this bs has no adapter for harness %s; nothing was made", name, kind)
 	}
-	// Prepare is pure, so it runs before anything is made: a refused launch leaves nothing.
-	launch, err := h.Prepare(c.workerStart(name, ws, doorbell(name, bead.ID, req.By), deny))
-	if err != nil {
-		return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s: its harness refused the launch; nothing was made", name)
-	}
 	text := prompt.Text(prompt.Worker, c.Project, ws.Kind, g.Types())
 	if g.Reviewed() {
 		text += prompt.Host(prompt.Worker, c.Review.Name())
+	}
+	// Prepare is pure, so it runs before anything is made: a refused launch leaves nothing.
+	launch, err := h.Prepare(c.workerStart(name, ws, doorbell(name, bead.ID, req.By), deny, text))
+	if err != nil {
+		return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s: its harness refused the launch; nothing was made", name)
 	}
 	launch.Files = withPrompt(launch.Files, text)
 	// A launch too long to type would fail after the record (motif 8): check its longest
@@ -267,15 +267,15 @@ func (c *Core) resume(ctx context.Context, sp logbook.Spawn, bead port.Bead, req
 	if err != nil {
 		return err
 	}
-	st0 := c.workerStart(sp.Name, sp.Workspace, doorbell(sp.Name, bead.ID, sp.By), deny)
+	text := prompt.Text(prompt.Worker, c.Project, sp.Workspace.Kind, e.Types())
+	if e.Reviewed() {
+		text += prompt.Host(prompt.Worker, c.Review.Name())
+	}
+	st0 := c.workerStart(sp.Name, sp.Workspace, doorbell(sp.Name, bead.ID, sp.By), deny, text)
 	st0.Continue, st0.Record = sp.Read, sp.Record
 	launch, err := h.Prepare(st0)
 	if err != nil {
 		return exit(ExitRefused, "", err, "%s: its harness refused the restart; nothing started", sp.Name)
-	}
-	text := prompt.Text(prompt.Worker, c.Project, sp.Workspace.Kind, e.Types())
-	if e.Reviewed() {
-		text += prompt.Host(prompt.Worker, c.Review.Name())
 	}
 	launch.Files = withPrompt(launch.Files, text)
 	var replaces logbook.ID
@@ -318,10 +318,10 @@ func goalFlags(g goal.Goal) string {
 }
 
 // workerStart is the start of worker name in dir that every launch of it prepares, a first
-// spawn's and a resume's alike: one place for its workspace, prompt file, PATH, guards and
+// spawn's and a resume's alike: one place for its workspace, prompt, PATH, guards and
 // shell timeout.
-func (c *Core) workerStart(name string, ws logbook.Workspace, bell string, deny []string) port.Start {
-	return port.Start{Role: port.Worker, Name: name, Dir: ws.Dir, Branch: ws.Branch, PushTo: ws.Push, Repo: ws.Repo, PromptFile: "{{prompt.md}}", Doorbell: bell,
+func (c *Core) workerStart(name string, ws logbook.Workspace, bell string, deny []string, text string) port.Start {
+	return port.Start{Role: port.Worker, Name: name, Dir: ws.Dir, Branch: ws.Branch, PushTo: ws.Push, Repo: ws.Repo, PromptFile: "{{prompt.md}}", Prompt: text, Doorbell: bell,
 		Path: c.WorkerPath, Deny: deny, ShellTimeout: ShellTimeout}
 }
 

@@ -133,8 +133,9 @@ func TestContractSpawnRefusals(t *testing.T) {
 		{"spawn-bad-value", "", []string{"--goal", "verdict=x"}, []string{"verdict takes no target"}},
 		{"spawn-push-dash", "", []string{"--goal", "push=-x"}, []string{"a target can't start with -"}},
 		{"spawn-review-no-remote", "", []string{"--goal", "review=https://github.com/cli/cli/pull/1"}, []string{"belongs to no github repo"}},
-		{"spawn-two-goals", "T4", []string{"--goal", "verdict", "--goal", "note"}, []string{"one goal per spawn"}},
+		// Last: until T4 the two-goal spawn is accepted, and spawns toy-1.
 		{"spawn-two-bad", "T4", []string{"--goal", "verdict=x", "--goal", "nope"}, []string{"one goal per spawn"}},
+		{"spawn-two-goals", "T4", []string{"--goal", "verdict", "--goal", "note"}, []string{"one goal per spawn"}},
 	} {
 		k.c(c.id, c.ticket, func(t *testing.T, x *toy) {
 			must(t, x.queen(append(append([]string{"spawn"}, c.args...), "toy-1")...), 2, c.want...)

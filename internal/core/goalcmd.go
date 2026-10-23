@@ -58,17 +58,15 @@ func (c *Core) Check(ctx context.Context, name string, self int) ([]logbook.Chec
 
 // GoalReq is a bs goal call: an amend (Values), a waiver (Waive), or the keeper's discard.
 type GoalReq struct {
-	By     string // who records it
-	Self   int    // the calling bs: its ancestors say whether a worker or a queen runs it
+	By     string // who records it: May has let it
 	Name   string
 	Values []string // the new --goal values; ["discard"] is a discard
 	Waive  string
 }
 
 // Goal amends worker name's live, incomplete goal, waives one of its checks, or discards
-// it (ADR-0010). The queen or the keeper may amend or waive, never a worker or anything it
-// started; only the keeper, with no recorded queen or worker among its ancestors, may
-// discard, at any time. An amend re-runs the spawn-time refusals for the new goal, and the
+// it (ADR-0010). Who may is the permission table's (May): the queen or the keeper amends
+// or waives, only the keeper discards, at any time. An amend re-runs the spawn-time refusals for the new goal, and the
 // worker is told its new goal.
 func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error) {
 	discard := slices.Equal(req.Values, []string{"discard"})
@@ -81,18 +79,6 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 		return logbook.Effective{}, exit(ExitRefused, bsname.Cmd+" status", nil, "no worker %s", req.Name)
 	case (len(req.Values) > 0) == (req.Waive != ""):
 		return logbook.Effective{}, exit(ExitRefused, "", nil, "%s: give the new goal (--goal values, or discard) or --waive <check>, one of them", what)
-	}
-	up, err := c.recordedAbove(ctx, req.Self)
-	if err != nil {
-		return logbook.Effective{}, exit(ExitCantCheck, "", err, "%s: can't tell who runs it", what)
-	}
-	for _, s := range up {
-		switch {
-		case s != Queen(c.Project):
-			return logbook.Effective{}, exit(ExitRefused, bsname.Cmd+" send "+sp.By+" \"...\"", nil, "%s: run by worker %s or something it started; a worker never changes a goal", what, s)
-		case discard:
-			return logbook.Effective{}, exit(ExitRefused, "ask the keeper", nil, "%s discard: only the keeper discards a goal, from a shell no queen or worker started (%s runs this)", what, s)
-		}
 	}
 	e, err := c.Logbook.Goal(ctx, sp)
 	if err != nil {
@@ -193,24 +179,4 @@ func cutAt(g goal.Goal) string {
 		return g.Type + "=" + g.Target
 	}
 	return ""
-}
-
-// recordedAbove names each session this logbook recorded (its queen, an open spawn's
-// start) among self and its ancestors.
-func (c *Core) recordedAbove(ctx context.Context, self int) ([]string, error) {
-	up, err := c.ancestors(self)
-	if err != nil {
-		return nil, err
-	}
-	var out []string
-	for _, pid := range up {
-		who, err := c.recordedAs(ctx, pid)
-		if err != nil {
-			return nil, err
-		}
-		if who != "" && !slices.Contains(out, who) {
-			out = append(out, who)
-		}
-	}
-	return out, nil
 }

@@ -304,9 +304,10 @@ func (c Client) Workspaces(ctx context.Context) ([]Workspace, error) {
 	return out, nil
 }
 
-// PaneDir is a pane and where it works: its shell's cwd and its foreground process's.
+// PaneDir is a pane and where it works: its workspace, its shell's cwd and its
+// foreground process's.
 type PaneDir struct {
-	ID, Cwd, ForegroundCwd string
+	ID, Workspace, Cwd, ForegroundCwd string
 }
 
 // PaneDirs lists every pane, in any workspace, with where it works.
@@ -315,6 +316,7 @@ func (c Client) PaneDirs(ctx context.Context) ([]PaneDir, error) {
 		Result struct {
 			Panes []struct {
 				ID            string `json:"pane_id"`
+				Workspace     string `json:"workspace_id"`
 				Cwd           string `json:"cwd"`
 				ForegroundCwd string `json:"foreground_cwd"`
 			} `json:"panes"`
@@ -325,7 +327,7 @@ func (c Client) PaneDirs(ctx context.Context) ([]PaneDir, error) {
 	}
 	var out []PaneDir
 	for _, p := range r.Result.Panes {
-		out = append(out, PaneDir{ID: p.ID, Cwd: p.Cwd, ForegroundCwd: p.ForegroundCwd})
+		out = append(out, PaneDir{ID: p.ID, Workspace: p.Workspace, Cwd: p.Cwd, ForegroundCwd: p.ForegroundCwd})
 	}
 	return out, nil
 }

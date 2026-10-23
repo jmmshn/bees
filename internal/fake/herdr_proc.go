@@ -70,3 +70,15 @@ func (h *Herdr) FailInfo(n int) {
 	defer h.mu.Unlock()
 	h.infoFails = n
 }
+
+// Split adds a shell pane to workspace on session, as a split in herdr's UI does, and
+// returns its id ("" for a workspace it doesn't have): a pane no entry recorded.
+func (h *Herdr) Split(session, workspace string) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	w := h.server(session).find(workspace)
+	if w == nil {
+		return ""
+	}
+	return w.add(w.panes[0].cwd).id
+}

@@ -177,8 +177,10 @@ func TestOpenMigratesAVersion1Logbook(t *testing.T) {
 	if q, ok, err := lb.LatestQueen(ctx, "queen-toy"); err != nil || !ok || q.Session != "default" || q.PID != 10 {
 		t.Fatalf("queen = %+v, %v, %v", q, ok, err)
 	}
-	if in, err := lb.InPane(ctx, "default", "w3:p1"); err != nil || len(in) != 1 || in[0].Name != "toy-1" || in[0].Process.PID != 20 {
-		t.Fatalf("InPane = %+v, %v", in, err)
+	if in, err := lb.Sessions(ctx); err != nil || !slices.ContainsFunc(in, func(r logbook.Recorded) bool {
+		return r.Name == "toy-1" && r.Session == "default" && r.Pane == "w3:p1" && r.Process.PID == 20
+	}) {
+		t.Fatalf("Sessions = %+v, %v", in, err)
 	}
 }
 
@@ -352,5 +354,71 @@ func TestAMigrationSaysWhenItKeptAnEarlierCopy(t *testing.T) {
 	}
 	if again := open(t, path); again.KeptCopy != "" {
 		t.Fatalf("a logbook already migrated reports a kept copy: %q", again.KeptCopy)
+	}
+}
+
+// A logbook opened AtFirstWrite reads empty and makes no file until its first write, which
+// makes it once: of parallel first writers exactly one created it (bees-13.59, OQ-K1).
+func TestALogbookIsMadeAtItsFirstWrite(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "sub", "bees.db")
+	lb, err := logbook.AtFirstWrite(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sps, err := lb.LatestSpawns(ctx); err != nil || len(sps) != 0 {
+		t.Fatalf("an unmade logbook reads %v, %v; want none", sps, err)
+	}
+	lb.Close()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("a logbook nothing wrote to was made: %v", err)
+	}
+	const n = 8
+	created := make([]bool, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			lb, err := logbook.AtFirstWrite(ctx, path)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer lb.Close()
+			if _, err := lb.Send(ctx, "keeper", "queen-toy", "hi"); err != nil {
+				t.Error(err)
+			}
+			created[i] = lb.Created()
+		}()
+	}
+	wg.Wait()
+	if c := len(slices.DeleteFunc(created, func(b bool) bool { return !b })); c != 1 {
+		t.Fatalf("%d writers made the logbook, want 1", c)
+	}
+	ro, err := logbook.OpenReadOnly(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ro.Close()
+	if ms, err := ro.Unread(ctx, "queen-toy"); err != nil || len(ms) != n {
+		t.Fatalf("%d messages, %v; want %d", len(ms), err, n)
+	}
+}
+
+// A file with no entries table (an older bs mid-creation) reads as an empty logbook.
+func TestATablelessFileReadsEmpty(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "bees.db")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lb, err := logbook.OpenReadOnly(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lb.Close()
+	if sps, err := lb.LatestSpawns(ctx); err != nil || len(sps) != 0 {
+		t.Fatalf("LatestSpawns = %v, %v", sps, err)
 	}
 }

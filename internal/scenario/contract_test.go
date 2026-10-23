@@ -358,14 +358,14 @@ func TestContractAmendWaiveDiscard(t *testing.T) {
 	k.c("amend-two-values", "", func(t *testing.T, x *toy) {
 		must(t, x.queen("goal", A, "verdict", "note"), 2, "one goal per spawn")
 	})
-	k.c("amend-as-worker", "T1", func(t *testing.T, x *toy) {
+	k.c("amend-as-worker", "", func(t *testing.T, x *toy) {
 		must(t, x.keeper("goal", "--as", A, A, "verdict"), 2, A, "worker")
 	})
 	k.c("amend-after-landed", "", func(t *testing.T, x *toy) { must(t, x.queen("goal", M, "note"), 2, "complete (landed)") })
-	k.c("discard-as-queen", "T1", func(t *testing.T, x *toy) {
+	k.c("discard-as-queen", "", func(t *testing.T, x *toy) {
 		must(t, x.queen("goal", A, "discard"), 2, "queen-toy", "only the keeper discards")
 	})
-	k.c("discard-as-queen-by", "T1", func(t *testing.T, x *toy) {
+	k.c("discard-as-queen-by", "", func(t *testing.T, x *toy) {
 		if g := lastGoal(x, spA); strings.Contains(g, `"discard":true`) {
 			fatalf(t, "the queen's discard was recorded: %s", g)
 		}
@@ -471,23 +471,23 @@ func TestContractIdentity(t *testing.T) {
 		k.step(x, I, "env", "BS_PROJECT=")
 		must(t, r, 0, "warning: ignoring BS_PROJECT")
 	})
-	k.c("ident-end-sibling", "T1", func(t *testing.T, x *toy) {
+	k.c("ident-end-sibling", "", func(t *testing.T, x *toy) {
 		must(t, k.w(x, I, "end", S1), 2, I+" runs this as a worker; only the queen or the keeper ends a worker")
 	})
-	k.c("ident-end-incomplete-sibling", "T1", func(t *testing.T, x *toy) {
+	k.c("ident-end-incomplete-sibling", "", func(t *testing.T, x *toy) {
 		must(t, k.w(x, I, "end", "--incomplete", S2), 2, I+" runs this as a worker")
 	})
-	k.c("ident-prune", "T1", func(t *testing.T, x *toy) { must(t, k.w(x, I, "prune"), 2, I+" runs this as a worker") })
-	k.c("ident-as-other", "T1", func(t *testing.T, x *toy) { must(t, k.w(x, I, "status", "--as", S1), 2, "--as") })
+	k.c("ident-prune", "", func(t *testing.T, x *toy) { must(t, k.w(x, I, "prune"), 2, I+" runs this as a worker") })
+	k.c("ident-as-other", "", func(t *testing.T, x *toy) { must(t, k.w(x, I, "status", "--as", S1), 2, "--as") })
 	k.c("ident-inbox-as-other", "", func(t *testing.T, x *toy) { must(t, k.w(x, I, "inbox", "--as", S1), 2, "--as") })
-	k.c("ident-check-other", "T1", func(t *testing.T, x *toy) { must(t, k.w(x, I, "check", S1), 2, I+" runs this as a worker") })
-	k.c("status-first-line-worker", "T1", func(t *testing.T, x *toy) {
+	k.c("ident-check-other", "", func(t *testing.T, x *toy) { must(t, k.w(x, I, "check", S1), 2, I+" runs this as a worker") })
+	k.c("status-first-line-worker", "", func(t *testing.T, x *toy) {
 		r := k.w(x, I, "status")
 		if first, _, _ := strings.Cut(r.out, "\n"); !strings.HasPrefix(first, "as "+I+" (worker of toy, spawned ") || !strings.HasSuffix(first, "· logbook "+x.logbook) {
 			fatalf(t, "status's first line %q", first)
 		}
 	})
-	k.c("status-first-line-keeper", "T1", func(t *testing.T, x *toy) {
+	k.c("status-first-line-keeper", "", func(t *testing.T, x *toy) {
 		r := x.keeper("status")
 		if first, _, _ := strings.Cut(r.out, "\n"); first != "as keeper (keeper of toy) · logbook "+x.logbook {
 			fatalf(t, "status's first line %q", first)
@@ -495,14 +495,14 @@ func TestContractIdentity(t *testing.T) {
 	})
 	// The tripwire: a herdr pane no entry recorded, inside a live spawn's workspace, is
 	// that worker, with a warning.
-	k.c("ident-tripwire", "T1", func(t *testing.T, x *toy) {
+	k.c("ident-tripwire", "", func(t *testing.T, x *toy) {
 		x.shell(x.session, "stray", spI.Workspace.Dir)
 		must(t, k.w(x, "stray", "status"), 0, "as "+I+" (worker of toy", "warning")
 		must(t, k.w(x, "stray", "end", S1), 2, I+" runs this as a worker")
 	})
 	// A residual escape (Amendment 4): a pane outside any recorded tree and workspace
 	// reads as the keeper. It documents the escape; it is no fence.
-	k.c("ident-outside-reads-keeper", "T1", func(t *testing.T, x *toy) {
+	k.c("ident-outside-reads-keeper", "", func(t *testing.T, x *toy) {
 		x.shell(x.session, "outside", x.repo)
 		must(t, k.w(x, "outside", "status"), 0, "as keeper (keeper of toy)")
 	})
@@ -518,20 +518,20 @@ func TestContractAs(t *testing.T) {
 	k.c("as-done-simulates-worker", "", func(t *testing.T, x *toy) {
 		must(t, x.keeper("done", "--as", W, "--answer", "yes", "--report", "r"), 0, "handed off to queen-toy")
 	})
-	k.c("as-check-own", "T1", func(t *testing.T, x *toy) {
+	k.c("as-check-own", "", func(t *testing.T, x *toy) {
 		must(t, x.keeper("check", "--as", W2, W2), 7, "FAIL verdict_given")
 	})
-	k.c("as-check-other", "T1", func(t *testing.T, x *toy) {
+	k.c("as-check-other", "", func(t *testing.T, x *toy) {
 		must(t, x.keeper("check", "--as", W2, W), 2, W2+" runs this as a worker")
 	})
-	k.c("as-end-as-worker", "T1", func(t *testing.T, x *toy) {
+	k.c("as-end-as-worker", "", func(t *testing.T, x *toy) {
 		must(t, x.keeper("end", "--as", W2, W), 2, W2+" runs this as a worker")
 	})
 	k.c("as-send-queen-down", "", func(t *testing.T, x *toy) {
 		must(t, x.keeper("send", "--as", "queen-toy", W2, "from the queen"), 0, "to "+W2)
 		must(t, k.w(x, W2, "inbox"), 0, "from queen-toy", "from the queen")
 	})
-	k.c("as-inbox-peeks", "T1", func(t *testing.T, x *toy) {
+	k.c("as-inbox-peeks", "", func(t *testing.T, x *toy) {
 		must(t, x.queen("send", W2, "peek me"), 0)
 		must(t, x.keeper("inbox", "--as", W2), 0, "peek me")
 		must(t, x.keeper("inbox", "--as", W2), 0, "peek me") // marked nothing read
@@ -543,7 +543,6 @@ func TestContractAs(t *testing.T) {
 // Parallel first spawns on a new project, with a concurrent read-only scan of its
 // logbook (bees-13.59): every spawn works and one prints R48's new logbook line.
 func TestContractParallelFirstSpawns(t *testing.T) {
-	xfail(t, "T1")
 	x := newToy(t)
 	const n = 11
 	for i := 1; i <= n; i++ {
@@ -669,10 +668,10 @@ func TestContractCrossProject(t *testing.T) {
 			fatalf(t, "%d queen entries in other's logbook, want 1 (%v)", q, err)
 		}
 	})
-	k.c("foreign-end", "T2", func(t *testing.T, x *toy) {
+	k.c("foreign-end", "", func(t *testing.T, x *toy) {
 		must(t, k.w(x, "toy-1", "end", "other-1"), 2, "you are toy-1 of toy; message queen-other")
 	})
-	k.c("foreign-spawn", "T2", func(t *testing.T, x *toy) {
+	k.c("foreign-spawn", "", func(t *testing.T, x *toy) {
 		must(t, k.w(x, "toy-1", "spawn", "--goal", "verdict", "other-1"), 2, "you are toy-1 of toy; message queen-other")
 	})
 	k.c("foreign-status", "", func(t *testing.T, x *toy) { must(t, k.w(x, "toy-1", "status"), 0) })

@@ -48,7 +48,7 @@ func (l *Logbook) RecordQueen(ctx context.Context, q Queen, alive func(Queen) (b
 			}
 		}
 		ok = true
-		_, err = insert(ctx, tx, entry{kind: "queen", actor: q.Name, subject: q.Name, data: q})
+		_, err = insertOn(ctx, tx, entry{kind: "queen", actor: q.Name, subject: q.Name, data: q})
 		return err
 	})
 	if err != nil {
@@ -126,7 +126,7 @@ func (l *Logbook) RecordStartOnce(ctx context.Context, s Start) (got Start, reco
 		case !errors.Is(err, sql.ErrNoRows):
 			return err
 		}
-		id, err := insert(ctx, tx, entry{kind: "started", actor: s.Name, subject: s.Name, ref: s.Spawn, data: s})
+		id, err := insertOn(ctx, tx, entry{kind: "started", actor: s.Name, subject: s.Name, ref: s.Spawn, data: s})
 		if err != nil {
 			return err
 		}

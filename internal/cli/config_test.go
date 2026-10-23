@@ -194,7 +194,7 @@ func TestBSProject(t *testing.T) {
 	if code != 1 {
 		t.Errorf("doctor: exit %d", code)
 	}
-	wantIn(t, out, "FAIL project: BS_PROJECT=bees names another project than the repo you are in (mytoy)", "the checks below run on the global file alone", "next: env -u BS_PROJECT", "WARN env: BS_PROJECT is set and overrides the config here (outside a herdr pane), for every bs command run from this shell")
+	wantIn(t, out, "FAIL project: BS_PROJECT=bees names another project than the repo you are in (mytoy)", "the checks below run on the global file alone", "next: env -u BS_PROJECT", "WARN env: BS_PROJECT is set and overrides the config here (from the keeper's shell), for every bs command run from this shell")
 	_, out, _ = r.run(r.repo, []string{"BS_LOGBOOK=/x"}, "doctor")
 	wantIn(t, out, "WARN env: BS_LOGBOOK is set; bs doesn't read it (an older bs did)")
 	// An unrecorded pane is outside one (bees-13.14): doctor names the old bs's pins as unread.

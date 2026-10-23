@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -104,5 +105,38 @@ func TestShellTimeoutIsTheWorkersEnv(t *testing.T) {
 	}
 	if s := workerSettings(t, port.Start{}); s["env"] != nil {
 		t.Fatalf("env = %s, want none without a ShellTimeout", s["env"])
+	}
+}
+
+// A worker's autoMode says whose worktree and branch these are and lets its routine work
+// through (bees-1.51): the rebuild shipped only $defaults and the classifier gated the
+// worker's own push and gh pr create (bees-13.72). Pinned word for word, so a rewrite
+// can't drop it silently again.
+func TestAutoModeKnowsTheWorkersOwnBranch(t *testing.T) {
+	autoMode := func(st port.Start) map[string][]string {
+		var a map[string][]string
+		if err := json.Unmarshal(workerSettings(t, st)["autoMode"], &a); err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	build := "Running this repository's own build, lint and test commands (such as go vet, go test, go build -o into the worktree, pre-commit) inside the worktree /wt/bees-8."
+	tools := "Running bs and bd, the bees tools, to read and send its project's messages and to read and update its own beads."
+	want := map[string][]string{
+		"environment": {"$defaults", "Host containment: a bees worker, working in its own git worktree /wt/bees-8 on its own branch bees-8 of the repository /repo."},
+		"allow": {"$defaults", build,
+			"Committing to and pushing (never force-pushing) the worker's own branch bees-8 to the repository's origin, opening a pull request from it, and pushing further commits to that open pull request.",
+			tools},
+	}
+	if got := autoMode(port.Start{Dir: "/wt/bees-8", Branch: "bees-8", Repo: "/repo"}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("autoMode = %q,\nwant %q", got, want)
+	}
+	// A push goal's workspace has no branch of its own: it claims none and pushes none.
+	want = map[string][]string{
+		"environment": {"$defaults", "Host containment: a bees worker, working in its own git worktree /wt/bees-8 of the repository /repo."},
+		"allow":       {"$defaults", build, tools},
+	}
+	if got := autoMode(port.Start{Dir: "/wt/bees-8", Repo: "/repo"}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("no branch: autoMode = %q,\nwant %q", got, want)
 	}
 }

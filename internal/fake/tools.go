@@ -67,6 +67,10 @@ type PR struct {
 	// Next, when set, replaces CI once gh pr checks has answered with CI as it is: a CI run
 	// that finishes after bs has seen it pending, however slow the machine.
 	Next *[]Check
+	// Created is when it was opened (gh's createdAt); MergeCommit the commit a merge made
+	// (mergeCommit.oid), "" while unmerged.
+	Created     time.Time
+	MergeCommit string
 }
 
 // Check is one CI check of a PR; an Optional one isn't required by branch protection, so
@@ -81,10 +85,13 @@ func (c Check) bucket() string {
 	return map[string]string{"SUCCESS": "pass", "FAILURE": "fail", "PENDING": "pending", "SKIPPED": "skipping", "CANCELLED": "cancel"}[c.State]
 }
 
-// Comment is one PR comment or review.
+// Comment is one PR comment or review. A review gh pr review posted has an ID and a
+// State (COMMENTED, APPROVED, CHANGES_REQUESTED).
 type Comment struct {
 	Author, Body string
 	At           time.Time
+	ID           int
+	State        string
 }
 
 // GH is a fake gh: pr view, pr checks, pr list, and the api paths bs reads (compare,
@@ -105,7 +112,15 @@ type GH struct {
 	// rules/branches/<b>, with branches/<b>'s classic list empty (jmmshn/bees's shape,
 	// probed).
 	Requires map[string][]string
+	// Login is the account gh runs as ("jmmshn" when ""): GitHub refuses it approving or
+	// requesting changes on its own PR.
+	Login string
+	// Calls is every argv gh was called with, oldest first.
+	Calls  [][]string
+	review int // the last review id given
 }
+
+func (g *GH) login() string { return cmp.Or(g.Login, "jmmshn") }
 
 // Edit changes PR url under the lock gh's calls take: a test's change while a bs done
 // --wait polls.
@@ -157,6 +172,7 @@ func (g *GH) Run(ctx context.Context, _ string, argv ...string) ([]byte, error) 
 		return nil, fmt.Errorf("%s: %w", strings.Join(argv, " "), ctx.Err())
 	}
 	defer g.mu.Unlock()
+	g.Calls = append(g.Calls, slices.Clone(argv))
 	if g.Offline {
 		return nil, ghFail(argv, "error connecting to api.github.com")
 	}
@@ -167,7 +183,7 @@ func (g *GH) Run(ctx context.Context, _ string, argv ...string) ([]byte, error) 
 		return g.list(argv)
 	}
 	if len(argv) < 4 || argv[1] != "pr" {
-		return nil, ghFail(argv, "fake gh: only pr view, pr checks, pr list and api")
+		return nil, ghFail(argv, "fake gh: only pr view, pr checks, pr list, pr review and api")
 	}
 	pr := g.PRs[argv[3]]
 	if pr == nil {
@@ -176,40 +192,15 @@ func (g *GH) Run(ctx context.Context, _ string, argv ...string) ([]byte, error) 
 	if err := g.refresh(pr); err != nil {
 		return nil, ghFail(argv, err.Error())
 	}
-	repo := strings.TrimPrefix(pr.URL[:strings.Index(pr.URL, "/pull/")], "https://github.com/")
-	commits := []any{}
-	for _, c := range pr.Commits {
-		commits = append(commits, map[string]string{"oid": c})
-	}
-	fields := map[string]any{
-		"url": pr.URL, "state": pr.State, "isDraft": pr.Draft, "headRefName": pr.Head, "headRefOid": pr.HeadOID,
-		"baseRefName": pr.Base, "author": map[string]string{"login": pr.Author}, "commits": commits,
-		"isCrossRepository": pr.Fork != "", "maintainerCanModify": pr.MaintainerCanModify,
-		"headRepository": map[string]string{"nameWithOwner": cmp.Or(pr.Fork, repo)},
-	}
-	cs, rs := []any{}, []any{} // gh says [] for none, never null
-	for _, c := range pr.Comments {
-		cs = append(cs, map[string]any{"author": map[string]string{"login": c.Author}, "body": c.Body, "createdAt": c.At.UTC().Format(time.RFC3339)})
-	}
-	for _, c := range pr.Reviews {
-		rs = append(rs, map[string]any{"author": map[string]string{"login": c.Author}, "body": c.Body, "submittedAt": c.At.UTC().Format(time.RFC3339)})
-	}
-	fields["comments"], fields["reviews"] = cs, rs
 	want := ""
 	if i := slices.Index(argv, "--json"); i >= 0 && i+1 < len(argv) {
 		want = argv[i+1]
 	}
 	switch argv[2] {
 	case "view":
-		out := map[string]any{}
-		for _, f := range strings.Split(want, ",") {
-			v, ok := fields[f]
-			if !ok {
-				return nil, ghFail(argv, "Unknown JSON field: \""+f+"\"")
-			}
-			out[f] = v
-		}
-		return json.Marshal(out)
+		return pick(argv, g.fields(pr), want)
+	case "review":
+		return g.postReview(argv, pr)
 	case "checks":
 		cs := pr.CI
 		if slices.Contains(argv, "--required") {
@@ -248,9 +239,100 @@ func (g *GH) Run(ctx context.Context, _ string, argv ...string) ([]byte, error) 
 	return nil, ghFail(argv, "fake gh: no pr "+argv[2])
 }
 
+// fields is every --json field gh pr view and gh pr list answer for pr.
+func (g *GH) fields(pr *PR) map[string]any {
+	repo := strings.TrimPrefix(pr.URL[:strings.Index(pr.URL, "/pull/")], "https://github.com/")
+	n, _ := strconv.Atoi(pr.URL[strings.LastIndex(pr.URL, "/")+1:])
+	commits := []any{}
+	for _, c := range pr.Commits {
+		commits = append(commits, map[string]string{"oid": c})
+	}
+	var merge any // gh says null for an unmerged PR's mergeCommit
+	if pr.MergeCommit != "" {
+		merge = map[string]string{"oid": pr.MergeCommit}
+	}
+	fields := map[string]any{
+		"number": n, "url": pr.URL, "state": pr.State, "isDraft": pr.Draft, "headRefName": pr.Head, "headRefOid": pr.HeadOID,
+		"baseRefName": pr.Base, "author": map[string]string{"login": pr.Author}, "commits": commits,
+		"isCrossRepository": pr.Fork != "", "maintainerCanModify": pr.MaintainerCanModify,
+		"headRepository": map[string]string{"nameWithOwner": cmp.Or(pr.Fork, repo)},
+		"createdAt":      pr.Created.UTC().Format(time.RFC3339), "mergeCommit": merge,
+	}
+	cs, rs := []any{}, []any{} // gh says [] for none, never null
+	for _, c := range pr.Comments {
+		cs = append(cs, map[string]any{"author": map[string]string{"login": c.Author}, "body": c.Body, "createdAt": c.At.UTC().Format(time.RFC3339)})
+	}
+	for _, c := range pr.Reviews {
+		rs = append(rs, map[string]any{"author": map[string]string{"login": c.Author}, "body": c.Body, "submittedAt": c.At.UTC().Format(time.RFC3339)})
+	}
+	fields["comments"], fields["reviews"] = cs, rs
+	return fields
+}
+
+// pick is fields cut to want's comma-separated names; one gh doesn't know is its error.
+func pick(argv []string, fields map[string]any, want string) ([]byte, error) {
+	out := map[string]any{}
+	for _, f := range strings.Split(want, ",") {
+		v, ok := fields[f]
+		if !ok {
+			return nil, ghFail(argv, "Unknown JSON field: \""+f+"\"")
+		}
+		out[f] = v
+	}
+	return json.Marshal(out)
+}
+
+// postReview is gh pr review <url> --comment|--approve|--request-changes --body <text> (or
+// -b, or --body-file <path>): a review by Login. Like GitHub, it refuses approving or
+// requesting changes on Login's own PR, and like gh it prints nothing on success.
+// ponytail: --body-file - (stdin) is refused: the fake's Run has no stdin.
+func (g *GH) postReview(argv []string, pr *PR) ([]byte, error) {
+	state := ""
+	for flag, s := range map[string]string{"--comment": "COMMENTED", "-c": "COMMENTED", "--approve": "APPROVED", "-a": "APPROVED", "--request-changes": "CHANGES_REQUESTED", "-r": "CHANGES_REQUESTED"} {
+		if slices.Contains(argv, flag) {
+			if state != "" {
+				return nil, ghFail(argv, "need exactly one of --approve, --request-changes, or --comment")
+			}
+			state = s
+		}
+	}
+	if state == "" {
+		return nil, ghFail(argv, "--approve, --request-changes, or --comment required when not running interactively")
+	}
+	body := ""
+	for i, a := range argv {
+		if i+1 >= len(argv) {
+			break
+		}
+		switch a {
+		case "--body", "-b":
+			body = argv[i+1]
+		case "--body-file", "-F":
+			if argv[i+1] == "-" {
+				return nil, ghFail(argv, "fake gh: --body-file - reads stdin, which the fake has none of: pass --body or a file")
+			}
+			b, err := os.ReadFile(argv[i+1])
+			if err != nil {
+				return nil, ghFail(argv, err.Error())
+			}
+			body = string(b)
+		}
+	}
+	if state != "APPROVED" && strings.TrimSpace(body) == "" {
+		return nil, ghFail(argv, "body cannot be blank for comment and request-changes reviews")
+	}
+	if pr.Author == g.login() && state != "COMMENTED" {
+		verb := map[string]string{"APPROVED": "approve", "CHANGES_REQUESTED": "request changes on"}[state]
+		return nil, ghFail(argv, "failed to create review: GraphQL: Review Can not "+verb+" your own pull request (addPullRequestReview)")
+	}
+	g.review++
+	pr.Reviews = append(pr.Reviews, Comment{Author: g.login(), Body: body, At: time.Now(), ID: g.review, State: state})
+	return nil, nil
+}
+
 // api answers gh api repos/<o>/<r> (its default branch, main), and under it
-// compare/<base>...<head>, branches/<branch> and rules/branches/<branch>; a ref or branch
-// the bare repo doesn't have is a 404, as on GitHub.
+// compare/<base>...<head>, branches/<branch>, rules/branches/<branch> and pulls/<n>/reviews;
+// a ref or branch the bare repo doesn't have is a 404, as on GitHub.
 func (g *GH) api(argv []string) ([]byte, error) {
 	notFound := &port.ExitError{Argv: argv, Code: 1, Stderr: []byte("gh: Not Found (HTTP 404)\n")}
 	parts := strings.SplitN(argv[2], "/", 4)
@@ -269,6 +351,17 @@ func (g *GH) api(argv []string) ([]byte, error) {
 	}
 	rest := parts[3]
 	switch {
+	case strings.HasPrefix(rest, "pulls/") && strings.HasSuffix(rest, "/reviews"):
+		pr := g.PRs["https://github.com/"+parts[1]+"/"+parts[2]+"/pull/"+strings.TrimSuffix(strings.TrimPrefix(rest, "pulls/"), "/reviews")]
+		if pr == nil {
+			return nil, notFound
+		}
+		out := []any{}
+		for _, r := range pr.Reviews {
+			out = append(out, map[string]any{"id": r.ID, "user": map[string]string{"login": r.Author}, "body": r.Body, "state": cmp.Or(r.State, "COMMENTED"),
+				"html_url": fmt.Sprintf("%s#pullrequestreview-%d", pr.URL, r.ID), "submitted_at": r.At.UTC().Format(time.RFC3339)})
+		}
+		return json.Marshal(out)
 	case strings.HasPrefix(rest, "compare/"):
 		base, head, _ := strings.Cut(strings.TrimPrefix(rest, "compare/"), "...")
 		for _, pr := range g.PRs {
@@ -308,9 +401,12 @@ func (g *GH) api(argv []string) ([]byte, error) {
 	return nil, ghFail(argv, "fake gh: api "+argv[2])
 }
 
-// list is gh pr list [--repo OWNER/REPO] --head <branch> --state <state> --json headRefOid:
-// the PRs of that repo (by URL) whose head branch is branch, in state (open, merged,
-// closed, all).
+// list is gh pr list [--repo OWNER/REPO] --head <branch> [--state <state>] [--limit <n>]
+// --json <fields>: the PRs of that repo (by URL) whose head branch is branch, in state
+// (open by default, merged, closed, all), newest first, at most n (30 by default). Like
+// gh's, --head matches a fork's PR from a branch of the same name too: only
+// isCrossRepository tells them apart (bees-13.60 V2), and --head owner:branch matches
+// nothing, exit 0 (probed on gh 2.102, bees-13.68).
 func (g *GH) list(argv []string) ([]byte, error) {
 	flag := func(name string) string {
 		if i := slices.Index(argv, name); i >= 0 && i+1 < len(argv) {
@@ -318,18 +414,31 @@ func (g *GH) list(argv []string) ([]byte, error) {
 		}
 		return ""
 	}
-	if f := flag("--json"); f != "headRefOid" {
-		return nil, ghFail(argv, "fake gh: pr list --json headRefOid only")
-	}
 	head, state := flag("--head"), strings.ToUpper(cmp.Or(flag("--state"), "open"))
-	out := []map[string]string{}
+	limit, err := strconv.Atoi(cmp.Or(flag("--limit"), "30"))
+	if err != nil {
+		return nil, ghFail(argv, "invalid argument "+strconv.Quote(flag("--limit"))+" for \"-L, --limit\" flag")
+	}
+	var prs []*PR
 	for _, url := range slices.Sorted(maps.Keys(g.PRs)) {
 		if repo := flag("--repo"); repo != "" && !strings.HasPrefix(url, "https://github.com/"+repo+"/pull/") {
 			continue
 		}
 		if pr := g.PRs[url]; pr.Head == head && (state == "ALL" || pr.State == state) {
-			out = append(out, map[string]string{"headRefOid": pr.HeadOID})
+			prs = append(prs, pr)
 		}
+	}
+	slices.SortStableFunc(prs, func(a, b *PR) int { return b.Created.Compare(a.Created) })
+	out := []json.RawMessage{}
+	for _, pr := range prs[:min(limit, len(prs))] {
+		if err := g.refresh(pr); err != nil {
+			return nil, ghFail(argv, err.Error())
+		}
+		row, err := pick(argv, g.fields(pr), flag("--json"))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, row)
 	}
 	return json.Marshal(out)
 }

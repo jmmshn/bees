@@ -15,7 +15,8 @@
 // execs), its output in a DIR/bg-*.out file the result's stdout names; ["child", tag] starts an idle child in its own
 // group, ["child-same-group", tag] one in beesfake's group, ["listen", tag] one listening
 // on a TCP port, ["detach", tag] one that escapes the tree; ["kill", tag] kills one;
-// ["cd", dir] changes the dir later calls run in; ["exit"] exits. Each step appends one
+// ["cd", dir] changes the dir later calls run in; ["env", "K=V"] sets K in
+// their env; ["exit"] exits. Each step appends one
 // JSON line to results.log.
 package main
 
@@ -228,6 +229,11 @@ func run(state string, step []string, kids map[string]int) Result {
 		r.PID = c.Process.Pid
 	case "cd":
 		if err := os.Chdir(tag); err != nil {
+			r.Code, r.Err = -1, err.Error()
+		}
+	case "env":
+		k, v, _ := strings.Cut(tag, "=")
+		if err := os.Setenv(k, v); err != nil {
 			r.Code, r.Err = -1, err.Error()
 		}
 	case "listen":

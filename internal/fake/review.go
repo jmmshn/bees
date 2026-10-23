@@ -45,6 +45,10 @@ type clChange struct {
 	Optional []port.CICheck  // checks no branch protection requires
 	next     *[]port.CICheck // replaces CI once CI has answered (CLHost.Next)
 	landed   string          // the trunk commit it landed as
+	// dir and created are the workspace it was first uploaded from, and when: a real CL
+	// host keys changes by client, never by a branch name (Head "clN" never names a worker).
+	dir     string
+	created time.Time
 }
 
 type clMade struct {
@@ -158,11 +162,30 @@ func (h *CLHost) Upload(dir string, n int, draft bool) string {
 	c := h.changes[n]
 	if c == nil {
 		c = &clChange{Change: port.Change{URL: fmt.Sprintf("https://cl.test/%s/%d", h.RepoName, n), Repo: h.RepoName, Number: n,
-			State: port.Open, Base: "trunk", Editable: true, Head: fmt.Sprintf("cl%d", n)}}
+			State: port.Open, Base: "trunk", Editable: true, Head: fmt.Sprintf("cl%d", n)}, dir: dir, created: time.Now()}
 		h.changes[n] = c
 	}
 	c.Draft, c.HeadCommit = draft, h.head(dir)
 	return c.URL
+}
+
+// Uploaded is every change first uploaded from dir at or after since, newest first: what
+// a CL host answers for a workspace (Review.Changes, bees-13.62).
+func (h *CLHost) Uploaded(dir string, since time.Time) []port.Change {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var out []*clChange
+	for _, c := range h.changes {
+		if c.dir == dir && !c.created.Before(since) {
+			out = append(out, c)
+		}
+	}
+	slices.SortFunc(out, func(a, b *clChange) int { return b.created.Compare(a.created) })
+	var cs []port.Change
+	for _, c := range out {
+		cs = append(cs, c.Change)
+	}
+	return cs
 }
 
 // Set changes change n: its state (open, merged, closed), required CI, or notes.

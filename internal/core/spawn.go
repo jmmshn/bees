@@ -41,6 +41,15 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 		return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s", req.Bead)
 	}
 	g.Fragment = prompt.Hash(g.Type)
+	// Another project's bead would make a worker named for that project, which this
+	// queen's mail can't reach (motif 3): its queen spawns it.
+	if owner := BeadOwner(req.Bead); owner != c.Project {
+		next := ""
+		if owner != "" {
+			next = bsname.Cmd + " send --project " + owner + " " + Queen(owner) + ` "..."`
+		}
+		return logbook.Spawn{}, false, exit(ExitRefused, next, nil, "%s is not a %s bead (want %s-<n>[.<m>…]); nothing was made", req.Bead, c.Project, c.Project)
+	}
 	bead, err := c.Beads.Show(ctx, req.Bead)
 	if err != nil {
 		if errors.Is(err, port.ErrNoBead) {

@@ -13,7 +13,7 @@ The toy's id (`lt<16 digits>`) names everything it owns: its herdr session, its 
 
 ```sh
 go build -o bin/bs ./cmd/bs                    # the build under test, in this checkout
-.claude/skills/live-test/setup.sh [--no-queen] [--harness agy] [<bin dir>]   # prints live.json
+.claude/skills/live-test/setup.sh [--no-queen] [--harness agy] [--cl] [<bin dir>]   # prints live.json
 ```
 
 Setup:
@@ -23,6 +23,7 @@ Setup:
 - starts the toy's own herdr server, `herdr --session <toy> server`, from `env -i` plus `PATH` (your build first), `HOME`, `TERM`, `LANG` and `SHELL`, plus any `XDG_*` you have set: no `BS_*` or `HERDR_*` of your shell reaches its panes. XDG is left as you have it (a separate XDG home broke the keeper's shell and overflowed `sun_path`), so the toy reads the config dir setup wrote;
 - opens a workspace there on the repo, and records in live.json which `bs` its shell runs (`pane_bs`): your shell's rc runs in the pane and may put dirs ahead of your build;
 - with `--harness agy`, checks agy is signed in from the toy's env (agy reads `SSH_CONNECTION`/`SSH_CLIENT`/`SSH_TTY` as a remote session and is "not signed in" there; the toy's bare env drops them, and bs unsets them in an agy worker's pane before its launch; `LIVE_SSH=1` hands them to the toy's panes, as a herdr server started over ssh does), warns when agy's `permissions.allow` lacks `command(bs)`, writes `AGY_MODEL` as `[worker.agy] model`, and records agy's settings path (`AGY_SETTINGS`) and version. The queen stays on Claude Code: tell it to `bs spawn --harness agy …`. agy prompts for each command and file write outside `command(bs)`: answer them in the worker's pane, and log each as a workaround;
+- with `--cl`, makes the toy CL-shaped ([cltoy/](cltoy/README.md)): `cl`, a small script that is both the monorepo client tool (a client is a git clone of the toy repo) and the CL host, goes on every toy pane's PATH, and the toy's config gets a `[workspace.command]` with its VCS keys and `review.host = "command"` over it, so `--goal pr` runs spawn, `cl upload`, `bs done`, `cl submit`, `bs end` and `bs prune` with nothing internal. Teardown removes the tool, its state and the clients;
 - unless `--no-queen`, starts `bs queen` in that pane with your build first on its PATH, answers the folder-trust prompt, and exits 0 only once the queen is up and idle.
 
 Keep every file you write under `<run>/keeper/`; other live tests may run beside yours.

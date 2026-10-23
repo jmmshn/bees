@@ -602,12 +602,63 @@ INSERT INTO entries VALUES ('s1','2026-10-01T00:00:00.000Z','spawned','queen-oth
 		t.Fatal(err)
 	}
 	must(t, x.queen("send", "--project", "other", "queen-other", "hi"), 2, "other.db has an open spawn the old bs started", "other-1", "nothing stored")
-	if _, err := os.Stat(other + ".pre-2"); !os.IsNotExist(err) {
+	if _, err := os.Stat(other + ".pre-3"); !os.IsNotExist(err) {
 		t.Fatalf("send migrated the other project's logbook: %v", err)
 	}
 }
 
 // startsRec is the fake harness, recording each start it prepares.
+// bees-13.13.6: a worker's own bs call records what its session says of itself (agy's
+// conversation id, beesfake's BEESFAKE_CONVERSATION), once per change; the keeper's --as
+// peek records nothing; the resume continues the recorded conversation even before it read
+// its inbox, and a respawn starts with none.
+func TestAResumeContinuesTheObservedConversation(t *testing.T) {
+	x := newToy(t)
+	rec := &startsRec{Harness: x.harness}
+	x.ports.Harness = rec
+	sp := x.spawn("toy-1", "branch")
+	x.harness.Step(t, "toy-1", "env", "BEESFAKE_CONVERSATION=c1")
+	x.harness.Await(t, "toy-1", 1)
+	must(t, x.worker("toy-1", 2, "status"), 0)
+	must(t, x.worker("toy-1", 3, "status"), 0)
+	x.env = append(slices.Clone(x.env), "BEESFAKE_CONVERSATION=keepers")
+	must(t, x.keeper("inbox", "--as", "toy-1"), 0, "peeked as toy-1")
+	observed := func() []string {
+		var out []string
+		rows, err := sql.Open("sqlite", "file:"+x.logbook+"?mode=ro")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		r, err := rows.Query(`SELECT actor, ref, data FROM entries WHERE kind = 'observed' ORDER BY rowid`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+		for r.Next() {
+			var actor, ref, data string
+			if err := r.Scan(&actor, &ref, &data); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, actor+" "+ref+" "+data)
+		}
+		return out
+	}
+	if got, want := observed(), []string{"toy-1 " + string(sp.ID) + ` {"conversation":"c1"}`}; !slices.Equal(got, want) {
+		t.Fatalf("observed entries = %q, want %q", got, want)
+	}
+	x.kill("toy-1")
+	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 0, "resumed toy-1")
+	if st := rec.all(); len(st) != 2 || st[0].Continue || !st[1].Continue || st[1].Record["conversation"] != "c1" || st[1].Record["state"] == "" {
+		t.Fatalf("the spawn's and the resume's starts: %+v", st)
+	}
+	must(t, x.queen("end", "--incomplete", "toy-1"), 0)
+	x.spawn("toy-1", "branch")
+	if sp2, _, err := x.open().LatestSpawn(context.Background(), "toy-1"); err != nil || sp2.Observed != nil {
+		t.Fatalf("a respawn's observed = %v, %v", sp2.Observed, err)
+	}
+}
+
 type startsRec struct {
 	fake.Harness
 	mu     sync.Mutex

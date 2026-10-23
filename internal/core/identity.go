@@ -347,6 +347,23 @@ func (c *Core) As(ctx context.Context, w Caller, as string) (Caller, error) {
 	return Caller{Name: as, Role: WorkerR, Project: c.Project, Spawn: sp.ID, Spawned: sp.TS, How: ByAs, Peek: true}, nil
 }
 
+// Observe records what worker w's session tells bs about itself in env, the env of the bs
+// it runs (port.Harness.Observe; agy's conversation id, which a resume continues): only
+// for a worker found by its recorded ancestor, whose env is its session's own. A failed
+// record warns and the command runs: a resume then refuses for want of it, saying so.
+func (c *Core) Observe(ctx context.Context, w Caller, env []string) {
+	if w.Role != WorkerR || w.How != ByAncestor {
+		return
+	}
+	h := c.harnessOf(w.harness)
+	if h == nil {
+		return
+	}
+	if _, err := c.Logbook.RecordObserved(ctx, w.Spawn, w.Name, h.Observe(env)); err != nil {
+		c.warn("couldn't record what %s's session says of itself (a resume needs it): %v", w.Name, err)
+	}
+}
+
 // table is the permission table (ADR-0010 Amendment 4 Permissions), the one place it
 // lives: the roles that may run each command. A worker's check and done are of itself; a
 // foreign session's send goes to queen-P. A command not here runs for every role.

@@ -20,6 +20,7 @@ The logbook stays the only truth (ADR-0001): one append-only `entries` table, un
 | `done` | `bs done` (the handoff) | the PRs handed off so far, or a verdict; every check's result *(Amendment 4)* |
 | `landed` | `bs end`, `bs prune`, or a `done` | the complete checks that passed; `by: end \| prune \| done` |
 | `ended` | `bs end` | `force`, `incomplete` |
+| `observed` | a worker's own bs call, when it changes | what its session says of itself (`Observe`): agy's conversation id *(Amendment 5)* |
 | `message`, `received` | `bs send`, `bs inbox` | as today |
 
 - **Liveness** is the recorded harness process alive with its recorded start time, for every harness (amends ADR-0004). herdr's agent status is never read.
@@ -38,7 +39,7 @@ type Harness interface {
 }
 ```
 
-The pilot's three methods, kept. Core owns the name, the directory, the assembled prompt, writing and removing per-start files (`<name>-[a-z]*-*`) and the per-start dir tree a harness that reads a directory gets (`<name>-dir-*`, `{{dir}}`; agy's `--add-dir`, bees-13.13.1), the 768-byte launch check, confirmation and its heal, liveness, identity, the gate, the harness-neutral guard rules, and the switch refusal. A harness that resumes by id gets an id bs chooses, through `Prepare`'s `Record`, stored in `spawned`. If agy's probe (bees-12.12) shows it can't start under a given id, a fourth method, `Observe`, returns post-start facts into the start's single `started` entry; it is added then, not before.
+The pilot's three methods, kept. Core owns the name, the directory, the assembled prompt, writing and removing per-start files (`<name>-[a-z]*-*`) and the per-start dir tree a harness that reads a directory gets (`<name>-dir-*`, `{{dir}}`; agy's `--add-dir`, bees-13.13.1), the 768-byte launch check, confirmation and its heal, liveness, identity, the gate, the harness-neutral guard rules, and the switch refusal. A harness that resumes by id gets an id bs chooses, through `Prepare`'s `Record`, stored in `spawned`. If agy's probe (bees-12.12) shows it can't start under a given id, a fourth method, `Observe`, returns post-start facts into the start's single `started` entry; it is added then, not before. *(Amendment 5: added; an entry of its own, since entries are append-only.)*
 
 `harness` is one global key: one harness per machine; each entry records its own, and ringing and teardown use the recorded one. ADR-0009's adapter requirements stand: resume the recorded conversation or fail visibly; `Now`/`Next` map to an interrupt and an after-turn; guards load or the start is refused (agy trusts a folder only by the keeper's hand: under `git_worktree` and `command` every spawn is a new folder, so bees-12.12 probes whether trusting the parent covers them); never a skip-permissions flag; SEC-1, 2 and 4 and tests T1–T5, T7–T11.
 
@@ -243,3 +244,10 @@ The identity ticket reproduces the race first (N parallel first spawns, plus a c
 ### Built by
 
 Rebuild steps 2–5 under bees-13: a design, then tickets for find-the-change (`--pr` goes), stacked `pr=` and narrow `push=` (no detached workspace), one goal per spawn, bs-posted reviews (it also rewrites `goal/review.md` and `host/github.md`'s review line), and identity with permissions, cross-project send and the logbook-creation fix.
+
+## Amendment 5 (bees-13.13.6, agy's conversation, keeper, 2026-10-23)
+
+- **`Observe(env) map[string]string`**, the Harness port's fourth method: pure, it reads what a running session says of itself from the env of a bs it runs. agy names its conversation only after the start and hands its shells `ANTIGRAVITY_CONVERSATION_ID` (bees-13.80 row 2), so a resume can't get it from `Prepare`'s `Record`. Claude's returns nothing.
+- **Who observes.** After the permission check, any bs call by a worker found by its recorded ancestor (never `--as`, the tripwire or another project's session): its env is its session's own.
+- **The `observed` kind** (schema v3; the v2 file is copied aside to `.pre-3` and rebuilt like the earlier migrations): ref the spawn, written only when the facts change. A spawn reads its newest; a resume's `Start.Record` is the spawn's `record` with them on top, and it continues (`Start.Continue`) once the worker read its inbox or observed anything. A respawn starts with none.
+- **No secrets.** agy's language-server address and CSRF token beside the id are not kept until a ring needs them (bees-13.13.10).

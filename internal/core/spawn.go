@@ -286,7 +286,14 @@ func (c *Core) resume(ctx context.Context, sp logbook.Spawn, bead port.Bead, req
 		text += host
 	}
 	st0 := c.workerStart(sp.Name, sp.Workspace, doorbell(sp.Name, bead.ID, sp.By), deny, text)
-	st0.Continue, st0.Record = sp.Read, sp.Record
+	// It has a conversation once it read its inbox, or told bs which (agy's, observed by
+	// its first bs call): the recorded facts and the observed ones, the observed newer.
+	st0.Continue = sp.Read || len(sp.Observed) > 0
+	st0.Record = maps.Clone(sp.Record)
+	if st0.Record == nil && len(sp.Observed) > 0 {
+		st0.Record = map[string]string{}
+	}
+	maps.Copy(st0.Record, sp.Observed)
 	launch, err := h.Prepare(st0)
 	if err != nil {
 		return exit(ExitRefused, "", err, "%s: its harness refused the restart; nothing started", sp.Name)

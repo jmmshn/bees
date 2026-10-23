@@ -237,6 +237,11 @@ func (r *run) goal(fs *flag.FlagSet, args []string) error {
 			return err
 		}
 		by = w.Name
+	} else if q := core.Queen(r.c.Project); *as != "" && *as != q {
+		return fmt.Errorf("%w: --as %s: only the queen (--as %s) or the keeper (no --as) changes a goal", errUsage, *as, q)
+	}
+	if slices.Equal(fs.Args(), []string{"discard"}) && r.s.Pane == nil {
+		by = "keeper" // only the keeper discards (ADR-0010), whatever --as says
 	}
 	e, err := r.c.Goal(r.ctx, core.GoalReq{By: by, Self: r.env.Self, Name: name, Values: fs.Args(), Waive: *waive})
 	if err != nil {
@@ -261,6 +266,16 @@ func waitFor(wait bool, timeout time.Duration) time.Duration {
 	return max(timeout, time.Second)
 }
 
+// asQueen is who for a command only the queen or the keeper runs: --as names no worker.
+// Inside a pane, core refuses a worker by its process ancestry.
+func (r *run) asQueen(as, does string) (core.Who, error) {
+	w, err := r.who(as)
+	if err == nil && r.s.Pane == nil && w.Spawn != "" {
+		return core.Who{}, fmt.Errorf("%w: --as %s: a worker never %s; only the queen (--as %s) or the keeper does", errUsage, as, does, core.Queen(r.c.Project))
+	}
+	return w, err
+}
+
 func (r *run) end(fs *flag.FlagSet, args []string) error {
 	force := fs.Bool("force", false, "end while background work runs (waives that gate only)")
 	incomplete := fs.Bool("incomplete", false, "end an incomplete goal; prune completes it later")
@@ -271,7 +286,7 @@ func (r *run) end(fs *flag.FlagSet, args []string) error {
 	if fs.NArg() != 1 {
 		return fmt.Errorf("%w: "+bsname.Cmd+" end <worker>", errUsage)
 	}
-	w, err := r.who(*as)
+	w, err := r.asQueen(*as, "ends a worker")
 	if err != nil {
 		return err
 	}
@@ -288,11 +303,11 @@ func (r *run) prune(fs *flag.FlagSet, args []string) error {
 	if err := parse(fs, args); err != nil {
 		return err
 	}
-	w, err := r.who(*as)
+	w, err := r.asQueen(*as, "prunes")
 	if err != nil {
 		return err
 	}
-	ps, err := r.c.Prune(r.ctx, w.Name)
+	ps, err := r.c.Prune(r.ctx, w.Name, r.env.Self)
 	if err != nil {
 		return err
 	}

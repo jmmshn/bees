@@ -71,3 +71,26 @@ func entries(t *testing.T, x *toy) int {
 	}
 	return n
 }
+
+// Only the queen or the keeper ends a worker, prunes, or names itself with --as: a worker
+// ends no sibling and prunes nothing (bees-13.49), --as names no worker, and a discard is
+// always the keeper's, whatever --as says (bees-13.50).
+func TestWorkerNeverEndsPrunesOrPosesAsQueen(t *testing.T) {
+	x := newToy(t)
+	x.startQueen()
+	x.spawn("toy-1", "verdict")
+	x.spawn("toy-2", "verdict")
+	must(t, x.worker("toy-1", 1, "end", "--incomplete", "toy-2"), 2, "run by worker toy-1", "a worker never ends a worker")
+	must(t, x.worker("toy-1", 2, "prune"), 2, "run by worker toy-1", "a worker never prunes")
+	must(t, x.keeper("end", "--as", "toy-1", "--incomplete", "toy-2"), 2, "--as toy-1: a worker never ends a worker")
+	must(t, x.keeper("prune", "--as", "toy-1"), 2, "--as toy-1: a worker never prunes")
+	must(t, x.keeper("goal", "--as", "toy-2", "toy-2", "note"), 2, "--as toy-2: only the queen")
+	must(t, x.keeper("goal", "--as", "queen-toy", "toy-2", "discard"), 0, "(discarded)")
+	must(t, x.worker("toy-2", 1, "inbox"), 0, "keeper discarded your goal")
+
+	// The queen, in its pane or by --as, and the keeper still end and prune.
+	must(t, x.queenRuns(1, "end", "--incomplete", "toy-1"), 0, "ended toy-1")
+	must(t, x.queen("end", "toy-2"), 0, "ended toy-2")
+	must(t, x.queenRuns(2, "prune"), 0)
+	must(t, x.keeper("prune", "--as", "keeper"), 0)
+}

@@ -82,16 +82,15 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 	case (len(req.Values) > 0) == (req.Waive != ""):
 		return logbook.Effective{}, exit(ExitRefused, "", nil, "%s: give the new goal (--goal values, or discard) or --waive <check>, one of them", what)
 	}
-	up, err := c.recordedAbove(ctx, req.Self)
-	if err != nil {
-		return logbook.Effective{}, exit(ExitCantCheck, "", err, "%s: can't tell who runs it", what)
+	if err := c.refuseWorker(ctx, req.Self, what, "changes a goal"); err != nil {
+		return logbook.Effective{}, err
 	}
-	for _, s := range up {
-		switch {
-		case s != Queen(c.Project):
-			return logbook.Effective{}, exit(ExitRefused, bsname.Cmd+" send "+sp.By+" \"...\"", nil, "%s: run by worker %s or something it started; a worker never changes a goal", what, s)
-		case discard:
-			return logbook.Effective{}, exit(ExitRefused, "ask the keeper", nil, "%s discard: only the keeper discards a goal, from a shell no queen or worker started (%s runs this)", what, s)
+	if discard {
+		switch up, err := c.recordedAbove(ctx, req.Self); {
+		case err != nil:
+			return logbook.Effective{}, exit(ExitCantCheck, "", err, "%s: can't tell who runs it", what)
+		case len(up) > 0: // the queen: refuseWorker let nothing else through
+			return logbook.Effective{}, exit(ExitRefused, "ask the keeper", nil, "%s discard: only the keeper discards a goal, from a shell no queen or worker started (%s runs this)", what, up[0])
 		}
 	}
 	e, err := c.Logbook.Goal(ctx, sp)
@@ -182,6 +181,26 @@ func (c *Core) Goal(ctx context.Context, req GoalReq) (logbook.Effective, error)
 	}
 	_, err = c.Logbook.Send(ctx, req.By, sp.Name, body) // read only by this spawn: mail is scoped to the open spawn
 	return e, err
+}
+
+// refuseWorker refuses a call a worker, or anything it started, runs: one this logbook
+// recorded among self and its ancestors that isn't the queen. Only the queen or the keeper
+// does it (ends a worker, prunes, changes a goal); what, if any, names the worker it's on.
+func (c *Core) refuseWorker(ctx context.Context, self int, what, does string) error {
+	up, err := c.recordedAbove(ctx, self)
+	if err != nil {
+		return exit(ExitCantCheck, "", err, "%s: can't tell who runs it", what)
+	}
+	for _, s := range up {
+		if s != Queen(c.Project) {
+			why := fmt.Sprintf("run by worker %s or something it started; a worker never %s", s, does)
+			if what != "" {
+				why = what + ": " + why
+			}
+			return exit(ExitRefused, bsname.Cmd+" send "+Queen(c.Project)+" \"...\"", nil, "%s", why)
+		}
+	}
+	return nil
 }
 
 // recordedAbove names each session this logbook recorded (its queen, an open spawn's

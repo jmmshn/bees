@@ -302,11 +302,11 @@ func TestContractGate(t *testing.T) {
 		must(t, x.queen("end", "--incomplete", G), 5, "still runs background work")
 	})
 	// #118 (bees-13.52): the way out of --incomplete keeps --incomplete.
-	k.c("gate-end-incomplete-next", "T7", func(t *testing.T, x *toy) {
+	k.c("gate-end-incomplete-next", "", func(t *testing.T, x *toy) {
 		must(t, x.queen("end", "--incomplete", G), 5, "next: bs end --incomplete --force "+G)
 	})
-	k.c("gate-force-next", "T7", func(t *testing.T, x *toy) {
-		r := x.queen("end", "--force", G) // today's next: above, followed
+	k.c("gate-force-next", "", func(t *testing.T, x *toy) {
+		r := x.queen("end", "--force", G) // the old next: line, followed
 		must(t, r, 9, "next: bs end --incomplete --force "+G)
 	})
 	k.c("gate-done-force", "", func(t *testing.T, x *toy) {
@@ -863,7 +863,7 @@ func TestContractOldMixedEntry(t *testing.T) {
 // T7 (#118's fixes, bees-13.53): a pr spawn ended --incomplete whose PR closed unmerged
 // can never complete: status's stuck: line names the keeper's discard, and runs as printed.
 func TestContractStuckOnAClosedPR(t *testing.T) {
-	gcase(t, "stuck-closed-pr", "T7", func(t *testing.T, x *toy, b ghBackend) {
+	gcase(t, "stuck-closed-pr", "", func(t *testing.T, x *toy, b ghBackend) {
 		sp := x.spawn("toy-1", "pr")
 		b.commit(x, sp.Workspace.Dir)
 		b.open(x, 1, sp.Workspace.Dir, "toy-1", false)

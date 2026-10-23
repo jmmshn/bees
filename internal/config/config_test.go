@@ -328,3 +328,34 @@ func TestPruneIgnore(t *testing.T) {
 	_, err = Load(Input{Dir: dir, Project: "toy", Home: "/h"})
 	wantErr(t, err, proj+`: prune.ignore = "[bin": not a path pattern`, `prune.ignore = "/bin/"`, `prune.ignore = "a//b"`)
 }
+
+// Every config SETUP.md shows for another VCS loads: its placeholders, dirs and checks are
+// ones bs accepts.
+func TestTheSetupExamplesLoad(t *testing.T) {
+	b, err := os.ReadFile("../../docs/SETUP.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, doc, ok := strings.Cut(string(b), "## Other VCS")
+	if !ok {
+		t.Fatal("SETUP.md has no Other VCS section")
+	}
+	doc, _, _ = strings.Cut(doc, "\n## ")
+	blocks := strings.Split(doc, "```toml\n")[1:]
+	if len(blocks) != 3 {
+		t.Fatalf("%d toml blocks, want 3 (jj, hg, CL)", len(blocks))
+	}
+	for _, blk := range blocks {
+		blk, _, _ = strings.Cut(blk, "```")
+		dir := t.TempDir()
+		write(t, filepath.Join(dir, "config.toml"), blk)
+		l, err := Load(Input{Dir: dir, Home: "/h"})
+		if err != nil {
+			t.Errorf("%v\n%s", err, blk)
+			continue
+		}
+		if k, _, _ := l.Kind(true); k != CommandKind || len(l.Workspace.Command.Missing()) > 0 || len(l.Goal) != 1 {
+			t.Errorf("kind %s, missing %v, goals %v:\n%s", k, l.Workspace.Command.Missing(), l.Goal, blk)
+		}
+	}
+}

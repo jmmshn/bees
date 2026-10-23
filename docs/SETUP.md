@@ -22,7 +22,7 @@ bs status                          # one line per spawn (LABEL GOAL STATE HANDOF
 bs send --project <other> queen-<other> "..."   # cross-project mail; the reply hint carries --project back
 ```
 
-`bs doctor` runs even when the config or the project can't be worked out: that is its first FAIL, the checks that need no project still run, and it prints a `skip` line for each it couldn't make. Only `git_worktree` workspaces work before bees-13.10 and 13.11: doctor fails any other kind and `config init` won't write one. `bs status` reads the logbook, the process table and the disk, and asks herdr only to heal an unconfirmed start, so with herdr down that start reads `unknown` and the rest still prints.
+`bs doctor` runs even when the config or the project can't be worked out: that is its first FAIL, the checks that need no project still run, and it prints a `skip` line for each it couldn't make. A `none` workspace waits for bees-13.10: doctor fails it and `config init` won't write it; a `command` workspace is a `[workspace.command]` table ([below](#other-vcs-a-command-workspace-and-a-custom-goal)), which doctor fails while it lacks a key. `bs status` reads the logbook, the process table and the disk, and asks herdr only to heal an unconfirmed start, so with herdr down that start reads `unknown` and the rest still prints.
 
 The first bs call on a logbook written by an older bs migrates it to schema 2, copying it aside to `<project>.db.pre-2` first. bs refuses a logbook where a session the old bs started is still open (it can neither ring nor see it run), naming each: end them first (`bs end <worker>` and `bs status` still run, warning).
 
@@ -72,6 +72,94 @@ No sandbox: the keeper chose not to run workers in Claude's bubblewrap sandbox (
 ## Who bs takes you for
 
 bs acts as its nearest ancestor process a session's entry recorded (a queen, a worker), else as the keeper; `bs status`'s first line says which. From the keeper's shell, `--as <session>` is a debug override that acts as that session, with its permissions: `bs done --as <worker> ...`, `bs send --as queen-<project> <worker> "..."` while her pane is down. `bs inbox --as <session>` only peeks: it marks nothing read.
+
+## Other VCS: a command workspace and a custom goal
+
+git with GitHub needs no config. Any other VCS (jj, hg, a cloud client with CLs) is two tables of your own argv in a config file ([ADR-0010](adr/0010-core-rebuild.md) Workspaces and Goals): `[workspace.command]`, which makes and removes each worker's directory, and a `[goal.<name>]` whose `cmd:` checks say whether the work was handed off and has landed. The queen then spawns with `--goal <name>`.
+
+How bs runs them, the same for both tables:
+
+- **argv, never a shell.** A `{key}` fills one whole argument from the spawn's record: `{dir}` (the worker's directory), `{name}` (the worker), `{bead}`, `{project}`, `{repo}` (the project's directory). A git_worktree also fills `{branch}`, `{base}` and `{start}`; a command workspace has none, and a check naming one is refused at spawn. A worker names nothing, so there is no `{pr}`: a check finds the change from the workspace. Need a pipe? `["sh", "-c", 'script using "$1"', "sh", "{name}"]` passes the value as an argument, never into the script.
+- **Where.** `create` and `remove` run in the project's directory (`paths.repo`); `clean` and every `cmd:` check run in the worker's. The environment is only `PATH`, `HOME` and `LANG`, as `bs` has them; `bs spawn` refuses a command whose program isn't on that `PATH`, and `bs doctor` checks each.
+- **Bounds.** Each runs within its `timeout` (default 60s); one that runs past it is killed with its process group.
+- **Exit 0 is yes, any other exit is no.** A command that can't start or times out is neither: `bs done` exits 6. Write each check so that "nothing found" exits non-zero: `jj log -r <revset>` and `hg log -r <revset>` exit 0 on an empty revset, and `! cmd` turns a network error into yes. Wrap them: `test -n "$(jj log --no-graph -r … -T commit_id)"`.
+- **Frozen.** A spawn records each check's argv, `clean`, `remove`, and the sha256 of the goal's `fragment` file: `bs done`, `bs end` and `bs prune` run what was recorded, never the config as it is now. A resume refuses a fragment changed since; `bs goal <worker> <goal>` records the new one.
+- **The workspace.** `bs spawn` refuses a `[workspace.command]` with no `clean` (exit 0 when nothing in the workspace would be lost: it is what lets prune remove one), and a `dir` that already exists with no spawn recorded on it. A `create` that fails, times out, or makes no `dir` runs `remove`, and nothing is recorded. `bs end` keeps the directory; `bs prune` runs `clean`, then `remove`, only once the goal's frozen prune rule holds or the keeper discarded it, and checks that `remove` left no `dir`. Guards: when the project's directory is a git checkout, a worker is denied pushes to its default branch and force pushes; else only `[guards] deny` applies. `bs spawn` says which.
+
+A custom goal names its checks by stage: `handoff` runs at `bs done`, `complete` at `bs end` (none: complete at handoff), `prune` before `bs prune` removes the workspace (none: at once). Each is a built-in check that needs no branch (`clean`, `verdict_given`, `note_changed`, `bead_created`) or `cmd:<name>` for a `[checks.<name>]`. Its `fragment` is a file of your own (both roles' text, `<!-- worker -->` and `<!-- queen -->` lines splitting it) that becomes the goal's section of each prompt: say there how the worker saves and submits its work.
+
+### jj
+
+Each worker is a jj workspace; it pushes its change to a bookmark named after itself.
+
+```toml
+[workspace.command]
+create  = ["jj", "workspace", "add", "--name", "{name}", "{dir}"]
+remove  = ["sh", "-c", 'jj workspace forget "$1"; rm -rf "$2"', "sh", "{name}", "{dir}"]
+clean   = ["sh", "-c", 'test -z "$(jj diff --summary)"']        # an empty working-copy commit
+dir     = "{repo}-WS/{name}"
+
+[checks.jj_pushed]
+run = ["sh", "-c", 'test -n "$(jj log --no-graph -r "remote_bookmarks(exact:\"$1\")" -T commit_id)"', "sh", "{name}"]
+[checks.jj_landed]
+run = ["sh", "-c", 'jj git fetch --quiet && test -n "$(jj log --no-graph -r "remote_bookmarks(exact:\"$1\") & ::trunk()" -T commit_id)"', "sh", "{name}"]
+timeout = "2m"
+
+[goal.jj]
+handoff  = ["cmd:jj_pushed"]
+complete = ["cmd:jj_landed"]
+prune    = ["cmd:jj_landed"]
+fragment = "~/.config/bees/fragments/jj.md"   # "jj describe, then jj git push --bookmark <your name>"
+```
+
+### hg
+
+Each worker is an `hg share` of the repo, its work on a bookmark named after itself. `hg outgoing` exits 1 when nothing is outgoing and 255 when it can't ask, so the check tests for 1, never `! hg outgoing`.
+
+```toml
+[workspace.command]
+create  = ["hg", "share", "{repo}", "{dir}"]
+remove  = ["rm", "-rf", "{dir}"]                                  # a share is its directory
+clean   = ["sh", "-c", 'test -z "$(hg status)"']
+dir     = "{repo}-WS/{name}"
+
+[checks.hg_pushed]
+run = ["sh", "-c", 'hg log -r "bookmark(\"$1\")" -T x >/dev/null || exit 1; hg outgoing -q -r "bookmark(\"$1\")" >/dev/null; test $? -eq 1', "sh", "{name}"]
+[checks.hg_landed]
+run = ["sh", "-c", 'hg pull -q && test -n "$(hg log -r "bookmark(\"$1\") and public()" -T x)"', "sh", "{name}"]
+
+[goal.hg]
+handoff  = ["clean", "cmd:hg_pushed"]
+complete = ["cmd:hg_landed"]
+prune    = ["cmd:hg_landed"]
+fragment = "~/.config/bees/fragments/hg.md"
+```
+
+### A cloud client and CLs
+
+A client tool that makes a named client per worker and sends its edits as CLs. `cl` below stands for your tool's own commands: each must exit non-zero when the answer is no. The live test runs this shape against a fake `cl`.
+
+```toml
+[workspace.command]
+create  = ["cl", "client", "new", "{name}", "{dir}"]
+remove  = ["cl", "client", "delete", "{name}"]
+clean   = ["cl", "client", "clean", "{name}"]   # exit 0: no edit outside a sent CL
+dir     = "~/clients/{name}"
+timeout = "3m"
+
+[checks.cl_sent]
+run = ["cl", "sent", "{name}"]                  # exit 0: the client's CL is out for review
+[checks.cl_submitted]
+run = ["cl", "submitted", "{name}"]             # exit 0: it is submitted
+
+[goal.cl]
+handoff  = ["cmd:cl_sent"]
+complete = ["cmd:cl_submitted"]
+prune    = ["cmd:cl_submitted"]
+fragment = "~/.config/bees/fragments/cl.md"
+```
+
+`bs end` is the completion gate (exit 9 until `cl submitted` exits 0); `bs end --incomplete` ends the worker anyway, and prune removes its client once the CL is submitted or the keeper discards the goal.
 
 ## Check it works
 

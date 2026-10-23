@@ -13,11 +13,11 @@ The directory a worker works in and the herdr workspace opened on it: its own gi
 _Avoid_: sandbox, clone. Not the project's own repo (see Project)
 
 **Goal**:
-What a worker owes the queen, fixed at spawn (`--goal pr`, `pr:draft`, `review=<url>`, `verdict`, …): what it hands off, and the state that completes it (ADR-0010).
+What a worker owes the queen, fixed at spawn, one per spawn (`--goal pr`, `pr:draft`, `pr=<url>` stacked on another change, `review=<url>`, `verdict`, …): what it hands off, and the state that completes it (ADR-0010, Amendment 4).
 _Avoid_: contract, output type, out, deliverable, done kind
 
 **Handoff**:
-A worker's `bs done`: it names its PRs (or gives a verdict) and bs checks them against its goal; for a note or beads goal, bs finds the change on the bead itself.
+A worker's `bs done`: bs finds the worker's change by its workspace (its branch, on GitHub) and checks it against its goal; the worker names nothing, except a verdict's answer and report. For a note or beads goal, bs finds the change on the bead itself (ADR-0010 Amendment 4).
 _Avoid_: done report, delivery
 
 **Complete**:
@@ -29,7 +29,7 @@ Where a project's changes (pull requests, CLs) are reviewed and land, set by `re
 _Avoid_: forge, remote, GitHub (for the general idea)
 
 **Workspace commit**:
-A commit made in a worker's workspace since it was first spawned there: one the worker wrote there, as its VCS records it (git: the HEAD reflog's commit, amend, merge-commit and revert entries; never a pull, checkout, reset, fast-forward, cherry-pick or rebase), or a rebased copy of one, matched by patch-id (a pull --rebase, a rebase -i, the host's "Update branch"). Work pulled in is never one. A handed-off change must hold one.
+A commit on a worker's branch past the start recorded at spawn. A handed-off change's head must be the branch's tip, ahead of that start. (Narrowed by ADR-0010 Amendment 4: it was a reflog and patch-id walk, there only to stop a worker naming a change not its own; with bs finding the change by branch, there is nothing to name.)
 _Avoid_: own commit, worker commit
 
 **Pending**:
@@ -63,7 +63,7 @@ The one coordinating session that assigns work to workers and reports to the kee
 _Avoid_: orchestrator, manager, lead, coordinator
 
 **Worker**:
-A session the queen starts to own one workspace and one bead. Replaces the earlier term "bee"; the tool keeps the name bees (worker bees).
+A session the queen starts to own one workspace and one bead: one branch, and at most one open change from it at a time (on a CL host, the workspace's chain). Dependent work is another worker, stacked on its change. Replaces the earlier term "bee"; the tool keeps the name bees (worker bees).
 _Avoid_: bee (as a role), agent, subagent, crew member
 
 **Session**:

@@ -1,7 +1,7 @@
 Review host: GitHub (`review.host = "github"`). A change is a pull request, its URL `https://github.com/<owner>/<repo>/pull/<n>`.
 <!-- worker -->
 
-- A pull request: push your branch (`git push -u origin <branch>`), open it with `gh pr create` (`--draft` for a draft), and push later commits to the same branch. A stacked PR: a new branch on top of yours, `gh pr create --base <your lower branch>`.
+- A pull request: push your branch (`git push -u origin <branch>`), open it with `gh pr create` (`--draft` for a draft), and push later commits to the same branch. Your branch holds at most one open PR, and you never cut a second branch: work that wants its own PR is another bead, so tell the queen, who stacks a worker on your PR.
 - A review: `gh pr review <url> --comment --body "..."` or `gh pr comment <url> --body "..."`.
 <!-- queen -->
 

@@ -59,7 +59,8 @@ type Command struct {
 	Remove checks.Cmd `json:"remove"`
 	Clean  checks.Cmd `json:"clean"`
 	// Ino is the directory's inode once create made it: prune removes only that directory,
-	// never one remade there since.
+	// never one remade there since. ponytail: a speed bump, as freeDir's worktree check is: a
+	// filesystem may reuse a deleted directory's inode for the next one made there.
 	Ino uint64 `json:"ino,omitempty"`
 }
 

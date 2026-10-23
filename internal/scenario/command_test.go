@@ -287,7 +287,9 @@ func TestAResumeRefusesAChangedFragment(t *testing.T) {
 }
 
 // Prune runs remove only on the directory create made: one remade there by hand since is
-// kept, named, never removed.
+// kept, named, never removed. The old one is moved aside, not deleted: a filesystem may
+// hand a deleted directory's inode straight to the next one (CI's did), which the inode
+// check can't tell apart.
 func TestPruneKeepsADirRemadeByHand(t *testing.T) {
 	x := newCLToy(t, "", "")
 	sp := x.spawn("toy-1", "cl")
@@ -296,7 +298,7 @@ func TestPruneKeepsADirRemadeByHand(t *testing.T) {
 	}
 	must(t, x.queen("end", "--incomplete", "toy-1"), 0)
 	must(t, x.keeper("goal", "toy-1", "discard"), 0)
-	if err := os.Remove(sp.Workspace.Dir); err != nil {
+	if err := os.Rename(sp.Workspace.Dir, sp.Workspace.Dir+".old"); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Mkdir(sp.Workspace.Dir, 0o700); err != nil {

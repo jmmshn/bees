@@ -127,11 +127,15 @@ func part(r Role, fragment string) string {
 
 // Host is r's part of the review host's fragment (host/<host>.md: how a change is
 // uploaded, reviewed and merged there) under "## Review host", or "" for a host with
-// none. The goal fragments name no host: a CL host brings its own commands here.
-func Host(r Role, host string) string {
-	f, err := fragments.ReadFile("host/" + host + ".md")
-	if err != nil {
-		return ""
+// none. own, when set, is the keeper's fragment (review.fragment) in its place. The goal
+// fragments name no host: a CL host brings its own commands here.
+func Host(r Role, host, own string) string {
+	if own == "" {
+		f, err := fragments.ReadFile("host/" + host + ".md")
+		if err != nil {
+			return ""
+		}
+		own = string(f)
 	}
-	return fill("\n## Review host\n\n"+part(r, string(f)), "")
+	return fill("\n## Review host\n\n"+part(r, own), "")
 }

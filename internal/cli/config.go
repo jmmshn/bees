@@ -367,6 +367,14 @@ func (s *settings) workerPath() []string {
 	return out
 }
 
+// hostPrompt is review.fragment, expanded: "" when unset.
+func (s *settings) hostPrompt() string {
+	if s.Review.Fragment == "" {
+		return ""
+	}
+	return s.Expand(s.Review.Fragment)
+}
+
 // unmade says why spawn won't make a workspace of kind yet, "" for one it makes: until
 // bees-13.10 and 13.11 it makes only git worktrees. Spawn refuses on it, doctor fails on
 // it and config init won't write it.

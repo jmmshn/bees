@@ -20,13 +20,16 @@ wt=$(git -C "$repo" worktree list --porcelain | grep '^worktree ' | grep -vc kee
 branches=$(git -C "$repo" branch --format='%(refname:short)' | others main | paste -sd, -)
 remote=$(git -C "$repo" ls-remote --heads origin | awk '{print $2}' | sed 's|refs/heads/||' | others main | paste -sd, -)
 sessions=$(for f in ~/.claude/sessions/*.json; do jq -r --arg r "$repo" 'select(.cwd|startswith($r)) | .name // .sessionId' "$f" 2>/dev/null; done | others "$lead" | paste -sd, -)
+# S19: clients the fake cl still holds (its own record, so a client made anywhere counts).
+clients=$([ -x "$dir/bin/cl" ] && "$dir/bin/cl" list | cut -f1 | paste -sd, -)
 # By pane cwd: herdr leaves .worktree empty for a workspace made with --cwd.
 workspaces=$(herdr pane list 2>/dev/null | jq -r --arg ws "$ws" --arg r "$repo" '[.result.panes[] | select(.workspace_id != $ws) | select((.cwd // "") | startswith($r)) | select((.cwd | test("keeper-wip")) | not) | .workspace_id] | unique[]' | paste -sd, -)
 jq -n --argjson run "$run" --argjson tok "$tokens" --arg wall "${wall:-}" \
 	--argjson turns "$(grep -c ' keeper: ' "$log")" --argjson inter "$(grep -c 'keeper\[intervention\]' "$log")" \
-	--argjson wt "$wt" --arg br "$branches" --arg rb "$remote" --arg se "$sessions" --arg wsp "$workspaces" \
+	--argjson wt "$wt" --arg br "$branches" --arg rb "$remote" --arg se "$sessions" --arg wsp "$workspaces" --arg cl "${clients:-}" \
 	--argjson check "$("$here/check.sh" "$dir")" \
 	'$run + {wall_s: (if $wall == "" then null else ($wall|tonumber|floor) end), keeper_turns: $turns, interventions: $inter,
 	  check: $check, tokens: $tok,
 	  leftovers: {worktrees: $wt, branches: ($br|split(",")|map(select(.!=""))), remote_branches: ($rb|split(",")|map(select(.!=""))),
-	             sessions: ($se|split(",")|map(select(.!=""))), workspaces: ($wsp|split(",")|map(select(.!=""))) }}' | tee "$dir/metrics.json"
+	             sessions: ($se|split(",")|map(select(.!=""))), workspaces: ($wsp|split(",")|map(select(.!=""))),
+	             clients: ($cl|split(",")|map(select(.!=""))) }}' | tee "$dir/metrics.json"

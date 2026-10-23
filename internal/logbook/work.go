@@ -96,6 +96,7 @@ type Done struct {
 	TS     time.Time `json:"-"`
 	Bead   string    `json:"bead"`
 	Change string    `json:"change,omitempty"` // the change bs found and judged
+	Review string    `json:"review,omitempty"` // the review bs posted for a review goal
 	// PRs is what a done recorded before ADR-0010 Amendment 4 handed off by --pr: bs reads
 	// them, never writes them, for one release (bees-13.60 Q11).
 	PRs    []string      `json:"prs,omitempty"`
@@ -124,6 +125,9 @@ func (d Done) Text() string {
 	}
 	if d.Answer != "" {
 		s += " answer " + d.Answer
+	}
+	if d.Review != "" {
+		s += " review " + d.Review
 	}
 	if d.Report != "" {
 		s += "\n" + d.Report

@@ -4,11 +4,13 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -115,20 +117,10 @@ type view struct {
 	Commits []struct {
 		Oid string `json:"oid"`
 	} `json:"commits"`
-	Comments []struct {
-		Body      string    `json:"body"`
-		CreatedAt time.Time `json:"createdAt"`
-	} `json:"comments"`
-	Reviews []struct {
-		Body        string    `json:"body"`
-		SubmittedAt time.Time `json:"submittedAt"`
-	} `json:"reviews"`
 }
 
-// ponytail: gh pr view may read only one GraphQL page (100) of commits, comments and
-// reviews (not probed); past that review_comment may miss one. gh api --paginate on
-// pulls/<n>/commits, issues/<n>/comments and pulls/<n>/reviews would replace it.
-const fields = "url,state,isDraft,headRefName,headRefOid,baseRefName,isCrossRepository,maintainerCanModify,headRepository,commits,comments,reviews"
+// ponytail: gh pr view may read only one GraphQL page (100) of commits (not probed).
+const fields = "url,state,isDraft,headRefName,headRefOid,baseRefName,isCrossRepository,maintainerCanModify,headRepository,commits"
 
 // gh runs gh in dir. gh saying the PR doesn't exist is port.ErrNoChange; any other
 // failure is returned as is, and read as "couldn't look": "Could not resolve to a
@@ -163,12 +155,6 @@ func (h Host) View(ctx context.Context, dir string, r port.Ref) (port.Change, er
 		Foreign: v.IsCrossRepository, ForeignRepo: v.HeadRepository.NameWithOwner, Editable: !v.IsCrossRepository || v.MaintainerCanModify}
 	for _, cm := range v.Commits {
 		c.Commits = append(c.Commits, cm.Oid)
-	}
-	for _, cm := range v.Comments {
-		c.Notes = append(c.Notes, port.Note{Body: cm.Body, At: cm.CreatedAt})
-	}
-	for _, rv := range v.Reviews {
-		c.Notes = append(c.Notes, port.Note{Body: rv.Body, At: rv.SubmittedAt})
 	}
 	return c, nil
 }
@@ -397,4 +383,59 @@ func (h Host) PushHint(ctx context.Context, dir string, c port.Change) string {
 		}
 	}
 	return "git push " + to + " HEAD:" + c.Head
+}
+
+// PostReview is gh pr review <url> --comment --body-file <file>; gh prints no URL, so the
+// review is found by its marker in gh api repos/R/pulls/N/reviews, before posting (a
+// retry) and after.
+func (h Host) PostReview(ctx context.Context, dir string, c port.Change, body, marker string) (string, error) {
+	if u, err := h.reviewWith(ctx, dir, c, marker); err != nil || u != "" {
+		return u, err
+	}
+	f, err := os.CreateTemp("", "bs-review-*.md")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.WriteString(body); err != nil {
+		f.Close()
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		return "", err
+	}
+	if _, err := h.gh(ctx, dir, "pr", "review", c.URL, "--comment", "--body-file", f.Name()); err != nil {
+		return "", err
+	}
+	u, err := h.reviewWith(ctx, dir, c, marker)
+	if err == nil && u == "" {
+		err = fmt.Errorf("gh pr review %s succeeded, but no review on it carries %s", c.URL, marker)
+	}
+	return u, err
+}
+
+// reviewWith is the URL of the review on c whose body carries marker; "" when none does.
+// --paginate prints one JSON array per page.
+func (h Host) reviewWith(ctx context.Context, dir string, c port.Change, marker string) (string, error) {
+	path := fmt.Sprintf("repos/%s/pulls/%d/reviews", c.Repo, c.Number)
+	out, err := h.gh(ctx, dir, "api", path, "--paginate")
+	if err != nil {
+		return "", err
+	}
+	dec := json.NewDecoder(bytes.NewReader(out))
+	for dec.More() {
+		var page []struct {
+			Body string `json:"body"`
+			URL  string `json:"html_url"`
+		}
+		if err := dec.Decode(&page); err != nil {
+			return "", fmt.Errorf("gh api %s: %w", path, err)
+		}
+		for _, r := range page {
+			if strings.Contains(r.Body, marker) {
+				return r.URL, nil
+			}
+		}
+	}
+	return "", nil
 }

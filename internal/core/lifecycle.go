@@ -60,6 +60,16 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 	if e.Discarded {
 		return logbook.Done{}, exit(ExitRefused, bsname.Cmd+" send "+sp.By+" \"...\"", nil, "the keeper discarded %s's goal; there is nothing to hand off", sp.Name)
 	}
+	// A goal complete at handoff is final once it lands: a second done would rewrite it
+	// (bees-13.54). A goal complete at merge keeps taking handoffs; its PRs accumulate.
+	atHandoff := !slices.ContainsFunc(e.Parts, func(p goal.Part) bool { return !p.AtHandoff })
+	if atHandoff {
+		if _, landed, err := c.Logbook.LandedOf(ctx, sp.ID); err != nil {
+			return logbook.Done{}, err
+		} else if landed {
+			return logbook.Done{}, exit(ExitRefused, bsname.Cmd+" send "+sp.By+" \"...\"", nil, "%s's goal is complete (landed); its handoff is final", sp.Name)
+		}
+	}
 	d := logbook.Done{Spawn: sp.ID, Name: sp.Name, Queen: sp.By, Bead: sp.Bead, Answer: h.Answer, Report: h.Report}
 	if prev, ok, err := c.Logbook.LatestDone(ctx, sp.ID); err != nil {
 		return d, err
@@ -143,7 +153,7 @@ func (c *Core) Done(ctx context.Context, who Who, self int, h Handed, o DoneOpts
 		return d, exit(ExitHandoff, "fix it, then "+bsname.Cmd+" done again", nil, "%d handoff checks failed:\n  %s", len(failed), strings.Join(failed, "\n  "))
 	}
 	var landed *logbook.Landed
-	if !slices.ContainsFunc(e.Parts, func(p goal.Part) bool { return !p.AtHandoff }) {
+	if atHandoff {
 		landed = &logbook.Landed{By: "done"}
 	}
 	d.ID, err = c.Logbook.RecordDone(ctx, d, landed)

@@ -55,6 +55,8 @@ Recording the toy's herdr client shows the queen's and workers' panes together. 
 
 For each thing the change claims, write down the command, the expected output and exit code, then the actual ones (`echo "exit $?"` after each). The check passes only when every line matches.
 
+A change to spawn, done, end, goal, prune or identity also replays the contract card, [CONTRACT.md](CONTRACT.md): `contract.sh <run dir>` on a toy from `setup.sh --no-queen` runs every offline case of the post-swap pilot and prints PASS/FAIL per case (XFAIL/XPASS for a fix not landed yet), with a table to paste into the PR body.
+
 A PR body gets a before/after transcript (AGENTS.md): the same steps run with the shared bs (before, the wrong output marked `← the bug`) and with your build (after), as a fenced queen ↔ worker chat, e.g. `queen-<toy> ▸ bs end <toy>-1`.
 
 ## 5. Teardown

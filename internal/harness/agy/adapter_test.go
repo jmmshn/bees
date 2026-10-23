@@ -131,8 +131,9 @@ func TestPrepareRefuses(t *testing.T) {
 	}
 }
 
-// A process is a session's own when it is the configured agy adding that session's
-// per-start dir, <name>-dir-<digits>: never another session's whose name extends it.
+// A process is a session's own when it adds that session's per-start dir,
+// <name>-dir-<digits>: never another session's whose name extends it. Which program runs
+// it is the core's to check, against the spawn's record (bees-14.7).
 func TestOwns(t *testing.T) {
 	argv := func(bin, dir string) []string {
 		return []string{bin, "--add-dir", "/c/bees/bs/" + dir, "--agent", "bs-worker"}
@@ -147,9 +148,7 @@ func TestOwns(t *testing.T) {
 		{agy.Adapter{}, argv("agy", "bees-8-x-dir-123"), false},
 		{agy.Adapter{}, argv("agy", "bees-8-dir-dir-123"), false},
 		{agy.Adapter{}, argv("agy", "bees-8-dir-"), false},
-		{agy.Adapter{}, argv("claude", "bees-8-dir-123"), false},
-		{agy.Adapter{Bin: "/opt/jetski/jetski"}, argv("jetski", "bees-8-dir-123"), true},
-		{agy.Adapter{Bin: "/opt/jetski/jetski"}, argv("agy", "bees-8-dir-123"), false},
+		{agy.Adapter{Bin: "/opt/jetski/jetski"}, argv("/opt/jetski/jetski", "bees-8-dir-123"), true},
 		{agy.Adapter{}, []string{"agy", "--add-dir"}, false},
 		{agy.Adapter{}, nil, false},
 	} {
@@ -178,5 +177,15 @@ func TestObserveRecordsOnlyTheConversation(t *testing.T) {
 func TestRingHasNone(t *testing.T) {
 	if err := (agy.Adapter{}).Ring(port.Target{Name: "bees-8", PID: 1}, "hi", port.Now); !errors.Is(err, port.ErrNoRing) {
 		t.Errorf("ring: %v", err)
+	}
+}
+
+// The program a launch runs is agy.bin, any base name (bees-14.7), and agy by default.
+func TestProgram(t *testing.T) {
+	if got := (agy.Adapter{}).Program(); got != "agy" {
+		t.Errorf("default: %q", got)
+	}
+	if got := (agy.Adapter{Bin: "/opt/jetski/jetski"}).Program(); got != "/opt/jetski/jetski" {
+		t.Errorf("bin: %q", got)
 	}
 }

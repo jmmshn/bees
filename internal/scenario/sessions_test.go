@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 	"github.com/jmmshn/bees/internal/herdr"
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/port"
+	"github.com/jmmshn/bees/internal/proc"
 )
 
 // Sessions (bees-13.4): pane identity across logbooks, liveness, the queen, start
@@ -851,6 +853,38 @@ func TestAWorkerDoesNotInheritWhatItsHarnessUnsets(t *testing.T) {
 	if slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "SSH_TTY=") }) || !slices.Contains(env, "SSH_AUTH_SOCK=/tmp/agent") {
 		t.Fatalf("the worker's env: %q", env)
 	}
+}
+
+// bees-14.7: a harness whose program isn't its kind's own (an agy-compatible build named
+// otherwise) can't be started by herdr's --kind, which types only the kind's program:
+// bs types its launch into the pane, after what it must not inherit is unset, records the
+// program on the spawn, and knows the process as the worker's by that record, though its
+// name is past the 15 bytes the kernel keeps.
+func TestAWorkerRunsAProgramNotNamedAfterItsKind(t *testing.T) {
+	x := newToy(t)
+	jet := filepath.Join(t.TempDir(), "jetski-agy-compatible")
+	if err := os.Symlink(fake.Beesfake(t), jet); err != nil {
+		t.Fatal(err)
+	}
+	x.herdr.Env = append(x.herdr.Env, "SSH_TTY=/dev/pts/9")
+	h := &unsetting{Harness: fake.Harness{State: x.harness.State, Bin: jet}}
+	x.ports.Harness = h
+	sp := x.spawn("toy-1", "branch")
+	if sp.Program != jet {
+		t.Fatalf("the spawn's recorded program: %q", sp.Program)
+	}
+	st, ok, err := x.open().LatestStart(context.Background(), sp.ID)
+	if err != nil || !ok || st.Late {
+		t.Fatalf("its start: %+v (%v, %v)", st, ok, err)
+	}
+	if name, _ := proc.Name(st.PID); runtime.GOOS == "linux" && name != "jetski-agy-comp" {
+		t.Errorf("pid %d is %q, not the program", st.PID, name)
+	}
+	must(t, x.worker("toy-1", 1, "status"), 0)
+	if env := h.seen(); slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "SSH_TTY=") }) {
+		t.Fatalf("the worker's env: %q", env)
+	}
+	must(t, x.keeper("status"), 0, "toy-1")
 }
 
 // unsetting is the fake harness unsetting SSH_TTY, as agy does, keeping the env of its

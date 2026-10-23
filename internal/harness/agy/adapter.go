@@ -59,16 +59,18 @@ type Adapter struct {
 
 var _ port.Harness = Adapter{}
 
-// Kind is herdr's --kind for agy, and the program bs queen execs.
+// Kind is herdr's --kind for agy.
 func (Adapter) Kind() string { return "agy" }
 
-// Owns reports whether argv is a launch Prepare built for session name: the configured
-// binary, adding name's per-start dir. agy has no --name, but the core makes that dir as
-// <name>-dir-<digits>, so its base names the session.
+// Program is the configured binary, any base name (an agy-compatible build, bees-14.7):
+// what a worker's launch runs and bs queen execs.
+func (a Adapter) Program() string { return a.bin() }
+
+// Owns reports whether argv is a launch Prepare built for session name: it adds name's
+// per-start dir. agy has no --name, but the core makes that dir as <name>-dir-<digits>,
+// so its base names the session. Which program runs it is the core's to check, against
+// the spawn's record.
 func (a Adapter) Owns(argv []string, name string) bool {
-	if len(argv) == 0 || filepath.Base(argv[0]) != filepath.Base(a.bin()) {
-		return false
-	}
 	i := slices.Index(argv, "--add-dir")
 	if i < 0 || i+1 >= len(argv) {
 		return false

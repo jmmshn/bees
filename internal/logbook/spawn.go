@@ -78,6 +78,7 @@ type Spawn struct {
 	Bead      string            `json:"bead"`
 	Label     string            `json:"label,omitempty"`
 	Harness   string            `json:"harness"`
+	Program   string            `json:"program,omitempty"` // the program its launches run; "": spawned before bs kept it, its harness's kind
 	Herdr     Pane              `json:"herdr"`
 	Workspace Workspace         `json:"workspace"`
 	Goal      goal.Goal         `json:"goal"`

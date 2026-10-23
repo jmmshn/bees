@@ -161,7 +161,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	if err != nil {
 		return logbook.Spawn{}, false, exit(ExitRefused, bsname.Cmd+" config", err, "%s: its harness's start files can't be written; nothing was made", name)
 	}
-	if err := herdr.CheckAgentArgs(worst); err != nil {
+	if _, err := typed(h.Kind(), h.Program(), worst, launch.Unset); err != nil {
 		return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s: the launch can't be typed into a pane; nothing was made", name)
 	}
 	session := cmp.Or(req.Session, logbook.DefaultSession)
@@ -241,7 +241,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 		return logbook.Spawn{}, false, exit(ExitFail, "", err, "%s: herdr couldn't tag its workspace; nothing was recorded", name)
 	}
 	sp = logbook.Spawn{
-		Name: name, By: req.By, Bead: bead.ID, Label: label, Harness: kind,
+		Name: name, By: req.By, Bead: bead.ID, Label: label, Harness: kind, Program: h.Program(),
 		Herdr: logbook.Pane{Session: session, Workspace: hw.ID, Pane: hw.Pane}, Workspace: ws,
 		Goal: g, ConfigDir: c.ConfigDir, At: at, PruneIgnore: c.PruneIgnore,
 	}

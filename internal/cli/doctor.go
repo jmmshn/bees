@@ -212,7 +212,6 @@ func (d *doctor) harness() {
 		d.line("ok", name, "%s %s", at, v)
 	}
 	if s.Harness == agy.Name && at != "" {
-		d.agyBin(at)
 		d.agySignIn(at)
 	}
 	h := d.r.ports.Harness
@@ -229,18 +228,6 @@ func (d *doctor) harness() {
 		d.line("FAIL", "ring sockets", "%v: another user could ring a session; chmod it (0700 a dir, 0600 a file)", err)
 	} else {
 		d.line("ok", "ring sockets", "%s", what)
-	}
-}
-
-// agyBin checks that at, agy.bin found, is the agy workers run: herdr's --kind agy starts
-// whatever agy the pane's PATH finds (bees-14.7), while bs queen execs agy.bin.
-func (d *doctor) agyBin(at string) {
-	const how = "herdr's --kind agy"
-	switch path, ok := checks.LookPath(d.path, agy.Name); {
-	case !ok:
-		d.line("FAIL", "agy.bin", "workers start agy from PATH (%s), and this shell's PATH has none: put %s's dir first on it", how, at)
-	case !samePath(path, at):
-		d.line("WARN", "agy.bin", "workers start %s, the agy on this shell's PATH (%s), not %s, the queen's: put %s's dir first on PATH", path, how, at, at)
 	}
 }
 

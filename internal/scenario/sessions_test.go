@@ -718,10 +718,23 @@ func TestSendAcrossProjectsToAnUnreadableLogbook(t *testing.T) {
 	must(t, x.queen("send", "--project", "other", "queen-other", "hi"), 6, "can't read logbook "+other+" to find who runs it", "next: check "+other)
 }
 
-// A dead worker recorded on another harness than this bs starts is refused, never resumed
+// adapters makes this bs's adapters by name, as cmd/bs does, with beesfake behind each of
+// kinds: a harness outside them has no adapter here.
+func (x *toy) adapters(kinds ...string) {
+	x.ports.Harness = nil
+	x.ports.NewHarness = func(name, _ string) port.Harness {
+		if slices.Contains(kinds, name) {
+			return x.harness
+		}
+		return nil
+	}
+}
+
+// A dead worker recorded on a harness this bs has no adapter for is refused, never resumed
 // on one that can't take its conversation (ADR-0010's switch refusal; bees-13.9 re-review 7).
-func TestAResumeOnAnotherHarnessIsRefused(t *testing.T) {
+func TestAResumeOnAHarnessWithNoAdapterIsRefused(t *testing.T) {
 	x := newToy(t)
+	x.adapters("claude_code")
 	x.start()
 	x.bead("toy-5", "work")
 	g, err := goal.Parse("branch")
@@ -739,6 +752,35 @@ func TestAResumeOnAnotherHarnessIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	must(t, x.queen("spawn", "--goal", "branch", "toy-5"), 2, "toy-5 was spawned on harness omp, and this bs starts claude_code; nothing started",
+	must(t, x.queen("spawn", "--goal", "branch", "toy-5"), 2, "toy-5 was spawned on harness omp, which this bs has no adapter for; nothing started",
 		"next: bs end --incomplete toy-5, then bs spawn --goal branch toy-5")
+}
+
+// bs spawn --harness starts that one spawn on another harness than the configured one and
+// records it; its resume restarts the recorded harness, whatever the config says, and
+// refuses another --harness (bees-13.13.12; motif 14). A harness with no adapter makes
+// nothing.
+func TestSpawnHarnessIsRecordedAndResumed(t *testing.T) {
+	x := newToy(t)
+	x.adapters("claude_code", "agy")
+	x.bead("toy-1", "work")
+	x.bead("toy-2", "work")
+	must(t, x.queen("spawn", "--goal", "branch", "--label", "toy 2", "--harness", "omp", "toy-2"), 2, "toy-2: this bs has no adapter for harness omp; nothing was made")
+	if _, err := os.Stat(filepath.Join(x.repo+"-WT", "toy-2")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a refused --harness made a worktree: %v", err)
+	}
+	must(t, x.queen("spawn", "--goal", "branch", "--label", "toy 1", "--harness", "agy", "toy-1"), 0, "spawned toy-1")
+	sp, ok, err := x.open().LatestSpawn(context.Background(), "toy-1")
+	if err != nil || !ok || sp.Harness != "agy" {
+		t.Fatalf("the spawn's recorded harness: %q (%v, %v)", sp.Harness, ok, err)
+	}
+	must(t, x.worker("toy-1", 1, "inbox"), 0)
+	x.kill("toy-1")
+	must(t, x.queen("spawn", "--goal", "branch", "--harness", "claude_code", "toy-1"), 2,
+		"toy-1 is spawned and not ended, on harness agy, not claude_code; a resume keeps its harness, so leave --harness off")
+	must(t, x.queen("spawn", "--goal", "branch", "toy-1"), 0, "resumed toy-1")
+	st, ok, err := x.open().LatestStart(context.Background(), sp.ID)
+	if err != nil || !ok || st.Harness != "agy" || st.Replaces == "" {
+		t.Fatalf("the resume's start: %+v (%v, %v)", st, ok, err)
+	}
 }

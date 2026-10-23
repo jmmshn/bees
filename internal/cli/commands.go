@@ -68,9 +68,10 @@ func (r *run) queen(fs *flag.FlagSet, args []string) error {
 
 // spawnArgs is bs spawn's arguments.
 type spawnArgs struct {
-	goal  oneGoal
-	label string
-	bead  string
+	goal    oneGoal
+	label   string
+	harness string
+	bead    string
 }
 
 // spawnArgs parses bs spawn's arguments and, when the project has no logbook yet, checks
@@ -79,6 +80,7 @@ func (r *run) spawnArgs(fs *flag.FlagSet, args []string) error {
 	a := &r.spawnReq
 	fs.Var(&a.goal, "goal", "what the worker hands off (one)")
 	fs.StringVar(&a.label, "label", "", "its herdr label: 1-4 lowercase words (default: its last spawn's)")
+	fs.StringVar(&a.harness, "harness", "", "the harness this one spawn starts on, recorded on it (default: harness)")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
@@ -106,7 +108,7 @@ func (r *run) spawnArgs(fs *flag.FlagSet, args []string) error {
 
 func (r *run) spawn(_ *flag.FlagSet, _ []string) error {
 	a := r.spawnReq
-	if r.c.Harness == nil {
+	if r.c.Harness == nil && a.harness == "" { // --harness names its own: Spawn checks that one
 		return &core.Exit{Code: core.ExitRefused, Msg: "no harness adapter for harness = " + r.s.Harness, Next: bsname.Cmd + " config"}
 	}
 	// A kind the config chose and spawn can't make yet is refused, never made a worktree;
@@ -119,7 +121,7 @@ func (r *run) spawn(_ *flag.FlagSet, _ []string) error {
 	}
 	// The keeper's spawn too is the queen's: its worker hands off to her.
 	sp, resumed, err := r.c.Spawn(r.ctx, core.SpawnReq{By: core.Queen(r.s.Project), Session: cmp.Or(core.Getenv(r.env.Vars, "HERDR_SESSION"), logbook.DefaultSession),
-		Bead: a.bead, Label: a.label, Goal: string(a.goal)})
+		Bead: a.bead, Label: a.label, Goal: string(a.goal), Harness: a.harness})
 	if err != nil {
 		return err
 	}

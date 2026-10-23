@@ -1,6 +1,7 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/jmmshn/bees/internal/bsname"
@@ -29,15 +31,14 @@ import (
 // each cmd: check's argv and its fragment's hash, or a built-in one. own is the custom
 // type's fragment text, when it has one.
 func (c *Core) parseGoal(v string) (goal.Goal, prompt.Own, error) {
-	head, _, target := strings.Cut(v, "=")
-	typ, _, state := strings.Cut(head, ":")
+	typ := goal.TypeOf(v)
 	t, ok := c.Goals[typ]
 	if !ok {
 		g, err := goal.Parse(v)
 		g.Fragment = prompt.Hash(g.Type)
 		return g, nil, err
 	}
-	if state || target {
+	if v != typ {
 		return goal.Goal{}, nil, fmt.Errorf("%w %q: the custom type %s takes no :<state> or =<target>", goal.ErrBad, v, typ)
 	}
 	cmds := map[string]checks.Cmd{}
@@ -117,10 +118,11 @@ func vals(project, name, bead string, ws logbook.Workspace) map[string]checks.Va
 	if ws.Branch != "" {
 		v["branch"] = checks.Value{S: ws.Branch, Ref: true}
 	}
-	for k, s := range map[string]string{"base": ws.Base, "start": ws.Start} {
-		if s != "" {
-			v[k] = checks.Value{S: s}
-		}
+	if ws.Base != "" {
+		v["base"] = checks.Value{S: ws.Base}
+	}
+	if ws.Start != "" {
+		v["start"] = checks.Value{S: ws.Start}
 	}
 	return v
 }
@@ -187,11 +189,16 @@ func (k *look) runCmd(ctx context.Context, g goal.Goal, name string) (outcome, s
 	if err != nil {
 		return failed, "", err
 	}
-	out := said(r.Output)
 	if r.Code != 0 {
-		return failed, fmt.Sprintf("%s exited %d%s", strings.Join(r.Argv, " "), r.Code, out), nil
+		return failed, exited(r), nil
 	}
-	return passed, strings.TrimPrefix(out, ": "), nil
+	return passed, strings.TrimPrefix(said(r.Output), ": "), nil
+}
+
+// exited is a command that exited non-zero, as a check's detail or an error says it: its
+// filled argv, its code, and the tail of what it printed.
+func exited(r checks.Result) string {
+	return fmt.Sprintf("%s exited %d%s", strings.Join(r.Argv, " "), r.Code, said(r.Output))
 }
 
 // said is a command's output for a check's detail: its last few lines, ": "-led, or "".
@@ -214,14 +221,10 @@ func said(b []byte) string {
 // whose it is.
 func (c *Core) commandWorkspace(name string, ended *logbook.Spawn) (ws logbook.Workspace, reused bool, err error) {
 	cmd := c.Command
-	if cmd == nil {
-		return logbook.Workspace{}, false, exit(ExitRefused, bsname.Cmd+" config", nil, "workspace kind command (%s) needs a [workspace.command] table", c.KindWhy)
+	if err := cmd.Incomplete(); err != nil {
+		return logbook.Workspace{}, false, exit(ExitRefused, bsname.Cmd+" config", err, "workspace kind command (%s); nothing was made", c.KindWhy)
 	}
-	if miss := cmd.Missing(); len(miss) > 0 {
-		return logbook.Workspace{}, false, exit(ExitRefused, bsname.Cmd+" config", nil,
-			"[workspace.command] has no %s (clean exits 0 when nothing in the workspace would be lost; it is what lets prune remove one); nothing was made", strings.Join(miss, ", "))
-	}
-	dir := strings.NewReplacer("{repo}", c.Repo, "{name}", name).Replace(cmd.Dir)
+	dir := config.FillDir(cmd.Dir, c.Repo, name)
 	if !filepath.IsAbs(dir) {
 		return logbook.Workspace{}, false, exit(ExitRefused, bsname.Cmd+" config", nil, "[workspace.command] dir %q is %s, not an absolute path", cmd.Dir, dir)
 	}
@@ -241,28 +244,62 @@ func (c *Core) commandWorkspace(name string, ended *logbook.Spawn) (ws logbook.W
 	return ws, false, nil
 }
 
-// create runs [workspace.command] create in the repo to make ws.Dir for worker name. A
-// create that fails, times out, or exits 0 with no dir made runs remove, so nothing is
-// left and nothing recorded (motif 8).
-func (c *Core) create(ctx context.Context, name, bead string, ws logbook.Workspace) error {
+// create runs [workspace.command] create in the repo to make ws.Dir for worker name, and
+// returns the directory's inode. A create that fails, times out, or exits 0 with no dir
+// made runs remove, so nothing is left and nothing recorded (motif 8). The spawn lock
+// keeps a twin spawn from making the same dir meanwhile.
+func (c *Core) create(ctx context.Context, name, bead string, ws logbook.Workspace) (uint64, error) {
 	cmd := checks.Cmd{Argv: c.Command.Create, Timeout: duration(c.Command.Timeout)}
 	r, err := checks.Run(ctx, cmd, ws.Repo, vals(c.Project, name, bead, ws), c.getenv)
 	switch {
 	case err != nil:
 	case r.Code != 0:
-		err = fmt.Errorf("exited %d%s", r.Code, said(r.Output))
+		err = errors.New(exited(r))
 	default:
-		if fi, serr := os.Stat(ws.Dir); serr != nil || !fi.IsDir() {
+		switch fi, serr := os.Stat(ws.Dir); {
+		case errors.Is(serr, os.ErrNotExist):
 			err = fmt.Errorf("exited 0 but made no directory %s", ws.Dir)
+		case serr != nil:
+			err = fmt.Errorf("exited 0, and %s can't be looked at: %w", ws.Dir, serr)
+		case !fi.IsDir():
+			err = fmt.Errorf("exited 0 but %s is no directory", ws.Dir)
+		default:
+			return inode(fi), nil
 		}
-	}
-	if err == nil {
-		return nil
 	}
 	if rerr := c.remove(context.WithoutCancel(ctx), name, bead, ws); rerr != nil {
 		err = errors.Join(err, fmt.Errorf("and remove: %w", rerr))
 	}
-	return exit(ExitFail, "", err, "%s: [workspace.command] create %s; nothing was recorded", name, ws.Dir)
+	return 0, exit(ExitFail, "", err, "%s: [workspace.command] create %s; nothing was recorded", name, ws.Dir)
+}
+
+// inode is fi's inode number, or 0 where the platform gives none.
+func inode(fi os.FileInfo) uint64 {
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+		return uint64(st.Ino)
+	}
+	return 0
+}
+
+// spawnLock holds worker name's spawn lock, from its first look at the record and the
+// disk to its record: a twin spawn waits, then finds the spawn and resumes or refuses,
+// never making (or removing) the same dir (motif 7). A command workspace's dir is the
+// keeper's argv's, which may not fail on one that exists, so only its kind takes it.
+func (c *Core) spawnLock(ctx context.Context, name string) (func(), error) {
+	dir := filepath.Join(c.CacheDir, "locks")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, exit(ExitFail, "", err, "%s: can't make its spawn lock", name)
+	}
+	t := c.timing()
+	wait := t.Confirm + t.AfterErr + 2*cmp.Or(duration(c.Command.Timeout), checks.DefaultTimeout)
+	unlock, err := lock(ctx, filepath.Join(dir, name+".spawn.lock"), wait, t.Poll)
+	switch {
+	case errors.Is(err, ErrStarting):
+		return nil, exit(ExitRefused, bsname.Cmd+" status", nil, "%s: another spawn of it is still under way", name)
+	case err != nil:
+		return nil, exit(ExitFail, "", err, "%s: its spawn lock", name)
+	}
+	return unlock, nil
 }
 
 // remove runs ws's frozen remove in its repo. A dir still there after a remove that
@@ -273,10 +310,13 @@ func (c *Core) remove(ctx context.Context, name, bead string, ws logbook.Workspa
 	case err != nil:
 		return err
 	case r.Code != 0:
-		return fmt.Errorf("%s exited %d%s", strings.Join(r.Argv, " "), r.Code, said(r.Output))
+		return errors.New(exited(r))
 	}
-	if _, err := os.Stat(ws.Dir); err == nil {
+	switch _, err := os.Stat(ws.Dir); {
+	case err == nil:
 		return fmt.Errorf("%s exited 0 and left %s", strings.Join(r.Argv, " "), ws.Dir)
+	case !errors.Is(err, os.ErrNotExist): // never read as gone (Rule G)
+		return fmt.Errorf("%w: %s exited 0, and whether it left %s can't be told: %w", checks.ErrCantRun, strings.Join(r.Argv, " "), ws.Dir, err)
 	}
 	return nil
 }
@@ -289,7 +329,7 @@ func (k *look) clean(ctx context.Context) (outcome, string, error) {
 		return failed, "", err
 	}
 	if r.Code != 0 {
-		return failed, fmt.Sprintf("[workspace.command] clean says %s holds work that would be lost (%s exited %d%s)", ws.Dir, strings.Join(r.Argv, " "), r.Code, said(r.Output)), nil
+		return failed, fmt.Sprintf("[workspace.command] clean says %s holds work that would be lost (%s)", ws.Dir, exited(r)), nil
 	}
 	return passed, "", nil
 }
@@ -298,6 +338,16 @@ func (k *look) clean(ctx context.Context) (outcome, string, error) {
 // why it kept it (unknown: it couldn't check): herdr has it open or a pane working in it,
 // or its clean exits non-zero. bs removes nothing itself: remove is the keeper's argv.
 func (c *Core) freeCommandDir(ctx context.Context, sp logbook.Spawn) (why string, unknown bool) {
+	// Only the directory its create made: one remade there by hand is not this spawn's to
+	// remove (as freeDir keeps a dir that is no longer a worktree of its repo).
+	if ino := sp.Workspace.Command.Ino; ino != 0 {
+		switch fi, err := os.Stat(sp.Workspace.Dir); {
+		case err != nil:
+			return "can't look at it: " + err.Error(), true
+		case inode(fi) != ino:
+			return "it is no longer the directory its spawn made (made again since?): look at it, then remove it by hand", false
+		}
+	}
 	if why, err := c.inUse(ctx, sp); err != nil {
 		return "can't tell whether herdr uses it: " + err.Error(), true
 	} else if why != "" {
@@ -317,11 +367,13 @@ func (c *Core) freeCommandDir(ctx context.Context, sp logbook.Spawn) (why string
 // openCommand makes command workspace ws (unless reused: its last spawn's, kept) and opens
 // a herdr workspace on it. A herdr that fails runs remove on what this spawn made, so a
 // failure leaves nothing behind and nothing recorded.
-func (c *Core) openCommand(ctx context.Context, session string, ws logbook.Workspace, name, bead, label string, reused bool) (herdr.Workspace, error) {
+func (c *Core) openCommand(ctx context.Context, session string, ws *logbook.Workspace, name, bead, label string, reused bool) (herdr.Workspace, error) {
 	if !reused {
-		if err := c.create(ctx, name, bead, ws); err != nil {
+		ino, err := c.create(ctx, name, bead, *ws)
+		if err != nil {
 			return herdr.Workspace{}, err
 		}
+		ws.Command.Ino = ino
 	}
 	hw, err := c.herdr(session).CreateWorkspace(ctx, ws.Dir, label)
 	if err == nil {
@@ -331,7 +383,7 @@ func (c *Core) openCommand(ctx context.Context, session string, ws logbook.Works
 		return hw, nil
 	}
 	if !reused {
-		if rerr := c.remove(context.WithoutCancel(ctx), name, bead, ws); rerr != nil {
+		if rerr := c.remove(context.WithoutCancel(ctx), name, bead, *ws); rerr != nil {
 			err = errors.Join(err, fmt.Errorf("and [workspace.command] remove: %w", rerr))
 		}
 	}

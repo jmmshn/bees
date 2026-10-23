@@ -57,6 +57,9 @@ type Workspace struct {
 type Command struct {
 	Remove checks.Cmd `json:"remove"`
 	Clean  checks.Cmd `json:"clean"`
+	// Ino is the directory's inode once create made it: prune removes only that directory,
+	// never one remade there since.
+	Ino uint64 `json:"ino,omitempty"`
 }
 
 // Spawn is a spawned entry: everything bs end, prune and a handoff read about a worker,

@@ -253,7 +253,7 @@ func TestDoctorFailsAKindSpawnRefuses(t *testing.T) {
 	r := newDoctorRig(t)
 	for body, want := range map[string]string{
 		"[workspace]\nkind = \"none\"\n":           "FAIL workspace: workspace.kind = none over a git checkout",
-		"[workspace.command]\ncreate = [\"jj\"]\n": "FAIL workspace: [workspace.command] has no remove, clean, dir: every spawn refuses it",
+		"[workspace.command]\ncreate = [\"jj\"]\n": "[workspace.command] has no remove, clean, dir (clean exits 0 when nothing in the workspace would be lost: it is what lets prune remove one): every spawn refuses it",
 	} {
 		r.write("projects/mytoy.toml", body)
 		code, out := r.doctor()

@@ -285,3 +285,25 @@ func TestAResumeRefusesAChangedFragment(t *testing.T) {
 		t.Fatal("the resume's prompt lacks the fragment its amend recorded")
 	}
 }
+
+// Prune runs remove only on the directory create made: one remade there by hand since is
+// kept, named, never removed.
+func TestPruneKeepsADirRemadeByHand(t *testing.T) {
+	x := newCLToy(t, "", "")
+	sp := x.spawn("toy-1", "cl")
+	if sp.Workspace.Command.Ino == 0 {
+		t.Fatal("no inode recorded")
+	}
+	must(t, x.queen("end", "--incomplete", "toy-1"), 0)
+	must(t, x.keeper("goal", "toy-1", "discard"), 0)
+	if err := os.Remove(sp.Workspace.Dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(sp.Workspace.Dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	must(t, x.queen("prune"), 3, "kept", "no longer the directory its spawn made")
+	if _, err := os.Stat(sp.Workspace.Dir); err != nil {
+		t.Fatalf("prune removed it: %v", err)
+	}
+}

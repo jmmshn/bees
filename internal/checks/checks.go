@@ -59,7 +59,11 @@ const DefaultTimeout = 60 * time.Second
 // branch, base and start (its tip at spawn). A workspace kind with no branch fills none of
 // the last three. A worker names nothing (ADR-0010 Amendment 4), so no placeholder comes
 // from it.
-var Keys = []string{"dir", "name", "bead", "project", "repo", "branch", "base", "start"}
+var Keys = append(slices.Clone(WorkspaceKeys), "branch", "base", "start")
+
+// WorkspaceKeys are the placeholders every workspace kind fills, and all a
+// [workspace.command] argv may name: a command workspace has no branch.
+var WorkspaceKeys = []string{"dir", "name", "bead", "project", "repo"}
 
 // Check refuses, before anything runs, an argv Fill could never fill: an empty one, a
 // placeholder argv[0], a brace that isn't a whole-argument placeholder, or one not
@@ -153,13 +157,18 @@ func env(getenv func(string) string) []string {
 }
 
 // LookPath finds program on path (a PATH value), as a command bs runs would: a name
-// with a / is itself, when it is executable.
+// with a / is itself, when it is executable. ponytail: exec.LookPath searches only bs's own
+// PATH, and an in-process caller's (a test's toy, a pane's) is another; it skips empty
+// PATH entries, which exec would read as the cwd, and never reads PATHEXT.
 func LookPath(path, program string) (string, bool) {
 	if strings.Contains(program, "/") {
 		fi, err := os.Stat(program)
 		return program, err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0
 	}
 	for _, d := range filepath.SplitList(path) {
+		if d == "" {
+			continue
+		}
 		at := filepath.Join(d, program)
 		if fi, err := os.Stat(at); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
 			return at, true

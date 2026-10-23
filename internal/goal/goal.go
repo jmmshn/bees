@@ -360,6 +360,13 @@ func landed(cs []string) []string {
 	return out
 }
 
+// TypeOf is the type --goal value v names: what comes before its :<state> or =<target>.
+func TypeOf(v string) string {
+	head, _, _ := strings.Cut(v, "=")
+	typ, _, _ := strings.Cut(head, ":")
+	return typ
+}
+
 // Parse resolves a spawn's --goal value, <type>[:<state>][=<target>] with the target
 // everything after the first =; "" is ErrNoGoal. The CLI refuses a second --goal.
 func Parse(v string) (Goal, error) {

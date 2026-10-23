@@ -155,11 +155,12 @@ func (c *Core) ensureQueen(ctx context.Context, in SendIn) (q logbook.Queen, sta
 }
 
 // lock takes an exclusive flock(2) on path, made if missing, polling every poll for up to
-// wait: past it, ErrStarting. unlock releases it.
+// wait: past it, ErrStarting (the queen's twin lock, a command workspace's spawn lock).
+// unlock releases it.
 func lock(ctx context.Context, path string, wait, poll time.Duration) (unlock func(), err error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		return nil, fmt.Errorf("the queen's twin lock: %w", err)
+		return nil, fmt.Errorf("lock %s: %w", path, err)
 	}
 	for deadline := time.Now().Add(wait); ; {
 		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
@@ -169,7 +170,7 @@ func lock(ctx context.Context, path string, wait, poll time.Duration) (unlock fu
 		switch {
 		case !errors.Is(err, syscall.EWOULDBLOCK):
 			f.Close()
-			return nil, fmt.Errorf("the queen's twin lock %s: %w", path, err)
+			return nil, fmt.Errorf("lock %s: %w", path, err)
 		case time.Now().After(deadline):
 			f.Close()
 			return nil, ErrStarting

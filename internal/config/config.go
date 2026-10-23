@@ -155,13 +155,6 @@ func (l *Loaded) Kind(gitTop bool) (kind, why string, chosen bool) {
 	return NoWorkspace, "worked out: no repo that is a git checkout's top level", false
 }
 
-// WorkspaceKeys are the placeholders a [workspace.command] argv may name: a command
-// workspace has no branch, so none of a git_worktree's.
-var WorkspaceKeys = []string{"dir", "name", "bead", "project", "repo"}
-
-// DirKeys are the placeholders [workspace.command] dir may name, anywhere in it.
-var DirKeys = []string{"repo", "name"}
-
 // check checks only what config can know: each argv's placeholders, the dir's, the
 // timeout. A missing argv or dir is refused where it would run, at spawn (ADR-0010), so
 // bs config and doctor still show the table.
@@ -174,7 +167,7 @@ func (c *Command) check() error {
 		if len(a.argv) == 0 {
 			continue
 		}
-		if err := checks.Check(a.argv, WorkspaceKeys); err != nil {
+		if err := checks.Check(a.argv, checks.WorkspaceKeys); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", a.key, err))
 		}
 	}
@@ -187,17 +180,31 @@ func (c *Command) check() error {
 // checkDir refuses a [workspace.command] dir that names a placeholder other than {repo}
 // and {name}, or that doesn't name {name}: every worker gets a directory of its own.
 func checkDir(dir string) error {
-	rest := dir
-	for _, k := range DirKeys {
-		rest = strings.ReplaceAll(rest, "{"+k+"}", "")
-	}
-	switch {
+	switch rest := FillDir(dir, "", ""); {
 	case strings.ContainsAny(rest, "{}"):
 		return fmt.Errorf("dir = %q: only {repo} and {name} are filled in", dir)
 	case !strings.Contains(dir, "{name}"):
 		return fmt.Errorf("dir = %q: it must name {name}, so each worker gets a directory of its own", dir)
 	}
 	return nil
+}
+
+// Incomplete is the error of a [workspace.command] missing a required key, nil when none
+// is: spawn refuses it, doctor fails it.
+func (c *Command) Incomplete() error {
+	if c == nil {
+		return errors.New("no [workspace.command] table")
+	}
+	if miss := c.Missing(); len(miss) > 0 {
+		return fmt.Errorf("[workspace.command] has no %s (clean exits 0 when nothing in the workspace would be lost: it is what lets prune remove one)", strings.Join(miss, ", "))
+	}
+	return nil
+}
+
+// FillDir is [workspace.command] dir for worker name of the project at repo: each {repo}
+// and {name} filled, the only placeholders it may name, anywhere in it.
+func FillDir(dir, repo, name string) string {
+	return strings.NewReplacer("{repo}", repo, "{name}", name).Replace(dir)
 }
 
 // Missing names each of c's required keys left unset: create, remove, clean (exits 0
@@ -228,11 +235,11 @@ func (g GoalType) check(name string, checks map[string]Check) error {
 		names []string
 	}{{"handoff", g.Handoff}, {"complete", g.Complete}, {"prune", g.Prune}} {
 		for _, n := range s.names {
-			cmd, ok := strings.CutPrefix(n, "cmd:")
+			cmd := goal.Cmd(n)
 			switch _, defined := checks[cmd]; {
-			case ok && !defined:
+			case cmd != "" && !defined:
 				errs = append(errs, fmt.Errorf("%s: %q names no [checks.%s]", s.key, n, cmd))
-			case !ok && !goal.IsCheck(n):
+			case cmd == "" && !goal.IsCheck(n):
 				errs = append(errs, fmt.Errorf("%s: %q is no built-in check; a command check is cmd:<name>", s.key, n))
 			}
 		}

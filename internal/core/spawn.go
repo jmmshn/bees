@@ -66,6 +66,13 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	if err := herdr.CheckAgentName(name); err != nil {
 		return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s can't be a worker's name; nothing was made", name)
 	}
+	if c.Kind == config.CommandKind && c.Command != nil {
+		unlock, err := c.spawnLock(ctx, name)
+		if err != nil {
+			return logbook.Spawn{}, false, err
+		}
+		defer unlock()
+	}
 	var ended *logbook.Spawn // the last spawn, ended: its kept worktree and branch are reused
 	switch prev, ok, err := c.Logbook.LatestSpawn(ctx, name); {
 	case err != nil:
@@ -120,9 +127,12 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 		return logbook.Spawn{}, false, err
 	}
 	if ws.Kind == config.CommandKind { // its guards come from git only in a git checkout: said (ADR-0010 Config)
-		if in, err := c.guardIn(ctx); err == nil && in.Git {
+		switch in, err := c.guardIn(ctx); {
+		case err != nil: // deny just built them, so this is a probe that failed since
+			c.warn("%s: a command workspace: can't tell whether its repo is a git checkout, so which guards apply: %v", name, err)
+		case in.Git:
 			c.warn("%s: a command workspace in a git checkout: its worker is denied pushes to the default branch and force pushes", name)
-		} else if err == nil {
+		default:
 			c.warn("%s: a command workspace in a repo that isn't a git checkout: no git guard applies, only [guards] deny", name)
 		}
 	}
@@ -158,7 +168,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	var hw herdr.Workspace
 	remade := false // a reused branch whose worktree was gone, checked out again here
 	if ws.Kind == config.CommandKind {
-		if hw, err = c.openCommand(ctx, session, ws, name, bead.ID, label, reused); err != nil {
+		if hw, err = c.openCommand(ctx, session, &ws, name, bead.ID, label, reused); err != nil {
 			return logbook.Spawn{}, false, err
 		}
 	} else if reused {

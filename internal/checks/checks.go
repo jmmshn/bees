@@ -10,12 +10,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jmmshn/bees/internal/port"
@@ -39,6 +41,7 @@ type Result struct {
 	Argv   []string // as it ran, placeholders filled
 	Code   int
 	Output []byte // stdout and stderr, interleaved
+	Stdout []byte // stdout alone: what a command that answers in JSON printed
 }
 
 var (
@@ -133,6 +136,18 @@ func Fill(ctx context.Context, argv []string, vals map[string]Value) ([]string, 
 	return out, nil
 }
 
+// locked is a writer two goroutines share.
+type locked struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *locked) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
+}
+
 // refOK reports whether git check-ref-format accepts s as a branch name. A git that
 // couldn't run or answer is an error, never "bad ref" (Rule G).
 func refOK(ctx context.Context, s string) (bool, error) {
@@ -209,17 +224,18 @@ func Run(ctx context.Context, c Cmd, dir string, vals map[string]Value, getenv f
 	defer cancel()
 	cmd := exec.CommandContext(ctx, prog, argv[1:]...)
 	cmd.Args[0] = argv[0]
-	var out bytes.Buffer
-	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = dir, env(getenv), &out, &out
+	var out, stdout bytes.Buffer
+	both := &locked{w: &out} // stdout and stderr are copied in by a goroutine each
+	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = dir, env(getenv), io.MultiWriter(both, &stdout), both
 	err = port.RunGroup(cmd)
 	var ee *exec.ExitError
 	switch {
 	case ctx.Err() == context.DeadlineExceeded:
 		return Result{}, fmt.Errorf("%w: %s after %s: %w", ErrCantRun, strings.Join(argv, " "), timeout, ErrTimeout)
 	case errors.As(err, &ee) && ee.Exited():
-		return Result{Argv: argv, Code: ee.ExitCode(), Output: out.Bytes()}, nil
+		return Result{Argv: argv, Code: ee.ExitCode(), Output: out.Bytes(), Stdout: stdout.Bytes()}, nil
 	case err != nil:
 		return Result{}, fmt.Errorf("%w: %s: %w", ErrCantRun, strings.Join(argv, " "), err)
 	}
-	return Result{Argv: argv, Output: out.Bytes()}, nil
+	return Result{Argv: argv, Output: out.Bytes(), Stdout: stdout.Bytes()}, nil
 }

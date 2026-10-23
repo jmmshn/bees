@@ -248,7 +248,7 @@ func (k *look) one(ctx context.Context, name string, v port.Change) (outcome, st
 // before bs kept a start is said to be unchecked there, never silently passed (Rule G).
 func (k *look) prHead(ctx context.Context, v port.Change) (outcome, string, error) {
 	c, ws := k.c, k.sp.Workspace
-	tip, ok, err := c.VCS.Branch(ctx, ws.Dir, ws.Branch)
+	tip, ok, err := c.vcs(k.sp.Workspace).Branch(ctx, ws.Dir, ws.Branch)
 	switch {
 	case err != nil:
 		return failed, "", err
@@ -262,7 +262,7 @@ func (k *look) prHead(ctx context.Context, v port.Change) (outcome, string, erro
 	case tip == ws.Start:
 		return failed, fmt.Sprintf("%s is where it started at spawn (%s): commit your work, then push it", ws.Branch, oid(tip)), nil
 	default:
-		if ahead, err := c.VCS.Descends(ctx, ws.Dir, ws.Start, tip); err != nil {
+		if ahead, err := c.vcs(k.sp.Workspace).Descends(ctx, ws.Dir, ws.Start, tip); err != nil {
 			return failed, "", err
 		} else if !ahead {
 			return failed, fmt.Sprintf("%s at %s doesn't descend from %s, where it started at spawn", ws.Branch, oid(tip), oid(ws.Start)), nil
@@ -282,21 +282,21 @@ func (k *look) lag(ctx context.Context, v port.Change) (string, error) {
 		return up, nil
 	}
 	c, dir := k.c, k.sp.Workspace.Dir
-	up, ok, err := c.VCS.Pushed(ctx, dir, v.Head)
+	up, ok, err := c.vcs(k.sp.Workspace).Pushed(ctx, dir, v.Head)
 	if err != nil || !ok || up == v.HeadCommit || v.State != port.Open {
 		return "", err
 	}
-	if has, err := c.VCS.Has(ctx, dir, v.HeadCommit); err != nil || !has {
+	if has, err := c.vcs(k.sp.Workspace).Has(ctx, dir, v.HeadCommit); err != nil || !has {
 		return "", err
 	}
 	b := k.sp.Workspace.Branch
 	if b == "" { // a push workspace made on no branch, before Amendment 4: no tip to compare
 		return "", nil
 	}
-	if tip, ok, err := c.VCS.Branch(ctx, dir, b); err != nil || !ok || tip != up {
+	if tip, ok, err := c.vcs(k.sp.Workspace).Branch(ctx, dir, b); err != nil || !ok || tip != up {
 		return "", err
 	}
-	ahead, err := c.VCS.Descends(ctx, dir, v.HeadCommit, up)
+	ahead, err := c.vcs(k.sp.Workspace).Descends(ctx, dir, v.HeadCommit, up)
 	if err != nil || !ahead {
 		return "", err
 	}
@@ -311,13 +311,13 @@ func (k *look) lag(ctx context.Context, v port.Change) (string, error) {
 // goal's target, by the command that names its head.
 func (k *look) unpushed(ctx context.Context, v port.Change, tip string) (outcome, string, error) {
 	c, dir, host := k.c, k.sp.Workspace.Dir, k.c.Review.Name()
-	has, err := c.VCS.Has(ctx, dir, v.HeadCommit)
+	has, err := c.vcs(k.sp.Workspace).Has(ctx, dir, v.HeadCommit)
 	if err != nil {
 		return failed, "", err
 	}
 	ahead := false
 	if has {
-		if ahead, err = c.VCS.Descends(ctx, dir, v.HeadCommit, tip); err != nil {
+		if ahead, err = c.vcs(k.sp.Workspace).Descends(ctx, dir, v.HeadCommit, tip); err != nil {
 			return failed, "", err
 		}
 	}

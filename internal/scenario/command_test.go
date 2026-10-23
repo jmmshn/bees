@@ -160,18 +160,31 @@ func TestAnUnrecordedDirRefusesASpawn(t *testing.T) {
 	noSpawn(t, x, "toy-1")
 }
 
+// vcsKeys are [workspace.command] VCS keys that load: the refusals never run them.
+const vcsKeys = `
+branch = ["true"]
+pushed = ["true"]
+has = ["true"]
+descends = ["true"]`
+
 // The spawn-time refusals, each before anything is made: no clean, a check's argv[0] on
 // no PATH, a placeholder a command workspace can't fill, a built-in check that reads a
-// branch, and a goal that hands off a branch.
+// git branch (with or without a VCS), a goal that hands off a git branch, and a pr goal
+// in a workspace with no VCS (bees-14.4).
 func TestCommandSpawnRefusals(t *testing.T) {
+	plain := `create = ["mkdir", "{dir}"]` + "\n" + `remove = ["rm", "-rf", "{dir}"]` + "\n" + `clean = ["true"]`
 	for name, tc := range map[string]struct{ command, extra, goal, want string }{
-		"no clean":          {`create = ["mkdir", "{dir}"]` + "\n" + `remove = ["rm", "-rf", "{dir}"]`, "", "cl", "[workspace.command] has no clean"},
-		"argv[0] missing":   {"", "[checks.gone]\nrun = [\"bs-no-such-cl\"]\n[goal.gone]\nhandoff = [\"cmd:gone\"]\n", "gone", "checks.gone.run: bs-no-such-cl is not on PATH"},
-		"no branch to fill": {"", "[checks.br]\nrun = [\"true\", \"{branch}\"]\n[goal.br]\nhandoff = [\"cmd:br\"]\n", "br", "checks.br.run can't run in a command workspace"},
-		"a branch check":    {"", "[goal.ahead]\nhandoff = [\"branch_ahead\"]\n", "ahead", "a command workspace has no branch for branch_ahead to read"},
-		"a branch goal":     {"", "", "branch", "a command workspace with no branch has none to hand off"},
-		"create missing":    {`create = ["bs-no-such-mk", "{dir}"]` + "\n" + `remove = ["rm", "-rf", "{dir}"]` + "\n" + `clean = ["true"]`, "", "cl", "workspace.command.create: bs-no-such-mk is not on PATH"},
-		"a custom state":    {"", "", "cl:ready", "the custom type cl takes no :<state> or =<target>"},
+		"no clean":            {`create = ["mkdir", "{dir}"]` + "\n" + `remove = ["rm", "-rf", "{dir}"]`, "", "cl", "[workspace.command] has no clean"},
+		"argv[0] missing":     {"", "[checks.gone]\nrun = [\"bs-no-such-cl\"]\n[goal.gone]\nhandoff = [\"cmd:gone\"]\n", "gone", "checks.gone.run: bs-no-such-cl is not on PATH"},
+		"no branch to fill":   {"", "[checks.br]\nrun = [\"true\", \"{branch}\"]\n[goal.br]\nhandoff = [\"cmd:br\"]\n", "br", "checks.br.run can't run in a command workspace"},
+		"a branch check":      {"", "[goal.ahead]\nhandoff = [\"branch_ahead\"]\n", "ahead", "branch_ahead read a git branch, which a command workspace has none of"},
+		"a git check":         {plain + vcsKeys, "[goal.merged]\nhandoff = [\"pr_open\"]\ncomplete = [\"branch_merged\"]\n", "merged", "branch_merged read a git branch"},
+		"a branch goal":       {"", "", "branch", "a command workspace has no git branch to cut at a change's head"},
+		"a branch goal, VCS":  {plain + vcsKeys, "", "branch:ready", "a command workspace has no git branch"},
+		"a pr check, no VCS":  {"", "[goal.open]\nhandoff = [\"pr_open\"]\n", "open", "a command workspace with no VCS has no branch to hand off: set [workspace.command] branch, pushed, has and descends"},
+		"vcs argv[0] missing": {plain + strings.Replace(vcsKeys, `has = ["true"]`, `has = ["bs-no-such-vcs"]`, 1), "", "cl", "workspace.command.has: bs-no-such-vcs is not on PATH"},
+		"create missing":      {`create = ["bs-no-such-mk", "{dir}"]` + "\n" + `remove = ["rm", "-rf", "{dir}"]` + "\n" + `clean = ["true"]`, "", "cl", "workspace.command.create: bs-no-such-mk is not on PATH"},
+		"a custom state":      {"", "", "cl:ready", "the custom type cl takes no :<state> or =<target>"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			x := newCLToy(t, tc.command, tc.extra)

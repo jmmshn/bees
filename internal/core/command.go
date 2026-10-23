@@ -19,7 +19,9 @@ import (
 	"github.com/jmmshn/bees/internal/goal"
 	"github.com/jmmshn/bees/internal/herdr"
 	"github.com/jmmshn/bees/internal/logbook"
+	"github.com/jmmshn/bees/internal/port"
 	"github.com/jmmshn/bees/internal/prompt"
+	"github.com/jmmshn/bees/internal/vcs/command"
 )
 
 // The keeper's commands (ADR-0010 Workspaces and Goals): a custom goal type's cmd: checks
@@ -162,6 +164,12 @@ func (c *Core) refuseCmds(ctx context.Context, g goal.Goal, name, bead string, w
 		all = append(all, named{"workspace.command.clean", ws.Command.Clean.Argv}, named{"workspace.command.remove", ws.Command.Remove.Argv})
 	}
 	v := vals(c.Project, name, bead, ws)
+	if ws.Command != nil && ws.Command.VCS != nil { // filled per question, so only the commit placeholders are sample
+		x := ws.Command.VCS
+		all = append(all, named{"workspace.command.branch", x.Branch.Argv}, named{"workspace.command.pushed", x.Pushed.Argv},
+			named{"workspace.command.has", x.Has.Argv}, named{"workspace.command.descends", x.Descends.Argv})
+		v["commit"], v["ancestor"] = checks.Value{S: "commit"}, checks.Value{S: "ancestor"}
+	}
 	for _, a := range all {
 		if _, err := checks.Fill(ctx, a.argv, v); errors.Is(err, checks.ErrCantRun) {
 			return exit(ExitCantCheck, "", err, "--goal %s: %s", g, a.key)
@@ -175,6 +183,15 @@ func (c *Core) refuseCmds(ctx context.Context, g goal.Goal, name, bead string, w
 		}
 	}
 	return nil
+}
+
+// vcs is workspace ws's VCS, as the goal checks read it: a command workspace's frozen
+// branch, pushed, has and descends, else the configured one (git).
+func (c *Core) vcs(ws logbook.Workspace) port.VCS {
+	if ws.Command != nil && ws.Command.VCS != nil {
+		return command.VCS{Cmds: *ws.Command.VCS, Getenv: c.getenv}
+	}
+	return c.VCS
 }
 
 // runCmd runs check name, a cmd: check of goal g, in worker sp's recorded dir: exit 0 is a
@@ -231,10 +248,14 @@ func (c *Core) commandWorkspace(name string, ended *logbook.Spawn) (ws logbook.W
 	dir = filepath.Clean(dir)
 	t := duration(cmd.Timeout)
 	ws = logbook.Workspace{Kind: config.CommandKind, Dir: dir, Repo: c.Repo, Command: &logbook.Command{
-		Remove: checks.Cmd{Argv: slices.Clone(cmd.Remove), Timeout: t}, Clean: checks.Cmd{Argv: slices.Clone(cmd.Clean), Timeout: t}}}
+		Remove: checks.Cmd{Argv: slices.Clone(cmd.Remove), Timeout: t}, Clean: checks.Cmd{Argv: slices.Clone(cmd.Clean), Timeout: t}, VCS: cmd.VCSCmds(t)}}
+	if ws.Command.VCS != nil { // the branch its VCS commands are asked about
+		ws.Branch = name
+	}
 	switch _, err := os.Stat(dir); {
 	case err == nil && ended != nil && ended.Workspace.Kind == config.CommandKind && samePath(ended.Workspace.Dir, dir):
-		ws.Command = ended.Workspace.Command // the commands it was made with remove it
+		ws.Command = ended.Workspace.Command // the commands it was made with remove it, and read it
+		ws.Branch = ended.Workspace.Branch
 		return ws, true, nil
 	case err == nil:
 		return logbook.Workspace{}, false, exit(ExitRefused, "", nil, "%s already exists, and no spawn of %s recorded it: look at it, then remove it by hand; nothing was made", dir, name)

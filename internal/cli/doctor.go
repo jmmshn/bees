@@ -439,6 +439,10 @@ func (s *settings) argvs() [][2]string {
 		add("workspace.command.create", c.Create)
 		add("workspace.command.remove", c.Remove)
 		add("workspace.command.clean", c.Clean)
+		add("workspace.command.branch", c.Branch)
+		add("workspace.command.pushed", c.Pushed)
+		add("workspace.command.has", c.Has)
+		add("workspace.command.descends", c.Descends)
 	}
 	for _, name := range slices.Sorted(maps.Keys(s.Checks)) {
 		add("checks."+name+".run", s.Checks[name].Run)

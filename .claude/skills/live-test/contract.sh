@@ -109,7 +109,7 @@ c spawn-pr-merged 2 'pr has no state "merged"' -- bs spawn --goal pr:merged --as
 c spawn-review-bare 2 'review needs a target' -- bs spawn --goal review --as "$queen" "$b0"
 c spawn-bad-value 2 'verdict takes no target' -- bs spawn --goal verdict=x --as "$queen" "$b0"
 c spawn-push-dash 2 "a target can't start with -" -- bs spawn --goal push=-x --as "$queen" "$b0"
-c spawn-review-no-remote 2 'belongs to no github repo' -- bs spawn --goal review=https://github.com/cli/cli/pull/1 --as "$queen" "$b0"
+c spawn-review-no-remote 2 'belongs to no github repo' -- bs spawn --label x --goal review=https://github.com/cli/cli/pull/1 --as "$queen" "$b0"
 c spawn-unknown-bead 2 "no bead $toy-99" -- bs spawn --goal verdict --as "$queen" "$toy-99"
 c spawn-two-bad 2 'one goal per spawn' -- bs spawn --goal verdict=x --goal nope --as "$queen" "$b0"
 c spawn-two-goals 2 'one goal per spawn' -- bs spawn --goal verdict --goal note --as "$queen" "$b0"
@@ -143,7 +143,7 @@ end_() { bs end --as "$queen" "$@"; }
 
 echo "== verdict ($V)"
 c verdict-no-answer 7 'verdict_given: --answer yes\|no is missing' -- done_ "$V"
-c verdict-maybe 7 'must be yes or no \(got "maybe"\)' -- done_ "$V" --answer maybe --report x
+c verdict-maybe 7 'must be yes|no \(got "maybe"\)' -- done_ "$V" --answer maybe --report x
 c verdict-blank-report 7 'report <text>\|- is missing' -- done_ "$V" --answer yes --report "   "
 c verdict-no-report 7 'report <text>\|- is missing' -- done_ "$V" --answer yes
 c verdict-pr 2 'flag provided but not defined: -pr' -- done_ "$V" --pr https://github.com/a/b/pull/1 --answer yes --report x

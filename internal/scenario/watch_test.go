@@ -16,7 +16,7 @@ import (
 // bs inbox --wait, the agy ring's watcher (bees-13.13.10), run in the background as an agy
 // worker runs it: one per worker, invisible to the gate, it exits with a doorbell once new
 // mail comes and marks nothing read; mail already unread when it began doesn't fire it;
-// it ends at --timeout with ExitNoMail, and when its worker ends.
+// it ends at --timeout with ExitNoMail, and when its worker ends or its harness exits.
 func TestTheMailWatcher(t *testing.T) {
 	x := newToy(t)
 	x.spawn("toy-1", "verdict")
@@ -66,7 +66,8 @@ func TestTheMailWatcher(t *testing.T) {
 	w = bg("inbox", "--wait")
 	armed(true)
 	must(t, x.queen("end", "toy-1"), 0)
-	if out := output(w); !strings.Contains(out, "toy-1 has ended") {
+	// bs end stops the harness and records the end: the watcher sees either first
+	if out := output(w); !strings.Contains(out, "no mail to watch for") {
 		t.Fatalf("the watcher of an ended worker said %q", out)
 	}
 	if _, err := os.Stat(filepath.Dir(lock)); err != nil {
@@ -78,8 +79,8 @@ func TestTheMailWatcher(t *testing.T) {
 // of the worker's harness, in its workspace, with agy's payload on stdin. A turn's first
 // model call with no watcher armed is told to arm one, and with one armed nothing; a turn
 // that ends on its own is held with the doorbell while mail is unread, else told to arm a
-// watcher while none is; one the keeper cancelled isn't held; the keeper's own agy gets
-// nothing.
+// watcher while none is, once per idle; one the keeper cancelled isn't held; the
+// keeper's own agy gets nothing.
 func TestAgyTurnHooks(t *testing.T) {
 	x := newToy(t)
 	sp := x.spawn("toy-1", "verdict")
@@ -110,6 +111,11 @@ func TestAgyTurnHooks(t *testing.T) {
 	}
 	release() // the watcher exited mid-turn, its mail read in the same turn: never idle deaf
 	must(t, hook(st.PID, "Stop", stop), 0, `{"decision":"continue","reason":"[bs] Run this command in the background`, "bs inbox --wait")
+	if r := hook(st.PID, "Stop", stop); r.code != 0 || r.out != "" { // it ignored Arm: held once, then let stop
+		t.Fatalf("asked twice in one idle: %s", r)
+	}
+	must(t, x.worker("toy-1", 2, "inbox", "--wait", "--timeout", "50ms"), 12, "no new mail") // a watcher took the lock: the next idle is asked again
+	must(t, hook(st.PID, "Stop", stop), 0, "bs inbox --wait")
 	must(t, x.queen("send", "toy-1", "hi"), 0)
 	must(t, hook(st.PID, "Stop", stop), 0, `{"decision":"continue","reason":"[bs] 1 unread (queen-toy)`)
 	if r := hook(st.PID, "Stop", cancel); r.code != 0 || r.out != "" {

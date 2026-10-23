@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"time"
 
@@ -33,6 +34,9 @@ func (c *Core) Watch(ctx context.Context, w Caller, self int, timeout time.Durat
 		return nil, exit(ExitRefused, "", nil, "%s's watcher is already armed (pid %d): nothing to do, it wakes you when mail comes", w.Name, held)
 	}
 	defer release()
+	if err := os.Remove(watch.Asked(c.CacheDir, w.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 	seen, err := c.Logbook.Unread(ctx, w.Name)
 	if err != nil {
 		return nil, err

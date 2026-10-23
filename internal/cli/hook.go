@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/jmmshn/bees/internal/bsname"
@@ -25,7 +27,8 @@ const settle = 2 * time.Second
 // first model call with no watcher armed, it injects Arm. When a turn ends on its own, it
 // holds the turn: with the doorbell while mail is unread (mail that came mid-turn, or
 // that woke it), else with Arm while no watcher is armed (one that exited mid-turn, its
-// mail read in the same turn), so a session never idles deaf. Anything else, and any
+// mail read in the same turn), so a session never idles deaf; that once per idle, so a
+// session that ignores Arm isn't held at every stop. Anything else, and any
 // caller not a queen or worker (the keeper's own agy), prints nothing: agy's no-op. An
 // error prints nothing to stdout either, and agy 1.4.6 lets a turn go on past a hook
 // that exits non-zero with no stdout (probed): the mail stays in the logbook, read at
@@ -65,12 +68,20 @@ func (r *run) hook(fs *flag.FlagSet, args []string) error {
 	if len(ms) > 0 {
 		return agy.Hold(r.out, core.Doorbell(ms, ms[len(ms)-1].From))
 	}
+	asked := watch.Asked(r.ports.CacheDir, w.Name)
+	if _, err := os.Stat(asked); err == nil || !errors.Is(err, os.ErrNotExist) {
+		return err // asked once this idle already: let it stop
+	}
 	for deadline := time.Now().Add(settle); ; time.Sleep(100 * time.Millisecond) {
 		if _, armed, err := watch.Armed(lock); err != nil || armed {
 			return err
 		}
 		if !time.Now().Before(deadline) {
-			return agy.Hold(r.out, Arm)
+			break
 		}
 	}
+	if err := os.WriteFile(asked, nil, 0o600); err != nil {
+		return err
+	}
+	return agy.Hold(r.out, Arm)
 }

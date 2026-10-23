@@ -17,6 +17,11 @@ import (
 // <name>-<stem>-* files bs removes at end, prune and before each start.
 func Path(cache, name string) string { return filepath.Join(cache, name+"-watch-lock") }
 
+// Asked is session name's marker that its Stop hook already held a turn to arm a watcher,
+// <name>-arm-asked: it holds one turn per idle, never every stop of a session that ignores
+// it, and the next watcher to take the lock removes it.
+func Asked(cache, name string) string { return filepath.Join(cache, name+"-arm-asked") }
+
 // Arm takes the lock at path for the watcher pid. held is the pid of the watcher already
 // holding it (-1 when it hasn't written its pid yet), and release is nil then. A watcher
 // keeps the lock until release or its exit.

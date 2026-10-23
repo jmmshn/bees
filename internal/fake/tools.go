@@ -405,7 +405,8 @@ func (g *GH) api(argv []string) ([]byte, error) {
 // --json <fields>: the PRs of that repo (by URL) whose head branch is branch, in state
 // (open by default, merged, closed, all), newest first, at most n (30 by default). Like
 // gh's, --head matches a fork's PR from a branch of the same name too: only
-// isCrossRepository tells them apart (bees-13.60 V2).
+// isCrossRepository tells them apart (bees-13.60 V2), and --head owner:branch matches
+// nothing, exit 0 (probed on gh 2.102, bees-13.68).
 func (g *GH) list(argv []string) ([]byte, error) {
 	flag := func(name string) string {
 		if i := slices.Index(argv, name); i >= 0 && i+1 < len(argv) {

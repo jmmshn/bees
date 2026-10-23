@@ -120,7 +120,11 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	}
 	text := prompt.Text(prompt.Worker, c.Project, h.Kind(), ws.Kind, g.Types())
 	if g.Reviewed() {
-		text += prompt.Host(prompt.Worker, c.Review.Name())
+		host, err := c.host(prompt.Worker)
+		if err != nil {
+			return logbook.Spawn{}, false, exit(ExitRefused, bsname.Cmd+" config", err, "%s: its review host's section can't be read; nothing was made", name)
+		}
+		text += host
 	}
 	// Prepare is pure, so it runs before anything is made: a refused launch leaves nothing.
 	launch, err := h.Prepare(c.workerStart(name, ws, doorbell(name, bead.ID, req.By), deny, text))
@@ -275,7 +279,11 @@ func (c *Core) resume(ctx context.Context, sp logbook.Spawn, bead port.Bead, req
 	}
 	text := prompt.Text(prompt.Worker, c.Project, h.Kind(), sp.Workspace.Kind, e.Types())
 	if e.Reviewed() {
-		text += prompt.Host(prompt.Worker, c.Review.Name())
+		host, err := c.host(prompt.Worker)
+		if err != nil {
+			return exit(ExitRefused, bsname.Cmd+" config", err, "%s: its review host's section can't be read; nothing started", sp.Name)
+		}
+		text += host
 	}
 	st0 := c.workerStart(sp.Name, sp.Workspace, doorbell(sp.Name, bead.ID, sp.By), deny, text)
 	st0.Continue, st0.Record = sp.Read, sp.Record

@@ -859,10 +859,15 @@ func TestAWorkerDoesNotInheritWhatItsHarnessUnsets(t *testing.T) {
 // otherwise) can't be started by herdr's --kind, which types only the kind's program:
 // bs types its launch into the pane, after what it must not inherit is unset, records the
 // program on the spawn, and knows the process as the worker's by that record, though its
-// name is past the 15 bytes the kernel keeps.
+// name is past the 15 bytes the kernel keeps. A program under a long dir (macOS's temp
+// dir, a deep home) still starts: the typed line only sources the launch (bees-13.89).
 func TestAWorkerRunsAProgramNotNamedAfterItsKind(t *testing.T) {
 	x := newToy(t)
-	jet := filepath.Join(t.TempDir(), "jetski-agy-compatible")
+	deep := filepath.Join(t.TempDir(), strings.Repeat(strings.Repeat("d", 99)+"/", 5))
+	if err := os.MkdirAll(deep, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	jet := filepath.Join(deep, "jetski-agy-compatible")
 	if err := os.Symlink(fake.Beesfake(t), jet); err != nil {
 		t.Fatal(err)
 	}

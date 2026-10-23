@@ -11,6 +11,7 @@ ok() { "$@" >/dev/null || fails+=("$*"); }
 case $s in
 S0|S1) ok same poem.txt ;;  # S0 = dry run of S1
 S18) ok same poem.txt; ok same fruits.txt ;;
+S19) ok same poem.txt; ok test -n "$(git -C "$repo" log --format=%s --grep='(CL ' main)" ;; # landed by cl submit
 S2) ok same fruits.txt; ok same todo.txt
 	ok test "$(show haiku.txt | tail -3)" = "$(cat "$here/fixtures/toy/haiku.txt")"
 	ok test "$(show haiku.txt | grep -c .)" -eq 4 ;;

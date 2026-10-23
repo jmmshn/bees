@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# cl: a fake CL tool for the S19 card. A client is a plain directory holding a copy of the
+# depot (a git repo's main); its edits go out as one CL per client, and a submit commits
+# them to the depot. State lives in ../cl beside this script, so it needs no env (bs runs
+# commands with only PATH, HOME and LANG).
+set -uo pipefail
+state=$(cd "$(dirname "$(realpath "$0")")/.." && pwd)/cl
+die() { echo "cl: $*" >&2; exit "${code:-2}"; }
+no() { echo "$*"; exit 1; } # the answer is no: exit 1, never 2
+usage() {
+	cat >&2 <<-'EOF'
+	usage:
+	  cl client new <name> <dir>   make a client: <dir> gets a copy of the depot (run in the depot)
+	  cl client delete <name>      remove the client and its directory
+	  cl client clean <name>       exit 0 when the client has no edit outside its uploaded CL
+	  cl upload [-m <desc>]        upload this client's edits as its CL (run in the client)
+	  cl diff [<name>]             the CL's diff against the depot it started from
+	  cl list                      every client, its directory and its CL's state
+	  cl sent <name>               exit 0 when the client's CL is out for review (or submitted)
+	  cl submitted <name>          exit 0 when the client's CL is submitted
+	  cl submit <name>             land the CL: commit its edits to the depot's main
+	EOF
+	exit 2
+}
+c() { echo "$state/clients/$1"; }
+need() { [ -d "$(c "$1")" ] || code=1 die "no client $1"; }
+# here is the client whose directory holds the cwd.
+here() {
+	local d
+	for d in "$state"/clients/*/; do
+		[ -f "$d/dir" ] || continue
+		case $PWD/ in "$(cat "$d/dir")"/*) basename "$d"; return ;; esac
+	done
+	die "$PWD is in no client: run it in one, or name the client"
+}
+# ref is what the client's directory is measured against: its CL once uploaded, else its base.
+ref() { if [ -d "$(c "$1")/cl" ]; then echo "$(c "$1")/cl"; else echo "$(c "$1")/base"; fi; }
+files() { (cd "$1" && find . -type f | sed 's|^\./||' | sort); }
+
+case ${1:-} in
+client)
+	case ${2:-} in
+	new)
+		[ $# -eq 4 ] || usage
+		name=$3 dir=$(realpath -m "$4")
+		[ ! -e "$(c "$name")" ] || die "client $name exists"
+		[ ! -e "$dir" ] || die "$dir exists"
+		depot=$(git rev-parse --show-toplevel 2>/dev/null) || die "run it in the depot (a git checkout)"
+		mkdir -p "$(c "$name")/base" "$dir" || die "can't make $dir"
+		git -C "$depot" archive main | tar -x -C "$(c "$name")/base" || die "can't read the depot's main"
+		cp -a "$(c "$name")/base/." "$dir/"
+		echo "$dir" >"$(c "$name")/dir" && echo "$depot" >"$(c "$name")/depot" && echo none >"$(c "$name")/status"
+		echo "client $name at $dir" ;;
+	delete)
+		[ $# -eq 3 ] || usage
+		need "$3"
+		rm -rf "$(cat "$(c "$3")/dir")" "$(c "$3")"
+		echo "deleted client $3" ;;
+	clean)
+		[ $# -eq 3 ] || usage
+		need "$3"
+		out=$(diff -rq "$(cat "$(c "$3")/dir")" "$(ref "$3")") || no "$3: edits outside its CL: $out"
+		echo "$3: clean" ;;
+	*) usage ;;
+	esac ;;
+upload)
+	shift; desc=
+	[ "${1:-}" = -m ] && { desc=${2:-}; shift 2; }
+	[ $# -eq 0 ] || usage
+	name=$(here) || exit
+	[ "$(cat "$(c "$name")/status")" != submitted ] || die "$name's CL is submitted: make a new client for more work"
+	dir=$(cat "$(c "$name")/dir")
+	diff -rq "$(c "$name")/base" "$dir" >/dev/null && die "nothing to upload: $dir has no edit"
+	rm -rf "$(c "$name")/cl" && cp -a "$dir" "$(c "$name")/cl"
+	[ -z "$desc" ] || echo "$desc" >"$(c "$name")/desc"
+	echo sent >"$(c "$name")/status"
+	echo "uploaded CL $name ($(diff -rq "$(c "$name")/base" "$(c "$name")/cl" | wc -l) files changed)" ;;
+diff)
+	name=${2:-$(here)} || exit
+	need "$name"
+	[ -d "$(c "$name")/cl" ] || code=1 die "$name has no CL uploaded"
+	(cd "$(c "$name")" && diff -ruN base cl)
+	exit 0 ;;
+list)
+	for d in "$state"/clients/*/; do
+		[ -f "$d/dir" ] && printf '%s\t%s\t%s\n' "$(basename "$d")" "$(cat "$d/dir")" "$(cat "$d/status")"
+	done
+	exit 0 ;;
+sent)
+	[ $# -eq 2 ] || usage
+	need "$2"
+	case $(cat "$(c "$2")/status") in sent | submitted) echo "$2: sent" ;; *) no "$2: no CL uploaded" ;; esac ;;
+submitted)
+	[ $# -eq 2 ] || usage
+	need "$2"
+	[ "$(cat "$(c "$2")/status")" = submitted ] || no "$2: not submitted"
+	echo "$2: submitted" ;;
+submit)
+	[ $# -eq 2 ] || usage
+	name=$2 && need "$name"
+	[ "$(cat "$(c "$name")/status")" = sent ] || die "$name has no CL out for review"
+	depot=$(cat "$(c "$name")/depot") base=$(c "$name")/base cl=$(c "$name")/cl
+	[ "$(git -C "$depot" branch --show-current)" = main ] || die "$depot isn't on main"
+	[ -z "$(git -C "$depot" status --porcelain)" ] || die "$depot has uncommitted changes"
+	changed=()
+	for f in $(sort -u <(files "$base") <(files "$cl")); do
+		cmp -s "$base/$f" "$cl/$f" && continue
+		# The depot moved under this file since the client was made: a conflict.
+		if [ -e "$base/$f" ]; then cmp -s "$base/$f" "$depot/$f"; else [ ! -e "$depot/$f" ]; fi || die "conflict in $f: the depot changed it since $name was made"
+		changed+=("$f")
+	done
+	for f in "${changed[@]}"; do
+		if [ -e "$cl/$f" ]; then mkdir -p "$(dirname "$depot/$f")" && cp "$cl/$f" "$depot/$f"; else rm "$depot/$f"; fi
+	done
+	git -C "$depot" add -A && git -C "$depot" commit -qm "$(cat "$(c "$name")/desc" 2>/dev/null || echo "CL $name") (CL $name)" || die "commit failed"
+	echo submitted >"$(c "$name")/status"
+	echo "submitted CL $name as $(git -C "$depot" rev-parse --short HEAD)" ;;
+*) usage ;;
+esac

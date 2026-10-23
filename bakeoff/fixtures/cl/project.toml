@@ -1,0 +1,22 @@
+# S19's project file, written by mkrun.sh as projects/<id>.toml with its placeholders filled:
+# the run dir (bin/cl is the fake cl, the fragments beside bin/) and a branch build's dir.
+worker.path = [@BSBIN@"@RUN@/bin"]
+review.fragment = "@RUN@/cl-host.md"
+guards.deny = ["cl submit*"]
+
+[workspace.command]
+create = ["@RUN@/bin/cl", "client", "new", "{name}", "{dir}"]
+remove = ["@RUN@/bin/cl", "client", "delete", "{name}"]
+clean  = ["@RUN@/bin/cl", "client", "clean", "{name}"]
+dir    = "{repo}-WS/{name}"
+
+[checks.cl_sent]
+run = ["@RUN@/bin/cl", "sent", "{name}"]
+[checks.cl_submitted]
+run = ["@RUN@/bin/cl", "submitted", "{name}"]
+
+[goal.cl]
+handoff  = ["cmd:cl_sent"]
+complete = ["cmd:cl_submitted"]
+prune    = ["cmd:cl_submitted"]
+fragment = "@RUN@/cl-goal.md"

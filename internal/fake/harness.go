@@ -67,7 +67,7 @@ func (h Harness) Dir(name string) string { return filepath.Join(h.State, name) }
 
 // Prepare is pure: the argv names the session and its state dir; Record keeps the state
 // dir and the PATH dirs it was given, for tests to read back from the spawned entry. A
-// worker's guards are a per-start file, deny.json, as claude_code's are its settings file.
+// worker's guards are .agents/deny.json in its per-start dir, as agy's hooks are.
 func (h Harness) Prepare(st port.Start) (port.Launch, error) {
 	if st.Name == "" {
 		return port.Launch{}, errors.New("beesfake: no name")
@@ -87,8 +87,8 @@ func (h Harness) Prepare(st port.Start) (port.Launch, error) {
 		if err != nil {
 			return l, err
 		}
-		l.Files = map[string]string{"deny.json": string(b)}
-		l.Args = append(l.Args, "--settings", "{{deny.json}}")
+		l.Dir = map[string]string{".agents/deny.json": string(b)}
+		l.Args = append(l.Args, "--add-dir", "{{dir}}")
 	}
 	return l, nil
 }

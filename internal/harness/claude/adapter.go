@@ -137,11 +137,15 @@ func environment(st port.Start) string {
 }
 
 // allow is the routine work of a worker the classifier lets through: its build and
-// tests, its own branch's commits, pushes and pull request, and the bees tools.
+// tests, its own branch's commits, pushes and pull request (a push goal's: pushes onto
+// the target's head branch instead), and the bees tools.
 func allow(st port.Start) []string {
 	a := []string{"$defaults",
 		fmt.Sprintf("Running this repository's own build, lint and test commands (such as go vet, go test, go build -o into the worktree, pre-commit) inside the worktree %s.", st.Dir)}
-	if st.Branch != "" {
+	switch {
+	case st.Branch != "" && st.PushTo != "": // a push goal: the target change's head, not a PR of its own (bees-13.78.1)
+		a = append(a, fmt.Sprintf("Committing to the worker's own branch %s and pushing it (never force-pushing) onto branch %s, the head of the pull request its goal names, on the remote that holds that head (git push <remote> HEAD:%s), and pushing further commits there.", st.Branch, st.PushTo, st.PushTo))
+	case st.Branch != "":
 		a = append(a, fmt.Sprintf("Committing to and pushing (never force-pushing) the worker's own branch %s to the repository's origin, opening a pull request from it, and pushing further commits to that open pull request.", st.Branch))
 	}
 	return append(a, "Running bs and bd, the bees tools, to read and send its project's messages and to read and update its own beads.")

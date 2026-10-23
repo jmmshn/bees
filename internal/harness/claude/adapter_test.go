@@ -131,7 +131,14 @@ func TestAutoModeKnowsTheWorkersOwnBranch(t *testing.T) {
 	if got := autoMode(port.Start{Dir: "/wt/bees-8", Branch: "bees-8", Repo: "/repo"}); !reflect.DeepEqual(got, want) {
 		t.Fatalf("autoMode = %q,\nwant %q", got, want)
 	}
-	// A push goal's workspace has no branch of its own: it claims none and pushes none.
+	// A push goal's branch is pushed onto its target's head, not opened as a change (bees-13.78.1).
+	want["allow"] = []string{"$defaults", build,
+		"Committing to the worker's own branch bees-8 and pushing it (never force-pushing) onto branch feature, the head of the pull request its goal names, on the remote that holds that head (git push <remote> HEAD:feature), and pushing further commits there.",
+		tools}
+	if got := autoMode(port.Start{Dir: "/wt/bees-8", Branch: "bees-8", PushTo: "feature", Repo: "/repo"}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("push: autoMode = %q,\nwant %q", got, want)
+	}
+	// A workspace with no branch of its own: it claims none and pushes none.
 	want = map[string][]string{
 		"environment": {"$defaults", "Host containment: a bees worker, working in its own git worktree /wt/bees-8 of the repository /repo."},
 		"allow":       {"$defaults", build, tools},

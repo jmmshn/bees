@@ -44,6 +44,9 @@ type Workspace struct {
 	// Trunk is the project base at spawn (the branch the repo had checked out): Base unless
 	// the branch stacks. A spawn recorded before bees-13.63 has none.
 	Trunk string `json:"trunk,omitempty"`
+	// Push is a push goal's target change's head branch, which the worker pushes its
+	// branch onto. A spawn recorded before bees-13.78.1 has none.
+	Push string `json:"push,omitempty"`
 }
 
 // Spawn is a spawned entry: everything bs end, prune and a handoff read about a worker,

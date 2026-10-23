@@ -76,6 +76,7 @@ type Start struct {
 	Name       string            // session name (ADR-0006)
 	Dir        string            // the workspace directory
 	Branch     string            // the worker's own branch; "" for a workspace with none
+	PushTo     string            // a push goal's target head branch, which Branch is pushed onto; "" for none
 	Repo       string            // the project dir the workspace was made from
 	PromptFile string            // the assembled role prompt
 	Doorbell   string            // first user message; "" for the queen

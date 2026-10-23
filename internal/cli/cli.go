@@ -71,7 +71,7 @@ var usage = strings.ReplaceAll(`usage: {cmd} <command> [flags] [arguments]   (fl
 
 commands:
   queen                                                    record this pane's queen, then exec the harness
-  spawn   --goal <goal>... [--label L] <bead>                start a worker
+  spawn   --goal <goal>... [--label L] [--harness H] <bead>  start a worker
   done    [--pr URL]... [--replaces URL]... [--answer yes|no --report TEXT|-] [--wait [--timeout D]] [--force]   hand off
   handoff                                                  done --wait
   check   <worker>                                         run its handoff checks now; writes nothing

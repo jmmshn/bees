@@ -28,6 +28,7 @@ type SpawnReq struct {
 	Bead    string
 	Label   string // "" is the last spawn's recorded label; a first spawn needs one
 	Goal    string // --goal, required
+	Harness string // --harness: this spawn's harness, recorded on it; "" is the configured one
 }
 
 // Spawn starts a worker for req.Bead: it resolves the goal, opens its git_worktree
@@ -112,8 +113,13 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	if err != nil {
 		return logbook.Spawn{}, false, err
 	}
+	kind := cmp.Or(req.Harness, c.HarnessName)
+	h := c.harnessOf(kind)
+	if h == nil {
+		return logbook.Spawn{}, false, exit(ExitRefused, bsname.Cmd+" config", nil, "%s: this bs has no adapter for harness %s; nothing was made", name, kind)
+	}
 	// Prepare is pure, so it runs before anything is made: a refused launch leaves nothing.
-	launch, err := c.Harness.Prepare(c.workerStart(name, ws, doorbell(name, bead.ID, req.By), deny))
+	launch, err := h.Prepare(c.workerStart(name, ws, doorbell(name, bead.ID, req.By), deny))
 	if err != nil {
 		return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s: its harness refused the launch; nothing was made", name)
 	}
@@ -191,7 +197,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 		return logbook.Spawn{}, false, exit(ExitFail, "", err, "%s: herdr couldn't tag its workspace; nothing was recorded", name)
 	}
 	sp = logbook.Spawn{
-		Name: name, By: req.By, Bead: bead.ID, Label: label, Harness: c.HarnessName,
+		Name: name, By: req.By, Bead: bead.ID, Label: label, Harness: kind,
 		Herdr: logbook.Pane{Session: session, Workspace: hw.ID, Pane: hw.Pane}, Workspace: ws,
 		Goal: g, ConfigDir: c.ConfigDir, At: at, PruneIgnore: c.PruneIgnore,
 	}
@@ -227,6 +233,18 @@ func (c *Core) resume(ctx context.Context, sp logbook.Spawn, bead port.Bead, req
 		return exit(ExitRefused, bsname.Cmd+" goal "+sp.Name+" "+req.Goal, nil,
 			"%s is spawned and not ended, and it was spawned with --goal %s, not --goal %s; a resume keeps its goal", sp.Name, e.Goal, g)
 	}
+	// A resume restarts the recorded harness, never the configured one or another --harness:
+	// only it can resume its conversation, or look for its process (ADR-0010's switch
+	// refusal; motif 14).
+	if req.Harness != "" && req.Harness != sp.Harness {
+		return exit(ExitRefused, bsname.Cmd+" spawn "+goalFlags(e.Goal)+" "+bead.ID, nil,
+			"%s is spawned and not ended, on harness %s, not %s; a resume keeps its harness, so leave --harness off", sp.Name, sp.Harness, req.Harness)
+	}
+	h := c.harnessOf(sp.Harness)
+	if h == nil {
+		return exit(ExitRefused, bsname.Cmd+" end --incomplete "+sp.Name+", then "+bsname.Cmd+" spawn "+goalFlags(e.Goal)+" "+bead.ID, nil,
+			"%s was spawned on harness %s, which this bs has no adapter for; nothing started", sp.Name, sp.Harness)
+	}
 	st, started, err := c.StartOf(ctx, sp)
 	if err != nil {
 		return exit(ExitCantCheck, "", err, "%s: can't tell whether it still runs; nothing started", sp.Name)
@@ -238,12 +256,6 @@ func (c *Core) resume(ctx context.Context, sp logbook.Spawn, bead port.Bead, req
 		case !errors.Is(err, port.ErrNotRunning):
 			return exit(ExitCantCheck, "", err, "%s: can't tell whether pid %d still runs; nothing started", sp.Name, st.PID)
 		}
-	}
-	// launch starts the configured harness: a spawn recorded on another is refused, never
-	// restarted on a harness that can't resume its conversation (ADR-0010's switch refusal).
-	if sp.Harness != c.HarnessName {
-		return exit(ExitRefused, bsname.Cmd+" end --incomplete "+sp.Name+", then "+bsname.Cmd+" spawn "+goalFlags(e.Goal)+" "+bead.ID, nil,
-			"%s was spawned on harness %s, and this bs starts %s; nothing started", sp.Name, sp.Harness, c.HarnessName)
 	}
 	if _, err := c.herdr(sp.Herdr.Session).ProcessInfo(ctx, sp.Herdr.Pane); errors.Is(err, herdr.ErrPaneGone) {
 		return exit(ExitRefused, bsname.Cmd+" end --incomplete "+sp.Name+", then "+bsname.Cmd+" spawn "+goalFlags(e.Goal)+" "+bead.ID, nil,
@@ -257,7 +269,7 @@ func (c *Core) resume(ctx context.Context, sp logbook.Spawn, bead port.Bead, req
 	}
 	st0 := c.workerStart(sp.Name, sp.Workspace, doorbell(sp.Name, bead.ID, sp.By), deny)
 	st0.Continue, st0.Record = sp.Read, sp.Record
-	launch, err := c.Harness.Prepare(st0)
+	launch, err := h.Prepare(st0)
 	if err != nil {
 		return exit(ExitRefused, "", err, "%s: its harness refused the restart; nothing started", sp.Name)
 	}

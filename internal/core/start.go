@@ -24,6 +24,11 @@ import (
 // the dead start a resume restarts, "" on a first start.
 func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch, replaces logbook.ID) error {
 	next := bsname.Cmd + " end --incomplete " + sp.Name
+	h, err := c.recorded(sp)
+	if err != nil {
+		return exit(ExitStart, next, err, "%s: nothing started", sp.Name)
+	}
+	kind := h.Kind()
 	args, err := c.writeFiles(sp.Name, l)
 	if err != nil {
 		return exit(ExitStart, next, err, "%s: couldn't write its start files", sp.Name)
@@ -35,7 +40,7 @@ func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch, repl
 	// twin beside it (motif 7). A pane bs can't look into starts nothing.
 	switch p, ok, err := c.own(ctx, sp); {
 	case err != nil:
-		return exit(ExitStart, next, err, "%s: can't tell whether pane %s already runs %s", sp.Name, sp.Herdr.Pane, c.Harness.Kind())
+		return exit(ExitStart, next, err, "%s: can't tell whether pane %s already runs %s", sp.Name, sp.Herdr.Pane, kind)
 	case ok:
 		if _, _, err := c.recordStart(ctx, sp, p, false, replaces); err != nil {
 			return exit(ExitStart, next, err, "%s: its start (pid %d) couldn't be recorded", sp.Name, p.PID)
@@ -44,9 +49,9 @@ func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch, repl
 	}
 	switch p, ok, err := c.harnessIn(ctx, sp); {
 	case err != nil:
-		return exit(ExitStart, next, err, "%s: can't tell whether pane %s already runs %s", sp.Name, sp.Herdr.Pane, c.Harness.Kind())
+		return exit(ExitStart, next, err, "%s: can't tell whether pane %s already runs %s", sp.Name, sp.Herdr.Pane, kind)
 	case ok:
-		return exit(ExitStart, next, nil, "%s: pane %s already runs %s (pid %d), which bs has no start of: a second would be its twin", sp.Name, sp.Herdr.Pane, c.Harness.Kind(), p.PID)
+		return exit(ExitStart, next, nil, "%s: pane %s already runs %s (pid %d), which bs has no start of: a second would be its twin", sp.Name, sp.Herdr.Pane, kind, p.PID)
 	}
 	t := c.timing()
 	wctx, cancel := context.WithCancel(ctx)
@@ -62,7 +67,7 @@ func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch, repl
 		}
 		seen <- got
 	}()
-	startErr := c.startAgent(ctx, sp, args)
+	startErr := c.startAgent(ctx, sp, kind, args)
 	switch {
 	case errors.Is(startErr, herdr.ErrPaneBusy), errors.Is(startErr, herdr.ErrNameTaken):
 		cancel() // herdr typed nothing, or a live agent has the name: no start of ours to find
@@ -79,7 +84,7 @@ func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch, repl
 	case got.pid == 0 && got.err != nil: // never a clean look: a miss it can't claim (Rule G)
 		return exit(ExitCantCheck, bsname.Cmd+" status, then "+next, errors.Join(startErr, got.err), "%s: can't look for its harness in pane %s, so its start is unconfirmed", sp.Name, sp.Herdr.Pane)
 	case got.pid == 0:
-		return exit(ExitStart, next, startErr, "%s: start unconfirmed: no %s of %s's in pane %s", sp.Name, c.Harness.Kind(), sp.Name, sp.Herdr.Pane)
+		return exit(ExitStart, next, startErr, "%s: start unconfirmed: no %s of %s's in pane %s", sp.Name, kind, sp.Name, sp.Herdr.Pane)
 	case got.err != nil:
 		return exit(ExitStart, next, got.err, "%s: its start (pid %d) couldn't be recorded", sp.Name, got.pid)
 	case errors.Is(startErr, herdr.ErrUnready):
@@ -93,13 +98,13 @@ func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch, repl
 	return nil
 }
 
-// startAgent is StartAgent, tried again while herdr finds the pane busy, within
-// Timing.Busy (bees-12.33).
-func (c *Core) startAgent(ctx context.Context, sp logbook.Spawn, args []string) error {
+// startAgent is StartAgent of harness program kind, tried again while herdr finds the
+// pane busy, within Timing.Busy (bees-12.33).
+func (c *Core) startAgent(ctx context.Context, sp logbook.Spawn, kind string, args []string) error {
 	t := c.timing()
 	h := c.herdr(sp.Herdr.Session)
 	for deadline := time.Now().Add(t.Busy); ; {
-		err := h.StartAgent(ctx, sp.Herdr.Pane, sp.Name, c.Harness.Kind(), args...)
+		err := h.StartAgent(ctx, sp.Herdr.Pane, sp.Name, kind, args...)
 		if !errors.Is(err, herdr.ErrPaneBusy) || time.Now().After(deadline) {
 			return err
 		}

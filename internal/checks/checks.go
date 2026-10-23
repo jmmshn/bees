@@ -41,7 +41,7 @@ type Result struct {
 	Argv   []string // as it ran, placeholders filled
 	Code   int
 	Output []byte // stdout and stderr, interleaved
-	Stdout []byte // stdout alone: a command whose answer is JSON
+	Stdout []byte // stdout alone: what a command that answers in JSON printed
 }
 
 var (
@@ -136,6 +136,18 @@ func Fill(ctx context.Context, argv []string, vals map[string]Value) ([]string, 
 	return out, nil
 }
 
+// locked is a writer two goroutines share.
+type locked struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *locked) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
+}
+
 // refOK reports whether git check-ref-format accepts s as a branch name. A git that
 // couldn't run or answer is an error, never "bad ref" (Rule G).
 func refOK(ctx context.Context, s string) (bool, error) {
@@ -189,11 +201,6 @@ func Run(ctx context.Context, c Cmd, dir string, vals map[string]Value, getenv f
 	if err != nil {
 		return Result{}, err
 	}
-	return Exec(ctx, argv, c.Timeout, dir, getenv)
-}
-
-// Exec runs argv, filled already, as Run does.
-func Exec(ctx context.Context, argv []string, timeout time.Duration, dir string, getenv func(string) string) (Result, error) {
 	if dir == "" {
 		return Result{}, fmt.Errorf("%w: no recorded dir to run %s in", ErrCantRun, argv[0])
 	}
@@ -209,6 +216,7 @@ func Exec(ctx context.Context, argv []string, timeout time.Duration, dir string,
 		}
 		prog = at
 	}
+	timeout := c.Timeout
 	if timeout <= 0 {
 		timeout = DefaultTimeout
 	}
@@ -217,9 +225,9 @@ func Exec(ctx context.Context, argv []string, timeout time.Duration, dir string,
 	cmd := exec.CommandContext(ctx, prog, argv[1:]...)
 	cmd.Args[0] = argv[0]
 	var out, stdout bytes.Buffer
-	both := &locked{w: &out} // stdout's and stderr's copies write it at once
+	both := &locked{w: &out} // stdout and stderr are copied in by a goroutine each
 	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = dir, env(getenv), io.MultiWriter(both, &stdout), both
-	err := port.RunGroup(cmd)
+	err = port.RunGroup(cmd)
 	var ee *exec.ExitError
 	switch {
 	case ctx.Err() == context.DeadlineExceeded:
@@ -230,16 +238,4 @@ func Exec(ctx context.Context, argv []string, timeout time.Duration, dir string,
 		return Result{}, fmt.Errorf("%w: %s: %w", ErrCantRun, strings.Join(argv, " "), err)
 	}
 	return Result{Argv: argv, Output: out.Bytes(), Stdout: stdout.Bytes()}, nil
-}
-
-// locked is w written by one goroutine at a time.
-type locked struct {
-	mu sync.Mutex
-	w  io.Writer
-}
-
-func (l *locked) Write(p []byte) (int, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.w.Write(p)
 }

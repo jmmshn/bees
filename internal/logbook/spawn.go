@@ -13,6 +13,7 @@ import (
 
 	"github.com/jmmshn/bees/internal/checks"
 	"github.com/jmmshn/bees/internal/goal"
+	"github.com/jmmshn/bees/internal/vcs/command"
 )
 
 // DefaultSession is the herdr session of a pane whose env has no HERDR_SESSION, and of
@@ -62,6 +63,9 @@ type Command struct {
 	// never one remade there since. ponytail: a speed bump, as freeDir's worktree check is: a
 	// filesystem may reuse a deleted directory's inode for the next one made there.
 	Ino uint64 `json:"ino,omitempty"`
+	// VCS is [workspace.command]'s branch, pushed, has and descends: the goal checks read
+	// the workspace through them. nil: it has no VCS bs can read, so no branch.
+	VCS *command.Cmds `json:"vcs,omitempty"`
 }
 
 // Spawn is a spawned entry: everything bs end, prune and a handoff read about a worker,

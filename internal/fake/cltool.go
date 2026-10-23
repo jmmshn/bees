@@ -58,7 +58,11 @@ func toJSON(c port.Change) clJSON {
 		Foreign: c.Foreign, ForeignRepo: c.ForeignRepo, Editable: c.Editable, Created: c.Created}
 }
 
-func (t CLTool) Run(ctx context.Context, dir string, argv []string, _ time.Duration) (checks.Result, error) {
+func (t CLTool) Run(ctx context.Context, c checks.Cmd, dir string, vals map[string]checks.Value) (checks.Result, error) {
+	argv, err := checks.Fill(ctx, c.Argv, vals)
+	if err != nil {
+		return checks.Result{}, err
+	}
 	out, err := t.answer(ctx, dir, argv)
 	if err != nil {
 		return checks.Result{Argv: argv, Code: 1, Output: []byte("cl: " + err.Error() + "\n")}, nil

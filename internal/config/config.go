@@ -8,11 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/jmmshn/bees/internal/checks"
 	"github.com/jmmshn/bees/internal/goal"
+	"github.com/jmmshn/bees/internal/vcs/command"
 )
 
 // Config is every setting bs reads; its tables mirror the TOML tables. Each string,
@@ -58,7 +60,7 @@ type Paths struct {
 // only overrides it.
 type Workspace struct {
 	Kind    string   `toml:"kind" scope:"both" enum:"git_worktree|none|command" doc:"overrides the worked-out kind: command when [workspace.command] is set, else git_worktree in a git checkout's top level, else none; spawn makes none only once bees-13.10 lands"`
-	Command *Command `toml:"command" scope:"both" doc:"argv that make (create), remove (remove) and check (clean: exit 0 when nothing would be lost) a command workspace at dir; create and remove run in paths.repo, clean in the workspace"`
+	Command *Command `toml:"command" scope:"both" doc:"argv that make (create), remove (remove) and check (clean: exit 0 when nothing would be lost) a command workspace at dir; create and remove run in paths.repo, clean in the workspace. Optional, all four or none: branch, pushed, has and descends answer the VCS facts pr goals read, each one JSON object on stdout (docs/SETUP.md)"`
 }
 
 // Command is [workspace.command]: its presence makes the kind command.
@@ -68,6 +70,35 @@ type Command struct {
 	Clean   []string `toml:"clean"` // exits 0 when nothing would be lost: required
 	Dir     string   `toml:"dir"`
 	Timeout string   `toml:"timeout"`
+	// The workspace's VCS (bees-14.4), all four or none: each prints one JSON object
+	// (internal/vcs/command). With none, a goal that reads a branch is refused.
+	Branch   []string `toml:"branch"`
+	Pushed   []string `toml:"pushed"`
+	Has      []string `toml:"has"`
+	Descends []string `toml:"descends"`
+}
+
+// vcs is c's VCS argv, by key.
+func (c *Command) vcs() []struct {
+	key  string
+	argv []string
+} {
+	return []struct {
+		key  string
+		argv []string
+	}{{"branch", c.Branch}, {"pushed", c.Pushed}, {"has", c.Has}, {"descends", c.Descends}}
+}
+
+// VCS reports whether c sets its VCS argv (load refused a partial set).
+func (c *Command) VCS() bool { return c != nil && len(c.Branch) > 0 }
+
+// VCSCmds is c's VCS argv as a spawn freezes them, each with c's timeout; nil when unset.
+func (c *Command) VCSCmds(timeout time.Duration) *command.Cmds {
+	if !c.VCS() {
+		return nil
+	}
+	cmd := func(argv []string) checks.Cmd { return checks.Cmd{Argv: slices.Clone(argv), Timeout: timeout} }
+	return &command.Cmds{Branch: cmd(c.Branch), Pushed: cmd(c.Pushed), Has: cmd(c.Has), Descends: cmd(c.Descends)}
 }
 
 // GoalType is a custom goal type, [goal.<name>]: the checks each stage runs, by name (a
@@ -282,6 +313,20 @@ func (c *Command) check() error {
 		if err := checks.Check(a.argv, checks.WorkspaceKeys); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", a.key, err))
 		}
+	}
+	var set, unset []string
+	for _, a := range c.vcs() {
+		if len(a.argv) == 0 {
+			unset = append(unset, a.key)
+			continue
+		}
+		set = append(set, a.key)
+		if err := checks.Check(a.argv, command.Keys); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", a.key, err))
+		}
+	}
+	if len(set) > 0 && len(unset) > 0 {
+		errs = append(errs, fmt.Errorf("sets %s but not %s: the workspace's VCS is all four of branch, pushed, has and descends, or none", strings.Join(set, ", "), strings.Join(unset, ", ")))
 	}
 	if c.Dir != "" {
 		errs = append(errs, checkDir(c.Dir))

@@ -25,9 +25,9 @@ import (
 // Name is this host's config name.
 const Name = config.CommandHost
 
-// Runner runs argv, its placeholders filled, in dir within timeout, as the checks runner
-// does: a non-zero exit is a Result, never an error.
-type Runner func(ctx context.Context, dir string, argv []string, timeout time.Duration) (checks.Result, error)
+// Runner fills c's argv from vals and runs it in dir, as checks.Run does: a non-zero exit
+// is a Result, never an error.
+type Runner func(ctx context.Context, c checks.Cmd, dir string, vals map[string]checks.Value) (checks.Result, error)
 
 // Host is [review.command], run on Run.
 type Host struct {
@@ -50,8 +50,8 @@ func New(cfg *config.ReviewCommand, run Runner, getenv func(string) string) (Hos
 		return Host{}, err
 	}
 	if run == nil {
-		run = func(ctx context.Context, dir string, argv []string, timeout time.Duration) (checks.Result, error) {
-			return checks.Exec(ctx, argv, timeout, dir, getenv)
+		run = func(ctx context.Context, c checks.Cmd, dir string, vals map[string]checks.Value) (checks.Result, error) {
+			return checks.Run(ctx, c, dir, vals, getenv)
 		}
 	}
 	timeout, _ := time.ParseDuration(cfg.Timeout) // checked at load; 0 is the default
@@ -67,19 +67,15 @@ func (h Host) call(ctx context.Context, key string, argv []string, dir string, v
 	for k, s := range vals {
 		vs[k] = checks.Value{S: s}
 	}
-	filled, err := checks.Fill(ctx, argv, vs)
-	if err != nil {
-		return fmt.Errorf("[review.command] %s: %w", key, err)
-	}
-	res, err := h.run(ctx, dir, filled, h.timeout)
+	res, err := h.run(ctx, checks.Cmd{Argv: argv, Timeout: h.timeout}, dir, vs)
 	if err != nil {
 		return fmt.Errorf("[review.command] %s: %w", key, err)
 	}
 	if res.Code != 0 {
-		return fmt.Errorf("[review.command] %s: %s exited %d: %s", key, strings.Join(filled, " "), res.Code, strings.TrimSpace(string(res.Output)))
+		return fmt.Errorf("[review.command] %s: %s exited %d: %s", key, strings.Join(res.Argv, " "), res.Code, strings.TrimSpace(string(res.Output)))
 	}
 	if err := json.Unmarshal(bytes.TrimSpace(res.Stdout), v); err != nil {
-		return fmt.Errorf("[review.command] %s: %s printed no JSON bs reads: %w", key, strings.Join(filled, " "), err)
+		return fmt.Errorf("[review.command] %s: %s printed no JSON bs reads: %w", key, strings.Join(res.Argv, " "), err)
 	}
 	return nil
 }

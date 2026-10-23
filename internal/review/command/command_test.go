@@ -28,7 +28,11 @@ func cfg() *config.ReviewCommand {
 
 // answers runs as a Runner: argv[1] → its stdout, or a code: prefix for the exit.
 func answers(t *testing.T, m map[string]string) Runner {
-	return func(_ context.Context, _ string, argv []string, _ time.Duration) (checks.Result, error) {
+	return func(ctx context.Context, c checks.Cmd, _ string, vals map[string]checks.Value) (checks.Result, error) {
+		argv, err := checks.Fill(ctx, c.Argv, vals)
+		if err != nil {
+			return checks.Result{}, err
+		}
 		out, ok := m[argv[1]]
 		if !ok {
 			t.Fatalf("unexpected %q", argv)
@@ -155,8 +159,8 @@ func TestExecReadsStdoutAlone(t *testing.T) {
 
 func TestPostReviewPassesTheBodyAsAFile(t *testing.T) {
 	var got []string
-	run := func(_ context.Context, _ string, argv []string, _ time.Duration) (checks.Result, error) {
-		got = argv
+	run := func(ctx context.Context, c checks.Cmd, _ string, vals map[string]checks.Value) (checks.Result, error) {
+		got, _ = checks.Fill(ctx, c.Argv, vals)
 		return checks.Result{Stdout: []byte(`{"url": "https://cl.test/toy/7#r1"}`)}, nil
 	}
 	c := cfg()

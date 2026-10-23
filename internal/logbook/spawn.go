@@ -200,6 +200,20 @@ func (l *Logbook) LatestSpawn(ctx context.Context, name string) (Spawn, bool, er
 	return s, err == nil, err
 }
 
+// EarlierLanded returns the newest spawn of the named worker before spawn whose goal is
+// complete; ok is false when none is. A respawn's row hides it otherwise (bees-13.78.4).
+func (l *Logbook) EarlierLanded(ctx context.Context, name string, spawn ID) (Spawn, bool, error) {
+	s, err := scanSpawn(l.db.QueryRowContext(ctx, `SELECT `+spawnCols+` FROM entries s
+WHERE s.kind = 'spawned' AND s.subject = ?
+  AND s.rowid < (SELECT x.rowid FROM entries x WHERE x.id = ?)
+  AND EXISTS (SELECT 1 FROM entries l WHERE l.kind = 'landed' AND l.ref = s.id)
+ORDER BY s.rowid DESC LIMIT 1`, name, string(spawn)))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Spawn{}, false, nil
+	}
+	return s, err == nil, err
+}
+
 // Spawn returns the spawned entry id.
 func (l *Logbook) Spawn(ctx context.Context, id ID) (Spawn, error) {
 	return scanSpawn(l.db.QueryRowContext(ctx, `SELECT `+spawnCols+` FROM entries s WHERE s.kind = 'spawned' AND s.id = ?`, string(id)))

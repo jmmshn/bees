@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -314,4 +316,37 @@ func TestDoctorAgyBin(t *testing.T) {
 	if _, out = r.doctor(); strings.Contains(out, "agy.bin") || !strings.Contains(out, "ok   harness agy: "+filepath.Join(r.bin, "agy")+" 1.4.6") {
 		t.Errorf("agy on PATH:\n%s", out)
 	}
+}
+
+// review.host = "command": doctor runs its repo argv, checks each argv[0], and fails a
+// host with no review.fragment, its only prompt section (ADR-0010 Amendment 6).
+func TestDoctorCommandReviewHost(t *testing.T) {
+	r := newDoctorRig(t)
+	r.stub("cl", `echo '{"repo": "toy"}'`)
+	table := `[review]
+host = "command"
+%s
+[review.command]
+url = 'https://cl\.test/(?P<repo>[^/]+)/(?P<number>[0-9]+)'
+repo = ["cl", "repo"]
+changes = ["cl", "changes", "{dir}"]
+view = ["cl", "view", "{url}"]
+ci = ["cl", "ci", "{url}"]
+post_review = ["nocl", "review", "{url}", "{body_file}", "{marker}"]
+`
+	r.write("projects/mytoy.toml", fmt.Sprintf(table, ""))
+	code, out := r.doctor()
+	wantIn(t, out, "ok   review: toy for pr goals, through [review.command]", `FAIL review: review.host = "command" has no built-in prompt section`,
+		"FAIL review.command.post_review: nocl is not on")
+	if code != 1 || strings.Contains(out, "gh:") {
+		t.Errorf("exit %d:\n%s", code, out)
+	}
+	frag := filepath.Join(r.home, "cl.md")
+	if err := os.WriteFile(frag, []byte("Upload with cl upload.\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.stub("cl", `echo "cl: can't reach the host" >&2; exit 1`)
+	r.write("projects/mytoy.toml", fmt.Sprintf(table, "fragment = "+strconv.Quote(frag)))
+	_, out = r.doctor()
+	wantIn(t, out, "ok   review: the review host's section from "+frag, "FAIL review: can't ask the review host which repo "+r.repo+" is", "can't reach the host")
 }

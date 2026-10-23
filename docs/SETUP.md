@@ -84,7 +84,7 @@ How bs runs them, the same for both tables:
 - **Bounds.** Each runs within its `timeout` (default 60s); one that runs past it is killed with its process group.
 - **Exit 0 is yes, any other exit is no.** A command that can't start or times out is neither: `bs done` exits 6. Write each check so that "nothing found" exits non-zero: `jj log -r <revset>` and `hg log -r <revset>` exit 0 on an empty revset, and `! cmd` turns a network error into yes. Wrap them: `test -n "$(jj log --no-graph -r … -T commit_id)"`.
 - **Frozen.** A spawn records each check's argv, `clean`, `remove`, and the sha256 of the goal's `fragment` file: `bs done`, `bs end` and `bs prune` run what was recorded, never the config as it is now. A resume refuses a fragment changed since; `bs goal <worker> <goal>` records the new one.
-- **The workspace.** `bs spawn` refuses a `[workspace.command]` with no `clean` (exit 0 when nothing in the workspace would be lost: it is what lets prune remove one), and a `dir` that already exists with no spawn recorded on it. A `create` that fails, times out, or makes no `dir` runs `remove`, and nothing is recorded. `bs end` keeps the directory; `bs prune` runs `clean`, then `remove`, only once the goal's frozen prune rule holds or the keeper discarded it, only on the directory `create` made (not one made there again since), and checks that `remove` left no `dir`. bs looks at nothing inside a command workspace: `clean` is the only guard on what's in it, so make it count ignored files too, where reports end up (an ignored `scratch/` is where five reports were lost, bees-13.7). A second spawn of the same worker waits for the first to record its directory, so two never make or remove it at once. Guards: when the project's directory is a git checkout, a worker is denied pushes to its default branch and force pushes; else only `[guards] deny` applies. `bs spawn` says which. Claude Code asks to trust each command workspace's directory, a new folder per worker, so each worker waits at that prompt in its pane until you answer it (bees-13.86).
+- **The workspace.** `bs spawn` refuses a `[workspace.command]` with no `clean` (exit 0 when nothing in the workspace would be lost: it is what lets prune remove one), and a `dir` that already exists with no spawn recorded on it. A `create` that fails, times out, or makes no `dir` runs `remove`, and nothing is recorded. `bs end` keeps the directory; `bs prune` runs `clean`, then `remove`, only once the goal's frozen prune rule holds or the keeper discarded it, only on the directory `create` made (not one made there again since), and checks that `remove` left no `dir`. bs looks at nothing inside a command workspace: `clean` is the only guard on what's in it, so make it count ignored files too, where reports end up (an ignored `scratch/` is where five reports were lost, bees-13.7). A second spawn of the same worker waits for the first to record its directory, so two never make or remove it at once. Guards: when the project's directory is a git checkout, a worker is denied pushes to its default branch and force pushes; in any directory, the review host's merge and approve (a `[review.command]` host's `merge_deny` and `approve_deny`) and `[guards] deny`. `bs spawn` says which. Claude Code asks to trust each command workspace's directory, a new folder per worker, so each worker waits at that prompt in its pane until you answer it (bees-13.86).
 
 A custom goal names its checks by stage: `handoff` runs at `bs done`, `complete` at `bs end` (none: complete at handoff), `prune` before `bs prune` removes the workspace (none: at once). Each is a built-in check that needs no branch (`clean`, `verdict_given`, `note_changed`, `bead_created`) or `cmd:<name>` for a `[checks.<name>]`. Its `fragment` is a file of your own (both roles' text, `<!-- worker -->` and `<!-- queen -->` lines splitting it) that becomes the goal's section of each prompt: say there how the worker saves and submits its work.
 
@@ -160,6 +160,38 @@ fragment = "~/.config/bees/fragments/cl.md"
 ```
 
 `bs end` is the completion gate (exit 9 until `cl submitted` exits 0); `bs end --incomplete` ends the worker anyway, and prune removes its client once the CL is submitted or the keeper discards the goal.
+
+### A review host of your own: `[review.command]`
+
+`--goal pr`, `push=` and `review=` read changes through a review host. GitHub is built in; any other (a CL host) is `review.host = "command"` and a `[review.command]` table of your own argv, each printing one JSON value ([ADR-0010](adr/0010-core-rebuild.md) Amendment 6). bs ships no adapter for any tool: wrap yours in a script that prints these shapes. They run as above (argv, never a shell; only `PATH`, `HOME` and `LANG`; `timeout`, default 60s), in the project's directory. Unknown keys are ignored; absent, `""` or `null` is none. **Exit non-zero, or print anything but the JSON, when you can't answer**: bs reads that as "couldn't ask" (exit 6), never as no.
+
+```toml
+[review]
+host     = "command"
+fragment = "~/.config/bees/fragments/cl-host.md"   # the host's only prompt section: how to upload, and how the queen lands
+
+[review.command]
+url          = 'https://cl\.example/(?P<repo>[^/]+)/(?P<number>[0-9]+)'   # matched whole
+repo         = ["cl", "repo", "--json"]                       # {"repo": "<name>", "protected": true}; null: no repo
+changes      = ["cl", "list", "--client", "{dir}", "--json"]  # [change, ...] uploaded from the workspace, any state
+view         = ["cl", "show", "{url}", "--json"]              # change, or null: no such change
+ci           = ["cl", "checks", "{url}", "--json"]            # {"checks": [{"name": "test", "bucket": "pass"}], "required": ["test"]}
+post_review  = ["cl", "comment", "{url}", "--file", "{body_file}", "--dedupe", "{marker}", "--json"]  # {"url": "<the comment's>"}
+fetch        = ["cl", "fetch", "{url}"]                       # optional: make {commit} present locally
+create       = "cl upload"                                    # shown to a worker with no change yet
+retarget     = "cl rebase --change {number} --onto {base}"    # shown when a stacked change's target landed
+push_hint    = "cl upload --change {number}"                  # shown when the host has an older head
+merge_deny   = ["cl submit*", "cl * submit*"]                 # guard globs: the worker never submits
+approve_deny = ["cl approve*", "cl * approve*"]               # ... nor approves
+timeout      = "60s"
+```
+
+A **change** is `{"url", "state", "draft", "head", "head_commit", "base", "commits", "foreign", "foreign_repo", "editable", "created", "behind"}`: `url` and `state` (`open`, `merged` or `closed`) always, `created` (RFC 3339) in `changes`, so bs keeps only those since the spawn; `behind` is how many commits its base has that it lacks. Its repo and number come from its URL through `url`. `bucket` is `pass`, `pending` or `skipping`; anything else is a failure. `required` names the checks the change's base requires: one not reported yet is pending.
+
+- **Placeholders.** `changes`: `{dir}`, `{repo}`, `{branch}`, `{base}`; `view` and `ci`: `{url}`, `{repo}`; `post_review`: `{url}`, `{body_file}` (the report, a temp file), `{marker}`; `fetch`: `{url}`, `{commit}`. Hints fill `{url}`, `{number}`, `{base}`, `{dir}`, `{branch}`, `{head}`.
+- **`post_review` dedupes**: a comment on the change already carrying `{marker}` is a retry after a lost answer, so print that one's URL and post nothing.
+- **One open change per workspace.** Two open changes from one workspace refuse the handoff, naming both, until a CL-chain rule lands.
+- `bs doctor` checks each argv[0], runs `repo`, and fails a command host with no `review.fragment`.
 
 ## Check it works
 

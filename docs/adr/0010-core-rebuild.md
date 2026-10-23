@@ -104,7 +104,7 @@ The types come from 151 `done` messages in the five real logbooks: about 110 sin
 | key | file | decides |
 |---|---|---|
 | `harness` | global | which program starts in the pane |
-| `review.host` | both | where pr, push and review goals' changes are reviewed and land: `github`, the default and only value yet (Amendment 1) |
+| `review.host` | both | where pr, push and review goals' changes are reviewed and land: `github`, the default, or `command`, the keeper's own argv in `[review.command]` (Amendment 1; Amendment 6) |
 | `review.fragment` | both | a markdown file that is the review host's prompt section in place of the built-in `prompt/host/<host>.md` (`<!-- worker -->` / `<!-- queen -->` split it by role): a command host's upload, revise and handoff steps live in the keeper's config, never in bs (bees-14.5); unreadable or blank, a reviewed goal's spawn, resume and amend refuse |
 | `paths.logbook_dir`, `paths.repos` | global | where logbooks live; where other projects' repos are |
 | `paths.repo`, `paths.worktrees` | project / both | the project dir; `<worktrees>/<name>` |
@@ -114,7 +114,7 @@ The types come from 151 `done` messages in the five real logbooks: about 110 sin
 | `[guards] deny`, `allow_merge_into` | both | deny globs, added to the default; the merge grant: the worker is told its bases, the merge deny lifts for every base (a glob can't see a PR's base), so it is refused unless the default branch is protected |
 | `[queen.<harness>]`, `[worker.<harness>]`, `worker.path` | both / project | the harness's own knobs; dirs first on a worker's PATH |
 
-Both files live under the config dir, `~/.config/bees`; no repo ships config bs executes. Guards default from the workspace: `git_worktree` denies push to the default branch, force-push and merge; `none` and `command` deny push to the default branch when the dir is a git checkout, else nothing, and bs says so at spawn. `[guards] deny` adds; `replace = true` replaces. `bs config` prints every value and its source; `bs config init` writes the global file; `bs doctor` checks the harness, herdr client and server versions, socket modes, the logbook dir, each `cmd:` argv[0], a remote for `pr` goals, and stray `BS_*` variables.
+Both files live under the config dir, `~/.config/bees`; no repo ships config bs executes. Guards default from the workspace: `git_worktree` denies push to the default branch, force-push and merge; `none` and `command` deny push to the default branch when the dir is a git checkout, else nothing, and bs says so at spawn; every kind denies the review host's own merge and approve globs *(Amendment 6)*. `[guards] deny` adds; `replace = true` replaces. `bs config` prints every value and its source; `bs config init` writes the global file; `bs doctor` checks the harness, herdr client and server versions, socket modes, the logbook dir, each `cmd:` argv[0], a remote for `pr` goals, and stray `BS_*` variables.
 
 **Refused at `bs spawn`** (exit 2, or 6 when the review host couldn't be asked: network, auth): a `pr`, `push` or `review` goal whose repo belongs to no repo on the review host (on GitHub: no GitHub remote); a `push`/`review` target that isn't an open change of the spawn's repo, or a fork without maintainer edits; a branch goal in a workspace with no branch; a custom type whose argv[0] isn't on PATH; a `command` kind with no `clean`; a pane whose herdr session has no config dir. *(Amendment 4)*
 
@@ -251,3 +251,29 @@ Rebuild steps 2–5 under bees-13: a design, then tickets for find-the-change (`
 - **Who observes.** After the permission check, any bs call by a worker found by its recorded ancestor (never `--as`, the tripwire or another project's session): its env is its session's own.
 - **The `observed` kind** (schema v3; the v2 file is copied aside to `.pre-3` and rebuilt like the earlier migrations): ref the spawn, written only when the facts change. A spawn reads its newest; a resume's `Start.Record` is the spawn's `record` with them on top, and it continues (`Start.Continue`) once the worker read its inbox or observed anything. A respawn starts with none.
 - **No secrets.** agy's language-server address and CSRF token beside the id are not kept until a ring needs them (bees-13.13.10).
+
+## Amendment 6 (bees-14.3, the command review host, 2026-10-23)
+
+A CL host plugs in behind `port.Review` with no tool of its own in bs: `review.host = "command"` runs the keeper's argv from `[review.command]` and reads a documented JSON answer. bs ships no host-specific adapter; every tool name, command and URL shape lives in the keeper's config (bees-14). The fake CL host (`fake.CLHost`) is its first user, through a scripted fake tool, and the PR-goal scenarios run on it.
+
+- **How bs runs them**, as `[workspace.command]` and `cmd:` checks run (bees-13.11, and bees-14.4's command VCS reads alike): argv, never a shell; each `{key}` one whole argument, filled by bs, never by a worker; the env only `PATH`, `HOME` and `LANG`; a `timeout` bound (60 s by default) killing the process group; cwd the project's checkout. Each prints **one JSON value on stdout**, snake_case keys, unknown ones ignored, absent, `""` or `null` meaning none. Exit non-zero, a timeout or output that isn't that JSON is *couldn't ask* (exit 6), never a no (Rule G).
+- **The keys.**
+
+  | key | placeholders | prints | serves |
+  |---|---|---|---|
+  | `url` | — | (a regexp, not a command, matched whole, with named groups `repo` and `number`) | `Parse`; the URL as given is the one spelling (motif 3) |
+  | `repo` | `{repo}` | `{"repo": "<name>", "protected": bool}`; `repo` none: the checkout belongs to no repo on the host | `Repo`, `Protected` |
+  | `changes` | `{repo}` `{dir}` `{branch}` `{base}` | `[change, …]`: every change uploaded from the workspace, any state | `Changes`; bs drops foreign ones and those created before the spawn, and sorts newest first |
+  | `view` | `{repo}` `{url}` | one change, or `null`: the host's definite "no such change" (`ErrNoChange`) | `View`, `Behind` |
+  | `ci` | `{repo}` `{url}` | `{"checks": [{"name", "bucket"}], "required": [name, …]}`: the change's required checks (`bucket` `pass`, `pending`, `skipping`, anything else a failure) and the names its base requires | `CI`, `RequiredChecks` |
+  | `post_review` | `{repo}` `{url}` `{body_file}` `{marker}` | `{"url": "<the review's>"}`; a review on the change already carrying `marker` is a retry: it posts nothing and prints that one's URL (motif 10) | `PostReview` |
+  | `fetch` (optional) | `{repo}` `{url}` `{commit}` | anything | `Fetch`; unset, a no-op |
+  | `create`, `retarget`, `push_hint` | text: `{url}` `{number}` `{base}` `{dir}` `{branch}` `{head}` | (shown to a worker, never run) | `Create`, `Retarget`, `PushHint` |
+  | `merge_deny`, `approve_deny` | — | (guard globs) | `MergeDeny`, `ApproveDeny`: the host's own submit and self-approve spellings, since guards' git and gh rules match nothing there |
+
+- **Guards.** A review host's merge and approve globs are denied in every workspace kind, not only `git_worktree`: a CL host's worker is in a `command` workspace, and a worker never lands or approves its own change anywhere. With a GitHub host this also denies `gh pr merge` in a `command` workspace in a git checkout, which was allowed before.
+
+  A change is `{"url", "state": "open|merged|closed", "draft", "head", "head_commit", "base", "commits": [...], "foreign", "foreign_repo", "editable", "created": RFC 3339, "behind"}`; `url` and `state` are required, `created` too in `changes`. Its repo and number are read from its URL by `url`, never from a second field.
+- **Required at load**: with `review.host = "command"`, `[review.command]` must set `url`, `repo`, `changes`, `view`, `ci` and `post_review`; a missing one fails the load naming it, as any bad key does. `review.fragment` is the host's only prompt section (bees-14.5): `bs doctor` fails a command host without one.
+- **One open change per workspace** (OQ-K3, deferred): a CL host's chain of CLs from one client is still read as Amendment 4's rule, so two open changes from a workspace refuse the handoff naming both, until a chain rule lands.
+- **Not frozen.** Like GitHub's, the host is the config as it is now, never recorded at spawn: a fixed `[review.command]` applies to open spawns at once.

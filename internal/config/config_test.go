@@ -224,7 +224,7 @@ func TestFieldsListUnsetTables(t *testing.T) {
 			unset = append(unset, f.Key)
 		}
 	}
-	if got := strings.Join(unset, " "); got != "workspace.command goal.<name> checks.<name>" {
+	if got := strings.Join(unset, " "); got != "workspace.command goal.<name> checks.<name> review.command" {
 		t.Errorf("unset tables = %s", got)
 	}
 }
@@ -342,10 +342,16 @@ func TestTheSetupExamplesLoad(t *testing.T) {
 	}
 	doc, _, _ = strings.Cut(doc, "\n## ")
 	blocks := strings.Split(doc, "```toml\n")[1:]
-	if len(blocks) != 3 {
-		t.Fatalf("%d toml blocks, want 3 (jj, hg, CL)", len(blocks))
+	if len(blocks) != 4 {
+		t.Fatalf("%d toml blocks, want 4 (jj, hg, CL, a review host)", len(blocks))
 	}
-	for _, blk := range blocks {
+	host, _, _ := strings.Cut(blocks[3], "```")
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "config.toml"), host)
+	if l, err := Load(Input{Dir: dir, Home: "/h"}); err != nil || l.Review.Host != CommandHost || l.Review.Command.Incomplete() != nil {
+		t.Errorf("the review host example: %v\n%s", err, host)
+	}
+	for _, blk := range blocks[:3] {
 		blk, _, _ = strings.Cut(blk, "```")
 		dir := t.TempDir()
 		write(t, filepath.Join(dir, "config.toml"), blk)
@@ -382,4 +388,32 @@ func TestAgyBin(t *testing.T) {
 	if err != nil || l.Agy.Bin != "agy" || l.Agy.Settings != "~/.gemini/antigravity-cli/settings.json" {
 		t.Errorf("defaults: %+v, %v", l.Agy, err)
 	}
+}
+
+// review.host = "command" needs [review.command] with its required keys; the table's
+// argv, url and hints are checked as any table's are.
+func TestReviewCommandErrors(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "config.toml"), "[review]\nhost = \"command\"\n")
+	_, err := Load(Input{Dir: dir, Home: "/h"})
+	wantErr(t, err, `review.host = "command" needs a [review.command] table`)
+	write(t, filepath.Join(dir, "config.toml"), `[review]
+host = "command"
+[review.command]
+url = 'https://cl\.test/(?P<repo>[^/]+)/[0-9]+'
+view = ["cl", "view", "{pr}"]
+changes = ["cl", "list", "{name}"]
+retarget = "cl rebase {change}"
+`)
+	_, err = Load(Input{Dir: dir, Home: "/h"})
+	wantErr(t, err, "it must name a group (?P<number>…)", "view: argument 2 {pr}: a worker names no change",
+		"changes: argument 2 {name}: no such placeholder", `retarget = "cl rebase {change}": only {url}`)
+	write(t, filepath.Join(dir, "config.toml"), `[review]
+host = "command"
+[review.command]
+url = 'https://cl\.test/(?P<repo>[^/]+)/(?P<number>[0-9]+)'
+view = ["cl", "view", "{url}"]
+`)
+	_, err = Load(Input{Dir: dir, Home: "/h"})
+	wantErr(t, err, "[review.command] has no repo, changes, ci, post_review")
 }

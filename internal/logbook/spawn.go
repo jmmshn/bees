@@ -91,8 +91,11 @@ type Spawn struct {
 	// PruneIgnore is prune.ignore at spawn: the ignored files prune lets go with the
 	// workspace. None on a spawn recorded before bs froze it, so prune keeps every one.
 	PruneIgnore []string `json:"prune_ignore,omitempty"`
-	Ended       bool     `json:"-"`
-	Read        bool     `json:"-"` // the worker has read a message since this spawn, so it has a conversation
+	// ConfigHome is the XDG_CONFIG_HOME the spawn ran under, exported in the worker's pane
+	// at every start (bees-14.10); "" on a spawn recorded before bs kept it.
+	ConfigHome string `json:"config_home,omitempty"`
+	Ended      bool   `json:"-"`
+	Read       bool   `json:"-"` // the worker has read a message since this spawn, so it has a conversation
 	// Observed is what the worker last told bs about itself from inside its session
 	// (RecordObserved): agy's conversation id; nil when it told nothing.
 	Observed map[string]string `json:"-"`

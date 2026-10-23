@@ -29,6 +29,7 @@ var errNoConfigDir = errors.New("no config dir for this herdr session")
 type settings struct {
 	*config.Loaded
 	Dir, Session string
+	Home         string // the config home Dir is under (config.Base)
 	Missing      bool   // the session's config dir doesn't exist
 	Project      string // "" when bs can't tell: config and doctor still run
 	ProjectFrom  string // how bs found it
@@ -81,11 +82,16 @@ var envKeys = []string{"BS_PROJECT", "BS_LOGBOOK_DIR", "BS_REPOS"}
 // with the error, for the warnings found before it.
 func load(ctx context.Context, env Env, ports Ports) (*settings, error) {
 	run := ports.Run
-	dir, session, err := config.Dir(func(k string) string { return core.Getenv(env.Vars, k) })
+	getenv := func(k string) string { return core.Getenv(env.Vars, k) }
+	dir, session, err := config.Dir(getenv)
 	if err != nil {
 		return nil, err
 	}
-	s := &settings{Dir: dir, Session: session}
+	base, err := config.Base(getenv)
+	if err != nil {
+		return nil, err
+	}
+	s := &settings{Dir: dir, Session: session, Home: base}
 	if fi, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) && session == config.DefaultSession {
 		// The keeper's own config: no files yet means the defaults, the real logbooks.
 	} else if errors.Is(err, os.ErrNotExist) {

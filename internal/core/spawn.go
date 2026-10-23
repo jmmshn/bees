@@ -161,7 +161,11 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	if err != nil {
 		return logbook.Spawn{}, false, exit(ExitRefused, bsname.Cmd+" config", err, "%s: its harness's start files can't be written; nothing was made", name)
 	}
-	if _, err := typed(h.Kind(), h.Program(), worst, launch.Unset); err != nil {
+	pre, err := prep(launch.Unset, c.ConfigHome)
+	if err == nil {
+		_, err = typed(h.Kind(), h.Program(), worst, pre)
+	}
+	if err != nil {
 		return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s: the launch can't be typed into a pane; nothing was made", name)
 	}
 	session := cmp.Or(req.Session, logbook.DefaultSession)
@@ -243,7 +247,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	sp = logbook.Spawn{
 		Name: name, By: req.By, Bead: bead.ID, Label: label, Harness: kind, Program: h.Program(),
 		Herdr: logbook.Pane{Session: session, Workspace: hw.ID, Pane: hw.Pane}, Workspace: ws,
-		Goal: g, ConfigDir: c.ConfigDir, At: at, PruneIgnore: c.PruneIgnore,
+		Goal: g, ConfigDir: c.ConfigDir, ConfigHome: c.ConfigHome, At: at, PruneIgnore: c.PruneIgnore,
 	}
 	sp.Record = launch.Record
 	hint := "" // how the worker hands its work to the target

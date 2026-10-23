@@ -36,6 +36,7 @@ type Core struct {
 	Checks      map[string]config.Check    // the argv their cmd: checks run
 	Getenv      func(string) string        // bs's own environment, which commands bs runs take PATH from; nil is the process's
 	ConfigDir   string                     // the config dir the spawn ran under, recorded
+	ConfigHome  string                     // the config home it ran under (config.Base), recorded and set in the worker's pane
 	CacheDir    string                     // per-start files
 	WorkerPath  []string                   // worker.path: dirs first on a worker's PATH
 	Guards      config.Guards

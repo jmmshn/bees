@@ -887,6 +887,31 @@ func TestAWorkerRunsAProgramNotNamedAfterItsKind(t *testing.T) {
 	must(t, x.keeper("status"), 0, "toy-1")
 }
 
+// bees-14.10: a queen under XDG_CONFIG_HOME spawns on a herdr server whose panes have
+// none, so a worker's bs read ~/.config/bees, not its queen's config: its config home is
+// recorded on the spawn and exported in its pane before every start.
+func TestAWorkerReadsItsQueensConfigHome(t *testing.T) {
+	x := newToy(t)
+	home := core.Getenv(x.env, "XDG_CONFIG_HOME")
+	x.herdr.Env = slices.DeleteFunc(x.herdr.Env, func(kv string) bool { return strings.HasPrefix(kv, "XDG_CONFIG_HOME=") })
+	jet := filepath.Join(t.TempDir(), "jetski")
+	if err := os.Symlink(fake.Beesfake(t), jet); err != nil {
+		t.Fatal(err)
+	}
+	// herdr agent start types toy-1's launch; bs types toy-2's with herdr pane run.
+	for bead, bin := range map[string]string{"toy-1": "", "toy-2": jet} {
+		h := &unsetting{Harness: fake.Harness{State: x.harness.State, Bin: bin}}
+		x.ports.Harness = h
+		if sp := x.spawn(bead, "branch"); sp.ConfigHome != home {
+			t.Fatalf("%s's spawn recorded config home %q, not %q", bead, sp.ConfigHome, home)
+		}
+		must(t, x.worker(bead, 1, "status"), 0)
+		if env := h.seen(); !slices.Contains(env, "XDG_CONFIG_HOME="+home) {
+			t.Fatalf("%s's env: %q", bead, env)
+		}
+	}
+}
+
 // unsetting is the fake harness unsetting SSH_TTY, as agy does, keeping the env of its
 // worker's last bs call.
 type unsetting struct {

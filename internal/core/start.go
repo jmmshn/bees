@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/jmmshn/bees/internal/bsname"
@@ -53,6 +55,17 @@ func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch, repl
 	case ok:
 		return exit(ExitStart, next, nil, "%s: pane %s already runs %s (pid %d), which bs has no start of: a second would be its twin", sp.Name, sp.Herdr.Pane, kind, p.PID)
 	}
+	// herdr types the launch into the pane's shell, whose env a herdr server started over
+	// ssh filled: what the harness must not inherit is unset there first (bees-13.13.13).
+	if len(l.Unset) > 0 {
+		line, err := unsetLine(l.Unset)
+		if err == nil {
+			err = c.herdr(sp.Herdr.Session).RunInPane(ctx, sp.Herdr.Pane, line)
+		}
+		if err != nil {
+			return exit(ExitStart, next, err, "%s: couldn't unset %s in pane %s: nothing started", sp.Name, strings.Join(l.Unset, ", "), sp.Herdr.Pane)
+		}
+	}
 	t := c.timing()
 	wctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -97,6 +110,18 @@ func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch, repl
 	}
 	return nil
 }
+
+// unsetLine is the shell line unsetting vars, each a plain variable name.
+func unsetLine(vars []string) (string, error) {
+	for _, v := range vars {
+		if !envName.MatchString(v) {
+			return "", fmt.Errorf("%q is not an env var name", v)
+		}
+	}
+	return "unset " + strings.Join(vars, " "), nil
+}
+
+var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // startAgent is StartAgent of harness program kind, tried again while herdr finds the
 // pane busy, within Timing.Busy (bees-12.33).

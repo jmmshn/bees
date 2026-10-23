@@ -42,6 +42,11 @@ const Conversation = "conversation"
 // needs them (bees-13.13.10): a token bs doesn't use, bs doesn't keep.
 const envConversation = "ANTIGRAVITY_CONVERSATION_ID"
 
+// Remote are the vars agy 1.4.6 reads as a remote session, saying "not signed in" when
+// any is set and not empty (probed, bees-13.13.13): a herdr server started over ssh hands
+// them to every pane. SSH_AUTH_SOCK doesn't count.
+var Remote = []string{"SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"}
+
 // Adapter is the agy harness for one role: its [<role>.agy] model, the agy binary (""
 // is agy on PATH), the bs its hook runs, an absolute path, and agy's settings.json, which
 // holds its trusted folders ("" is ~/.gemini/antigravity-cli/settings.json).
@@ -80,10 +85,11 @@ func (a Adapter) bin() string {
 }
 
 // Prepare builds the agy argv: the per-start dir, the role's custom agent, the model and
-// the doorbell as the first prompt (-i). Never --dangerously-skip-permissions: it skips
-// the hooks too. A resume continues the recorded conversation and is refused without one,
-// never -c, which falls back to another conversation. A worker's PATH dirs are refused:
-// agy has no per-session way to set them yet (bees-13.80 row 5).
+// the doorbell as the first prompt (-i), with Remote unset. Never
+// --dangerously-skip-permissions: it skips the hooks too. A resume continues the recorded
+// conversation and is refused without one, never -c, which falls back to another
+// conversation. A worker's PATH dirs are refused: agy has no per-session way to set them
+// yet (bees-13.80 row 5).
 func (a Adapter) Prepare(st port.Start) (port.Launch, error) {
 	var l port.Launch
 	switch {
@@ -102,6 +108,7 @@ func (a Adapter) Prepare(st port.Start) (port.Launch, error) {
 		l.Dir[".agents/hooks.json"] = hooks(a.Bs, st.Deny)
 	}
 	l.Args = []string{"--add-dir", "{{dir}}", "--agent", agent, "--mode", "auto"}
+	l.Unset = Remote
 	if a.Model != "" {
 		l.Args = append(l.Args, "--model="+a.Model) // one argument, so a value starting with - stays a value
 	}

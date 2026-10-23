@@ -75,6 +75,7 @@ type workspace struct {
 type pane struct {
 	id, cwd string
 	agent   *agent
+	shell   []string // the env a pane run line left the pane's shell with; nil: as it started
 }
 
 // The kinds herdr agent start supports (herdr 0.9.5 --help); any other exits 2.

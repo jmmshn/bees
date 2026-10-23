@@ -55,12 +55,16 @@ func (r *run) queen(fs *flag.FlagSet, args []string) error {
 	if err := r.c.CheckGuards(r.ctx); err != nil { // bees-12.20: refused now, not at every spawn
 		return err
 	}
-	argv, err := r.c.Queen(r.ctx, core.QueenReq{Session: r.s.Session, Pane: pane, Self: r.env.Self, Exe: exe})
+	argv, unset, err := r.c.Queen(r.ctx, core.QueenReq{Session: r.s.Session, Pane: pane, Self: r.env.Self, Exe: exe})
 	if err != nil {
 		return err
 	}
-	// bs sets no BS_* in a session's env (ADR-0010): her bs finds her by her pane.
-	env := slices.DeleteFunc(slices.Clone(r.env.Vars), func(kv string) bool { return strings.HasPrefix(kv, "BS_") })
+	// bs sets no BS_* in a session's env (ADR-0010): her bs finds her by her pane. What the
+	// harness must not inherit goes too (agy's SSH_*, bees-13.13.13).
+	env := slices.DeleteFunc(slices.Clone(r.env.Vars), func(kv string) bool {
+		k, _, _ := strings.Cut(kv, "=")
+		return strings.HasPrefix(k, "BS_") || slices.Contains(unset, k)
+	})
 	if err := r.c.Logbook.Close(); err != nil { // exec keeps no logbook open
 		return err
 	}

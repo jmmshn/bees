@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/jmmshn/bees/internal/harness/agy"
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/port"
+	"github.com/jmmshn/bees/internal/proc"
 )
 
 // rig is a keeper's shell on herdr session toy: a home, a config root and a git repo.
@@ -492,4 +494,36 @@ func TestQueenLooksForAgyBin(t *testing.T) {
 		t.Errorf("exit %d", code)
 	}
 	wantIn(t, errb.String(), filepath.Join(r.home, "opt", "agy")+" is missing or not executable (agy.bin)")
+}
+
+// bees-13.13.13: bs queen on harness agy execs it without the SSH_* vars agy reads as a
+// remote session ("not signed in"), keeping the rest, SSH_AUTH_SOCK too.
+func TestQueenExecDropsWhatAgyMustNotInherit(t *testing.T) {
+	r := newRig(t)
+	r.start()
+	r.write("config.toml", "harness = \"agy\"\n[paths]\nlogbook_dir = \""+r.logbook+"\"\n")
+	bin := filepath.Join(r.home, "bin")
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "agy"), []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var env []string
+	ports := Ports{Run: port.Exec{}, CacheDir: filepath.Join(r.home, "cache"), Harness: agy.Adapter{Bs: "/bin/bs"}, Proc: proc.System{},
+		Exec: func(_ string, e, _ []string) error { env = e; return nil }}
+	vars := append(append([]string{}, r.env...), "PATH="+bin+":"+os.Getenv("PATH"), "HERDR_PANE_ID=w1:p1",
+		"SSH_CONNECTION=1.2.3.4 1 5.6.7.8 22", "SSH_CLIENT=1.2.3.4 1 22", "SSH_TTY=/dev/pts/9", "SSH_AUTH_SOCK=/tmp/agent")
+	var out, errb bytes.Buffer
+	if code := Run(context.Background(), Env{Vars: vars, Dir: r.repo, Self: os.Getpid()}, ports, []string{"queen"}, &out, &errb); code != 0 {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "SSH_") && !strings.HasPrefix(kv, "SSH_AUTH_SOCK=") {
+			t.Errorf("the exec env keeps %s", kv)
+		}
+	}
+	if !slices.Contains(env, "SSH_AUTH_SOCK=/tmp/agent") || !slices.Contains(env, "HERDR_PANE_ID=w1:p1") {
+		t.Errorf("the exec env lost what agy may inherit: %q", env)
+	}
 }

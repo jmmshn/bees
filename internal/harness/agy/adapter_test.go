@@ -34,6 +34,10 @@ func TestPrepareAWorker(t *testing.T) {
 	if len(l.Files) != 0 || len(l.Dir) != 2 {
 		t.Errorf("files %v, dir %v: want only the agent file and hooks.json in the dir", l.Files, l.Dir)
 	}
+	// bees-13.13.13: agy says "not signed in" with any of these set (probed on 1.4.6).
+	if want := []string{"SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"}; !reflect.DeepEqual(l.Unset, want) {
+		t.Errorf("unset = %q, want %q", l.Unset, want)
+	}
 	agent := l.Dir[".agents/agents/bs-worker.md"]
 	front := "---\nname: bs-worker\ndescription: a bees worker, started by bs\ntools: [" + strings.Join(agy.Tools, ", ") + "]\n---\n"
 	if agent != front+"You are a worker.\n" {

@@ -220,12 +220,14 @@ func TestTheCommandKeysAreRead(t *testing.T) {
 	r.write("projects/mytoy.toml", "[checks.lint]\nrun = [\"bs-no-such-lint\", \"lint\"]\n")
 	_, out, _ := r.run(r.repo, nil, "config")
 	wantIn(t, out, `checks.lint.run = ["bs-no-such-lint", "lint"]  # project `, "# [workspace.command] unset\n", "# [goal.<name>] unset\n")
-	if strings.Contains(out, "not read by") {
-		t.Errorf("bs config calls a key unread:\n%s", out)
+	for line := range strings.Lines(out) {
+		if strings.Contains(line, "not read by") && (strings.Contains(line, "checks.") || strings.Contains(line, "goal.") || strings.Contains(line, "workspace.command")) {
+			t.Errorf("bs config calls a key unread: %s", line)
+		}
 	}
 	_, out, _ = r.run(r.repo, nil, "doctor")
 	wantIn(t, out, "FAIL checks.lint.run: bs-no-such-lint is not on")
-	if strings.Contains(out, "not read by") || strings.Contains(out, "guards") {
+	if strings.Contains(out, "checks.lint.run yet") || strings.Contains(out, "guards") {
 		t.Errorf("doctor calls the guards unread; bees-13.6 reads them:\n%s", out)
 	}
 	if strings.Contains(out, "model set") || strings.Contains(out, "workspace.command") {

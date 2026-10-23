@@ -132,6 +132,7 @@ func (h *Herdr) Run(ctx context.Context, dir string, argv ...string) ([]byte, er
 		"pane list":                 h.paneList,
 		"pane process-info":         h.processInfo,
 		"pane close":                h.paneClose,
+		"pane run":                  h.paneRun,
 		"pane move":                 h.paneMove,
 	}[args[0]+" "+args[1]]
 	if f == nil {

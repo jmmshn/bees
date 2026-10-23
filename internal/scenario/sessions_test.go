@@ -299,7 +299,8 @@ func TestAMisaddressedSendIsRefused(t *testing.T) {
 }
 
 // T11 (round 11's cross-project send and reply): a worker's send --project lands in the
-// other project's logbook, and that project's inbox shows how to reply across.
+// other project's logbook, and that project's inbox shows how to reply across: queen to
+// queen (T2).
 func TestRound11CrossProjectSendAndReply(t *testing.T) {
 	x := newToy(t)
 	x.spawn("toy-1", "verdict")
@@ -311,7 +312,7 @@ func TestRound11CrossProjectSendAndReply(t *testing.T) {
 	must(t, x.worker("toy-1", 1, "send", "--project", "other", "queen-other", "your API changed?"), 0)
 	other := append(slices.Clone(x.env), "BS_PROJECT=other")
 	must(t, x.shellRun("/", other, "", "inbox", "--as", "queen-other"), 0,
-		"from toy-1", "your API changed?", `(reply with: bs send --project toy toy-1 "...")`)
+		"from toy-1", "your API changed?", `(reply with: bs send --project toy queen-toy "...")`)
 }
 
 // worker.path reaches the harness as dirs first on the worker's PATH (the live rig's

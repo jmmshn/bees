@@ -93,8 +93,8 @@ func Doorbell(unread []logbook.Message, from string) string {
 	}
 	for _, m := range slices.Backward(unread) {
 		if m.From == from {
-			if m.FromProject != "" { // cross-project mail: the reply goes to the sender's logbook
-				reply = "--project " + m.FromProject + " " + from
+			if m.FromProject != "" { // cross-project mail: the reply goes queen to queen, in the sender's logbook
+				reply = "--project " + m.FromProject + " " + Queen(m.FromProject)
 			}
 			break
 		}

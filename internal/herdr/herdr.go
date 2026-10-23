@@ -45,7 +45,8 @@ var (
 	ErrPaneGone   = errors.New("pane not found")                           // pane_not_found, agent_pane_not_found
 	ErrNameTaken  = errors.New("a live agent already has the name")        // agent_name_taken: herdr started nothing
 	ErrPaneBusy   = errors.New("pane is not at an idle shell yet")         // agent_pane_busy: herdr typed nothing (bees-12.33)
-	ErrUnready    = errors.New("the agent didn't become ready in time")    // timeout, agent_not_ready: the process may run (bees-12.49)
+	ErrUnready    = errors.New("the agent didn't become ready in time")    // timeout: the process may run (bees-12.49)
+	ErrBlocked    = errors.New("the agent is blocked at a prompt")         // agent_not_ready: it runs, waiting on an answer (bees-13.78.3)
 	ErrDirty      = errors.New("worktree has modified or untracked files") // dirty_worktree_requires_force
 	ErrUnsafeArg  = errors.New("herdr can't pass an agent argument containing a control character")
 	ErrLongLaunch = errors.New("launch line too long to type into a pane")
@@ -60,7 +61,7 @@ var codes = map[string]error{
 	"agent_name_taken":              ErrNameTaken,
 	"agent_pane_busy":               ErrPaneBusy,
 	"timeout":                       ErrUnready,
-	"agent_not_ready":               ErrUnready,
+	"agent_not_ready":               ErrBlocked,
 	"dirty_worktree_requires_force": ErrDirty,
 	"invalid_agent_argument":        ErrUnsafeArg,
 	"invalid_agent_name":            ErrBadName,
@@ -223,7 +224,8 @@ func Unsafe(a string) bool { return strings.IndexFunc(a, unicode.IsControl) >= 0
 const StartTimeout = 10 * time.Second
 
 // StartAgent starts kind with args in pane as agent name. ErrUnready means herdr gave up
-// waiting while the process may well run: the caller looks for it (bees-12.49).
+// waiting while the process may well run, and ErrBlocked that it runs but waits at a
+// prompt (folder trust): the caller looks for it (bees-12.49).
 func (c Client) StartAgent(ctx context.Context, pane, name, kind string, args ...string) error {
 	if err := CheckAgentName(name); err != nil {
 		return err

@@ -155,16 +155,17 @@ func TestFakeHerdrRefusesATakenNameAndABusyPane(t *testing.T) {
 	}
 }
 
-// A start can time out, or lose its terminal, while its process runs (bees-12.49).
+// A start can time out, block at a prompt, or lose its terminal, while its process runs
+// (bees-12.49, bees-13.78.3).
 func TestFakeHerdrStartFailsWhileTheProcessRuns(t *testing.T) {
-	for _, mode := range []string{"timeout", "lost"} {
+	for _, mode := range []string{"timeout", "blocked", "lost"} {
 		r := newRig(t)
 		c := r.client("")
 		ws, _ := c.CreateWorkspace(context.Background(), t.TempDir(), "x")
 		r.h.StartFails = mode
 		l, _ := r.harn.Prepare(port.Start{Name: "toy-1"})
 		err := c.StartAgent(context.Background(), ws.Pane, "toy-1", "claude", l.Args...)
-		if err == nil || mode == "timeout" && !errors.Is(err, herdr.ErrUnready) {
+		if err == nil || mode == "timeout" && !errors.Is(err, herdr.ErrUnready) || mode == "blocked" && !errors.Is(err, herdr.ErrBlocked) {
 			t.Fatalf("%s: err = %v", mode, err)
 		}
 		pi, err := c.ProcessInfo(context.Background(), ws.Pane)

@@ -137,6 +137,8 @@ func (h *Herdr) agentStart(s *server, session string, f flags) ([]byte, error) {
 	switch fails {
 	case "timeout":
 		return nil, refusal("agent:start", "timeout", "agent %s was not ready within %s", name, timeout)
+	case "blocked":
+		return nil, refusal("agent:start", "agent_not_ready", "agent %s is blocked during startup and is not ready for prompts", name)
 	case "lost":
 		return nil, refusal("agent:start", "terminal_lost", "the terminal of pane %s went away", paneID)
 	}

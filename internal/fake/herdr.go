@@ -33,7 +33,8 @@ type Herdr struct {
 	// nothing: a new pane's shell isn't at its prompt yet (bees-12.33).
 	Busy int
 	// StartFails makes the next agent start fail while its process runs all the same:
-	// "timeout" (herdr gave up waiting for ready, bees-12.49) or "lost" (the terminal went
+	// "timeout" (herdr gave up waiting for ready, bees-12.49), "blocked" (it waits at a
+	// prompt such as folder trust; agent_not_ready, probed on 0.9.5) or "lost" (the terminal went
 	// away mid-start; the code is not probed).
 	StartFails string
 	// infoFails is how many next pane process-info calls fail as an unreachable server

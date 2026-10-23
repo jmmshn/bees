@@ -42,9 +42,14 @@ func (r *run) queen(fs *flag.FlagSet, args []string) error {
 	if r.c.Harness == nil {
 		return &core.Exit{Code: core.ExitRefused, Msg: "no harness adapter for harness = " + r.s.Harness, Next: bsname.Cmd + " config"}
 	}
-	exe, ok := lookPath(core.Getenv(r.env.Vars, "PATH"), r.c.Harness.Kind())
+	program := r.s.program(r.s.Harness)
+	exe, ok := lookPath(core.Getenv(r.env.Vars, "PATH"), program)
 	if !ok {
-		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("%s is not on PATH", r.c.Harness.Kind()), Next: bsname.Cmd + " doctor"}
+		msg := program + " is not on PATH"
+		if strings.Contains(program, "/") {
+			msg = program + " is missing or not executable (agy.bin)"
+		}
+		return &core.Exit{Code: core.ExitRefused, Msg: msg, Next: bsname.Cmd + " doctor"}
 	}
 	if err := r.c.CheckGuards(r.ctx); err != nil { // bees-12.20: refused now, not at every spawn
 		return err

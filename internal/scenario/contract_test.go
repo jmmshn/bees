@@ -157,7 +157,7 @@ func TestContractVerdict(t *testing.T) {
 		must(t, k.w(x, V, "done"), 7, "verdict_given: --answer yes|no is missing")
 	})
 	k.c("verdict-maybe", "", func(t *testing.T, x *toy) {
-		must(t, k.w(x, V, "done", "--answer", "maybe", "--report", "x"), 7, `must be yes or no (got "maybe")`)
+		must(t, k.w(x, V, "done", "--answer", "maybe", "--report", "x"), 7, `must be yes|no (got "maybe")`)
 	})
 	k.c("verdict-blank-report", "", func(t *testing.T, x *toy) {
 		must(t, k.w(x, V, "done", "--answer", "yes", "--report", "   "), 7, "report <text>|- is missing")
@@ -1015,7 +1015,7 @@ func TestContractReviewPostedByBs(t *testing.T) {
 		x.gh.Edit(url, func(pr *fake.PR) { rs = slices.Clone(pr.Reviews) })
 		return rs
 	}
-	gcase(t, "review-posts-once", "T6", func(t *testing.T, x *toy, b ghBackend) {
+	gcase(t, "review-posts-once", "", func(t *testing.T, x *toy, b ghBackend) {
 		_, url := x.target(b, 5, "feature")
 		sp := x.spawn("toy-1", "review="+url)
 		must(t, x.shellRun(x.repo, x.env, "looks right\n", "done", "--as", "toy-1", "--answer", "approve", "--report", "-"), 0)
@@ -1031,7 +1031,7 @@ func TestContractReviewPostedByBs(t *testing.T) {
 		}
 	})
 	// A retry after a lost response: the review bs posted is there, so nothing more is.
-	gcase(t, "review-retry-posts-nothing", "T6", func(t *testing.T, x *toy, b ghBackend) {
+	gcase(t, "review-retry-posts-nothing", "", func(t *testing.T, x *toy, b ghBackend) {
 		_, url := x.target(b, 5, "feature")
 		sp := x.spawn("toy-1", "review="+url)
 		x.gh.Edit(url, func(pr *fake.PR) {
@@ -1042,12 +1042,12 @@ func TestContractReviewPostedByBs(t *testing.T) {
 			fatalf(t, "%d reviews after a retry, want 1: %+v", len(rs), rs)
 		}
 	})
-	gcase(t, "review-answer-yes", "T6", func(t *testing.T, x *toy, b ghBackend) {
+	gcase(t, "review-answer-yes", "", func(t *testing.T, x *toy, b ghBackend) {
 		_, url := x.target(b, 5, "feature")
 		x.spawn("toy-1", "review="+url)
 		must(t, x.keeper("done", "--as", "toy-1", "--answer", "yes", "--report", "r"), 7, "approve|changes")
 	})
-	gcase(t, "review-never-approves", "T6", func(t *testing.T, x *toy, b ghBackend) {
+	gcase(t, "review-never-approves", "", func(t *testing.T, x *toy, b ghBackend) {
 		_, url := x.target(b, 5, "feature")
 		x.spawn("toy-1", "review="+url)
 		must(t, x.keeper("done", "--as", "toy-1", "--answer", "approve", "--report", "r"), 0)

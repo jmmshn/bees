@@ -121,7 +121,7 @@ func TestDoneForNoOpenSpawnIsRefused(t *testing.T) {
 func TestAVerdictCompletesAtHandoff(t *testing.T) {
 	x := newToy(t)
 	sp := x.spawn("toy-1", "verdict")
-	must(t, x.worker("toy-1", 1, "done", "--answer", "maybe"), 7, "--answer must be yes or no")
+	must(t, x.worker("toy-1", 1, "done", "--answer", "maybe"), 7, "--answer must be yes|no")
 	must(t, x.worker("toy-1", 2, "done", "--answer", "yes", "--report", "it holds"), 0, "answer yes")
 	if ld, ok, _ := x.open().LandedOf(context.Background(), sp.ID); !ok || ld.By != "done" {
 		t.Fatalf("landed = %+v, %v", ld, ok)

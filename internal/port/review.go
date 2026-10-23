@@ -30,8 +30,9 @@ type Change struct {
 }
 
 // Where is a workspace as a review host sees it: the project's checkout (where the host's
-// tool runs), the workspace, and the worker's branch ("" on a branchless kind).
-type Where struct{ Repo, Dir, Branch string }
+// tool runs), the workspace, the worker's branch ("" on a branchless kind), and Base, the
+// branch a stacked change lands on ("" for the project's base).
+type Where struct{ Repo, Dir, Branch, Base string }
 
 // A change's states.
 const (
@@ -90,6 +91,9 @@ type Review interface {
 	Changes(ctx context.Context, w Where, since time.Time) (cs []Change, skipped string, err error)
 	// Create is the command that opens a change from w, for a worker that has none.
 	Create(w Where) string
+	// Retarget is the command that moves change c onto base: a stacked change whose target
+	// merged. A change not opened yet has only its Head.
+	Retarget(c Change, base string) string
 	// MergeDeny is the guard globs that keep a worker from landing a change itself on this
 	// host (ADR-0010 guards: no merge); allow_merge_into lifts them.
 	MergeDeny() []string
@@ -102,15 +106,9 @@ type Review interface {
 	PushHint(ctx context.Context, dir string, c Change) string
 }
 
-// VCS is a workspace's version control as the goal checks read it.
+// VCS is a workspace's version control as the goal checks read it: four facts about
+// commits and refs (ADR-0010 Amendment 4).
 type VCS interface {
-	// Commits is every commit written in dir since since: never one checked out, reset to,
-	// pulled, fast-forwarded or rebased there (ADR-0010's workspace commits, with PatchIDs).
-	Commits(ctx context.Context, dir string, since time.Time) ([]string, error)
-	// PatchIDs is the patch of each of commits dir has, the same for a commit and every
-	// rebased copy of it (none for a commit with no patch of its own, a merge); missing is
-	// those dir doesn't have.
-	PatchIDs(ctx context.Context, dir string, commits []string) (ids map[string]string, missing []string, err error)
 	// Branch is the tip of dir's local branch name; ok false when there is none.
 	Branch(ctx context.Context, dir, name string) (tip string, ok bool, err error)
 	// Pushed is where dir's checkout last pushed branch name to, local or not (a push
@@ -120,8 +118,4 @@ type VCS interface {
 	Has(ctx context.Context, dir, commit string) (bool, error)
 	// Descends reports whether commit is ancestor or descends from it.
 	Descends(ctx context.Context, dir, ancestor, commit string) (bool, error)
-	// Detach makes dir a checkout of repo at commit on no branch: a push goal's workspace.
-	Detach(ctx context.Context, repo, dir, commit string) error
-	// Drop removes a checkout Detach made.
-	Drop(ctx context.Context, repo, dir string) error
 }

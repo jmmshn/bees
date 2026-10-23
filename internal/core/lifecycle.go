@@ -217,6 +217,12 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 	if err != nil {
 		return err
 	}
+	switch why, next, err := c.stackedOn(ctx, sp, e); {
+	case err != nil:
+		return exit(ExitCantCheck, bsname.Cmd+" end "+name+" again once it can", err, "%s: can't tell whether an open spawn stacks on its change", name)
+	case why != "":
+		return exit(ExitRefused, next, nil, "%s: %s; nothing ended", name, why)
+	}
 	done, passed, failed, err := c.complete(ctx, sp, e)
 	switch {
 	case err != nil && !o.Incomplete:
@@ -494,6 +500,12 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 	if err != nil {
 		return keep(true, "%v", err)
 	}
+	switch why, next, err := c.stackedOn(ctx, sp, e); {
+	case err != nil:
+		return keep(true, "can't tell whether an open spawn stacks on its change: %v", err)
+	case why != "":
+		return keep(false, "%s: %s", why, next)
+	}
 	if !e.Discarded {
 		if !e.IsLegacy() {
 			switch done, passed, _, err := c.complete(ctx, sp, e); {
@@ -550,12 +562,16 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 	// The prune rule's branch_merged, when it ran and passed, is the proof: one gh call,
 	// not two. A merged (or closed draft) handed-off change holding the tip is another.
 	release := e.Discarded || slices.Contains(e.Prune, goal.BranchMerged)
-	if !release && slices.Contains(e.Types(), "pr") {
+	if !release && (slices.Contains(e.Types(), "pr") || e.Type == "push") {
 		d, _, err := c.Logbook.LatestDone(ctx, sp.ID)
 		if err != nil {
 			return keep(true, "%v", err)
 		}
-		if p.Held, err = c.heldByChange(ctx, sp, d.PRs, slices.Contains(e.Prune, goal.PRClosed)); err != nil {
+		prs := d.PRs
+		if e.Type == "push" { // its work went onto the target
+			prs = []string{e.Target}
+		}
+		if p.Held, err = c.heldByChange(ctx, sp, prs, slices.Contains(e.Prune, goal.PRClosed)); err != nil {
 			return keep(true, "can't tell whether a handed-off change holds branch %s: %v", ws.Branch, err)
 		}
 		release = p.Held != ""
@@ -606,6 +622,59 @@ func ignoredBy(pat, p string) bool {
 		}
 	}
 	return false
+}
+
+// stackedOn says why lower worker l can't end or be pruned yet: an open spawn's pr=<url>
+// goal stacks on l's change, and that spawn's change (when it has one) still lands on l's
+// branch. Once it is retargeted (next), or that spawn ends, l is free (Q6: the retarget
+// pitfall as a check). "" when nothing stacks on l.
+func (c *Core) stackedOn(ctx context.Context, l logbook.Spawn, e logbook.Effective) (why, next string, err error) {
+	if e.Type != "pr" {
+		return "", "", nil
+	}
+	sps, err := c.Logbook.LatestSpawns(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	var on []logbook.Spawn // open spawns stacked on some change: l's, maybe
+	targets := map[logbook.ID]string{}
+	for _, s := range sps {
+		if s.Ended || s.ID == l.ID {
+			continue
+		}
+		se, err := c.Logbook.Goal(ctx, s)
+		if err != nil {
+			return "", "", err
+		}
+		if se.Type == "pr" && se.Target != "" {
+			on, targets[s.ID] = append(on, s), se.Target
+		}
+	}
+	if len(on) == 0 {
+		return "", "", nil
+	}
+	f := c.look(l, Handed{}).change(ctx)
+	if f.err != nil || f.why != "" {
+		return "", "", f.err
+	}
+	var whys, nexts []string
+	for _, s := range on {
+		if targets[s.ID] != f.c.URL {
+			continue
+		}
+		sf := c.theChange(ctx, s)
+		switch trunk := cmp.Or(s.Workspace.Trunk, l.Workspace.Trunk, l.Workspace.Base); {
+		case sf.err != nil:
+			return "", "", sf.err
+		case sf.why != "":
+			whys = append(whys, fmt.Sprintf("%s stacks on its change %s", s.Name, f.c.URL))
+			nexts = append(nexts, fmt.Sprintf("%s once %s opens its change, or %s end %s", c.Review.Retarget(port.Change{Head: s.Workspace.Branch}, trunk), s.Name, bsname.Cmd, s.Name))
+		case sf.c.Base == f.c.Head:
+			whys = append(whys, fmt.Sprintf("%s's change %s stacks on its change %s", s.Name, sf.c.URL, f.c.URL))
+			nexts = append(nexts, c.Review.Retarget(sf.c, trunk))
+		}
+	}
+	return strings.Join(whys, "; "), strings.Join(nexts, "; "), nil
 }
 
 // heldByChange is the URL of sp's change (or of one of prs, which a done recorded before

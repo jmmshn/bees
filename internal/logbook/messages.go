@@ -44,17 +44,29 @@ const forOpenSpawn = `
               AND s.rowid = (SELECT MAX(x.rowid) FROM entries x WHERE x.kind = 'spawned' AND x.subject = m.subject)
               AND NOT EXISTS (SELECT 1 FROM entries e WHERE e.kind = 'ended' AND e.ref = s.id)))`
 
-// unread is the anti-join over receipts (ADR-0002): messages and done entries addressed
-// to ?1 with no receipt from it, scoped to its open spawn.
-const unread = `
+// inbox is messages and done entries addressed to ?1, scoped to its open spawn.
+const inbox = `
 FROM entries m
 WHERE m.kind IN ('message', 'done') AND m.subject = ?1
-  AND NOT EXISTS (SELECT 1 FROM entries r WHERE r.kind = 'received' AND r.ref = m.id AND r.actor = ?1)
   AND` + forOpenSpawn
+
+// unread is the anti-join over receipts (ADR-0002): inbox entries with no receipt from ?1.
+const unread = inbox + `
+  AND NOT EXISTS (SELECT 1 FROM entries r WHERE r.kind = 'received' AND r.ref = m.id AND r.actor = ?1)`
 
 // Unread returns session's unread messages and done entries in the order they were stored.
 func (l *Logbook) Unread(ctx context.Context, session string) ([]Message, error) {
-	rows, err := l.db.QueryContext(ctx, `SELECT m.id, m.ts, m.actor, m.subject, coalesce(json_extract(m.data, '$.from_project'), ''), m.kind, m.data `+unread+` ORDER BY m.rowid`, session)
+	return l.scanMessages(ctx, unread, session)
+}
+
+// Inbox returns all of session's messages and done entries (read and unread, scoped to
+// its open spawn) in the order they were stored.
+func (l *Logbook) Inbox(ctx context.Context, session string) ([]Message, error) {
+	return l.scanMessages(ctx, inbox, session)
+}
+
+func (l *Logbook) scanMessages(ctx context.Context, from, session string) ([]Message, error) {
+	rows, err := l.db.QueryContext(ctx, `SELECT m.id, m.ts, m.actor, m.subject, coalesce(json_extract(m.data, '$.from_project'), ''), m.kind, m.data `+from+` ORDER BY m.rowid`, session)
 	if err != nil {
 		return nil, err
 	}

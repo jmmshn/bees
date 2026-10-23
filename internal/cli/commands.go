@@ -450,16 +450,30 @@ func (r *run) rang(to string, err error) {
 }
 
 func (r *run) inbox(fs *flag.FlagSet, args []string) error {
+	all := fs.Bool("all", false, "include read mail; marks nothing read")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("%w: "+bsname.Cmd+" inbox [--all]", errUsage)
+	}
 	w := r.caller
-	ms, err := r.c.Logbook.Unread(r.ctx, w.Name)
+	var ms []logbook.Message
+	var err error
+	if *all {
+		ms, err = r.c.Logbook.Inbox(r.ctx, w.Name)
+	} else {
+		ms, err = r.c.Logbook.Unread(r.ctx, w.Name)
+	}
 	if err != nil {
 		return err
 	}
 	if len(ms) == 0 {
-		fmt.Fprintln(r.out, "no unread messages")
+		if *all {
+			fmt.Fprintln(r.out, "no messages")
+		} else {
+			fmt.Fprintln(r.out, "no unread messages")
+		}
 		return nil
 	}
 	var ids []logbook.ID
@@ -469,6 +483,9 @@ func (r *run) inbox(fs *flag.FlagSet, args []string) error {
 			fmt.Fprintf(r.out, "   (reply with: "+bsname.Cmd+" send --project %s %s \"...\")\n\n", m.FromProject, core.Queen(m.FromProject))
 		}
 		ids = append(ids, m.ID)
+	}
+	if *all {
+		return nil
 	}
 	if w.Peek { // a debug peek: only the session itself marks its mail read
 		fmt.Fprintf(r.out, "(peeked as %s with --as: nothing marked read)\n", w.Name)

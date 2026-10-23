@@ -536,6 +536,15 @@ func TestContractAs(t *testing.T) {
 		must(t, x.keeper("inbox", "--as", W2), 0, "peek me")
 		must(t, x.keeper("inbox", "--as", W2), 0, "peek me") // marked nothing read
 		must(t, k.w(x, W2, "inbox"), 0, "peek me")
+		must(t, k.w(x, W2, "inbox"), 0, "no unread messages")
+	})
+	k.c("inbox-all-rereads-without-marking-read", "", func(t *testing.T, x *toy) {
+		must(t, x.queen("send", W2, "unread reply"), 0)
+		must(t, k.w(x, W2, "inbox", "--all"), 0, "from the queen", "peek me", "unread reply")
+		must(t, k.w(x, W2, "inbox"), 0, "unread reply") // --all marked nothing read
+		must(t, k.w(x, W2, "inbox", "--all"), 0, "from the queen", "peek me", "unread reply")
+		must(t, x.keeper("inbox", "--all"), 0, "no messages")
+		must(t, k.w(x, W2, "inbox", "extra"), 2, "bs inbox [--all]")
 	})
 	k.c("as-queen-rig", "", func(t *testing.T, x *toy) { must(t, x.queen("send", W2, "still the queen"), 0, "to "+W2) })
 }

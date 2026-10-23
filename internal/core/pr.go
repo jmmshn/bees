@@ -161,7 +161,7 @@ func (k *look) changes(ctx context.Context, g goal.Goal) (vs []port.Change, why 
 func isPRCheck(name string) bool {
 	switch name {
 	case goal.PRExists, goal.PROpen, goal.PRNotDraft, goal.PRHead, goal.PRWorkspaceCommit, goal.PRPushed, goal.PRCurrent,
-		goal.CIGreen, goal.PRMerged, goal.PRLanded, goal.PRClosed, goal.PushMoved, goal.ReviewComment:
+		goal.CIGreen, goal.PRMerged, goal.PRLanded, goal.PRClosed, goal.PushMoved:
 		return true
 	}
 	return false
@@ -237,12 +237,6 @@ func (k *look) one(ctx context.Context, name string, v port.Change) (outcome, st
 			return failed, "", err
 		}
 		return unless(n == 0, fmt.Sprintf("%d commits behind %s: bring %s in, then push", n, v.Base, v.Base))
-	case goal.ReviewComment:
-		mark, since := "bs:"+string(k.sp.ID), k.sp.TS.Truncate(time.Second)
-		if slices.ContainsFunc(v.Notes, func(n port.Note) bool { return !n.At.Before(since) && strings.Contains(n.Body, mark) }) {
-			return passed, "", nil
-		}
-		return failed, "no comment or review since the spawn carries " + mark, nil
 	}
 	return failed, "", fmt.Errorf("no check %s", name)
 }

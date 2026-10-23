@@ -69,12 +69,13 @@ func (k *look) run(ctx context.Context, g goal.Goal, name string) (outcome, stri
 		return k.prCheck(ctx, g, name)
 	}
 	switch name {
-	case goal.VerdictGiven:
+	case goal.VerdictGiven, goal.ReviewComment:
+		set := strings.Join(g.Answers(), "|")
 		switch {
 		case h.Answer == "":
-			return failed, "--answer yes|no is missing", nil
-		case h.Answer != "yes" && h.Answer != "no":
-			return failed, fmt.Sprintf("--answer must be yes or no (got %q)", h.Answer), nil
+			return failed, "--answer " + set + " is missing", nil
+		case !slices.Contains(g.Answers(), h.Answer):
+			return failed, fmt.Sprintf("--answer must be %s (got %q)", set, h.Answer), nil
 		case strings.TrimSpace(h.Report) == "":
 			return failed, "--report <text>|- is missing", nil
 		}

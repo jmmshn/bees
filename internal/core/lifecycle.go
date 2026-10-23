@@ -119,9 +119,10 @@ func (c *Core) Done(ctx context.Context, who Caller, self int, h Handed, o DoneO
 		}
 	}
 	var rs []logbook.CheckResult
+	var k *look
 	for {
 		var cant *logbook.CheckResult
-		k := c.look(sp, Handed{Answer: h.Answer, Report: h.Report})
+		k = c.look(sp, Handed{Answer: h.Answer, Report: h.Report})
 		if !waited {
 			k.found = f
 		}
@@ -163,12 +164,35 @@ func (c *Core) Done(ctx context.Context, who Caller, self int, h Handed, o DoneO
 	if len(failed) > 0 {
 		return d, exit(ExitHandoff, "fix it, then "+bsname.Cmd+" done again", nil, "%d handoff checks failed:\n  %s", len(failed), strings.Join(failed, "\n  "))
 	}
+	if e.Type == "review" {
+		if d.Review, err = c.postReview(lookCtx, k, e.Goal, sp, h); err != nil {
+			return d, exit(ExitCantCheck, bsname.Cmd+" done again once it can (it won't post twice)", err, "can't post the review on %s", e.Target)
+		}
+	}
 	var landed *logbook.Landed
 	if e.AtHandoff {
 		landed = &logbook.Landed{By: "done"}
 	}
 	d.ID, err = c.Logbook.RecordDone(ctx, d, landed)
 	return d, err
+}
+
+// postReview posts a review goal's report on its target as a comment review, after every
+// handoff check passed and before the done is recorded: a crash between the two is healed
+// by the retry, which finds the review by its marker, bs:<spawn id>, and posts nothing
+// more (motif 10). bs never approves or requests changes: workers run as the keeper's
+// account, and the host refuses both on its own change; the answer is said in the body.
+func (c *Core) postReview(ctx context.Context, k *look, g goal.Goal, sp logbook.Spawn, h Handed) (string, error) {
+	vs, why, err := k.changes(ctx, g)
+	if err == nil && why != "" {
+		err = errors.New(why)
+	}
+	if err != nil {
+		return "", err
+	}
+	marker := "bs:" + string(sp.ID)
+	body := fmt.Sprintf("%s\n\n%s's verdict: %s (%s)", h.Report, sp.Name, h.Answer, marker)
+	return c.Review.PostReview(ctx, k.at(), vs[0], body, marker)
 }
 
 // DoneOpts are bs done's flags.

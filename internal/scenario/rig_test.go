@@ -298,7 +298,7 @@ func (x *toy) open() *logbook.Logbook {
 func (x *toy) spawn(bead, value string) logbook.Spawn {
 	x.t.Helper()
 	x.bead(bead, "work on "+bead)
-	if r := x.queen("spawn", "--goal", value, bead); r.code != 0 {
+	if r := x.queen("spawn", "--goal", value, "--label", label(bead), bead); r.code != 0 {
 		x.t.Fatalf("spawn %s: exit %d: %s", bead, r.code, r)
 	}
 	sp, ok, err := x.open().LatestSpawn(context.Background(), core.Name(bead))
@@ -307,6 +307,9 @@ func (x *toy) spawn(bead, value string) logbook.Spawn {
 	}
 	return sp
 }
+
+// label is a valid label for bead: toy-1.2 → "toy 1 2".
+func label(bead string) string { return strings.NewReplacer("-", " ", ".", " ").Replace(bead) }
 
 // commit makes a commit in dir.
 func (x *toy) commit(dir, file string) {

@@ -76,7 +76,7 @@ type spawnArgs struct {
 func (r *run) spawnArgs(fs *flag.FlagSet, args []string) error {
 	a := &r.spawnReq
 	fs.Var(&a.goal, "goal", "what the worker hands off (one)")
-	fs.StringVar(&a.label, "label", "", "its herdr label (default: the bead's title)")
+	fs.StringVar(&a.label, "label", "", "its herdr label: 1-4 lowercase words (default: its last spawn's)")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
@@ -86,6 +86,11 @@ func (r *run) spawnArgs(fs *flag.FlagSet, args []string) error {
 	a.bead = fs.Arg(0)
 	if _, err := goal.Parse(string(a.goal)); err != nil { // Spawn says the same; here before a logbook is made
 		return &core.Exit{Code: core.ExitRefused, Msg: a.bead, Err: err}
+	}
+	if a.label != "" {
+		if err := core.CheckLabel(a.label); err != nil { // likewise
+			return &core.Exit{Code: core.ExitRefused, Msg: a.bead + ": --label", Err: err}
+		}
 	}
 	if _, err := os.Stat(r.s.Logbook); errors.Is(err, os.ErrNotExist) && r.ports.Beads != nil {
 		if _, err := r.ports.Beads.Show(r.ctx, a.bead); errors.Is(err, port.ErrNoBead) {
@@ -99,7 +104,6 @@ func (r *run) spawnArgs(fs *flag.FlagSet, args []string) error {
 
 func (r *run) spawn(_ *flag.FlagSet, _ []string) error {
 	a := r.spawnReq
-	label := &a.label
 	if r.c.Harness == nil {
 		return &core.Exit{Code: core.ExitRefused, Msg: "no harness adapter for harness = " + r.s.Harness, Next: bsname.Cmd + " config"}
 	}
@@ -113,7 +117,7 @@ func (r *run) spawn(_ *flag.FlagSet, _ []string) error {
 	}
 	// The keeper's spawn too is the queen's: its worker hands off to her.
 	sp, resumed, err := r.c.Spawn(r.ctx, core.SpawnReq{By: core.Queen(r.s.Project), Session: cmp.Or(core.Getenv(r.env.Vars, "HERDR_SESSION"), logbook.DefaultSession),
-		Bead: a.bead, Label: *label, Goal: string(a.goal)})
+		Bead: a.bead, Label: a.label, Goal: string(a.goal)})
 	if err != nil {
 		return err
 	}

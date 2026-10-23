@@ -391,15 +391,15 @@ func TestSpawnRefusesAPRGoalWithoutARemote(t *testing.T) {
 		closed6 := b.open(x, 6, other, "feature", false)
 		b.close(x, 6)
 		x.bead("toy-1", "x")
-		must(t, x.queen("spawn", "--goal", "push="+closed6, "toy-1"), 2, "it is closed, not open")
-		must(t, x.queen("spawn", "--goal", "review="+b.other(), "toy-1"), 2, "not of this project's repo")
-		must(t, x.queen("spawn", "--goal", "push="+b.url(9), "toy-1"), 2, "no such change")
+		must(t, x.queen("spawn", "--label", "x", "--goal", "push="+closed6, "toy-1"), 2, "it is closed, not open")
+		must(t, x.queen("spawn", "--label", "x", "--goal", "review="+b.other(), "toy-1"), 2, "not of this project's repo")
+		must(t, x.queen("spawn", "--label", "x", "--goal", "push="+b.url(9), "toy-1"), 2, "no such change")
 		b.foreign(x, 5)
-		must(t, x.queen("spawn", "--goal", "push="+open5, "toy-1"), 2, "doesn't let this project push to it")
-		must(t, x.queen("spawn", "--goal", "review="+open5, "toy-1"), 0) // a review pushes nothing
+		must(t, x.queen("spawn", "--label", "x", "--goal", "push="+open5, "toy-1"), 2, "doesn't let this project push to it")
+		must(t, x.queen("spawn", "--label", "x", "--goal", "review="+open5, "toy-1"), 0) // a review pushes nothing
 		x.bead("toy-2", "x")
 		b.offline(x, true)
-		must(t, x.queen("spawn", "--goal", "review="+open5, "toy-2"), 6, "can't ask")
+		must(t, x.queen("spawn", "--label", "x", "--goal", "review="+open5, "toy-2"), 6, "can't ask")
 		b.offline(x, false)
 		if _, ok, _ := x.open().LatestSpawn(context.Background(), "toy-2"); ok {
 			t.Fatal("a refused spawn was recorded")
@@ -410,7 +410,7 @@ func TestSpawnRefusesAPRGoalWithoutARemote(t *testing.T) {
 			x := newToy(t)
 			b.setup(x, false)
 			x.bead("toy-1", "x")
-			must(t, x.queen("spawn", "--goal", "pr", "toy-1"), 2, "belongs to no", "repo")
+			must(t, x.queen("spawn", "--label", "x", "--goal", "pr", "toy-1"), 2, "belongs to no", "repo")
 		}
 	})
 }

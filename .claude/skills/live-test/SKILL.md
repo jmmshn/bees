@@ -57,6 +57,8 @@ For each thing the change claims, write down the command, the expected output an
 
 A change to spawn, done, end, goal, prune or identity also replays the contract card, [CONTRACT.md](CONTRACT.md): its Go half runs in `go test` (`-run TestContract -v` shows each case), and `contract.sh <run dir>` on a toy from `setup.sh --no-queen` runs the same cases live and prints PASS/FAIL per case (XFAIL/XPASS for a rebuild ticket not landed yet), with a table to paste into the PR body.
 
+An agy-compatible CLI (agy itself, or another build of its codebase) is probed without a toy: `agy-probe.sh <binary>`, from your own signed-in shell. In one throwaway run dir, it spends 3 model turns (`AGY_MODEL` picks a cheap model) and starts the TUI 3 times with no turn. It prints a PASS/FAIL/SKIP table, one row per feature the agy adapter relies on: the agent file and hooks loading from `--add-dir`, the hook decision format (empty stdout means no decision, `{}` reads as deny), resume by `--conversation`, exact-path trust, and the env var names a hook and a `run_command` child get. It removes the trust entries it caused (`--keep-trust` keeps them) and lists what the binary kept. The table names no binary, path or model, so a user can share it; bs ships the script, never a table from a build that isn't public. `run_command` needs `command(bs)` in the CLI's `permissions.allow`, which bees needs anyway; without it that row is SKIP.
+
 A PR body gets a before/after transcript (AGENTS.md): the same steps run with the shared bs (before, the wrong output marked `← the bug`) and with your build (after), as a fenced queen ↔ worker chat, e.g. `queen-<toy> ▸ bs end <toy>-1`.
 
 ## 5. Teardown

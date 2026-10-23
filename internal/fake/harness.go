@@ -25,7 +25,8 @@ var build struct {
 }
 
 // Beesfake builds beesfake once per test binary, named claude so its process has the
-// harness's name, and returns its path.
+// harness's name, and returns its path. A bs beside it is beesfake too: a bs call relayed
+// to the test, for a pane whose shell runs bs (the queen's auto-start).
 func Beesfake(t testing.TB) string {
 	t.Helper()
 	build.once.Do(func() {
@@ -38,6 +39,8 @@ func Beesfake(t testing.TB) string {
 		out, err := exec.Command("go", "build", "-o", build.path, "github.com/jmmshn/bees/internal/fake/beesfake").CombinedOutput()
 		if err != nil {
 			build.err = fmt.Errorf("go build beesfake: %w: %s", err, out)
+		} else if err := os.Symlink("claude", filepath.Join(dir, "bs")); err != nil { // the shared bs on a pane's PATH
+			build.err = err
 		}
 	})
 	if build.err != nil {

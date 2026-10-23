@@ -6,6 +6,7 @@
 //
 //	beesfake --name N --state DIR   the harness: DIR/ring.sock, DIR/rings.log, DIR/script, DIR/results.log
 //	beesfake call ARGS...           one bs call, relayed to the test over $BEESFAKE_RELAY
+//	bs ARGS...                      the same, run under the name bs (a pane's shell running bs)
 //	beesfake idle                   a child that runs until killed
 //	beesfake detach                 starts an idle child in a new session, prints its pid, exits
 //
@@ -66,6 +67,9 @@ type Result struct {
 }
 
 func main() {
+	if filepath.Base(os.Args[0]) == "bs" {
+		os.Exit(call(os.Args[1:]))
+	}
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "call":

@@ -235,6 +235,18 @@ func (c Client) StartAgent(ctx context.Context, pane, name, kind string, args ..
 		"--timeout", strconv.FormatInt(StartTimeout.Milliseconds(), 10), "--"}, args...)...)
 }
 
+// RunInPane types line into pane's shell and returns at once, with no output: herdr pane
+// run joins its arguments with spaces into one shell line and takes a newline in it as
+// another line (probed, 0.9.5), so a line holding a control character is refused here.
+// Text typed before the new pane's shell is at its prompt still runs (probed). A pane
+// herdr doesn't know is ErrPaneGone.
+func (c Client) RunInPane(ctx context.Context, pane, line string) error {
+	if Unsafe(line) {
+		return fmt.Errorf("pane run %.40q: %w", line, ErrUnsafeArg)
+	}
+	return c.call(ctx, nil, "pane", "run", pane, line)
+}
+
 // PaneProcess is a foreground process herdr found in a pane.
 type PaneProcess struct {
 	PID  int

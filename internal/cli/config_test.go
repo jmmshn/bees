@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jmmshn/bees/internal/core"
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/port"
 )
@@ -442,5 +443,32 @@ func TestConfigInitCantLook(t *testing.T) {
 	run := &run{ctx: context.Background(), env: Env{Vars: r.env}, s: &settings{Dir: r.session, Project: "mytoy"}}
 	if err := run.initRefusals("project", nil, ""); !errors.Is(err, os.ErrPermission) {
 		t.Errorf("an unreadable global file: %v, want permission denied", err)
+	}
+}
+
+// A moved paths.logbook_dir never starts an empty logbook while the old dir holds the
+// project's one (bees-13.73.5, motif 14): bs queen and bs spawn are refused too.
+func TestRefusesAMovedLogbookDir(t *testing.T) {
+	r := newRig(t)
+	old := filepath.Join(r.home, ".local", "share", "bees")
+	if err := os.MkdirAll(old, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(old, "mytoy.db"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, cmd := range [][]string{{"queen"}, {"spawn", "--goal", "pr", "mytoy-1"}, {"status"}} {
+		code, _, stderr := r.run(r.repo, nil, cmd...)
+		if code != core.ExitRefused {
+			t.Errorf("bs %s: exit %d, want %d: %s", cmd, code, core.ExitRefused, stderr)
+		}
+		wantIn(t, stderr, "paths.logbook_dir moved there", "from ~/.local/share/bees", "move "+filepath.Join(old, "mytoy.db")+" into "+r.logbook)
+	}
+	if _, err := os.Stat(filepath.Join(r.logbook, "mytoy.db")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a logbook was made at the new dir: %v", err)
+	}
+	r.start() // the new dir has one: the old one no longer matters
+	if code, _, stderr := r.run(r.repo, nil, "status"); code != 0 {
+		t.Errorf("bs status with both: exit %d: %s", code, stderr)
 	}
 }

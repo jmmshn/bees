@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -32,6 +33,12 @@ var _ port.Harness = Adapter{}
 
 // Kind is herdr's --kind for Claude, and the program bs queen execs.
 func (Adapter) Kind() string { return "claude" }
+
+// Owns reports whether argv carries --name name, as every launch Prepare builds does.
+func (Adapter) Owns(argv []string, name string) bool {
+	i := slices.Index(argv, "--name")
+	return i >= 0 && i+1 < len(argv) && argv[i+1] == name
+}
 
 // Prepare builds the claude argv. A worker's starts with its doorbell as the first prompt
 // and its settings in a --settings file (a per-start file the core writes); the queen's

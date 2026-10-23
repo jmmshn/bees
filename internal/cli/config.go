@@ -389,7 +389,7 @@ func (s *settings) resolve(ctx context.Context, env Env, ports Ports, dir, home 
 		}
 	}
 	in := core.ResolveIn{Project: s.Project, Dirs: dirs, Self: env.Self, Session: s.Session, Pane: getenv("HERDR_PANE_ID"),
-		Run: ports.Run, Proc: ports.Proc, Program: harnessProgram}
+		Run: ports.Run, Proc: ports.Proc, Harness: ports.recorded}
 	if s.Project != "" {
 		in.Logbook = filepath.Join(dirs[0], s.Project+".db")
 	}

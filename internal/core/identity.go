@@ -77,7 +77,7 @@ type ResolveIn struct {
 	Session, Pane string
 	Run           port.Runner
 	Proc          port.Proc
-	Program       func(harness string) string // a recorded harness's process name; nil skips the heal probe
+	Harness       func(name string) port.Harness // a recorded harness's adapter (nil: none here); nil skips the heal probe
 }
 
 // Resolve finds who calls bs (ADR-0010 Amendment 4 Identity), reading every logbook
@@ -178,10 +178,10 @@ func claimed(cs []Caller) error {
 }
 
 // heal finds a worker of P recorded in the hinted pane with no live start (none yet, or
-// its process died and was restarted by hand) whose harness, with --name <worker> in its
-// argv, runs there above self. The old bs's workers are never healed (SPEC7).
+// its process died and was restarted by hand) whose harness, an argv it owns as the
+// worker's, runs there above self. The old bs's workers are never healed (SPEC7).
 func heal(ctx context.Context, in ResolveIn, up []int, mine []Caller) (Caller, bool, error) {
-	if in.Pane == "" || in.Program == nil {
+	if in.Pane == "" || in.Harness == nil {
 		return Caller{}, false, nil
 	}
 	var probe *herdr.PaneProcesses // looked up once
@@ -203,7 +203,8 @@ func heal(ctx context.Context, in ResolveIn, up []int, mine []Caller) (Caller, b
 			probe = &pi
 		}
 		if slices.ContainsFunc(probe.Foreground, func(f herdr.PaneProcess) bool {
-			return isOwn(f, in.Program(c.harness), c.Name) && slices.Contains(up, f.PID)
+			h := in.Harness(c.harness)
+			return h != nil && isOwn(f, h, c.Name) && slices.Contains(up, f.PID)
 		}) {
 			c.Unconfirmed = true
 			found = append(found, c)

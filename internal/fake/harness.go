@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -61,6 +62,12 @@ func RemoveBuild() {
 type Harness struct{ State string }
 
 func (Harness) Kind() string { return "claude" }
+
+// Owns reports whether argv carries --name name, as claude_code's does.
+func (Harness) Owns(argv []string, name string) bool {
+	i := slices.Index(argv, "--name")
+	return i >= 0 && i+1 < len(argv) && argv[i+1] == name
+}
 
 // Dir is the state dir of session name.
 func (h Harness) Dir(name string) string { return filepath.Join(h.State, name) }

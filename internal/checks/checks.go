@@ -36,6 +36,7 @@ type Value struct {
 
 // Result is a command that ran to its exit.
 type Result struct {
+	Argv   []string // as it ran, placeholders filled
 	Code   int
 	Output []byte // stdout and stderr, interleaved
 }
@@ -207,9 +208,9 @@ func Run(ctx context.Context, c Cmd, dir string, vals map[string]Value, getenv f
 	case ctx.Err() == context.DeadlineExceeded:
 		return Result{}, fmt.Errorf("%w: %s after %s: %w", ErrCantRun, strings.Join(argv, " "), timeout, ErrTimeout)
 	case errors.As(err, &ee) && ee.Exited():
-		return Result{Code: ee.ExitCode(), Output: out.Bytes()}, nil
+		return Result{Argv: argv, Code: ee.ExitCode(), Output: out.Bytes()}, nil
 	case err != nil:
 		return Result{}, fmt.Errorf("%w: %s: %w", ErrCantRun, strings.Join(argv, " "), err)
 	}
-	return Result{Output: out.Bytes()}, nil
+	return Result{Argv: argv, Output: out.Bytes()}, nil
 }

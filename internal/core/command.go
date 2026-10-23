@@ -189,7 +189,7 @@ func (k *look) runCmd(ctx context.Context, g goal.Goal, name string) (outcome, s
 	}
 	out := said(r.Output)
 	if r.Code != 0 {
-		return failed, fmt.Sprintf("%s exited %d%s", strings.Join(cmd.Argv, " "), r.Code, out), nil
+		return failed, fmt.Sprintf("%s exited %d%s", strings.Join(r.Argv, " "), r.Code, out), nil
 	}
 	return passed, strings.TrimPrefix(out, ": "), nil
 }
@@ -273,10 +273,10 @@ func (c *Core) remove(ctx context.Context, name, bead string, ws logbook.Workspa
 	case err != nil:
 		return err
 	case r.Code != 0:
-		return fmt.Errorf("%s exited %d%s", strings.Join(ws.Command.Remove.Argv, " "), r.Code, said(r.Output))
+		return fmt.Errorf("%s exited %d%s", strings.Join(r.Argv, " "), r.Code, said(r.Output))
 	}
 	if _, err := os.Stat(ws.Dir); err == nil {
-		return fmt.Errorf("%s exited 0 and left %s", strings.Join(ws.Command.Remove.Argv, " "), ws.Dir)
+		return fmt.Errorf("%s exited 0 and left %s", strings.Join(r.Argv, " "), ws.Dir)
 	}
 	return nil
 }
@@ -289,7 +289,7 @@ func (k *look) clean(ctx context.Context) (outcome, string, error) {
 		return failed, "", err
 	}
 	if r.Code != 0 {
-		return failed, fmt.Sprintf("[workspace.command] clean says %s holds work that would be lost (%s exited %d%s)", ws.Dir, strings.Join(ws.Command.Clean.Argv, " "), r.Code, said(r.Output)), nil
+		return failed, fmt.Sprintf("[workspace.command] clean says %s holds work that would be lost (%s exited %d%s)", ws.Dir, strings.Join(r.Argv, " "), r.Code, said(r.Output)), nil
 	}
 	return passed, "", nil
 }

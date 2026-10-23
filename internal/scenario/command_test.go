@@ -111,7 +111,7 @@ func TestACLGoalInACommandWorkspace(t *testing.T) {
 	must(t, x.worker("toy-1", 1, "done"), 7, "cmd:cl_sent", "exited 1: toy-1: not sent")
 	x.mark("toy-1", "sent")
 	must(t, x.worker("toy-1", 2, "done"), 0)
-	must(t, x.queen("end", "toy-1"), 9, "not complete", "cmd:cl_submitted", "toy-1: not submitted")
+	must(t, x.queen("end", "toy-1"), 9, "not complete", "cmd:cl_submitted", x.cl+" submitted toy-1 exited 1: toy-1: not submitted")
 	x.mark("toy-1", "submitted")
 	must(t, x.queen("end", "toy-1"), 0)
 	x.write(filepath.Join(dir, "unsaved"), "a draft")

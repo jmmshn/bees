@@ -13,7 +13,7 @@ The toy's id (`lt<16 digits>`) names everything it owns: its herdr session, its 
 
 ```sh
 go build -o bin/bs ./cmd/bs                    # the build under test, in this checkout
-.claude/skills/live-test/setup.sh [--no-queen] [<bin dir>]   # prints live.json
+.claude/skills/live-test/setup.sh [--no-queen] [--harness agy] [<bin dir>]   # prints live.json
 ```
 
 Setup:
@@ -22,6 +22,7 @@ Setup:
 - writes the toy's config, `~/.config/bees/sessions/<toy>/config.toml`, with `paths.logbook_dir = <run>/logbooks`. `bs` in a pane on herdr session `<toy>` reads that dir and nothing else of `~/.config/bees` (ADR-0010). Edit it, or add `projects/<toy>.toml`, before your check;
 - starts the toy's own herdr server, `herdr --session <toy> server`, from `env -i` plus `PATH` (your build first), `HOME`, `TERM`, `LANG` and `SHELL`, plus any `XDG_*` you have set: no `BS_*` or `HERDR_*` of your shell reaches its panes. XDG is left as you have it (a separate XDG home broke the keeper's shell and overflowed `sun_path`), so the toy reads the config dir setup wrote;
 - opens a workspace there on the repo, and records in live.json which `bs` its shell runs (`pane_bs`): your shell's rc runs in the pane and may put dirs ahead of your build;
+- with `--harness agy`, checks agy is signed in from the toy's env (agy reads `SSH_CONNECTION`/`SSH_CLIENT` as a remote session and is "not signed in" there; the toy's bare env drops them), warns when agy's `permissions.allow` lacks `command(bs)`, writes `AGY_MODEL` as `[worker.agy] model`, and records agy's settings path (`AGY_SETTINGS`) and version. The queen stays on Claude Code: tell it to `bs spawn --harness agy …`. agy prompts for each command and file write outside `command(bs)`: answer them in the worker's pane, and log each as a workaround;
 - unless `--no-queen`, starts `bs queen` in that pane with your build first on its PATH, answers the folder-trust prompt, and exits 0 only once the queen is up and idle.
 
 Keep every file you write under `<run>/keeper/`; other live tests may run beside yours.
@@ -71,7 +72,7 @@ In order, stopping at the first failure (exit 1; fix the cause and run it again,
 
 1. `herdr --session <toy> server stop`, then `herdr session delete <toy>`: the toy's server holds every pane and process the toy started, and is named after it, so nothing of the keeper's is touched (motif 12). No `bs end`: the logbook recording the ends is deleted below.
 2. Deletes every `<toy>-*` bead. It stops instead if one is linked to a bead outside the toy, since `bd delete` would rewrite that bead's references to `[deleted:ID]`.
-3. Removes the toy repo and its worktrees, moves the toy's Claude transcripts from `~/.claude/projects` into `<run>/keeper/transcripts/`, then removes its logbooks, cache files and config dir. `<run>/keeper/` is kept for your records; delete it when you're done. Claude's folder-trust entry for the toy stays in `~/.claude.json`, which live sessions rewrite.
+3. Removes the toy repo and its worktrees, moves the toy's Claude transcripts from `~/.claude/projects` into `<run>/keeper/transcripts/`, then removes its logbooks, cache files and config dir. Of agy's files, it removes the `trustedWorkspaces` entries in the run dir (under the lock bs takes), and moves into `<run>/keeper/agy/` the logs of agy starts whose workspace is in the run dir and the conversations they created (`conversations/`, `brain/`, `annotations/`, `implicit/`); lines in agy's shared `history.jsonl` and `cache/last_conversations.json` are noted, not edited. `<run>/keeper/` is kept for your records; delete it when you're done. Claude's folder-trust entry for the toy stays in `~/.claude.json`, which live sessions rewrite.
 4. Checks for leaks (exit 2): the toy's herdr session still listed, a pane of the keeper's herdr in the run dir (or herdr unreachable, so it can't tell), a process still running in the run dir (where there is no `/proc`, as on macOS, it says it can't check, and ends with `no leaks found; not checked: stray processes`), and toy files.
 5. Prints a `note:` line, never an exit code, for each leftover outside the toy: beads with `created_by` the toy id outside `<toy>-*`, and rows the toy's sessions (`queen-<toy>`, `<toy>-N`) wrote into other logbooks (read through `logbook.py`). Last, it compares the keeper's workspaces with the list setup took: all still open, or a note naming the ones closed since (never by teardown). This is a report, not a check: it never fails teardown.
 

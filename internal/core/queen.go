@@ -24,14 +24,14 @@ type QueenReq struct {
 }
 
 // Queen records the project's queen in req's pane and returns the argv bs queen execs:
-// the harness, in the repo, with the queen's prompt. The caller has refused a call from
+// the harness, in the repo, with the queen's prompt, and the env vars it must not inherit. The caller has refused a call from
 // outside a pane, or with no harness. It refuses while a queen's recorded process lives
 // (motif 7): the check and the record share one transaction. A queen recorded before an
 // exec that then fails is harmless: her pid is dead.
-func (c *Core) Queen(ctx context.Context, req QueenReq) ([]string, error) {
+func (c *Core) Queen(ctx context.Context, req QueenReq) (argv, unset []string, err error) {
 	name := Queen(c.Project)
 	if c.Repo == "" {
-		return nil, exit(ExitRefused, "cd into the project's repo, or set paths.repo", nil, "project %s has no repo to start her in", c.Project)
+		return nil, nil, exit(ExitRefused, "cd into the project's repo, or set paths.repo", nil, "project %s has no repo to start her in", c.Project)
 	}
 	var checkErr error // running's failure, told apart from a logbook write's
 	running := func(q logbook.Queen) (bool, error) {
@@ -49,44 +49,44 @@ func (c *Core) Queen(ctx context.Context, req QueenReq) ([]string, error) {
 	// A refused second queen leaves the first's files alone: they are written only once
 	// RecordQueen, which checks again under its lock, has recorded this one.
 	if q, ok, err := c.Logbook.LatestQueen(ctx, name); err != nil {
-		return nil, err
+		return nil, nil, err
 	} else if ok {
 		if up, err := running(q); err != nil {
-			return nil, exit(ExitCantCheck, bsname.Cmd+" doctor", err, "can't tell whether a queen already runs")
+			return nil, nil, exit(ExitCantCheck, bsname.Cmd+" doctor", err, "can't tell whether a queen already runs")
 		} else if up {
-			return nil, twin(q)
+			return nil, nil, twin(q)
 		}
 	}
 	start, err := c.Proc.Start(req.Self)
 	if err != nil {
-		return nil, exit(ExitCantCheck, bsname.Cmd+" doctor", err, "can't read its own start time")
+		return nil, nil, exit(ExitCantCheck, bsname.Cmd+" doctor", err, "can't read its own start time")
 	}
 	host, err := c.host(prompt.Queen)
 	if err != nil {
-		return nil, exit(ExitRefused, bsname.Cmd+" config", err, "her review host's section can't be read")
+		return nil, nil, exit(ExitRefused, bsname.Cmd+" config", err, "her review host's section can't be read")
 	}
 	custom, own := c.queenOwn()
 	text := prompt.Text(prompt.Queen, c.Project, c.Harness.Kind(), c.Kind, append(goal.BuiltinTypes(), custom...), own) + host
 	l, err := c.Harness.Prepare(port.Start{Role: port.Queen, Name: name, Dir: c.Repo, PromptFile: "{{prompt.md}}", Prompt: text})
 	if err != nil {
-		return nil, exit(ExitRefused, bsname.Cmd+" config", err, "its harness refused the launch")
+		return nil, nil, exit(ExitRefused, bsname.Cmd+" config", err, "its harness refused the launch")
 	}
 	q := logbook.Queen{Name: name, Harness: c.HarnessName, Session: req.Session, Pane: req.Pane,
 		Process: logbook.Process{PID: req.Self, Start: start}, Exe: req.Exe, Repo: c.Repo}
 	switch prev, ok, err := c.Logbook.RecordQueen(ctx, q, running); {
 	case checkErr != nil:
-		return nil, exit(ExitCantCheck, bsname.Cmd+" doctor", checkErr, "can't tell whether a queen already runs")
+		return nil, nil, exit(ExitCantCheck, bsname.Cmd+" doctor", checkErr, "can't tell whether a queen already runs")
 	case err != nil:
-		return nil, exit(ExitFail, bsname.Cmd+" doctor", err, "couldn't record %s", name)
+		return nil, nil, exit(ExitFail, bsname.Cmd+" doctor", err, "couldn't record %s", name)
 	case !ok:
-		return nil, twin(prev)
+		return nil, nil, twin(prev)
 	}
 	l.Files = withPrompt(l.Files, text)
 	args, err := c.writeFiles(name, l)
 	if err != nil {
-		return nil, exit(ExitFail, bsname.Cmd+" queen", err, "couldn't write her start files (her entry names this pid, which exits: harmless)")
+		return nil, nil, exit(ExitFail, bsname.Cmd+" queen", err, "couldn't write her start files (her entry names this pid, which exits: harmless)")
 	}
-	return append([]string{c.Harness.Kind()}, args...), nil
+	return append([]string{c.Harness.Kind()}, args...), l.Unset, nil
 }
 
 // host is r's review host section of the prompt: review.fragment's file when the keeper

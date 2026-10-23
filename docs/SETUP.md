@@ -86,6 +86,17 @@ How bs runs them, the same for both tables:
 - **Frozen.** A spawn records each check's argv, `clean`, `remove`, and the sha256 of the goal's `fragment` file: `bs done`, `bs end` and `bs prune` run what was recorded, never the config as it is now. A resume refuses a fragment changed since; `bs goal <worker> <goal>` records the new one.
 - **The workspace.** `bs spawn` refuses a `[workspace.command]` with no `clean` (exit 0 when nothing in the workspace would be lost: it is what lets prune remove one), and a `dir` that already exists with no spawn recorded on it. A `create` that fails, times out, or makes no `dir` runs `remove`, and nothing is recorded. `bs end` keeps the directory; `bs prune` runs `clean`, then `remove`, only once the goal's frozen prune rule holds or the keeper discarded it, only on the directory `create` made (not one made there again since), and checks that `remove` left no `dir`. bs looks at nothing inside a command workspace: `clean` is the only guard on what's in it, so make it count ignored files too, where reports end up (an ignored `scratch/` is where five reports were lost, bees-13.7). A second spawn of the same worker waits for the first to record its directory, so two never make or remove it at once. Guards: when the project's directory is a git checkout, a worker is denied pushes to its default branch and force pushes; else only `[guards] deny` applies. `bs spawn` says which. Claude Code would ask to trust each command workspace's directory, a new folder per worker, so a Claude worker's spawn marks that one folder trusted in `~/.claude.json` (`projects[<dir>].hasTrustDialogAccepted`, under Claude's own lock) and prune drops its entry; a `dir` inside a git checkout is left to the repo's trust (bees-13.86).
 
+**The workspace's VCS (optional).** With these four keys set in `[workspace.command]`, all or none, a command workspace takes `--goal pr` like a git worktree: bs asks them what git would tell it, and the review host (`review.host`) finds and reads the change. Each runs in the worker's directory and prints one JSON object on stdout (unknown keys ignored, stderr never read); a non-zero exit, a timeout or anything else printed is "couldn't ask" (`bs done` exits 6), never "no". `{branch}` is the worker's name; `{commit}` and `{ancestor}` are commits the review host or `branch` named.
+
+```text
+branch   = [..., "{branch}"]                  → {"tip": "<commit>"}       the workspace's head; absent, "" or null: none
+pushed   = [..., "{branch}"]                  → {"tip": "<commit>"}       what it last uploaded; absent, "" or null: can't say
+has      = [..., "{commit}"]                  → {"has": true|false}       the workspace has that commit
+descends = [..., "{ancestor}", "{commit}"]    → {"descends": true|false}  commit is ancestor or descends from it
+```
+
+At spawn bs records `branch`'s tip as where the worker started; `bs done` then checks that the change's head is the workspace's tip and descends from that start. Without the four keys, a goal that reads a branch (`pr`, or a check like `pr_open`) is refused at spawn, naming them. Even with them, what needs git itself is refused: `--goal branch`, `--goal push=<url>` and `--goal pr=<url>` (each cuts or measures a git branch), and the checks `branch_ahead` and `branch_merged`. bs ships no adapter for any tool: the commands are yours.
+
 A custom goal names its checks by stage: `handoff` runs at `bs done`, `complete` at `bs end` (none: complete at handoff), `prune` before `bs prune` removes the workspace (none: at once). Each is a built-in check that needs no branch (`clean`, `verdict_given`, `note_changed`, `bead_created`) or `cmd:<name>` for a `[checks.<name>]`. Its `fragment` is a file of your own (both roles' text, `<!-- worker -->` and `<!-- queen -->` lines splitting it) that becomes the goal's section of each prompt: say there how the worker saves and submits its work.
 
 ### jj
@@ -146,6 +157,11 @@ remove  = ["cl", "client", "delete", "{name}"]
 clean   = ["cl", "client", "clean", "{name}"]   # exit 0: no edit outside a sent CL
 dir     = "~/clients/{name}"
 timeout = "3m"
+# Optional: the client's VCS, so --goal pr works too (one JSON object each, above).
+branch   = ["cl", "head", "--json", "{dir}"]
+pushed   = ["cl", "uploaded", "--json", "{dir}"]
+has      = ["cl", "has", "--json", "{commit}"]
+descends = ["cl", "descends", "--json", "{ancestor}", "{commit}"]
 
 [checks.cl_sent]
 run = ["cl", "sent", "{name}"]                  # exit 0: the client's CL is out for review

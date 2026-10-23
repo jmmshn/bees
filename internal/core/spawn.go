@@ -225,7 +225,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	}
 	// Where the branch starts: a pr goal's change must be ahead of it (pr_head).
 	if ws.Branch != "" {
-		tip, ok, err := c.VCS.Branch(ctx, ws.Dir, ws.Branch)
+		tip, ok, err := c.vcs(ws).Branch(ctx, ws.Dir, ws.Branch)
 		if err == nil && !ok {
 			err = fmt.Errorf("no branch %s in %s", ws.Branch, ws.Dir)
 		}
@@ -390,6 +390,17 @@ func (c *Core) workerStart(name string, ws logbook.Workspace, bell string, deny 
 // refuse runs the spawn-time refusals of goal g that need no network, in workspace ws,
 // for bs spawn and every bs goal amend.
 func (c *Core) refuse(g goal.Goal, ws logbook.Workspace) error {
+	if ws.Kind == config.CommandKind { // its branch is its VCS commands', never git's
+		if on := g.OnGit(); len(on) > 0 && g.Type != "branch" {
+			return exit(ExitRefused, "", nil, "--goal %s: %s read a git branch, which a command workspace has none of", g, strings.Join(on, ", "))
+		}
+		switch {
+		case g.Type == "branch" || g.Type == "push" || g.Type == "pr" && g.Target != "":
+			return exit(ExitRefused, "", nil, "--goal %s: a command workspace has no git branch to cut at a change's head or measure against a base; give it --goal pr or a [goal.<name>] of its own", g)
+		case (g.Type == "pr" || len(g.OnBranch()) > 0) && ws.Branch == "":
+			return exit(ExitRefused, bsname.Cmd+" config", nil, "--goal %s: a command workspace with no VCS has no branch to hand off: set [workspace.command] branch, pushed, has and descends (docs/SETUP.md)", g)
+		}
+	}
 	if (g.Type == "branch" || g.Type == "pr" || g.Type == "push") && ws.Branch == "" {
 		return exit(ExitRefused, "", nil, "--goal %s: a %s workspace with no branch has none to hand off", g, ws.Kind)
 	}

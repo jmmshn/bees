@@ -111,6 +111,7 @@ type Launch struct {
 	Files  map[string]string // key → content
 	Dir    map[string]string // relative path → content
 	Record map[string]string // facts known before the start that a later start needs (a conversation id bs chose)
+	Unset  []string          // env vars the harness must not inherit: the core unsets them in the pane's shell first, and bs queen drops them from its exec
 }
 
 // Target is a session as the core found it: alive with its recorded start time.

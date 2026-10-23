@@ -236,11 +236,21 @@ func Cmd(check string) string {
 var onBranch = []string{PRExists, PROpen, PRNotDraft, PRHead, PRWorkspaceCommit, PRPushed, PRCurrent, CIGreen,
 	PRMerged, PRLanded, PRClosed, PRTargetOpen, PushMoved, BranchAhead, BranchMerged}
 
+// onGit are the built-in checks that read a git branch itself, never through the VCS
+// port: a command workspace can't run them.
+var onGit = []string{BranchAhead, BranchMerged}
+
 // OnBranch names the checks of g that need a branch to read, each once.
-func (g Goal) OnBranch() []string {
+func (g Goal) OnBranch() []string { return g.among(onBranch) }
+
+// OnGit names the checks of g that need a git branch, each once.
+func (g Goal) OnGit() []string { return g.among(onGit) }
+
+// among names g's checks in set, each once.
+func (g Goal) among(set []string) []string {
 	var out []string
 	for _, c := range slices.Concat(g.Handoff, g.Complete, g.Prune) {
-		if slices.Contains(onBranch, c) && !slices.Contains(out, c) {
+		if slices.Contains(set, c) && !slices.Contains(out, c) {
 			out = append(out, c)
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func write(t *testing.T, path, body string) {
@@ -260,6 +261,33 @@ handoff = ["cmd:nope", "made_up"]
 		"create: argument 5 {branch}: no such placeholder", `dir = "x": it must name {name}`,
 		"[checks.handed] run: argument 2 {pr}: a worker names no change", `argument 2 "cl-{name}": a placeholder fills one whole argument`,
 		`[goal.cl] handoff: "cmd:nope" names no [checks.nope]`, `"made_up" is no built-in check`)
+}
+
+// A [workspace.command] VCS is all four keys or none, each naming only the VCS
+// placeholders (bees-14.4).
+func TestCommandVCSIsAllOrNone(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "config.toml"), `
+[workspace.command]
+branch = ["cl", "head", "{name}"]
+has = ["cl", "has", "{commit}"]
+`)
+	_, err := Load(Input{Dir: dir, Home: "/h"})
+	wantErr(t, err, "sets branch, has but not pushed, descends", "branch: argument 2 {name}: no such placeholder (there are {dir}, {branch}, {commit}, {ancestor})")
+	write(t, filepath.Join(dir, "config.toml"), `
+[workspace.command]
+branch = ["cl", "head", "{branch}"]
+pushed = ["cl", "uploaded", "{branch}"]
+has = ["cl", "has", "{commit}"]
+descends = ["cl", "descends", "{ancestor}", "{commit}"]
+`)
+	l, err := Load(Input{Dir: dir, Home: "/h"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := l.Workspace.Command.VCSCmds(time.Second); c == nil || c.Descends.Argv[2] != "{ancestor}" || c.Has.Timeout != time.Second {
+		t.Errorf("VCSCmds = %+v", c)
+	}
 }
 
 // A [workspace.command] missing a key loads, so bs config and doctor can show it; spawn

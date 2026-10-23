@@ -315,3 +315,25 @@ func TestDoctorAgyBin(t *testing.T) {
 		t.Errorf("agy on PATH:\n%s", out)
 	}
 }
+
+// bees-13.13.13: doctor checks agy is signed in as a worker's runs, without the SSH_*
+// agy reads as a remote session, set in this shell or not; signed out, it warns.
+func TestDoctorAgySignIn(t *testing.T) {
+	r := newDoctorRig(t)
+	r.write("config.toml", "harness = \"agy\"\n[paths]\nlogbook_dir = \""+r.logbook+"\"\n")
+	signedOut := filepath.Join(t.TempDir(), "signed-out")
+	r.stub("agy", `case $1 in --version) echo 1.4.6;; models) [ -z "$SSH_TTY$SSH_CONNECTION$SSH_CLIENT" ] && [ ! -e `+signedOut+` ] || { echo "Error: Please sign in to view available models." >&2; exit 1; }; echo gemini;; esac`)
+	t.Setenv("SSH_TTY", "/dev/pts/9")
+	t.Setenv("SSH_CONNECTION", "1.2.3.4 1 5.6.7.8 22")
+	agyAt := filepath.Join(r.bin, "agy")
+	_, out := r.doctor()
+	wantIn(t, out, "ok   agy sign-in: "+agyAt+" models answers without SSH_CONNECTION, SSH_CLIENT, SSH_TTY")
+	if err := os.WriteFile(signedOut, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, out := r.doctor()
+	wantIn(t, out, "WARN agy sign-in: "+agyAt+" isn't signed in as workers run it (without SSH_CONNECTION, SSH_CLIENT, SSH_TTY), so an agy worker can't start: run agy once to sign in")
+	if code != 0 {
+		t.Errorf("a warning failed doctor: exit %d\n%s", code, out)
+	}
+}

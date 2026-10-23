@@ -100,7 +100,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 			}
 			remade = true
 		}
-		if hw, err = c.herdr(session).CreateWorkspace(ctx, ws.Dir, c.Project+" · "+label); err != nil {
+		if hw, err = c.herdr(session).CreateWorkspace(ctx, ws.Dir, label); err != nil {
 			if remade {
 				_, rerr := c.git(context.WithoutCancel(ctx), ws.Repo, "worktree", "remove", ws.Dir)
 				err = errors.Join(err, rerr)
@@ -112,7 +112,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 		} else {
 			c.warn("%s: on its kept worktree and branch %s, with the work its last spawn left there", name, ws.Branch)
 		}
-	} else if hw, err = c.makeWorkspace(ctx, session, &ws, target, c.Project+" · "+label); err != nil {
+	} else if hw, err = c.makeWorkspace(ctx, session, &ws, target, label); err != nil {
 		return logbook.Spawn{}, false, err
 	}
 	// undo takes back what this spawn made: a reused branch stays, and its worktree unless

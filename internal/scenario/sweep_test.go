@@ -31,12 +31,12 @@ func TestWorkersMailEachOtherAndAreRung(t *testing.T) {
 	}
 }
 
-// Round 11: herdr labels read <project> · <label>.
-func TestHerdrLabelsNameTheProject(t *testing.T) {
+// Round 11: herdr labels read <project> · <label>; bees-13.57: just <label>, herdr nests it under its repo.
+func TestHerdrLabelsAreTheLabel(t *testing.T) {
 	x := newToy(t)
 	x.spawn("toy-1", "branch")
 	out, err := x.herdr.Run(context.Background(), "", "herdr", "--session", "toy", "workspace", "list")
-	if err != nil || !strings.Contains(string(out), `"label":"toy · work on toy-1"`) {
+	if err != nil || !strings.Contains(string(out), `"label":"work on toy-1"`) {
 		t.Fatalf("workspace list: %s, %v", out, err)
 	}
 }

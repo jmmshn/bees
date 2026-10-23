@@ -94,9 +94,11 @@ func (a Adapter) Ring(t port.Target, text string, p port.Priority) error {
 // Code's 2-minute default otherwise cuts bs done --wait); the worker's bs finds its
 // project from its herdr pane (ADR-0010).
 //
-// Every autoMode list keeps "$defaults": a list without it replaces the built-in rules
-// (force push, exfiltration). The deny rules run before the classifier; a rule's * matches
-// any text, a space or a slash too (probed on Claude Code 2.1.302).
+// A worker owns its worktree and branch, so the classifier may let it build, test and push
+// its own branch (bees-1.51, lost in the rebuild: bees-13.72). Every autoMode list keeps
+// "$defaults": a list without it replaces the built-in rules (force push, exfiltration).
+// The deny rules run before the classifier; a rule's * matches any text, a space or a
+// slash too (probed on Claude Code 2.1.302).
 func workerSettings(st port.Start) (string, error) {
 	deny := make([]string, len(st.Deny))
 	for i, d := range st.Deny {
@@ -105,8 +107,8 @@ func workerSettings(st port.Start) (string, error) {
 	s := map[string]any{
 		"crossSessionInbound": "accept",
 		"autoMode": map[string][]string{
-			"environment": {"$defaults"},
-			"allow":       {"$defaults"},
+			"environment": {"$defaults", environment(st)},
+			"allow":       allow(st),
 		},
 		"permissions": map[string][]string{"deny": deny},
 	}
@@ -123,6 +125,26 @@ func workerSettings(st port.Start) (string, error) {
 	}
 	b, err := json.Marshal(s)
 	return string(b), err
+}
+
+// environment tells the classifier whose workspace this is; a workspace with no branch
+// (a push goal's, detached at someone else's change) claims none.
+func environment(st port.Start) string {
+	if st.Branch == "" {
+		return fmt.Sprintf("Host containment: a bees worker, working in its own git worktree %s of the repository %s.", st.Dir, st.Repo)
+	}
+	return fmt.Sprintf("Host containment: a bees worker, working in its own git worktree %s on its own branch %s of the repository %s.", st.Dir, st.Branch, st.Repo)
+}
+
+// allow is the routine work of a worker the classifier lets through: its build and
+// tests, its own branch's commits, pushes and pull request, and the bees tools.
+func allow(st port.Start) []string {
+	a := []string{"$defaults",
+		fmt.Sprintf("Running this repository's own build, lint and test commands (such as go vet, go test, go build -o into the worktree, pre-commit) inside the worktree %s.", st.Dir)}
+	if st.Branch != "" {
+		a = append(a, fmt.Sprintf("Committing to and pushing (never force-pushing) the worker's own branch %s to the repository's origin, opening a pull request from it, and pushing further commits to that open pull request.", st.Branch))
+	}
+	return append(a, "Running bs and bd, the bees tools, to read and send its project's messages and to read and update its own beads.")
 }
 
 // pathHook puts dirs first on the PATH of the worker's Bash tool. Not env.PATH: Claude

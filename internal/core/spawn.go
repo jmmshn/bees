@@ -78,7 +78,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 		return logbook.Spawn{}, false, err
 	}
 	// Prepare is pure, so it runs before anything is made: a refused launch leaves nothing.
-	launch, err := c.Harness.Prepare(c.workerStart(name, ws.Dir, doorbell(name, bead.ID, req.By), deny))
+	launch, err := c.Harness.Prepare(c.workerStart(name, ws, doorbell(name, bead.ID, req.By), deny))
 	if err != nil {
 		return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s: its harness refused the launch; nothing was made", name)
 	}
@@ -189,7 +189,7 @@ func (c *Core) resume(ctx context.Context, sp logbook.Spawn, bead port.Bead, req
 	if err != nil {
 		return err
 	}
-	st0 := c.workerStart(sp.Name, sp.Workspace.Dir, doorbell(sp.Name, bead.ID, sp.By), deny)
+	st0 := c.workerStart(sp.Name, sp.Workspace, doorbell(sp.Name, bead.ID, sp.By), deny)
 	st0.Continue, st0.Record = sp.Read, sp.Record
 	launch, err := c.Harness.Prepare(st0)
 	if err != nil {
@@ -240,10 +240,10 @@ func goalFlags(g goal.Goal) string {
 }
 
 // workerStart is the start of worker name in dir that every launch of it prepares, a first
-// spawn's and a resume's alike: one place for its prompt file, PATH, guards and shell
-// timeout.
-func (c *Core) workerStart(name, dir, bell string, deny []string) port.Start {
-	return port.Start{Role: port.Worker, Name: name, Dir: dir, PromptFile: "{{prompt.md}}", Doorbell: bell,
+// spawn's and a resume's alike: one place for its workspace, prompt file, PATH, guards and
+// shell timeout.
+func (c *Core) workerStart(name string, ws logbook.Workspace, bell string, deny []string) port.Start {
+	return port.Start{Role: port.Worker, Name: name, Dir: ws.Dir, Branch: ws.Branch, Repo: ws.Repo, PromptFile: "{{prompt.md}}", Doorbell: bell,
 		Path: c.WorkerPath, Deny: deny, ShellTimeout: ShellTimeout}
 }
 

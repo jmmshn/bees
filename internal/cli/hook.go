@@ -66,7 +66,7 @@ func (r *run) hook(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	if len(ms) > 0 {
-		return agy.Hold(r.out, core.Doorbell(ms, ms[len(ms)-1].From))
+		return agy.Hold(r.out, core.Doorbell(ms, ms[len(ms)-1].From, r.c.Project))
 	}
 	asked := watch.Asked(r.ports.CacheDir, w.Name)
 	if _, err := os.Stat(asked); err == nil || !errors.Is(err, os.ErrNotExist) {

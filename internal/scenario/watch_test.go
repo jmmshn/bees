@@ -65,6 +65,12 @@ func TestTheMailWatcher(t *testing.T) {
 	must(t, step("inbox"), 0, "hi") // nothing was marked read
 	w = bg("inbox", "--wait")
 	armed(true)
+	must(t, x.keeper("send", "toy-1", "from the keeper"), 0)
+	if out := output(w); !strings.Contains(out, `1 unread (keeper) — run: bs inbox   (reply with: bs send queen-toy "...")`) {
+		t.Fatalf("watcher said %q; want keeper mail answered to queen-toy (bees-13.92)", out)
+	}
+	w = bg("inbox", "--wait")
+	armed(true)
 	must(t, x.queen("end", "toy-1"), 0)
 	// bs end stops the harness and records the end: the watcher sees either first
 	if out := output(w); !strings.Contains(out, "no mail to watch for") {
@@ -118,6 +124,8 @@ func TestAgyTurnHooks(t *testing.T) {
 	must(t, hook(st.PID, "Stop", stop), 0, "bs inbox --wait")
 	must(t, x.queen("send", "toy-1", "hi"), 0)
 	must(t, hook(st.PID, "Stop", stop), 0, `{"decision":"continue","reason":"[bs] 1 unread (queen-toy)`)
+	must(t, x.keeper("send", "toy-1", "from the keeper"), 0)
+	must(t, hook(st.PID, "Stop", stop), 0, `2 unread (queen-toy, keeper) — run: bs inbox   (reply with: bs send queen-toy \"...\")`) // bees-13.92
 	if r := hook(st.PID, "Stop", cancel); r.code != 0 || r.out != "" {
 		t.Fatalf("a cancelled turn: %s", r)
 	}

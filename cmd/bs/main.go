@@ -22,6 +22,7 @@ func main() {
 		cache = os.TempDir()
 	}
 	exe, _ := os.Executable() // "": bs is then checked as the shared install
+	cacheDir := filepath.Join(cache, "bees", "bs")
 	ports := cli.Ports{
 		Run:   port.Exec{},
 		Proc:  proc.System{},
@@ -31,11 +32,11 @@ func main() {
 			case claude.Name:
 				return claude.Adapter{Model: o.Model}
 			case agy.Name:
-				return agy.Adapter{Model: o.Model, Bin: o.Bin, Bs: exe, Settings: o.Settings} // its guard hook runs this bs
+				return agy.Adapter{Model: o.Model, Bin: o.Bin, Bs: exe, Settings: o.Settings, Cache: cacheDir} // its hooks run this bs
 			}
 			return nil
 		},
-		CacheDir: filepath.Join(cache, "bees", "bs"),
+		CacheDir: cacheDir,
 		Exec:     execHarness,
 		Revision: revision(),
 		Exe:      exe,

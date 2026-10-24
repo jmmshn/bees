@@ -88,11 +88,12 @@ type Timing struct {
 	CIPoll     time.Duration // bs done --wait: how often it asks the review host again
 	WaitGrace  time.Duration // bs done --wait: how long its last look may run past --timeout
 	Stop       time.Duration // SIGTERM before SIGKILL
+	Mail       time.Duration // bs inbox --wait: how often it reads the logbook again
 }
 
 // DefaultTiming is ADR-0010's: confirmation polled every 250 ms within 20 s, 5 s after a
 // herdr error, agent_pane_busy retried for 8 s.
-var DefaultTiming = Timing{CIPoll: 20 * time.Second, WaitGrace: 45 * time.Second, Confirm: 20 * time.Second, Poll: 250 * time.Millisecond, SecondLook: time.Second, Stop: 3 * time.Second,
+var DefaultTiming = Timing{CIPoll: 20 * time.Second, WaitGrace: 45 * time.Second, Confirm: 20 * time.Second, Poll: 250 * time.Millisecond, SecondLook: time.Second, Stop: 3 * time.Second, Mail: 2 * time.Second,
 	Gate: 5 * time.Second, AfterErr: 5 * time.Second, Busy: 8 * time.Second}
 
 // MaxWait bounds bs done --wait's --timeout, and ShellTimeout is the shell call a worker's
@@ -109,7 +110,7 @@ func (c *Core) timing() Timing {
 	}
 	t.Poll, t.SecondLook, t.Stop = cmp.Or(t.Poll, d.Poll), cmp.Or(t.SecondLook, d.SecondLook), cmp.Or(t.Stop, d.Stop)
 	t.Gate, t.AfterErr, t.Busy = cmp.Or(t.Gate, d.Gate), cmp.Or(t.AfterErr, d.AfterErr), cmp.Or(t.Busy, d.Busy)
-	t.CIPoll, t.WaitGrace = cmp.Or(t.CIPoll, d.CIPoll), cmp.Or(t.WaitGrace, d.WaitGrace)
+	t.CIPoll, t.WaitGrace, t.Mail = cmp.Or(t.CIPoll, d.CIPoll), cmp.Or(t.WaitGrace, d.WaitGrace), cmp.Or(t.Mail, d.Mail)
 	return t
 }
 
@@ -136,6 +137,7 @@ const (
 	ExitIncomplete = 9  // bs end on an incomplete goal
 	ExitPending    = 10 // a handoff waits only on CI still running: re-run with --wait
 	ExitWaited     = 11 // bs done --wait ran out of time with CI still running
+	ExitNoMail     = 12 // bs inbox --wait ran out of time with no new mail
 )
 
 // Exit is a refusal or failure with its exit code and the next command to run.

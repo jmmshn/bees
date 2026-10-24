@@ -114,7 +114,7 @@ func (a Adapter) Prepare(st port.Start) (port.Launch, error) {
 	}
 	agent := "bs-" + string(st.Role)
 	l.Dir = map[string]string{
-		".agents/agents/" + agent + ".md": agentFile(agent, st.Role, st.Prompt),
+		".agents/agents/" + agent + ".md": agentFile(agent, st.Role, st.Dir, st.Prompt),
 		".agents/hooks.json":              hooks(a.Bs, st.Dir, st.Role == port.Worker, st.Deny),
 	}
 	l.Args = []string{"--add-dir", "{{dir}}", "--agent", agent, "--mode", Mode}
@@ -330,9 +330,17 @@ func getenv(env []string, key string) string {
 	return ""
 }
 
-// agentFile is the role's custom agent: its tools, and the role prompt as its body.
-func agentFile(name string, role port.Role, prompt string) string {
-	return fmt.Sprintf("---\nname: %s\ndescription: a bees %s, started by %s\ntools: [%s]\n---\n%s", name, role, bsname.Cmd, strings.Join(Tools, ", "), prompt)
+// agentFile is the role's custom agent: its tools, and its workspace and the role prompt
+// as its body.
+func agentFile(name string, role port.Role, dir, prompt string) string {
+	return fmt.Sprintf("---\nname: %s\ndescription: a bees %s, started by %s\ntools: [%s]\n---\n%s%s", name, role, bsname.Cmd, strings.Join(Tools, ", "), cwdLine(dir), prompt)
+}
+
+// cwdLine tells the model its workspace: agy shows it the workspace dirs sorted, the first
+// as its "Command Working Directory", and run_command runs in the Cwd the model passes, so
+// the --add-dir'd start dir under ~/.cache would beat a repo under ~/repos (bees-13.13.18).
+func cwdLine(dir string) string {
+	return "Your workspace is " + dir + ". Pass it as run_command's Cwd; ignore the \"Command Working Directory\" agy lists.\n\n"
 }
 
 // hooks is agy's hooks.json: when a turn stops, bs hook gets agy's payload, from the

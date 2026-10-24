@@ -25,7 +25,8 @@ func worker() port.Start {
 
 // A worker's launch adds its per-start dir, picks its custom agent, runs in accept-edits mode and
 // gets the doorbell as its first prompt; the agent file lists the worker's tools and holds
-// the prompt as its body (probe 1).
+// the prompt as its body (probe 1), after the line naming its workspace as run_command's
+// Cwd (bees-13.13.18).
 func TestPrepareAWorker(t *testing.T) {
 	l, err := agy.Adapter{Model: "gemini-3.8-flash", Bs: "/bin/bs"}.Prepare(worker())
 	if err != nil {
@@ -44,7 +45,8 @@ func TestPrepareAWorker(t *testing.T) {
 	}
 	agent := l.Dir[".agents/agents/bs-worker.md"]
 	front := "---\nname: bs-worker\ndescription: a bees worker, started by bs\ntools: [" + strings.Join(agy.Tools, ", ") + "]\n---\n"
-	if agent != front+"You are a worker.\n" {
+	cwd := "Your workspace is /wt/bees-8. Pass it as run_command's Cwd; ignore the \"Command Working Directory\" agy lists.\n\n"
+	if agent != front+cwd+"You are a worker.\n" {
 		t.Errorf("agent file = %q", agent)
 	}
 	for _, tool := range []string{"run_command", "view_file", "list_dir", "grep_search", "find_by_name", "write_to_file", "replace_file_content", "multi_replace_file_content"} {
@@ -55,7 +57,8 @@ func TestPrepareAWorker(t *testing.T) {
 }
 
 // The queen's launch has her agent and the Stop mail hook, so mail stored mid-turn
-// wakes her when it ends (bees-13.13.21), and no guard: guards are a worker's.
+// wakes her when it ends (bees-13.13.21), and no guard: guards are a worker's. Her
+// workspace is her repo.
 func TestPrepareTheQueen(t *testing.T) {
 	l, err := agy.Adapter{Bs: "/bin/bs"}.Prepare(port.Start{Role: port.Queen, Name: "queen-bees", Dir: "/repo", Prompt: "You are the queen.\n"})
 	if err != nil {
@@ -64,7 +67,7 @@ func TestPrepareTheQueen(t *testing.T) {
 	if want := []string{"--add-dir", "{{dir}}", "--agent", "bs-queen", "--mode", "accept-edits"}; !reflect.DeepEqual(l.Args, want) {
 		t.Errorf("args = %q, want %q", l.Args, want)
 	}
-	if !strings.HasSuffix(l.Dir[".agents/agents/bs-queen.md"], "---\nYou are the queen.\n") {
+	if !strings.HasSuffix(l.Dir[".agents/agents/bs-queen.md"], "---\nYour workspace is /repo. Pass it as run_command's Cwd; ignore the \"Command Working Directory\" agy lists.\n\nYou are the queen.\n") {
 		t.Errorf("dir = %v", l.Dir)
 	}
 	var h map[string]map[string][]struct{ Type, Command string }

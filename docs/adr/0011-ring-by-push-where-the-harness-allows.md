@@ -54,7 +54,7 @@ The waiter's one virtue is uniformity: every harness can run it. That isn't wort
 
 ## Revisit when
 
-`bs doctor` prints the installed agy version and points here. Re-probe on a new agy release when either holds:
+`bs doctor` prints the installed agy version (checked against `agy.Probed`, bees-13.13.15) and points here. Re-probe on a new agy release when either holds:
 
 - [#1022](https://github.com/google-antigravity/antigravity-cli/issues/1022) is fixed: `send_message` wakes an idle session;
 - agy documents a local API to prompt a live session (remote control or `agentapi`), one that reports failure.
@@ -110,8 +110,8 @@ The remaining races each need a coincidence inside the ~0.3 s between `agent get
 - the keeper submits a prompt at the same instant, so the doorbell lands mid-turn, queued or in the box behind their text;
 - an idle agy's own background task or schedule timer starts a turn whose first tool call asks permission inside the typing window, and the doorbell's Enter answers that menu.
 
-The message is in the logbook first, so no race loses mail. The worst case is one command approved without a prompt, in a worktree still behind `bs guard` and branch protection. The keeper judged it low risk (2026-10-23).
+The message is in the logbook first, so no race loses mail. The worst case is one command approved without a prompt, in a worktree still behind `bs guard` (and GitHub branch protection where enabled; recommended in [SETUP.md](../SETUP.md#worker-permissions), not set on this repo today). The keeper judged it low risk (2026-10-23).
 
 ### Revisit agy's typed ring when
 
-The [watch list above](#revisit-when) stands, with herdr refusing `agent prompt` while a permission menu is on screen added: that closes the menu race whatever agy does.
+The [watch list above](#revisit-when) stands, with herdr refusing `agent prompt` while a permission menu is on screen added: that closes the menu race whatever agy does. See [SETUP.md](../SETUP.md#future-agy-work-that-would-simplify-bs) for what each upstream change lets `bs` delete.

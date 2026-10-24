@@ -699,9 +699,12 @@ func fill(args []string, key, path string) {
 func brief(b port.Bead, g goal.Goal, ws logbook.Workspace, t *target, hint string, mergeInto []string) string {
 	s := fmt.Sprintf("You own %s: %s\n\nYour goal: --goal %s. Hand it off with "+bsname.Cmd+" done when it holds.\n", b.ID, b.Title, g)
 	// a harness whose cwd isn't the worktree (agy) learns where to work only from here
-	if ws.Branch != "" {
+	switch {
+	case ws.Kind == config.GitWorktree:
 		s += fmt.Sprintf("Your worktree: %s, branch %s.\n", ws.Dir, ws.Branch)
-	} else {
+	case ws.Branch != "": // a command workspace's VCS commands are asked about this name
+		s += fmt.Sprintf("Your workspace: %s, branch %s.\n", ws.Dir, ws.Branch)
+	default:
 		s += fmt.Sprintf("Your workspace: %s.\n", ws.Dir)
 	}
 	if len(mergeInto) > 0 { // the guard can't see a PR's base: the brief says which (guards.allow_merge_into)

@@ -94,7 +94,7 @@ commands:
   bead    ls [--all] [<bd query>] | new --parent <project>-N [--description D] [--type T] [--priority P] <title>
   version                                                  print the commit {cmd} was built from
   guard   --harness agy <glob>...                          a harness's PreToolUse hook: deny a tool call on stdin a glob matches
-  hook    --harness agy PreInvocation|Stop                 agy's turn hooks: arm the mail watcher, hold a turn with unread mail
+  hook    --harness agy Stop                               agy's Stop hook: hold a turn with unread mail
 
 {cmd} acts in the repo it runs in, as its nearest recorded ancestor (a queen, a worker),
 else as the keeper. --as <session>, a debug override from a shell no session started,

@@ -13,8 +13,8 @@ import (
 	"github.com/jmmshn/bees/internal/watch"
 )
 
-// bs inbox --wait, the agy ring's watcher (bees-13.13.10), run in the background as an agy
-// worker runs it: one per worker, invisible to the gate, it exits with a doorbell once new
+// bs inbox --wait, the mail watcher (bees-13.13.10) omp's bs extension runs (ADR-0011),
+// run in the background: one per worker, invisible to the gate, it exits with a doorbell once new
 // mail comes and marks nothing read; mail already unread when it began doesn't fire it;
 // it ends at --timeout with ExitNoMail, and when its worker ends or its harness exits.
 func TestTheMailWatcher(t *testing.T) {
@@ -81,13 +81,12 @@ func TestTheMailWatcher(t *testing.T) {
 	}
 }
 
-// agy's turn hooks, bs hook --harness agy (bees-13.13.10), run as agy runs them: a child
-// of the worker's harness, in its workspace, with agy's payload on stdin. A turn's first
-// model call with no watcher armed is told to arm one, and with one armed nothing; a turn
-// that ends on its own is held with the doorbell while mail is unread, else told to arm a
-// watcher while none is, once per idle; one the keeper cancelled isn't held; the
-// keeper's own agy gets nothing.
-func TestAgyTurnHooks(t *testing.T) {
+// agy's Stop hook, bs hook --harness agy Stop, run as agy runs it: a child of the
+// worker's harness, in its workspace, with agy's payload on stdin. A turn that ends on its
+// own is held with the doorbell while mail is unread (mail its ring didn't type into a
+// working session, bees-13.97), else let stop; one the keeper cancelled isn't held; the
+// keeper's own agy gets nothing. PreInvocation's arming is retired: refused as usage.
+func TestAgyStopHook(t *testing.T) {
 	x := newToy(t)
 	sp := x.spawn("toy-1", "verdict")
 	st, _, _ := x.open().LatestStart(context.Background(), sp.ID)
@@ -98,30 +97,11 @@ func TestAgyTurnHooks(t *testing.T) {
 			x.ports, []string{"hook", "--harness", "agy", event}, &out, &errb)
 		return result{code, out.String(), errb.String()}
 	}
-	first, later := `{"invocationNum":0,"initialNumSteps":1}`, `{"invocationNum":1}`
 	stop, cancel := `{"terminationReason":"NO_TOOL_CALL","fullyIdle":true}`, `{"terminationReason":"USER_CANCELED"}`
-	must(t, hook(st.PID, "PreInvocation", first), 0, `{"injectSteps":[{"userMessage":"[bs] Run this command in the background`, "bs inbox --wait")
-	if r := hook(st.PID, "PreInvocation", later); r.code != 0 || r.out != "" {
-		t.Fatalf("a later model call: %s", r)
-	}
-	release, _, err := watch.Arm(watch.Path(x.ports.CacheDir, "toy-1"), 4242)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r := hook(st.PID, "PreInvocation", first); r.code != 0 || r.out != "" {
-		t.Fatalf("armed: %s", r)
-	}
 	must(t, x.worker("toy-1", 1, "inbox"), 0) // the brief, read
 	if r := hook(st.PID, "Stop", stop); r.code != 0 || r.out != "" {
-		t.Fatalf("no unread mail, a watcher armed: %s", r)
+		t.Fatalf("no unread mail: %s", r)
 	}
-	release() // the watcher exited mid-turn, its mail read in the same turn: never idle deaf
-	must(t, hook(st.PID, "Stop", stop), 0, `{"decision":"continue","reason":"[bs] Run this command in the background`, "bs inbox --wait")
-	if r := hook(st.PID, "Stop", stop); r.code != 0 || r.out != "" { // it ignored Arm: held once, then let stop
-		t.Fatalf("asked twice in one idle: %s", r)
-	}
-	must(t, x.worker("toy-1", 2, "inbox", "--wait", "--timeout", "50ms"), 12, "no new mail") // a watcher took the lock: the next idle is asked again
-	must(t, hook(st.PID, "Stop", stop), 0, "bs inbox --wait")
 	must(t, x.queen("send", "toy-1", "hi"), 0)
 	must(t, hook(st.PID, "Stop", stop), 0, `{"decision":"continue","reason":"[bs] 1 unread (queen-toy)`)
 	must(t, x.keeper("send", "toy-1", "from the keeper"), 0)
@@ -129,7 +109,8 @@ func TestAgyTurnHooks(t *testing.T) {
 	if r := hook(st.PID, "Stop", cancel); r.code != 0 || r.out != "" {
 		t.Fatalf("a cancelled turn: %s", r)
 	}
-	if r := hook(os.Getpid(), "PreInvocation", first); r.code != 0 || r.out != "" {
+	if r := hook(os.Getpid(), "Stop", stop); r.code != 0 || r.out != "" {
 		t.Fatalf("the keeper's agy: %s", r)
 	}
+	must(t, hook(st.PID, "PreInvocation", `{"invocationNum":0}`), 2, "hook --harness agy Stop")
 }

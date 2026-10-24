@@ -32,7 +32,7 @@ func main() {
 			case claude.Name:
 				return claude.Adapter{Model: o.Model}
 			case agy.Name:
-				return agy.Adapter{Model: o.Model, Bin: o.Bin, Bs: exe, Settings: o.Settings, Cache: cacheDir} // its hooks run this bs
+				return agy.Adapter{Model: o.Model, Bin: o.Bin, Bs: exe, Settings: o.Settings, Run: port.Exec{}} // its hooks run this bs; its ring, herdr
 			}
 			return nil
 		},

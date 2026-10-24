@@ -4,8 +4,8 @@
 // agy has no flag for a system-prompt or settings file: it finds custom agents and hooks
 // under a .agents/ directory it discovers, which --add-dir adds (probe 1). So Prepare puts
 // both in the per-start directory the core writes: the role's custom agent, its prompt the
-// agent's body, and for a worker the hooks.json that runs bs guard before each command and
-// bs hook when a turn stops, which holds the turn while mail is unread. Its ring types the
+// agent's body, and the hooks.json that runs bs hook when a turn stops, which holds the
+// turn while mail is unread, and for a worker bs guard before each command too. Its ring types the
 // doorbell into an idle session's empty input box (bees-13.97, ADR-0011).
 package agy
 
@@ -109,13 +109,13 @@ func (a Adapter) Prepare(st port.Start) (port.Launch, error) {
 		return l, fmt.Errorf("agy: bs can't put %s first on agy's commands' PATH yet (bees-13.80 row 5); drop bs spawn --path, and worker.path from the config", strings.Join(st.Path, ", "))
 	case st.Continue && st.Record[Conversation] == "":
 		return l, errors.New("agy: no recorded conversation to resume: its session never ran a bs call, which records it; bs end the worker and spawn it again to start fresh")
-	case st.Role == port.Worker && !filepath.IsAbs(a.Bs):
-		return l, fmt.Errorf("agy: the bs its guard hook runs must be an absolute path, not %q", a.Bs)
+	case !filepath.IsAbs(a.Bs):
+		return l, fmt.Errorf("agy: the bs its hooks run must be an absolute path, not %q", a.Bs)
 	}
 	agent := "bs-" + string(st.Role)
-	l.Dir = map[string]string{".agents/agents/" + agent + ".md": agentFile(agent, st.Role, st.Prompt)}
-	if st.Role == port.Worker {
-		l.Dir[".agents/hooks.json"] = hooks(a.Bs, st.Dir, st.Deny)
+	l.Dir = map[string]string{
+		".agents/agents/" + agent + ".md": agentFile(agent, st.Role, st.Prompt),
+		".agents/hooks.json":              hooks(a.Bs, st.Dir, st.Role == port.Worker, st.Deny),
 	}
 	l.Args = []string{"--add-dir", "{{dir}}", "--agent", agent, "--mode", Mode}
 	l.Unset = Remote
@@ -141,7 +141,7 @@ const ringTimeout = 10 * time.Second
 // working or blocked: herdr sees agy's permission menu 0.1-0.2 s late, and a ring in that
 // gap answers the menu's default, Yes (bees-13.95). An idle agy shows no menu until a
 // turn starts. Anything else is *port.Held, typing nothing: the mail waits in the logbook,
-// a worker's Stop hook shows the doorbell if its turn ends on its own, and bs ring rings
+// a session's Stop hook shows the doorbell if its turn ends on its own, and bs ring rings
 // again (bees-13.97).
 func (a Adapter) Ring(t port.Target, text string, _ port.Priority) error {
 	if a.Run == nil {
@@ -335,26 +335,31 @@ func agentFile(name string, role port.Role, prompt string) string {
 	return fmt.Sprintf("---\nname: %s\ndescription: a bees %s, started by %s\ntools: [%s]\n---\n%s", name, role, bsname.Cmd, strings.Join(Tools, ", "), prompt)
 }
 
-// hooks is agy's hooks.json: before each run_command, bs guard gets the tool call on
-// stdin and the deny globs as arguments; when a turn stops, bs hook gets agy's payload, from the workspace dir so bs finds its project and caller.
-// agy runs each command under sh -c in the hooks.json dir, so bs is an absolute path and
-// each word is single-quoted.
-func hooks(bs, dir string, deny []string) string {
-	cmd := []string{quote(bs), "guard", "--harness", Name}
-	for _, g := range deny {
-		cmd = append(cmd, quote(g))
+// hooks is agy's hooks.json: when a turn stops, bs hook gets agy's payload, from the
+// workspace dir so bs finds its project and caller; a queen's ring is held mid-turn as
+// a worker's is, so she gets it too (bees-13.13.21). With guard, before each run_command
+// bs guard gets the tool call on stdin and the deny globs as arguments: guards are a
+// worker's. agy runs each command under sh -c in the hooks.json dir, so bs is an
+// absolute path and each word is single-quoted.
+func hooks(bs, dir string, guard bool, deny []string) string {
+	h := map[string]any{
+		"bs-mail": map[string]any{
+			"Stop": []any{map[string]any{"type": "command", "command": mailHook(bs, dir, "Stop")}},
+		},
 	}
-	b, _ := json.Marshal(map[string]any{
-		"bs-guards": map[string]any{
+	if guard {
+		cmd := []string{quote(bs), "guard", "--harness", Name}
+		for _, g := range deny {
+			cmd = append(cmd, quote(g))
+		}
+		h["bs-guards"] = map[string]any{
 			"PreToolUse": []any{map[string]any{
 				"matcher": Shell,
 				"hooks":   []any{map[string]any{"type": "command", "command": strings.Join(cmd, " ")}},
 			}},
-		},
-		"bs-mail": map[string]any{
-			"Stop": []any{map[string]any{"type": "command", "command": mailHook(bs, dir, "Stop")}},
-		},
-	})
+		}
+	}
+	b, _ := json.Marshal(h)
 	return string(b)
 }
 

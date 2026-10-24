@@ -348,7 +348,7 @@ func TestPushGoal(t *testing.T) {
 	if sp.Workspace.Branch != "toy-1" || sp.Workspace.Start != head || x.headOf(b, dir) != head {
 		t.Fatalf("push workspace %+v at %s, want branch toy-1 at %s", sp.Workspace, x.headOf(b, dir), head)
 	}
-	must(t, x.worker("toy-1", 1, "inbox"), 0, "starts at "+target+"'s head", "git push origin HEAD:feature")
+	must(t, x.worker("toy-1", 1, "inbox"), 0, "Your worktree: "+dir+", branch toy-1.", "starts at "+target+"'s head", "git push origin HEAD:feature")
 	must(t, x.worker("toy-1", 2, "done"), 7, "pr_head", "where it started at spawn")
 	b.commit(x, dir)
 	must(t, x.worker("toy-1", 3, "done"), 7, "pr_head", "git push origin HEAD:feature")

@@ -413,7 +413,7 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 	case q.Pane != "":
 		fmt.Fprintf(r.out, "started %s in pane %s on herdr session %s (%s queen)\n", to, q.Pane, q.Session, sent.Bs)
 		var held *port.Held
-		if sent.Rung != nil && !errors.Is(sent.Rung, core.ErrEnded) && !errors.As(sent.Rung, &held) {
+		if sent.Rung != nil && !errors.Is(sent.Rung, core.ErrEnded) && !errors.Is(sent.Rung, core.ErrAlreadyRead) && !errors.As(sent.Rung, &held) {
 			fmt.Fprintf(r.out, "stored, not rung: %s doesn't take a ring yet (%v); her pane may be at a prompt, such as folder trust: herdr --session %s pane read %s --source recent\n", to, sent.Rung, q.Session, q.Pane)
 			return nil
 		}
@@ -462,6 +462,8 @@ func (r *run) rang(to string, err error) {
 		fmt.Fprintf(r.out, "rung %s\n", to)
 	case errors.As(err, &held):
 		fmt.Fprintf(r.out, "stored, not rung: %s; if it's still unread once %s is idle, run: %s ring %s\n", held.Why, to, bsname.Cmd, to)
+	case errors.Is(err, core.ErrAlreadyRead):
+		fmt.Fprintf(r.out, "stored; %v\n", err)
 	case errors.Is(err, port.ErrNotRunning), errors.Is(err, port.ErrNoRing):
 		fmt.Fprintf(r.out, "stored, not rung (%v): %s reads it at its next "+bsname.Cmd+" inbox\n", err, to)
 	case errors.Is(err, core.ErrEnded):

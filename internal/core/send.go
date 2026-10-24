@@ -81,7 +81,7 @@ func (c *Core) Send(ctx context.Context, in SendIn) (Sent, error) {
 	out.Rung = c.Ring(ctx, in.From.Name, in.To, in.Priority)
 	// A queen just started may not take a ring yet (her harness still booting, or at a
 	// prompt such as folder trust): try again until Timing.Confirm runs out.
-	for deadline := time.Now().Add(c.timing().Confirm); out.Started.Pane != "" && out.Rung != nil && time.Now().Before(deadline); {
+	for deadline := time.Now().Add(c.timing().Confirm); out.Started.Pane != "" && out.Rung != nil && !errors.Is(out.Rung, ErrAlreadyRead) && time.Now().Before(deadline); {
 		if err := sleep(ctx, c.timing().Poll); err != nil {
 			return out, nil
 		}

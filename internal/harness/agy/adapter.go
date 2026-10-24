@@ -201,6 +201,14 @@ func mailHook(bs, dir, event string) string {
 // quote is s as one sh word.
 func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
+// Probed is the agy release bs's agy contracts were last probed on (bees-13.13.15):
+// the hook payloads (PreToolUse toolCall.name and toolCall.args.CommandLine read by Call;
+// PreInvocation invocationNum read by FirstCall; Stop terminationReason == NO_TOOL_CALL
+// read by Stopped), the hook answers (Answer's decision deny and empty stdout for no
+// decision; Inject's injectSteps; Hold's decision continue), and the --mode log lines
+// Mode / Adapter.Took parses.
+const Probed = "1.4.6"
+
 // Call reads agy's PreToolUse payload: {"toolCall": {"name": ..., "args": {...}}}. A
 // payload with no tool name, or a shell call with no command line, is an error: agy's
 // payload changed shape.

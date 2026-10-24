@@ -148,9 +148,27 @@ func (r *run) spawn(_ *flag.FlagSet, _ []string) error {
 		fmt.Fprintf(r.out, "spawned %s (--goal %s) in %s, pane %s on herdr session %s\n", sp.Name, sp.Goal, sp.Workspace.Dir, sp.Herdr.Pane, sp.Herdr.Session)
 	}
 	if sp.Harness == agy.Name {
+		r.agyProbed()
 		r.agyTook(sp.Name)
 	}
 	return nil
+}
+
+// agyProbed warns when the configured agy binary is not agy.Probed, the release bs's agy
+// contracts were last probed on (bees-13.13.15). An absent binary says nothing here:
+// tests run on beesfake with no agy on PATH, and bs doctor checks the binary.
+func (r *run) agyProbed() {
+	d := &doctor{r: r, path: core.Getenv(r.env.Vars, "PATH")}
+	prog := r.s.program(agy.Name)
+	if _, ok := checks.LookPath(d.path, prog); !ok {
+		return
+	}
+	switch at, v, err := d.version(prog); {
+	case err != nil && v == "":
+		fmt.Fprintf(r.err, "%s spawn: warning: can't read %s (%s's agy contracts were probed on %s)\n  next: %s doctor\n", bsname.Cmd, err, bsname.Cmd, agy.Probed, bsname.Cmd)
+	case v != agy.Probed:
+		fmt.Fprintf(r.err, "%s spawn: warning: %s is %s, not %s (the version %s's agy contracts were probed on): re-probe the hook payloads, the --mode log line, and docs/adr/0011-ring-by-push-where-the-harness-allows.md\n  next: %s doctor\n", bsname.Cmd, at, v, agy.Probed, bsname.Cmd, bsname.Cmd)
+	}
 }
 
 // agyTook warns when the agy just started for session name says in its log it didn't

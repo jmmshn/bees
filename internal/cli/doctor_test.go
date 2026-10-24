@@ -405,3 +405,48 @@ func TestDoctorAgyMode(t *testing.T) {
 	_, out = r.doctor()
 	wantIn(t, out, "ok   agy mode: the newest agy bs started took --mode accept-edits (its log "+now+")")
 }
+
+// bees-13.13.15: agy auto-updates, and its hook payloads, answers and --mode log line can
+// change silently: doctor and spawn --harness agy warn when agy's version drifts from
+// agy.Probed (1.4.6), or when --version is unreadable. Absent agy prints no line. Real
+// agy --version prints one bare x.y.z line ("1.4.7\n", probed).
+func TestDoctorAgyVersion(t *testing.T) {
+	r := newDoctorRig(t)
+	if _, out := r.doctor(); strings.Contains(out, "agy version") {
+		t.Fatalf("agy version line with no agy on PATH:\n%s", out)
+	}
+	agyAt := filepath.Join(r.bin, "agy")
+	r.stub("agy", "echo 1.4.6") // real agy --version: a bare x.y.z line
+	_, out := r.doctor()
+	wantIn(t, out, "ok   agy version: "+agyAt+" 1.4.6 matches 1.4.6, the version bs's agy contracts were probed on")
+
+	r.stub("agy", "echo 1.4.7")
+	code, out := r.doctor()
+	if code != 0 {
+		t.Errorf("a newer agy failed doctor: exit %d\n%s", code, out)
+	}
+	wantIn(t, out, "WARN agy version: "+agyAt+" is 1.4.7, not 1.4.6 (the version bs's agy contracts were probed on): re-probe the hook payloads (PreToolUse, PreInvocation, Stop) and answers, the --mode log line, and the watch list in docs/adr/0011-ring-by-push-where-the-harness-allows.md")
+
+	r.write("config.toml", "harness = \"agy\"\n[paths]\nlogbook_dir = \""+r.logbook+"\"\n")
+	r.stub("agy", `case $1 in --version) echo 1.4.7;; models) echo gemini;; esac`)
+	code, out = r.doctor()
+	if code != 0 {
+		t.Errorf("harness agy on 1.4.7: exit %d\n%s", code, out)
+	}
+	wantIn(t, out, "ok   harness agy: "+agyAt+" 1.4.7", "WARN agy version: "+agyAt+" is 1.4.7, not 1.4.6")
+
+	// Unreadable --version: under claude_code, agy version warns; under harness = agy,
+	// harness agy fails and agy version stays quiet rather than repeat it.
+	r.stub("agy", "echo unknown")
+	code, out = r.doctor()
+	if code != 1 || strings.Contains(out, "agy version") {
+		t.Errorf("unreadable under harness = agy: exit %d\n%s", code, out)
+	}
+	wantIn(t, out, "FAIL harness agy: "+agyAt+" --version printed no version: unknown")
+	r.write("config.toml", "[paths]\nlogbook_dir = \""+r.logbook+"\"\n")
+	code, out = r.doctor()
+	if code != 0 {
+		t.Errorf("unreadable under claude_code: exit %d\n%s", code, out)
+	}
+	wantIn(t, out, "WARN agy version: "+agyAt+" --version printed no version: unknown (probed on 1.4.6)")
+}

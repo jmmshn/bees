@@ -114,9 +114,9 @@ func (d *doctor) line(level, name, format string, a ...any) {
 
 // minVersion is the oldest release of each tool bs works with, by program.
 var minVersion = map[string]string{
-	"claude": "2.1.296", // cross-session messaging, which the doorbell rides on
-	"agy":    "1.4.6",   // the version bees-13.80's probes ran on
-	"bd":     "1.1.0",   // bd query
+	"claude": "2.1.296",  // cross-session messaging, which the doorbell rides on
+	"agy":    agy.Probed, // the version bees-13.80's probes ran on
+	"bd":     "1.1.0",    // bd query
 }
 
 // version runs program --version, found on the caller's PATH, and returns the first x.y.z
@@ -218,6 +218,7 @@ func (d *doctor) harness() {
 	if s.Harness == agy.Name && err == nil {
 		d.line("ok", "agy ring", "agy %s can't be pushed a doorbell, so a waiter (bs inbox --wait) rings it; re-probe a new agy against the watch list in docs/adr/0011-ring-by-push-where-the-harness-allows.md", v)
 	}
+	d.agyVersion(at, v)
 	d.agyMode(s.Harness != agy.Name)
 	h := d.r.ports.Harness
 	if h == nil && d.r.ports.NewHarness != nil {
@@ -234,6 +235,30 @@ func (d *doctor) harness() {
 	} else {
 		d.line("ok", "ring sockets", "%s", what)
 	}
+}
+
+// agyVersion checks the installed agy's version against agy.Probed: agy auto-updates, and
+// a release can silently change the hook payloads, hook answers or --mode log line bs
+// depends on (bees-13.13.15). Absent agy prints no line, as other agy lines.
+func (d *doctor) agyVersion(at, v string) {
+	if d.r.s.Harness != agy.Name {
+		prog := d.r.s.program(agy.Name)
+		if _, ok := checks.LookPath(d.path, prog); !ok {
+			return
+		}
+		var err error
+		if at, v, err = d.version(prog); err != nil {
+			d.line("WARN", "agy version", "%v (probed on %s)", err, agy.Probed)
+			return
+		}
+	} else if v == "" {
+		return
+	}
+	if v == agy.Probed {
+		d.line("ok", "agy version", "%s %s matches %s, the version %s's agy contracts were probed on", at, v, agy.Probed, bsname.Cmd)
+		return
+	}
+	d.line("WARN", "agy version", "%s is %s, not %s (the version %s's agy contracts were probed on): re-probe the hook payloads (PreToolUse, PreInvocation, Stop) and answers, the --mode log line, and the watch list in docs/adr/0011-ring-by-push-where-the-harness-allows.md", at, v, agy.Probed, bsname.Cmd)
 }
 
 // agySignIn checks agy at is signed in as a worker's runs, without agy.Remote, which its

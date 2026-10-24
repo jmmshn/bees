@@ -50,11 +50,17 @@ func main() {
 
 // startDir is where per-start dirs go: agy lists them with the workspace, sorted, the
 // first where its commands run, so they live under a root that sorts after typical repos
-// (/home, /Users): $XDG_RUNTIME_DIR (/run/user/<uid>), else the temp dir (macOS's
-// /var/folders/…), named for the user there, since /tmp is everyone's (bees-13.13.28).
+// (/home, /Users): the user's runtime dir, /run/user/<uid>, when it is theirs, else the
+// temp dir (macOS's /var/folders/…), named for the user there, since /tmp is everyone's
+// (bees-13.13.28). It comes from the uid, not XDG_RUNTIME_DIR, which herdr's panes may
+// lack and the keeper's shell has: every bs on the machine must find the same dirs to
+// remove them.
 func startDir() string {
-	if root := os.Getenv("XDG_RUNTIME_DIR"); root != "" {
-		return filepath.Join(root, "bees", "bs")
+	run := filepath.Join("/run/user", strconv.Itoa(os.Getuid()))
+	if fi, err := os.Lstat(run); err == nil && fi.IsDir() && fi.Mode().Perm() == 0o700 {
+		if st, ok := fi.Sys().(*syscall.Stat_t); ok && int(st.Uid) == os.Getuid() {
+			return filepath.Join(run, "bees", "bs")
+		}
 	}
 	return filepath.Join(os.TempDir(), "bees-"+strconv.Itoa(os.Getuid()), "bs")
 }

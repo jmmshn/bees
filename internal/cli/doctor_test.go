@@ -395,7 +395,7 @@ func TestDoctorAgyWorkspaceOrder(t *testing.T) {
 	wantIn(t, out, "ok   agy workspace order: "+r.repo+" and "+filepath.Join(r.repo+"-WT", "mytoy-1")+" sort before the start dirs in "+r.start)
 	r.start = filepath.Join(r.home, "cache")
 	code, out := r.doctor()
-	wantIn(t, out, "FAIL agy workspace order: every agy start would be refused: "+filepath.Join(r.repo+"-WT", "mytoy-1")+" and "+r.repo+" sort after the start dirs in "+r.start, "XDG_RUNTIME_DIR")
+	wantIn(t, out, "FAIL agy workspace order: every agy start would be refused: "+filepath.Join(r.repo+"-WT", "mytoy-1")+" and "+r.repo+" sort after the start dirs in "+r.start, "/run/user/<uid>")
 	if code == 0 {
 		t.Errorf("exit 0:\n%s", out)
 	}

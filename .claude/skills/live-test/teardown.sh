@@ -26,7 +26,10 @@ recorded=$(jq -r '.config // empty' "$run/live.json" 2>/dev/null)
 store=$HOME/.local/share/bees
 if [ "$(uname)" = Darwin ]; then cache=$HOME/Library/Caches/bees; else cache=${XDG_CACHE_HOME:-$HOME/.cache}/bees; fi
 # per-start dirs, as cmd/bs's startDir (bees-13.13.28)
-if [ -n "${XDG_RUNTIME_DIR:-}" ]; then start=$XDG_RUNTIME_DIR/bees/bs; else start=${TMPDIR:-/tmp}; start=${start%/}/bees-$(id -u)/bs; fi
+if [ -d "/run/user/$(id -u)" ] && [ ! -L "/run/user/$(id -u)" ]; then start=/run/user/$(id -u)/bees/bs; else start=${TMPDIR:-/tmp}; start=${start%/}/bees-$(id -u)/bs; fi
+# ...and bs config names it: a different one would leak-check a dir the toy never used.
+said=$(bs config 2>/dev/null | sed -n 's/^# start dirs: //p')
+[ -z "$said" ] || [ "$said" = "$start" ] || fail "bs config names the start dirs $said, but teardown computed $start"
 projects=$HOME/.claude/projects enc=$(sed 's/[^A-Za-z0-9]/-/g' <<<"$run") # Claude's name for a project dir
 fail() { echo "teardown: $*; fix it and run teardown.sh $run again" >&2; exit 1; }
 # agy's settings and data dir, checked against setup's like the config dir. agy keeps the

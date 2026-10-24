@@ -177,7 +177,7 @@ func TestOrder(t *testing.T) {
 		}
 	}
 	err := agy.Order("/tmp/bees-8", run, "bees-8")
-	for _, want := range []string{"/tmp/bees-8", run + "/bees-8-dir-<digits>", "XDG_RUNTIME_DIR"} {
+	for _, want := range []string{"/tmp/bees-8", run + "/bees-8-dir-<digits>", "/run/user/<uid>"} {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal %v doesn't name %s", err, want)
 		}

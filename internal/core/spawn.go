@@ -668,8 +668,8 @@ func (c *Core) writeFiles(name string, l port.Launch) ([]string, error) {
 }
 
 // ownDir refuses dir, or the dir holding it, unless it is a dir this user alone can write:
-// a start dir holds the hooks agy runs, and the start dir lives in /tmp when
-// XDG_RUNTIME_DIR is unset, where another user could make it first or swap it.
+// a start dir holds the hooks agy runs, and lives in /tmp when there is no /run/user/<uid>,
+// where another user could make it first or swap it.
 func ownDir(dir string) error {
 	for _, d := range []string{dir, filepath.Dir(dir)} {
 		fi, err := os.Lstat(d)
@@ -677,7 +677,7 @@ func ownDir(dir string) error {
 			return err
 		}
 		if st, ok := fi.Sys().(*syscall.Stat_t); !fi.IsDir() || !ok || int(st.Uid) != os.Getuid() || fi.Mode().Perm()&0o022 != 0 {
-			return fmt.Errorf("%s (%v) isn't a dir only this user can write, so another user could swap the start files under it: remove it, or set XDG_RUNTIME_DIR", d, fi.Mode())
+			return fmt.Errorf("%s (%v) isn't a dir only this user can write, so another user could swap the start files under it: remove it", d, fi.Mode())
 		}
 	}
 	return nil

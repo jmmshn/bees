@@ -353,7 +353,7 @@ func Before(workspace, startDir, name string) bool {
 func kit(startDir, name string) string { return filepath.Join(startDir, name+"-dir-") }
 
 // OrderFix is how a keeper gets a workspace Before its start dir.
-const OrderFix = "move the workspace to a path that sorts before it, or set XDG_RUNTIME_DIR (TMPDIR without it) so bs makes start dirs under a path that sorts after the workspace"
+const OrderFix = "move the workspace to a path that sorts before it (bs makes start dirs in /run/user/<uid>, else under TMPDIR)"
 
 // Order refuses a workspace that isn't Before its start dir. There is no fallback: a
 // session working in its start dir is worse than one that doesn't start (bees-13.13.28).

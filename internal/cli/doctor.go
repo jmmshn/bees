@@ -201,7 +201,8 @@ func (d *doctor) project() {
 }
 
 // harness checks the configured harness's program and version, and the modes of its ring
-// sockets (ADR-0009 T3) when it can tell them.
+// sockets (ADR-0009 T3) when it can tell them. A found agy points at ADR-0011's watch list:
+// its ring is a waiter until agy can be pushed one (bees-13.91).
 func (d *doctor) harness() {
 	s := d.r.s
 	name := "harness " + s.Harness
@@ -213,6 +214,9 @@ func (d *doctor) harness() {
 	}
 	if s.Harness == agy.Name && at != "" {
 		d.agySignIn(at)
+	}
+	if s.Harness == agy.Name && err == nil {
+		d.line("ok", "agy ring", "agy %s can't be pushed a doorbell, so a waiter (bs inbox --wait) rings it; re-probe a new agy against the watch list in docs/adr/0011-ring-by-push-where-the-harness-allows.md", v)
 	}
 	d.agyMode(s.Harness != agy.Name)
 	h := d.r.ports.Harness

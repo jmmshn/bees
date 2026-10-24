@@ -56,6 +56,7 @@ Status: **accepted**, **superseded** (replaced by a later decision), or **open**
 | R9 | One doorbell in flight per session; re-ring after 60 s; flag the queen after 120 s. | open (v1) | SPEC v1 outline |
 | R10 | `bs send --now` rings with priority "now", which interrupts the current turn; the default is "next". | accepted | SPEC |
 | R11 | Bee contract: a prompt starting with `[bs]` is a doorbell; run the `bs inbox` it names, act, and reply with `bs send`. | open (v1, with `bs spawn`) | SPEC v1 outline |
+| R58 | Ring by push where the harness allows it, a waiter where it doesn't (bees-13.91). The core stays one (logbook, doorbell text, `bs inbox --wait`, the `bs end` gate); only each adapter's `Ring` differs. Claude Code: push, today's cross-session message, not moved to pull. pi/omp (bees-12.8): push, the bs extension runs `bs inbox --wait` in-process and calls `pi.sendMessage(…, {triggerTurn: true, deliverAs: "followUp"})`, replacing ADR-0009's per-worker socket and token. agy: the waiter (#168) until agy can push; watch [antigravity-cli#1022](https://github.com/google-antigravity/antigravity-cli/issues/1022) and a local API to prompt a live session. | accepted (keeper, 2026-10-23) | ADR-0011 |
 
 ## Code and build
 

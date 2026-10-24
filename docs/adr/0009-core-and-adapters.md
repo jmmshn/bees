@@ -1,5 +1,7 @@
 # bees keeps the mechanics; prompts carry the policy
 
+> Amended by [ADR-0011](0011-ring-by-push-where-the-harness-allows.md): omp's ring is its extension running `bs inbox --wait` in-process, not a socket and token; agy's ring is a waiter armed by hooks until agy can push.
+>
 > Supersedes S4 (Claude Code only, behind `{Launch, Ring, Alive}`). Amends [ADR-0004](0004-liveness-is-derived-not-stored.md), [ADR-0006](0006-spawn-and-naming.md), [ADR-0007](0007-claudes-registry-confirms-a-launch.md) and [ADR-0008](0008-config-files-one-tagged-struct.md). Epic bees-12; security criteria from bees-12.2. Settled with the keeper over three plannotator rounds and chat, 2026-10-21.
 
 bees-12's north star (the same as bees-11's): a new keeper on another harness (Gemini's agy, oh-my-pi) and another VCS (a CitC client and CLs instead of a git worktree and PRs) can set bees up with agentic help, and the config shows every decision about what runs where. The fact finding (queen-bees, 2026-10-21) found Claude Code wired into about 12 places with no interface, git in identity, spawn and prune, and 40 mentions of PRs, merges, pushes, branches and prune in `QUEEN.md`/`WORKER.md` (`grep -oiE` on main). S4, ADR-0006 and ADR-0008 each assumed one of those three things.

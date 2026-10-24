@@ -287,7 +287,8 @@ func TestUnknownFlagIsRefusal(t *testing.T) {
 }
 
 // bees-14.1: harness agy checks agy.bin, refusing one that's missing. A worker runs
-// agy.bin itself, as the queen does, any base name (bees-14.7): nothing more to say.
+// agy.bin itself, as the queen does, any base name (bees-14.7): nothing more to say. A
+// found agy also points at ADR-0011's watch list for a push ring (bees-13.91).
 func TestDoctorAgyBin(t *testing.T) {
 	r := newDoctorRig(t)
 	opt := filepath.Join(t.TempDir(), "jetski")
@@ -297,12 +298,17 @@ func TestDoctorAgyBin(t *testing.T) {
 		t.Errorf("no agy at %s: exit %d", opt, code)
 	}
 	wantIn(t, out, "FAIL harness agy: "+opt+" is missing or not executable")
+	if strings.Contains(out, "agy ring") {
+		t.Errorf("agy ring line with no agy:\n%s", out)
+	}
 	if err := os.WriteFile(opt, []byte("#!/bin/sh\necho 1.4.6\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if _, out = r.doctor(); strings.Contains(out, "agy.bin") || !strings.Contains(out, "ok   harness agy: "+opt+" 1.4.6") {
 		t.Errorf("agy.bin %s, no agy on PATH:\n%s", opt, out)
 	}
+	wantIn(t, out, "ok   agy ring: agy 1.4.6 can't be pushed a doorbell")
+	wantIn(t, out, "docs/adr/0011-ring-by-push-where-the-harness-allows.md")
 	r.stub("agy", "echo 1.4.6")
 	r.write("config.toml", "harness = \"agy\"\n[paths]\nlogbook_dir = \""+r.logbook+"\"\n")
 	if _, out = r.doctor(); strings.Contains(out, "agy.bin") || !strings.Contains(out, "ok   harness agy: "+filepath.Join(r.bin, "agy")+" 1.4.6") {

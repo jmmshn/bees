@@ -56,12 +56,31 @@ func TestStatusNamesWaivedDiscardedAndKept(t *testing.T) {
 		t.Fatal(err)
 	}
 	must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir)
-	if r := x.keeper("status"); cell(r.out, "toy-3", "WORKSPACE") != sp.Workspace.Dir+" (removed)" || strings.Contains(r.out, "kept: toy-3") {
+	// Ended, removed, nothing to do: history, which only --all lists (bees-13.78.17).
+	if r := x.keeper("status"); lineOf(r.out, "toy-3 ") != "" || !strings.Contains(r.out, "1 ended workers with their workspace gone and nothing to do are hidden → bs status --all lists them") {
 		t.Fatalf("after prune:\n%s", r)
+	}
+	if r := x.keeper("status", "--all"); cell(r.out, "toy-3", "WORKSPACE") != "toy-3 (removed)" || strings.Contains(r.out, "kept: toy-3") || strings.Contains(r.out, "hidden") {
+		t.Fatalf("after prune, --all:\n%s", r)
 	}
 	must(t, x.queen("end", "toy-2"), 0)
 	if r := x.keeper("status"); strings.Contains(r.out, "discarded: toy-2") || !strings.Contains(r.out, "kept: toy-2: its goal is discarded") {
 		t.Fatalf("after bs end toy-2:\n%s", r)
+	}
+}
+
+// Status sorts workers by name with numbers as numbers, and shows a workspace relative to
+// paths.worktrees, naming that dir once (bees-13.78.17).
+func TestStatusSortsNaturallyWithRelativeWorkspaces(t *testing.T) {
+	x := newToy(t)
+	for _, n := range []string{"toy-10", "toy-2", "toy-1"} {
+		x.spawn(n, "verdict")
+	}
+	r := x.keeper("status")
+	must(t, r, 0, "workspaces are under "+filepath.Join(filepath.Dir(x.repo), "toy-WT"))
+	i1, i2, i10 := strings.Index(r.out, "\ntoy-1 "), strings.Index(r.out, "\ntoy-2 "), strings.Index(r.out, "\ntoy-10 ")
+	if i1 < 0 || i1 > i2 || i2 > i10 || cell(r.out, "toy-10", "WORKSPACE") != "toy-10" {
+		t.Fatalf("not toy-1, toy-2, toy-10 with relative workspaces:\n%s", r)
 	}
 }
 

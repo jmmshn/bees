@@ -81,3 +81,17 @@ func TestTookPrintModeFallback(t *testing.T) {
 		t.Fatalf("got %+v %v", got, ok)
 	}
 }
+
+// agy run by hand in a session's start dir, as bs doctor's agy models once ran in an agy
+// session's cwd, logs that dir as its only workspace and asks for no mode: not a start
+// (bees-13.13.18).
+func TestTookSkipsAgyRunInAStartDir(t *testing.T) {
+	models := `I1023 21:23:42.175345       1 server.go:305] Creating CLI server backend: product=antigravity workspaceDirs=[/cache/bs/w-1-dir-2481398278] appDataDir=/home/u/.gemini/antigravity-cli`
+	a := logs(t, map[string][]string{
+		"cli-20261023_145044.log": {session("w-1"), sandbox, askEdits},
+		"cli-20261023_212342.log": {models},
+	})
+	if got, ok, err := a.Took(""); err != nil || !ok || got.Asked != agy.Mode || filepath.Base(got.Log) != "cli-20261023_145044.log" {
+		t.Fatalf("Took: %+v %v %v", got, ok, err)
+	}
+}

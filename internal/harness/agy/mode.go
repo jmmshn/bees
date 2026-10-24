@@ -72,8 +72,10 @@ func (a Adapter) Took(name string) (t Took, ok bool, err error) {
 	return t, false, nil
 }
 
-// readLog reads one agy log: ok when a workspace dir in it is a per-start dir of session
-// name, or of any session for "".
+// readLog reads one agy log: ok when a workspace dir --add-dir added, any but the first,
+// agy's cwd, is a per-start dir of session name, or of any session for "". agy run
+// without a session in a start dir, as bs doctor's agy models once ran in an agy
+// session's cwd, logs that dir first, and asks for no mode (bees-13.13.18).
 func readLog(path, name string) (t Took, ok bool, err error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -86,7 +88,9 @@ func readLog(path, name string) (t Took, ok bool, err error) {
 	for sc.Scan() {
 		line := sc.Text()
 		if m := workspaceDir.FindStringSubmatch(line); m != nil && !ok {
-			ok = slices.ContainsFunc(strings.Fields(m[1]), func(d string) bool { return startDir(filepath.Base(d), name) })
+			if dirs := strings.Fields(m[1]); len(dirs) > 1 {
+				ok = slices.ContainsFunc(dirs[1:], func(d string) bool { return startDir(filepath.Base(d), name) })
+			}
 		}
 		if m := askedLine.FindStringSubmatch(line); m != nil && t.Asked == "" {
 			t.Asked = m[1]

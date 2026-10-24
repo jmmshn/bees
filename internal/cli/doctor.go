@@ -276,7 +276,8 @@ func (d *doctor) agyVersion(at, raw string, ok bool) {
 // agySignIn checks agy at is signed in as a worker's runs, without agy.Remote, which its
 // launch unsets: agy reads them as a remote session and says "not signed in" there, and a
 // herdr server started over ssh hands them to every pane (bees-13.13.13). agy models asks
-// agy's server, so a check that can't tell warns too.
+// agy's server, so a check that can't tell warns too. It runs in the temp dir: agy logs
+// its cwd as a workspace dir, and an agy session's cwd can be its start dir (bees-13.13.18).
 func (d *doctor) agySignIn(at string) {
 	argv := []string{"env"}
 	for _, v := range agy.Remote {
@@ -284,7 +285,7 @@ func (d *doctor) agySignIn(at string) {
 	}
 	ctx, cancel := context.WithTimeout(d.r.ctx, 20*time.Second)
 	defer cancel()
-	switch _, err := d.r.ports.Run.Run(ctx, "", append(argv, at, "models")...); {
+	switch _, err := d.r.ports.Run.Run(ctx, os.TempDir(), append(argv, at, "models")...); {
 	case err != nil && strings.Contains(strings.ToLower(err.Error()), "sign in"):
 		d.line("WARN", "agy sign-in", "%s isn't signed in as workers run it (without %s), so an agy worker can't start: run agy once to sign in", at, strings.Join(agy.Remote, ", "))
 	case err != nil:

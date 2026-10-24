@@ -351,17 +351,23 @@ post_review = ["nocl", "review", "{url}", "{body_file}", "{marker}"]
 }
 
 // bees-13.13.13: doctor checks agy is signed in as a worker's runs, without the SSH_*
-// agy reads as a remote session, set in this shell or not; signed out, it warns.
+// agy reads as a remote session, set in this shell or not; signed out, it warns. It asks
+// from the temp dir.
 func TestDoctorAgySignIn(t *testing.T) {
 	r := newDoctorRig(t)
 	r.write("config.toml", "harness = \"agy\"\n[paths]\nlogbook_dir = \""+r.logbook+"\"\n")
 	signedOut := filepath.Join(t.TempDir(), "signed-out")
-	r.stub("agy", `case $1 in --version) echo 1.4.6;; models) [ -z "$SSH_TTY$SSH_CONNECTION$SSH_CLIENT" ] && [ ! -e `+signedOut+` ] || { echo "Error: Please sign in to view available models." >&2; exit 1; }; echo gemini;; esac`)
+	wd := filepath.Join(t.TempDir(), "wd")
+	r.stub("agy", `case $1 in --version) echo 1.4.6;; models) pwd >`+wd+`; [ -z "$SSH_TTY$SSH_CONNECTION$SSH_CLIENT" ] && [ ! -e `+signedOut+` ] || { echo "Error: Please sign in to view available models." >&2; exit 1; }; echo gemini;; esac`)
 	t.Setenv("SSH_TTY", "/dev/pts/9")
 	t.Setenv("SSH_CONNECTION", "1.2.3.4 1 5.6.7.8 22")
 	agyAt := filepath.Join(r.bin, "agy")
 	_, out := r.doctor()
 	wantIn(t, out, "ok   agy sign-in: "+agyAt+" models answers without SSH_CONNECTION, SSH_CLIENT, SSH_TTY")
+	// bees-13.13.18: never in doctor's cwd, which can be an agy session's start dir.
+	if got, err := os.ReadFile(wd); err != nil || strings.TrimSpace(string(got)) != os.TempDir() {
+		t.Errorf("agy models ran in %q (%v), not %s", got, err, os.TempDir())
+	}
 	if err := os.WriteFile(signedOut, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}

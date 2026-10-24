@@ -267,12 +267,14 @@ func tripwire(ctx context.Context, in ResolveIn, mine []Caller) (Caller, bool, e
 }
 
 // within reports whether dir is ws or under it; a workspace that is the repo itself (kind
-// none) holds every shell in the repo, so it counts for nothing.
+// none) holds every shell in the repo, so it counts for nothing. Both are compared with
+// symlinks resolved: a cwd from the OS is the real path, a recorded dir may not be
+// (macOS's /var is /private/var, bees-13.89).
 func within(dir, ws, repo string) bool {
 	if dir == "" || ws == "" || samePath(ws, repo) {
 		return false
 	}
-	rel, err := filepath.Rel(ws, dir)
+	rel, err := filepath.Rel(resolved(ws), resolved(dir))
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 

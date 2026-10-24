@@ -42,3 +42,21 @@ func TestSamePathResolvesAGoneDirsParent(t *testing.T) {
 		t.Fatal("different dirs match")
 	}
 }
+
+// within finds a cwd the OS gives as its real path under a workspace recorded through a
+// symlink (macOS's /var → /private/var), so a worker in its own clone acts as itself
+// (bees-13.89).
+func TestWithinResolvesSymlinks(t *testing.T) {
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := filepath.EvalSymlinks(real)
+	if !within(filepath.Join(r, "ws", "sub"), filepath.Join(link, "ws"), filepath.Join(link, "repo")) {
+		t.Fatal("a cwd under a workspace named through a symlink isn't within it")
+	}
+	if within(filepath.Join(r, "other"), filepath.Join(link, "ws"), filepath.Join(link, "repo")) {
+		t.Fatal("a cwd outside the workspace is within it")
+	}
+}

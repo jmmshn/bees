@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -41,9 +42,14 @@ func (c *Core) launch(ctx context.Context, sp logbook.Spawn, l port.Launch, repl
 	if err != nil {
 		return exit(ExitStart, next, err, "%s: its pane's env can't be readied", sp.Name)
 	}
-	line, err := typed(kind, prog, args, pre)
+	line, body, err := typed(kind, prog, args, pre, script(c.CacheDir, sp.Name))
 	if err != nil {
 		return exit(ExitStart, next, err, "%s: the launch can't be typed into a pane", sp.Name)
+	}
+	if body != "" {
+		if err := writeScript(script(c.CacheDir, sp.Name), body); err != nil {
+			return exit(ExitStart, next, err, "%s: couldn't write its launch script", sp.Name)
+		}
 	}
 	// A harness already in the pane: this worker's own is adopted; any other would get a
 	// twin beside it (motif 7). A pane bs can't look into starts nothing.
@@ -152,26 +158,40 @@ var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // typed is how a launch of prog reaches the pane: "" when herdr agent start --kind kind
 // types it, prog being kind's own program; else the shell line bs types with herdr pane
-// run, pre (prep's line) first, since herdr's --kind starts only its own program (no flag
-// for another in 0.9.5, bees-14.7). Either is refused when herdr or the tty would refuse it.
-func typed(kind, prog string, args []string, pre string) (string, error) {
+// run, since herdr's --kind starts only its own program (no flag for another in 0.9.5,
+// bees-14.7). That line sources script, which holds body: pre (prep's line), then prog
+// and its args, too long to type whole under a long temp dir (bees-13.89). Either is
+// refused when herdr or the tty would refuse it.
+func typed(kind, prog string, args []string, pre, script string) (line, body string, err error) {
 	if prog == kind {
 		if pre != "" {
 			if err := herdr.CheckAgentArgs([]string{pre}); err != nil {
-				return "", err
+				return "", "", err
 			}
 		}
-		return "", herdr.CheckAgentArgs(args)
+		return "", "", herdr.CheckAgentArgs(args)
 	}
 	words := []string{shellQuote(prog)}
 	for _, a := range args {
 		words = append(words, shellQuote(a))
 	}
-	line := strings.Join(words, " ")
+	body = strings.Join(words, " ")
 	if pre != "" {
-		line = pre + "; " + line
+		body = pre + "; " + body
 	}
-	return line, herdr.CheckAgentArgs([]string{line}) // one line through the same tty
+	line = ". " + shellQuote(script)
+	return line, body + "\n", herdr.CheckAgentArgs([]string{line}) // one line through the same tty
+}
+
+// script is the path of worker name's launch script: a start file, so removeFiles takes it.
+func script(cache, name string) string { return filepath.Join(cache, name+"-run-launch.sh") }
+
+// writeScript writes body to path (0600), in a dir it makes (0700).
+func writeScript(path, body string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(body), 0o600)
 }
 
 // program is the program a spawn's launches run: recorded, the one its entry recorded,

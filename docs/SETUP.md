@@ -76,7 +76,7 @@ bs starts agy with `--mode accept-edits`: file edits in the workspace go through
 bs never writes agy's allow list. To let workers run their usual commands unasked, add them yourself under `permissions.allow` in `~/.gemini/antigravity-cli/settings.json`:
 
 ```json
-{"permissions": {"allow": ["command(bd)", "command(go)", "command(git)", "command(gh pr create)", "command(./bin/bs)"]}}
+{"permissions": {"allow": ["command(bd)", "command(go)", "command(git)", "command(gh pr create)", "command(bs)", "command(./bin/bs)"]}}
 ```
 
 bs's guard hook runs before each command all the same, and its deny wins over an allow: `git push` to the default branch and `gh pr merge` stay denied.

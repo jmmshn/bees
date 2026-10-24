@@ -1,1 +1,2 @@
 - Calling herdr directly → herdr refuses agent arguments containing control characters (newlines) → put text in a file and pass its path.
+- A background process of yours to stop → its parent is often your own session process, so killing the parent ends your session mid-run and orphans what you started (bs bug bees-13.96) → stop it by its task id or the pid you started, never its parent (`ps -o ppid=`).

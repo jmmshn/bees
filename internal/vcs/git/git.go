@@ -82,3 +82,32 @@ func (v VCS) Descends(ctx context.Context, dir, ancestor, commit string) (bool, 
 	}
 	return err == nil, err
 }
+
+var _ port.Merges = VCS{}
+
+// CleanMerge: git rev-list --parents names a merge's two parents, and git merge-tree
+// --write-tree writes the tree their clean merge gives (exit 1 on a conflict), which
+// commit's own tree must be.
+func (v VCS) CleanMerge(ctx context.Context, dir, commit string) (string, string, bool, error) {
+	out, err := v.git(ctx, dir, "rev-list", "--parents", "-n1", commit)
+	if err != nil {
+		return "", "", false, err
+	}
+	ps := strings.Fields(out)
+	if len(ps) != 3 {
+		return "", "", false, nil
+	}
+	merged, err := v.git(ctx, dir, "merge-tree", "--write-tree", ps[1], ps[2])
+	if exited(err, 1) {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, err
+	}
+	tree, err := v.git(ctx, dir, "rev-parse", commit+"^{tree}")
+	if err != nil {
+		return "", "", false, err
+	}
+	merged, _, _ = strings.Cut(merged, "\n")
+	return ps[1], ps[2], tree == merged, nil
+}

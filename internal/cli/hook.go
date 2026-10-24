@@ -30,8 +30,8 @@ const settle = 2 * time.Second
 // mail read in the same turn), so a session never idles deaf; that once per idle, so a
 // session that ignores Arm isn't held at every stop. Anything else, and any
 // caller not a queen or worker (the keeper's own agy), prints nothing: agy's no-op. An
-// error prints nothing to stdout either, and agy 1.4.6 lets a turn go on past a hook
-// that exits non-zero with no stdout (probed): the mail stays in the logbook, read at
+// error prints nothing to stdout either, and agy lets a turn go on past a hook that exits
+// non-zero with no stdout (probed on agy.Probed): the mail stays in the logbook, read at
 // the next bs inbox.
 func (r *run) hook(fs *flag.FlagSet, args []string) error {
 	harness := fs.String("harness", "", "the harness whose hook this is: agy")

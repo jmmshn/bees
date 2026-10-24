@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/jmmshn/bees/internal/fake"
+	"github.com/jmmshn/bees/internal/harness/agy"
 	"github.com/jmmshn/bees/internal/harness/claude"
 	"github.com/jmmshn/bees/internal/port"
 )
@@ -406,9 +407,9 @@ func TestDoctorAgyMode(t *testing.T) {
 	wantIn(t, out, "ok   agy mode: the newest agy bs started took --mode accept-edits (its log "+now+")")
 }
 
-// bees-13.13.15: agy auto-updates, and its hook payloads, answers and --mode log line can
-// change silently: doctor and spawn --harness agy warn when agy's version drifts from
-// agy.Probed (1.4.6), or when --version is unreadable. Absent agy prints no line. Real
+// bees-13.13.15: agy auto-updates, and its contracts can change silently: doctor and
+// spawn --harness agy warn when agy's version drifts from agy.Probed, when --version is
+// not a bare x.y.z line, or when --version is unreadable. Absent agy prints no line. Real
 // agy --version prints one bare x.y.z line ("1.4.7\n", probed).
 func TestDoctorAgyVersion(t *testing.T) {
 	r := newDoctorRig(t)
@@ -416,24 +417,50 @@ func TestDoctorAgyVersion(t *testing.T) {
 		t.Fatalf("agy version line with no agy on PATH:\n%s", out)
 	}
 	agyAt := filepath.Join(r.bin, "agy")
-	r.stub("agy", "echo 1.4.6") // real agy --version: a bare x.y.z line
+	r.stub("agy", "echo "+agy.Probed) // real agy --version: a bare x.y.z line
 	_, out := r.doctor()
-	wantIn(t, out, "ok   agy version: "+agyAt+" 1.4.6 matches 1.4.6, the version bs's agy contracts were probed on")
+	wantIn(t, out, "ok   agy version: "+agyAt+" "+agy.Probed+" matches "+agy.Probed+", the version bs's agy contracts were probed on")
 
 	r.stub("agy", "echo 1.4.7")
 	code, out := r.doctor()
 	if code != 0 {
 		t.Errorf("a newer agy failed doctor: exit %d\n%s", code, out)
 	}
-	wantIn(t, out, "WARN agy version: "+agyAt+" is 1.4.7, not 1.4.6 (the version bs's agy contracts were probed on): re-probe the hook payloads (PreToolUse, PreInvocation, Stop) and answers, the --mode log line, and the watch list in docs/adr/0011-ring-by-push-where-the-harness-allows.md")
+	wantIn(t, out, "WARN agy version: "+agyAt+" is 1.4.7, not "+agy.Probed+" (the version bs's agy contracts were probed on): re-probe the hook payloads (PreToolUse, PreInvocation, Stop), hook answers and non-zero exit, the --mode log line, Tools, Remote SSH_*, ANTIGRAVITY_CONVERSATION_ID, trustedWorkspaces, the launch flags and .agents/ files (.claude/skills/live-test/agy-probe.sh), and the watch list in docs/adr/0011-ring-by-push-where-the-harness-allows.md")
+
+	// A pre-release or multi-line --version whose first x.y.z is Probed is still a mismatch.
+	for cmd, want := range map[string]string{
+		"echo " + agy.Probed + "-rc.1":                           agy.Probed + "-rc.1",
+		"echo 'updated " + agy.Probed + " -> 1.4.7'; echo 1.4.7": "updated " + agy.Probed + " -> 1.4.7 / 1.4.7",
+	} {
+		r.stub("agy", cmd)
+		if _, out := r.doctor(); !strings.Contains(out, "WARN agy version: "+agyAt+" is "+want+", not "+agy.Probed) {
+			t.Errorf("%q:\n%s", cmd, out)
+		}
+	}
+
+	// Older than minVersion (1.4.5): under claude_code, agy version warns to upgrade;
+	// under harness = agy, harness agy fails.
+	r.stub("agy", "echo 1.4.5")
+	code, out = r.doctor()
+	if code != 0 {
+		t.Errorf("older agy under claude_code: exit %d\n%s", code, out)
+	}
+	wantIn(t, out, "WARN agy version: "+agyAt+" 1.4.5 is older than 1.4.6, the oldest bees works with: upgrade it")
 
 	r.write("config.toml", "harness = \"agy\"\n[paths]\nlogbook_dir = \""+r.logbook+"\"\n")
+	code, out = r.doctor()
+	if code != 1 || strings.Contains(out, "agy version") {
+		t.Errorf("older agy under harness = agy: exit %d\n%s", code, out)
+	}
+	wantIn(t, out, "FAIL harness agy: "+agyAt+" 1.4.5 is older than 1.4.6, the oldest bees works with: upgrade it")
+
 	r.stub("agy", `case $1 in --version) echo 1.4.7;; models) echo gemini;; esac`)
 	code, out = r.doctor()
 	if code != 0 {
 		t.Errorf("harness agy on 1.4.7: exit %d\n%s", code, out)
 	}
-	wantIn(t, out, "ok   harness agy: "+agyAt+" 1.4.7", "WARN agy version: "+agyAt+" is 1.4.7, not 1.4.6")
+	wantIn(t, out, "ok   harness agy: "+agyAt+" 1.4.7", "WARN agy version: "+agyAt+" is 1.4.7, not "+agy.Probed)
 
 	// Unreadable --version: under claude_code, agy version warns; under harness = agy,
 	// harness agy fails and agy version stays quiet rather than repeat it.
@@ -448,5 +475,5 @@ func TestDoctorAgyVersion(t *testing.T) {
 	if code != 0 {
 		t.Errorf("unreadable under claude_code: exit %d\n%s", code, out)
 	}
-	wantIn(t, out, "WARN agy version: "+agyAt+" --version printed no version: unknown (probed on 1.4.6)")
+	wantIn(t, out, "WARN agy version: "+agyAt+" --version printed no version: unknown (probed on "+agy.Probed+")")
 }

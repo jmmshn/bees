@@ -30,23 +30,23 @@ const Name = "agy"
 const Shell = "run_command"
 
 // Tools are the agent's tools. A custom agent without tools: frontmatter has none, and an
-// unknown name fails the start (probe 1), so this is the list a worker needs and agy 1.4.6
-// registers (command_status and send_command_input are in the binary but not the CLI's
-// registry).
+// unknown name fails the start (probe 1), so this is the list a worker needs and agy
+// registers (probed on Probed; command_status and send_command_input are in the binary
+// but not the CLI's registry).
 var Tools = []string{Shell, "view_file", "list_dir", "grep_search", "find_by_name", "write_to_file", "replace_file_content", "multi_replace_file_content"}
 
 // Conversation is the Record key of the conversation a resume continues: agy names it
 // only after the start, so the worker's first bs call observes it (bees-13.13.6).
 const Conversation = "conversation"
 
-// envConversation is the conversation id agy hands its run_command shells (bees-13.80).
-// Its language server's address and CSRF token beside it are left alone until a ring
-// needs them (bees-13.13.10): a token bs doesn't use, bs doesn't keep.
+// envConversation is the conversation id agy hands its run_command shells (bees-13.80,
+// probed on Probed). Its language server's address and CSRF token beside it are left
+// alone until a ring needs them (bees-13.13.10): a token bs doesn't use, bs doesn't keep.
 const envConversation = "ANTIGRAVITY_CONVERSATION_ID"
 
-// Remote are the vars agy 1.4.6 reads as a remote session, saying "not signed in" when
-// any is set and not empty (probed, bees-13.13.13): a herdr server started over ssh hands
-// them to every pane. SSH_AUTH_SOCK doesn't count.
+// Remote are the vars agy reads as a remote session, saying "not signed in" when any is
+// set and not empty (probed on Probed, bees-13.13.13): a herdr server started over ssh
+// hands them to every pane. SSH_AUTH_SOCK doesn't count.
 var Remote = []string{"SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"}
 
 // Adapter is the agy harness for one role: its [<role>.agy] model, the agy binary (""
@@ -129,7 +129,7 @@ func (a Adapter) Prepare(st port.Start) (port.Launch, error) {
 }
 
 // Ring types nothing: agy wakes an idle session when a background command it ran exits
-// (probed on 1.4.6), so the session's ring is its own bs inbox --wait, which exits when
+// (probed on Probed), so the session's ring is its own bs inbox --wait, which exits when
 // mail comes, and its hooks keep one armed. Ring only says whether one is: ErrArmed, or
 // ErrNoRing with the message held until the session's next turn, where its Stop hook
 // holds it until it reads its mail.
@@ -201,12 +201,24 @@ func mailHook(bs, dir, event string) string {
 // quote is s as one sh word.
 func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
-// Probed is the agy release bs's agy contracts were last probed on (bees-13.13.15):
-// the hook payloads (PreToolUse toolCall.name and toolCall.args.CommandLine read by Call;
-// PreInvocation invocationNum read by FirstCall; Stop terminationReason == NO_TOOL_CALL
-// read by Stopped), the hook answers (Answer's decision deny and empty stdout for no
-// decision; Inject's injectSteps; Hold's decision continue), and the --mode log lines
-// Mode / Adapter.Took parses.
+// Probed is the agy release bs's agy contracts were last probed on (bees-13.13.15;
+// .claude/skills/live-test/agy-probe.sh):
+//   - launch flags (--add-dir, --agent, --mode, --model, --conversation, -i) and the
+//     .agents/agents/<name>.md and .agents/hooks.json file shapes in the --add-dir;
+//   - Tools: the registered tool names (an unknown name fails the start);
+//   - Remote: the SSH_* vars agy reads as a remote session ("not signed in") and
+//     `agy models` as doctor's sign-in probe;
+//   - envConversation (ANTIGRAVITY_CONVERSATION_ID) handed to run_command shells, which
+//     Observe records for --conversation resume;
+//   - Trusted (trustedWorkspaces in settings.json), exact-path folder trust;
+//   - hook payloads: PreToolUse toolCall.name and toolCall.args.CommandLine read by Call;
+//     PreInvocation invocationNum read by FirstCall; Stop terminationReason == NO_TOOL_CALL
+//     read by Stopped;
+//   - hook answers and exit: Answer's decision deny and empty stdout for no decision
+//     (never {}, which reads as deny); Inject's injectSteps; Hold's decision continue; a
+//     non-zero hook exit with empty stdout letting the turn continue;
+//   - ring: an exiting background command waking an idle session, and ADR-0011's watch list;
+//   - mode: the --mode log lines Mode / Adapter.Took parses.
 const Probed = "1.4.6"
 
 // Call reads agy's PreToolUse payload: {"toolCall": {"name": ..., "args": {...}}}. A

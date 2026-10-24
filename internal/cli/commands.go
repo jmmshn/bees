@@ -163,11 +163,13 @@ func (r *run) agyProbed() {
 	if _, ok := checks.LookPath(d.path, prog); !ok {
 		return
 	}
-	switch at, v, err := d.version(prog); {
-	case err != nil && v == "":
+	switch at, raw, v, err := d.rawVersion(prog); {
+	case err != nil && v != "":
+		fmt.Fprintf(r.err, "%s spawn: warning: %v\n  next: %s doctor\n", bsname.Cmd, err, bsname.Cmd)
+	case err != nil:
 		fmt.Fprintf(r.err, "%s spawn: warning: can't read %s (%s's agy contracts were probed on %s)\n  next: %s doctor\n", bsname.Cmd, err, bsname.Cmd, agy.Probed, bsname.Cmd)
-	case v != agy.Probed:
-		fmt.Fprintf(r.err, "%s spawn: warning: %s is %s, not %s (the version %s's agy contracts were probed on): re-probe the hook payloads, the --mode log line, and docs/adr/0011-ring-by-push-where-the-harness-allows.md\n  next: %s doctor\n", bsname.Cmd, at, v, agy.Probed, bsname.Cmd, bsname.Cmd)
+	case raw != agy.Probed:
+		fmt.Fprintf(r.err, "%s spawn: warning: %s is %s, not %s (the version %s's agy contracts were probed on): %s\n  next: %s doctor\n", bsname.Cmd, at, strings.ReplaceAll(raw, "\n", " / "), agy.Probed, bsname.Cmd, agyReprobe, bsname.Cmd)
 	}
 }
 

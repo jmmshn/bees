@@ -35,7 +35,7 @@ func TestPrepareAWorker(t *testing.T) {
 	if len(l.Files) != 0 || len(l.Dir) != 2 {
 		t.Errorf("files %v, dir %v: want only the agent file and hooks.json in the dir", l.Files, l.Dir)
 	}
-	// bees-13.13.13: agy says "not signed in" with any of these set (probed on 1.4.6).
+	// bees-13.13.13: agy says "not signed in" with any of these set (probed on agy.Probed).
 	if want := []string{"SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"}; !reflect.DeepEqual(l.Unset, want) {
 		t.Errorf("unset = %q, want %q", l.Unset, want)
 	}
@@ -197,7 +197,7 @@ func TestRingIsTheArmedWatcher(t *testing.T) {
 
 // hooks.json runs bs hook --harness agy before each model call and when a turn stops,
 // from the worker's workspace (agy runs it in the hooks.json dir, where bs would find no
-// project): flat handler lists, as PreInvocation and Stop take (agy 1.4.6 docs).
+// project): flat handler lists, as PreInvocation and Stop take (probed on agy.Probed).
 func TestHooksRunBsHookForMail(t *testing.T) {
 	bin := t.TempDir()
 	bs := filepath.Join(bin, "my bs")
@@ -228,8 +228,8 @@ func TestHooksRunBsHookForMail(t *testing.T) {
 	}
 }
 
-// PreInvocation's payload as agy 1.4.6 sends it (probed): invocationNum 0 is a turn's
-// first model call, sent even though protojson may drop a zero.
+// PreInvocation's payload as agy sends it (probed on agy.Probed): invocationNum 0 is a
+// turn's first model call, sent even though protojson may drop a zero.
 func TestFirstCall(t *testing.T) {
 	for _, c := range []struct {
 		in   string

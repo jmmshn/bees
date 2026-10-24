@@ -9,8 +9,8 @@ import (
 	"github.com/jmmshn/bees/internal/harness/agy"
 )
 
-// Lines from agy 1.4.6's logs (bees-13.13.14): a bs-started worker asking for auto on a
-// host without its sandbox, and one asking for accept-edits.
+// Lines from agy's logs (probed on agy.Probed, bees-13.13.14): a bs-started worker asking
+// for auto on a host without its sandbox, and one asking for accept-edits.
 const (
 	start    = `I1023 13:25:53.527790       1 server.go:299] Creating CLI server backend: product=antigravity workspaceDirs=[/repo/wt /cache/bs/%s-dir-2481398278] appDataDir=/home/u/.gemini/antigravity-cli`
 	sandbox  = `W1023 13:25:53.530099       1 store.go:31] Terminal sandbox unavailable: AppArmor restricts unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns = 1)`

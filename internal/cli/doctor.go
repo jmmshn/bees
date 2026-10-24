@@ -114,33 +114,40 @@ func (d *doctor) line(level, name, format string, a ...any) {
 
 // minVersion is the oldest release of each tool bs works with, by program.
 var minVersion = map[string]string{
-	"claude": "2.1.296",  // cross-session messaging, which the doorbell rides on
-	"agy":    agy.Probed, // the version bees-13.80's probes ran on
-	"bd":     "1.1.0",    // bd query
+	"claude": "2.1.296", // cross-session messaging, which the doorbell rides on
+	"agy":    "1.4.6",   // the oldest agy release bs works with
+	"bd":     "1.1.0",   // bd query
 }
 
 // version runs program --version, found on the caller's PATH, and returns the first x.y.z
 // it prints and where the program is, refusing one older than minVersion.
 func (d *doctor) version(program string) (at, v string, err error) {
+	at, raw, v, err := d.rawVersion(program)
+	_ = raw
+	return at, v, err
+}
+
+func (d *doctor) rawVersion(program string) (at, raw, v string, err error) {
 	at, ok := checks.LookPath(d.path, program)
 	if !ok && strings.Contains(program, "/") {
-		return "", "", fmt.Errorf("%s is missing or not executable", program)
+		return "", "", "", fmt.Errorf("%s is missing or not executable", program)
 	} else if !ok {
-		return "", "", fmt.Errorf("%s is not on PATH: install it (docs/SETUP-AGENT.md, step 3)", program)
+		return "", "", "", fmt.Errorf("%s is not on PATH: install it (docs/SETUP-AGENT.md, step 3)", program)
 	}
 	ctx, cancel := context.WithTimeout(d.r.ctx, 5*time.Second)
 	defer cancel()
 	out, err := d.r.ports.Run.Run(ctx, "", at, "--version")
 	if err != nil {
-		return at, "", fmt.Errorf("%s --version: %w", at, err)
+		return at, "", "", fmt.Errorf("%s --version: %w", at, err)
 	}
-	if v = semver.FindString(string(out)); v == "" {
-		return at, "", fmt.Errorf("%s --version printed no version: %s", at, strings.TrimSpace(string(out)))
+	raw = strings.TrimSpace(string(out))
+	if v = semver.FindString(raw); v == "" {
+		return at, raw, "", fmt.Errorf("%s --version printed no version: %s", at, raw)
 	}
 	if min, ok := minVersion[filepath.Base(program)]; ok && older(v, min) {
-		return at, v, fmt.Errorf("%s %s is older than %s, the oldest bees works with: upgrade it (docs/SETUP-AGENT.md, step 3)", at, v, min)
+		return at, raw, v, fmt.Errorf("%s %s is older than %s, the oldest bees works with: upgrade it (docs/SETUP-AGENT.md, step 3)", at, v, min)
 	}
-	return at, v, nil
+	return at, raw, v, nil
 }
 
 // semver is the first x.y.z in a --version line.
@@ -206,7 +213,7 @@ func (d *doctor) project() {
 func (d *doctor) harness() {
 	s := d.r.s
 	name := "harness " + s.Harness
-	at, v, err := d.version(s.program(s.Harness))
+	at, raw, v, err := d.rawVersion(s.program(s.Harness))
 	if err != nil {
 		d.line("FAIL", name, "%v", err)
 	} else {
@@ -218,7 +225,7 @@ func (d *doctor) harness() {
 	if s.Harness == agy.Name && err == nil {
 		d.line("ok", "agy ring", "agy %s can't be pushed a doorbell, so a waiter (bs inbox --wait) rings it; re-probe a new agy against the watch list in docs/adr/0011-ring-by-push-where-the-harness-allows.md", v)
 	}
-	d.agyVersion(at, v)
+	d.agyVersion(at, raw, err == nil)
 	d.agyMode(s.Harness != agy.Name)
 	h := d.r.ports.Harness
 	if h == nil && d.r.ports.NewHarness != nil {
@@ -237,28 +244,33 @@ func (d *doctor) harness() {
 	}
 }
 
-// agyVersion checks the installed agy's version against agy.Probed: agy auto-updates, and
-// a release can silently change the hook payloads, hook answers or --mode log line bs
-// depends on (bees-13.13.15). Absent agy prints no line, as other agy lines.
-func (d *doctor) agyVersion(at, v string) {
+// agyReprobe names what to re-probe when agy's version drifts from agy.Probed.
+const agyReprobe = "re-probe the hook payloads (PreToolUse, PreInvocation, Stop), hook answers and non-zero exit, the --mode log line, Tools, Remote SSH_*, ANTIGRAVITY_CONVERSATION_ID, trustedWorkspaces, the launch flags and .agents/ files (.claude/skills/live-test/agy-probe.sh), and the watch list in docs/adr/0011-ring-by-push-where-the-harness-allows.md"
+
+// agyVersion checks the installed agy's --version output against agy.Probed: agy
+// auto-updates, and a release can silently change the contracts bs depends on
+// (bees-13.13.15). Real agy --version prints one bare x.y.z line, so anything else (a
+// pre-release suffix or extra lines) is treated as a mismatch too. Absent agy prints no
+// line, as other agy lines.
+func (d *doctor) agyVersion(at, raw string, ok bool) {
 	if d.r.s.Harness != agy.Name {
 		prog := d.r.s.program(agy.Name)
-		if _, ok := checks.LookPath(d.path, prog); !ok {
+		if _, found := checks.LookPath(d.path, prog); !found {
 			return
 		}
 		var err error
-		if at, v, err = d.version(prog); err != nil {
+		if at, raw, _, err = d.rawVersion(prog); err != nil {
 			d.line("WARN", "agy version", "%v (probed on %s)", err, agy.Probed)
 			return
 		}
-	} else if v == "" {
+	} else if !ok {
 		return
 	}
-	if v == agy.Probed {
-		d.line("ok", "agy version", "%s %s matches %s, the version %s's agy contracts were probed on", at, v, agy.Probed, bsname.Cmd)
+	if raw == agy.Probed {
+		d.line("ok", "agy version", "%s %s matches %s, the version %s's agy contracts were probed on", at, raw, agy.Probed, bsname.Cmd)
 		return
 	}
-	d.line("WARN", "agy version", "%s is %s, not %s (the version %s's agy contracts were probed on): re-probe the hook payloads (PreToolUse, PreInvocation, Stop) and answers, the --mode log line, and the watch list in docs/adr/0011-ring-by-push-where-the-harness-allows.md", at, v, agy.Probed, bsname.Cmd)
+	d.line("WARN", "agy version", "%s is %s, not %s (the version %s's agy contracts were probed on): %s", at, strings.ReplaceAll(raw, "\n", " / "), agy.Probed, bsname.Cmd, agyReprobe)
 }
 
 // agySignIn checks agy at is signed in as a worker's runs, without agy.Remote, which its

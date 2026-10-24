@@ -834,8 +834,8 @@ func TestAResumeOnAHarnessWithNoAdapterIsRefused(t *testing.T) {
 // bs spawn --harness starts that one spawn on another harness than the configured one and
 // records it; its resume restarts the recorded harness, whatever the config says, and
 // refuses another --harness (bees-13.13.12; motif 14). A harness with no adapter makes
-// nothing. When agy's --version differs from agy.Probed (1.4.6) or is unreadable, spawn
-// prints one stderr warning (bees-13.13.15).
+// nothing. When agy's --version differs from agy.Probed, is older than the minimum, or is
+// unreadable, spawn prints one stderr warning (bees-13.13.15).
 func TestSpawnHarnessIsRecordedAndResumed(t *testing.T) {
 	x := newToy(t)
 	x.adapters("claude_code", "agy")
@@ -851,6 +851,8 @@ func TestSpawnHarnessIsRecordedAndResumed(t *testing.T) {
 	x.bead("toy-1", "work")
 	x.bead("toy-2", "work")
 	x.bead("toy-3", "work")
+	x.bead("toy-4", "work")
+	x.bead("toy-5", "work")
 	must(t, x.queen("spawn", "--goal", "branch", "--label", "toy 2", "--harness", "omp", "toy-2"), 2, "toy-2: this bs has no adapter for harness omp; nothing was made")
 	if _, err := os.Stat(filepath.Join(x.repo+"-WT", "toy-2")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("a refused --harness made a worktree: %v", err)
@@ -871,7 +873,7 @@ func TestSpawnHarnessIsRecordedAndResumed(t *testing.T) {
 		"toy-1 is spawned and not ended, on harness agy, not claude_code; a resume keeps its harness, so leave --harness off")
 	stubAgy("1.4.7")
 	r = x.queen("spawn", "--goal", "branch", "toy-1")
-	must(t, r, 0, "resumed toy-1", "bs spawn: warning: "+agyBin+" is 1.4.7, not 1.4.6 (the version bs's agy contracts were probed on): re-probe the hook payloads, the --mode log line, and docs/adr/0011-ring-by-push-where-the-harness-allows.md\n  next: bs doctor\n")
+	must(t, r, 0, "resumed toy-1", "bs spawn: warning: "+agyBin+" is 1.4.7, not 1.4.6 (the version bs's agy contracts were probed on): re-probe the hook payloads (PreToolUse, PreInvocation, Stop), hook answers and non-zero exit, the --mode log line, Tools, Remote SSH_*, ANTIGRAVITY_CONVERSATION_ID, trustedWorkspaces, the launch flags and .agents/ files (.claude/skills/live-test/agy-probe.sh), and the watch list in docs/adr/0011-ring-by-push-where-the-harness-allows.md\n  next: bs doctor\n")
 	if n := strings.Count(r.stderr, "bs spawn: warning:"); n != 1 {
 		t.Fatalf("expected 1 warning on stderr, got %d: %q", n, r.stderr)
 	}
@@ -882,6 +884,15 @@ func TestSpawnHarnessIsRecordedAndResumed(t *testing.T) {
 	stubAgy("unknown")
 	r = x.queen("spawn", "--goal", "branch", "--label", "toy 3", "--harness", "agy", "toy-3")
 	must(t, r, 0, "spawned toy-3", "bs spawn: warning: can't read "+agyBin+" --version printed no version: unknown (bs's agy contracts were probed on 1.4.6)\n  next: bs doctor\n")
+	stubAgy("1.4.5")
+	r = x.queen("spawn", "--goal", "branch", "--label", "toy 4", "--harness", "agy", "toy-4")
+	must(t, r, 0, "spawned toy-4", "bs spawn: warning: "+agyBin+" 1.4.5 is older than 1.4.6, the oldest bees works with: upgrade it (docs/SETUP-AGENT.md, step 3)\n  next: bs doctor\n")
+	if strings.Contains(r.stderr, "re-probe") {
+		t.Fatalf("older agy told to re-probe instead of upgrade: %q", r.stderr)
+	}
+	stubAgy("1.4.6-rc.1")
+	r = x.queen("spawn", "--goal", "branch", "--label", "toy 5", "--harness", "agy", "toy-5")
+	must(t, r, 0, "spawned toy-5", "bs spawn: warning: "+agyBin+" is 1.4.6-rc.1, not 1.4.6")
 }
 
 // bees-13.13.13: a herdr server started over ssh hands SSH_* to every pane, and agy reads

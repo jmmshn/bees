@@ -26,7 +26,8 @@ func TestSpawnHandoffEndPruneOnABranchGoal(t *testing.T) {
 	if err != nil || !ok || st.PID == 0 {
 		t.Fatalf("no confirmed start: %+v, %v, %v", st, ok, err)
 	}
-	if r := x.worker("toy-1", 1, "inbox"); r.code != 0 || !strings.Contains(r.out, "You own toy-1") || !strings.Contains(r.out, "--goal branch") {
+	if r := x.worker("toy-1", 1, "inbox"); r.code != 0 || !strings.Contains(r.out, "You own toy-1") || !strings.Contains(r.out, "--goal branch") ||
+		!strings.Contains(r.out, "Your worktree: "+sp.Workspace.Dir+", branch toy-1.") {
 		t.Fatalf("worker's inbox: %s", r)
 	}
 	// Nothing committed yet: the handoff names the failed check (exit 7).

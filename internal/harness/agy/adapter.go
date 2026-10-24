@@ -17,6 +17,7 @@ import (
 	"io"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -139,8 +140,9 @@ const ringTimeout = 10 * time.Second
 // takes no push from outside yet (ADR-0011). It never types into a session that is
 // working or blocked: herdr sees agy's permission menu 0.1-0.2 s late, and a ring in that
 // gap answers the menu's default, Yes (bees-13.95). An idle agy shows no menu until a
-// turn starts. Anything else is *port.Held, typing nothing: the worker's Stop hook shows
-// the doorbell when its turn ends, and the mail waits in the logbook either way.
+// turn starts. Anything else is *port.Held, typing nothing: the mail waits in the logbook,
+// a worker's Stop hook shows the doorbell if its turn ends on its own, and bs ring rings
+// again (bees-13.97).
 func (a Adapter) Ring(t port.Target, text string, _ port.Priority) error {
 	if a.Run == nil {
 		return fmt.Errorf("no herdr to type with: %w", port.ErrNoRing)
@@ -148,9 +150,7 @@ func (a Adapter) Ring(t port.Target, text string, _ port.Priority) error {
 	ctx, cancel := context.WithTimeout(context.Background(), ringTimeout)
 	defer cancel()
 	h := herdr.Client{Run: a.Run, Session: t.Session}
-	busy := func(status string) error {
-		return &port.Held{Why: fmt.Sprintf("%s is %s; it sees the mail when this turn ends (its Stop hook) or at its next %s inbox", t.Name, status, bsname.Cmd)}
-	}
+	busy := func(status string) error { return &port.Held{Why: t.Name + " is " + status} }
 	switch st, err := h.AgentStatus(ctx, t.Pane); {
 	case err != nil:
 		return err
@@ -166,11 +166,11 @@ func (a Adapter) Ring(t port.Target, text string, _ port.Priority) error {
 	case Menu(screen):
 		return busy("at a permission menu")
 	case !ok:
-		return &port.Held{Why: fmt.Sprintf("no agy input box on %s's screen (a view such as /tasks over it?); it sees the mail at its next %s inbox", t.Name, bsname.Cmd)}
-	case in != "":
-		return &port.Held{Why: fmt.Sprintf("%s's input box has text (someone is typing); it sees the mail when that turn ends (its Stop hook) or at its next %s inbox", t.Name, bsname.Cmd)}
-	case !Ready(screen):
-		return &port.Held{Why: fmt.Sprintf("%s's screen isn't at agy's prompt (no \"? for shortcuts\" under its input box); it sees the mail at its next %s inbox", t.Name, bsname.Cmd)}
+		return &port.Held{Why: "no agy input box on " + t.Name + "'s screen (a view such as /tasks over it?)"}
+	case !Ready(screen) && in == "":
+		return &port.Held{Why: t.Name + "'s screen isn't at agy's prompt (no \"? for shortcuts\" under its input box)"}
+	case in != "": // agy drops its footer while someone types; ready with text fails closed too
+		return &port.Held{Why: t.Name + "'s input box has text (someone is typing)"}
 	}
 	if err := h.Prompt(ctx, t.Pane, text); errors.Is(err, herdr.ErrBlocked) {
 		return busy(herdr.Blocked)
@@ -187,6 +187,7 @@ func (a Adapter) Ring(t port.Target, text string, _ port.Priority) error {
 // typed, so it doesn't count. ok is false when the screen has no such box: a permission
 // menu stands in its place, or the screen isn't agy's.
 func Box(screen []string) (text string, ok bool) {
+	screen = trim(screen)
 	var rules []int
 	for i, l := range screen {
 		if rule(plain(l, true)) {
@@ -213,20 +214,40 @@ func Box(screen []string) (text string, ok bool) {
 // last line: it says "esc to cancel" mid-turn and at a menu, and nothing there while
 // someone types (agy 1.4.6-1.4.7).
 func Ready(screen []string) bool {
+	screen = trim(screen)
 	return len(screen) > 0 && strings.HasPrefix(plain(screen[len(screen)-1], true), "? for shortcuts")
 }
 
-// Menu reports whether screen shows agy's permission menu (agy 1.4.6: "Requesting
-// permission for:" over numbered answers, the first "1. Yes, run command").
+// Menu reports whether screen shows agy's permission menu where agy draws it, under the
+// screen's last rule (agy 1.4.6-1.4.7: "Requesting permission for:" over numbered answers,
+// the first "1. Yes, run command"): a "1. Yes" in the conversation above is the agent's
+// own text.
 func Menu(screen []string) bool {
-	return slices.ContainsFunc(screen, func(l string) bool {
+	screen = trim(screen)
+	last := -1
+	for i, l := range screen {
+		if rule(plain(l, true)) {
+			last = i
+		}
+	}
+	return slices.ContainsFunc(screen[last+1:], func(l string) bool {
 		l = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(plain(l, true)), ">"))
 		return strings.HasPrefix(l, "Requesting permission") || strings.HasPrefix(l, "1. Yes")
 	})
 }
 
+// trim is screen without its trailing blank lines (rows under an inline UI's last line,
+// reset-only escapes).
+func trim(screen []string) []string {
+	n := len(screen)
+	for n > 0 && strings.TrimSpace(plain(screen[n-1], true)) == "" {
+		n--
+	}
+	return screen[:n]
+}
+
 // plain is l with its escape sequences dropped and, unless grey, the text drawn grey or
-// dim (SGR 2, 90, 38;5;8) dropped too.
+// dim dropped too (SGR 2, 90, 38;5;8, or a truecolor grey 38;2;v;v;v).
 func plain(l string, grey bool) string {
 	var b strings.Builder
 	dim := false
@@ -253,6 +274,12 @@ func plain(l string, grey bool) string {
 	return strings.TrimRight(b.String(), " \r")
 }
 
+// greyRGB reports whether r, g, b is a mid or dark grey: equal, under 200.
+func greyRGB(r, g, b string) bool {
+	v, err := strconv.Atoi(r)
+	return err == nil && r == g && g == b && v < 200
+}
+
 // sgrDim is whether text is grey or dim after the SGR parameters params, from dim before.
 func sgrDim(params string, dim bool) bool {
 	ps := strings.Split(params, ";")
@@ -269,7 +296,7 @@ func sgrDim(params string, dim bool) bool {
 			k += 2
 		case (p == "38" || p == "48") && k+1 < len(ps) && ps[k+1] == "2":
 			if p == "38" {
-				dim = false
+				dim = k+4 < len(ps) && greyRGB(ps[k+2], ps[k+3], ps[k+4])
 			}
 			k += 4
 		case p >= "30" && p <= "37" && len(p) == 2, p >= "91" && p <= "97" && len(p) == 2:

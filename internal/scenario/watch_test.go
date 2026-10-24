@@ -85,7 +85,8 @@ func TestTheMailWatcher(t *testing.T) {
 // worker's harness, in its workspace, with agy's payload on stdin. A turn that ends on its
 // own is held with the doorbell while mail is unread (mail its ring didn't type into a
 // working session, bees-13.97), else let stop; one the keeper cancelled isn't held; the
-// keeper's own agy gets nothing. PreInvocation's arming is retired: refused as usage.
+// keeper's own agy gets nothing. PreInvocation's arming is retired: a silent no-op for a
+// worker spawned before.
 func TestAgyStopHook(t *testing.T) {
 	x := newToy(t)
 	sp := x.spawn("toy-1", "verdict")
@@ -112,5 +113,7 @@ func TestAgyStopHook(t *testing.T) {
 	if r := hook(os.Getpid(), "Stop", stop); r.code != 0 || r.out != "" {
 		t.Fatalf("the keeper's agy: %s", r)
 	}
-	must(t, hook(st.PID, "PreInvocation", `{"invocationNum":0}`), 2, "hook --harness agy Stop")
+	if r := hook(st.PID, "PreInvocation", `{"invocationNum":0}`); r.code != 0 || r.out != "" {
+		t.Fatalf("PreInvocation: %s", r)
+	}
 }

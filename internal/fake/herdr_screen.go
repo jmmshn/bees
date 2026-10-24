@@ -1,6 +1,8 @@
 package fake
 
 import (
+	"cmp"
+	"slices"
 	"strings"
 
 	"github.com/jmmshn/bees/internal/herdr"
@@ -14,6 +16,7 @@ type Screen struct {
 	Status string // idle, done, working, blocked; "" is idle
 	Box    string
 	Hint   string // agy 1.4.7's grey placeholder, drawn in an empty box
+	Grey   string // the SGR it is drawn in: "" is 38;5;8 (seen on 1.4.7); a theme may differ
 	Menu   bool
 }
 
@@ -100,9 +103,16 @@ func (h *Herdr) agentPrompt(s *server, _ string, f flags) ([]byte, error) {
 // paneRead is herdr pane read PANE: its screen as text (probed, 0.9.5), here agy's
 // layout as bees-13.95 and 13.97 read it: the last turn over a short rule, then the input
 // box between two full-width rules and a footer, or the permission menu in their place.
-// --format ansi draws the hint grey (SGR 38;5;8), as agy 1.4.7 does.
+// --format ansi draws the hint in Screen.Grey. A --source or --format herdr doesn't take
+// is refused, as herdr refuses it (0.9.5 --help).
 func (h *Herdr) paneRead(s *server, _ string, f flags) ([]byte, error) {
 	id := first(f.pos)
+	if v, ok := f.get("--source"); ok && !slices.Contains([]string{"visible", "recent", "recent-unwrapped", "detection"}, v) {
+		return nil, usage("error: invalid value '%s' for '--source <SOURCE>'", v)
+	}
+	if v, ok := f.get("--format"); ok && v != "text" && v != "ansi" {
+		return nil, usage("error: invalid value '%s' for '--format <FORMAT>'", v)
+	}
 	_, p := s.pane(id)
 	if p == nil {
 		return nil, refusal("pane:read", "pane_not_found", "pane %s not found", id)
@@ -122,7 +132,7 @@ func (h *Herdr) paneRead(s *server, _ string, f flags) ([]byte, error) {
 		if in == "" && sc.Hint != "" {
 			in = sc.Hint
 			if v, _ := f.get("--format"); v == "ansi" {
-				in = "\x1b[38;5;8m" + sc.Hint + "\x1b[0m"
+				in = "\x1b[" + cmp.Or(sc.Grey, "38;5;8") + "m" + sc.Hint + "\x1b[0m"
 			}
 		}
 		footer := "? for shortcuts                  accept-edits · bs-worker"

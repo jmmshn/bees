@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -199,7 +200,7 @@ func TestRingTypesOnlyIntoAnIdleEmptyBox(t *testing.T) {
 			t.Fatalf("%+v: typed %q", sc, p)
 		}
 	}
-	held(fake.Screen{Status: herdr.Working}, "bees-8 is working; it sees the mail when this turn ends (its Stop hook)")
+	held(fake.Screen{Status: herdr.Working}, "bees-8 is working")
 	held(fake.Screen{Status: herdr.Blocked, Menu: true}, "bees-8 is blocked")
 	held(fake.Screen{Status: herdr.Idle, Menu: true}, "bees-8 is at a permission menu")
 	held(fake.Screen{Status: herdr.Working, Menu: true}, "bees-8 is working")
@@ -207,7 +208,7 @@ func TestRingTypesOnlyIntoAnIdleEmptyBox(t *testing.T) {
 	held(fake.Screen{Status: herdr.Idle, Box: "keeper half typed", Hint: "Accept-edits mode"}, "bees-8's input box has text")
 	held(fake.Screen{Status: "unknown"}, "bees-8 is unknown")
 	for i, st := range []string{herdr.Idle, herdr.Done} {
-		h.SetScreen("toy", ws.Pane, fake.Screen{Status: st, Hint: "Accept-edits mode: file edits auto-approved"})
+		h.SetScreen("toy", ws.Pane, fake.Screen{Status: st, Hint: "Accept-edits mode: file edits auto-approved", Grey: []string{"", "38;2;128;128;128"}[i]})
 		if err := a.Ring(tg, "[bs] 1 unread", port.Now); err != nil {
 			t.Fatalf("%s: Ring = %v", st, err)
 		}
@@ -249,6 +250,9 @@ func TestBoxAndMenuReadAgysScreen(t *testing.T) {
 		{"/tasks under the box", []string{short, full, ">", full, "Tasks", "  No background tasks.", "", "Keyboard: ↑/↓ Navigate  enter View output", "", "   accept-edits · bs-worker"}, "", false, false},
 		// agy 1.4.7 in herdr's ansi format (bees-13.97): its grey placeholder in an empty box, and typed text
 		{"hint", []string{short, g + full + r, b + ">" + r + " " + g + "Accept-edits mode: file edits auto-approved (shift+tab to cycle)" + r + "\r", g + full + r, g + footer + r}, "", true, false},
+		{"truecolor hint", []string{short, g + full + r, b + ">" + r + " \x1b[38;2;128;128;128mAccept-edits mode" + r, g + full + r, g + footer + r}, "", true, false},
+		{"blank rows under it", append(slices.Clone(idle), "", "\x1b[0m", "   "), "", true, false},
+		{"the agent's own 1. Yes", append([]string{short, "  Which way?", "  1. Yes, once CI passes", "  2. No"}, idle...), "", true, false},
 		{"typed ansi", []string{short, g + full + r, b + ">" + r + " half typed\r", g + full + r, g + footer + r}, "half typed", true, false},
 	} {
 		if box, ok := agy.Box(c.screen); box != c.box || ok != c.ok {
@@ -262,7 +266,7 @@ func TestBoxAndMenuReadAgysScreen(t *testing.T) {
 		footer string
 		want   bool
 	}{{footer, true}, {"\x1b[0m\x1b[38;5;8m" + footer, true}, {"      accept-edits · bs-worker", false}, {"esc to cancel      accept-edits · bs-worker", false}} {
-		if got := agy.Ready([]string{full, ">", full, c.footer}); got != c.want {
+		if got := agy.Ready([]string{full, ">", full, c.footer, ""}); got != c.want {
 			t.Errorf("Ready with footer %q = %v", c.footer, got)
 		}
 	}
@@ -291,17 +295,15 @@ func TestHooksRunBsHookForMail(t *testing.T) {
 	if len(h["bs-mail"]) != 1 {
 		t.Fatalf("bs-mail hooks: %s", l.Dir[".agents/hooks.json"])
 	}
-	for _, ev := range []string{"Stop"} {
-		hs := h["bs-mail"][ev]
-		if len(hs) != 1 || hs[0].Type != "command" {
-			t.Fatalf("%s: hooks.json = %s", ev, l.Dir[".agents/hooks.json"])
-		}
-		c := exec.Command("sh", "-c", hs[0].Command)
-		c.Dir = bin
-		out, err := c.Output()
-		if want := st.Dir + "\nhook\n--harness\nagy\n" + ev + "\n"; err != nil || string(out) != want {
-			t.Errorf("%s: the hook ran with %q (%v), want %q", ev, out, err, want)
-		}
+	hs := h["bs-mail"]["Stop"]
+	if len(hs) != 1 || hs[0].Type != "command" {
+		t.Fatalf("hooks.json = %s", l.Dir[".agents/hooks.json"])
+	}
+	c := exec.Command("sh", "-c", hs[0].Command)
+	c.Dir = bin
+	out, err := c.Output()
+	if want := st.Dir + "\nhook\n--harness\nagy\nStop\n"; err != nil || string(out) != want {
+		t.Errorf("the hook ran with %q (%v), want %q", out, err, want)
 	}
 }
 

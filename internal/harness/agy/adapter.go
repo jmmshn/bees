@@ -99,7 +99,8 @@ func (a Adapter) bin() string {
 // --dangerously-skip-permissions: it skips the hooks too. A resume continues the recorded
 // conversation and is refused without one, never -c, which falls back to another
 // conversation. A worker's PATH dirs are refused: agy has no per-session way to set them
-// yet (bees-13.80 row 5).
+// yet (bees-13.80 row 5), and so is a workspace agy would list after the per-start dir
+// (Order).
 func (a Adapter) Prepare(st port.Start) (port.Launch, error) {
 	var l port.Launch
 	switch {
@@ -112,9 +113,12 @@ func (a Adapter) Prepare(st port.Start) (port.Launch, error) {
 	case !filepath.IsAbs(a.Bs):
 		return l, fmt.Errorf("agy: the bs its hooks run must be an absolute path, not %q", a.Bs)
 	}
+	if err := Order(st.Dir, st.StartDir, st.Name); err != nil {
+		return l, err
+	}
 	agent := "bs-" + string(st.Role)
 	l.Dir = map[string]string{
-		".agents/agents/" + agent + ".md": agentFile(agent, st.Role, st.Dir, st.Prompt),
+		".agents/agents/" + agent + ".md": agentFile(agent, st.Role, st.Prompt),
 		".agents/hooks.json":              hooks(a.Bs, st.Dir, st.Role == port.Worker, st.Deny),
 	}
 	l.Args = []string{"--add-dir", "{{dir}}", "--agent", agent, "--mode", Mode}
@@ -330,17 +334,37 @@ func getenv(env []string, key string) string {
 	return ""
 }
 
-// agentFile is the role's custom agent: its tools, and its workspace and the role prompt
-// as its body.
-func agentFile(name string, role port.Role, dir, prompt string) string {
-	return fmt.Sprintf("---\nname: %s\ndescription: a bees %s, started by %s\ntools: [%s]\n---\n%s%s", name, role, bsname.Cmd, strings.Join(Tools, ", "), cwdLine(dir), prompt)
+// agentFile is the role's custom agent: its tools, and the role prompt as its body.
+func agentFile(name string, role port.Role, prompt string) string {
+	return fmt.Sprintf("---\nname: %s\ndescription: a bees %s, started by %s\ntools: [%s]\n---\n%s", name, role, bsname.Cmd, strings.Join(Tools, ", "), prompt)
 }
 
-// cwdLine tells the model its workspace: agy shows it the workspace dirs sorted, the first
-// as its "Command Working Directory", and run_command runs in the Cwd the model passes, so
-// the --add-dir'd start dir under ~/.cache would beat a repo under ~/repos (bees-13.13.18).
-func cwdLine(dir string) string {
-	return "Your workspace is " + dir + ". Pass it as run_command's Cwd; ignore the \"Command Working Directory\" agy lists.\n\n"
+// Before reports whether agy lists workspace ahead of session name's per-start dir, which
+// the core makes as <startDir>/<name>-dir-<digits>: agy shows the model its workspace dirs
+// sorted, cleaned, in byte order, symlinks kept as spelled, and the first is the "Command
+// Working Directory" every run_command runs in; the model never passes another Cwd
+// (bees-13.13.18's probes, bees-13.13.27). A workspace before <name>-dir- is before it
+// whatever the digits.
+func Before(workspace, startDir, name string) bool {
+	return startDir != "" && filepath.Clean(workspace) < kit(startDir, name)
+}
+
+// kit is the part of session name's per-start dir path its digits follow.
+func kit(startDir, name string) string { return filepath.Join(startDir, name+"-dir-") }
+
+// OrderFix is how a keeper gets a workspace Before its start dir.
+const OrderFix = "move the workspace to a path that sorts before it, or set XDG_RUNTIME_DIR (TMPDIR without it) so bs makes start dirs under a path that sorts after the workspace"
+
+// Order refuses a workspace that isn't Before its start dir. There is no fallback: a
+// session working in its start dir is worse than one that doesn't start (bees-13.13.28).
+func Order(workspace, startDir, name string) error {
+	switch {
+	case startDir == "":
+		return errors.New("agy: no start dir to check the workspace sorts before")
+	case !Before(workspace, startDir, name):
+		return fmt.Errorf("agy: it would run every command in the start dir %s<digits>, not the workspace %s: agy runs them in the first of its workspace dirs, sorted by path, and the start dir sorts first; %s (bees-13.13.28)", kit(startDir, name), workspace, OrderFix)
+	}
+	return nil
 }
 
 // hooks is agy's hooks.json: when a turn stops, bs hook gets agy's payload, from the

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"flag"
 	"fmt"
 
@@ -50,6 +51,7 @@ func (r *run) config(fs *flag.FlagSet, args []string) error {
 	kind, why, _ := s.Kind(s.GitTop)
 	fmt.Fprintf(w, "# workspace kind: %s (%s)\n", kind, why)
 	fmt.Fprintf(w, "# cache: %s\n", r.ports.CacheDir)
+	fmt.Fprintf(w, "# start dirs: %s\n", cmp.Or(r.ports.StartDir, r.ports.CacheDir))
 	for _, f := range s.Fields() {
 		note := ""
 		if f.Scope != "both" {

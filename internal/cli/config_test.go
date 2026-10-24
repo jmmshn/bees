@@ -496,6 +496,35 @@ func TestQueenLooksForAgyBin(t *testing.T) {
 	wantIn(t, errb.String(), filepath.Join(r.home, "opt", "agy")+" is missing or not executable (agy.bin)")
 }
 
+// bees-13.13.28: bs queen on harness agy refuses a start dir that sorts before her repo,
+// as ~/.cache does before ~/repos: agy would run her every command there. It execs nothing.
+func TestQueenOnAgyRefusesAStartDirSortingFirst(t *testing.T) {
+	r := newRig(t)
+	r.start()
+	r.write("config.toml", "harness = \"agy\"\n[paths]\nlogbook_dir = \""+r.logbook+"\"\n")
+	bin := filepath.Join(r.home, "bin")
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "agy"), []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	execed := false
+	start := filepath.Join(filepath.Dir(r.repo), "a-start")
+	ports := Ports{Run: port.Exec{}, CacheDir: filepath.Join(r.home, "cache"), StartDir: start, Harness: agy.Adapter{Bs: "/bin/bs"}, Proc: proc.System{},
+		Exec: func(string, []string, []string) error { execed = true; return nil }}
+	vars := append(append([]string{}, r.env...), "PATH="+bin+":"+os.Getenv("PATH"), "HERDR_PANE_ID=w1:p1")
+	var out, errb bytes.Buffer
+	if code := Run(context.Background(), Env{Vars: vars, Dir: r.repo, Self: os.Getpid()}, ports, []string{"queen"}, &out, &errb); code != 2 || execed {
+		t.Fatalf("exit %d, exec %v: %s", code, execed, errb.String())
+	}
+	wantIn(t, errb.String(), start+"/queen-")
+	wantIn(t, errb.String(), r.repo)
+	if _, err := os.Stat(start); !os.IsNotExist(err) {
+		t.Errorf("the refused start made %s: %v", start, err)
+	}
+}
+
 // bees-13.13.13: bs queen on harness agy execs it without the SSH_* vars agy reads as a
 // remote session ("not signed in"), keeping the rest, SSH_AUTH_SOCK too.
 func TestQueenExecDropsWhatAgyMustNotInherit(t *testing.T) {
@@ -510,7 +539,7 @@ func TestQueenExecDropsWhatAgyMustNotInherit(t *testing.T) {
 		t.Fatal(err)
 	}
 	var env []string
-	ports := Ports{Run: port.Exec{}, CacheDir: filepath.Join(r.home, "cache"), Harness: agy.Adapter{Bs: "/bin/bs"}, Proc: proc.System{},
+	ports := Ports{Run: port.Exec{}, CacheDir: filepath.Join(r.home, "cache"), StartDir: filepath.Join(filepath.Dir(r.repo), "zz-start"), Harness: agy.Adapter{Bs: "/bin/bs"}, Proc: proc.System{},
 		Exec: func(_ string, e, _ []string) error { env = e; return nil }}
 	vars := append(append([]string{}, r.env...), "PATH="+bin+":"+os.Getenv("PATH"), "HERDR_PANE_ID=w1:p1",
 		"SSH_CONNECTION=1.2.3.4 1 5.6.7.8 22", "SSH_CLIENT=1.2.3.4 1 22", "SSH_TTY=/dev/pts/9", "SSH_AUTH_SOCK=/tmp/agent")

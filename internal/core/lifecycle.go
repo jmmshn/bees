@@ -417,17 +417,24 @@ func (c *Core) recordedAs(ctx context.Context, pid int) (string, error) {
 
 // removeFiles removes worker name's per-start files, <name>-<stem>-*, and its start dir
 // tree, <name>-dir-*: a stem starts with a letter, so this never takes the files of a
-// worker whose name extends name (bees-12 and bees-12-3). Only bs's cache dir is looked
-// in, and only a dir named as writeFiles names one is removed whole (motif 12).
+// worker whose name extends name (bees-12 and bees-12-3). Only bs's cache and start dirs
+// are looked in (the cache dir held start dirs before bees-13.13.28), and only a dir
+// named as writeFiles names one is removed whole (motif 12).
 func (c *Core) removeFiles(name string) error {
 	fs, err := filepath.Glob(filepath.Join(c.CacheDir, name+"-[a-z]*-*"))
 	if err != nil {
 		return err
 	}
-	dirs, err := filepath.Glob(filepath.Join(c.CacheDir, filePattern(name, "dir")))
-	if err != nil {
-		return err
+	var dirs []string
+	for _, in := range slices.Compact([]string{c.CacheDir, c.startDir()}) {
+		ds, err := filepath.Glob(filepath.Join(in, filePattern(name, "dir")))
+		if err != nil {
+			return err
+		}
+		dirs = append(dirs, ds...)
 	}
+	fs = append(fs, dirs...)
+	fs = slices.Compact(slices.Sorted(slices.Values(fs)))
 	var errs []error
 	for _, f := range fs {
 		rm := os.Remove

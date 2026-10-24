@@ -489,10 +489,7 @@ func TestSpawnResumesADeadWorker(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	// The resumed process is rung; how many it has unread depends on whether its fake replayed
-	// its script's first inbox on restart, which can read the send before its ring is
-	// counted ("0 unread ()", seen on CI): only the ring itself is asserted.
-	if len(rings) == 0 || !strings.Contains(rings[len(rings)-1], "run: bs inbox") {
+	if len(rings) == 0 || !strings.Contains(rings[len(rings)-1], "2 unread (queen-toy ×2) — run: bs inbox") {
 		t.Fatalf("the resumed worker's rings: %q", rings)
 	}
 	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 2, "it was spawned with --goal branch", "bs goal toy-1")

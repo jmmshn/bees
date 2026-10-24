@@ -1,6 +1,6 @@
 ---
 name: live-test
-description: Live-test bs end to end in a throwaway project, from setup to a leak-checked teardown. Use when exercising a bs change live (real herdr, real Claude sessions), probing a bug, playing a bake-off card by hand, or recording a demo.
+description: Live-test bs end to end in a throwaway project, from setup to a leak-checked teardown. Use when exercising a bs change live (real herdr, real Claude sessions), probing a bug, playing a bake-off card by hand, recording a demo, or sweeping old test leftovers (run dirs, toy logbooks, beads, start files).
 ---
 
 # Live-test bs
@@ -80,3 +80,13 @@ In order, stopping at the first failure (exit 1; fix the cause and run it again,
 ## 6. Report
 
 Exit 2 is a leak: run `capture-pitfall` on how it got there, fix the cause, and rerun teardown; don't remove it yourself (see "Never delete or mutate by hand"). Copy any `note:` lines into your report so the leftovers can be cleaned later. Report the check's expected-vs-actual lines, both builds, every workaround, and `no leaks`.
+
+## 7. Sweep old leftovers
+
+Teardown keeps `<run>/keeper/`, and bake-off runs keep everything, so test leftovers pile up. `sweep.py` lists them, and with `--apply` removes them:
+
+```sh
+python3 -I .claude/skills/live-test/sweep.py [--days 7] [--apply]
+```
+
+It takes run dirs under `$BEES_LIVE` and `$BAKEOFF_RUNS` untouched for `--days` (a live-test run only after teardown), after stopping their toy queens (a keeper workspace labelled `<toy> · …` with every pane under a test cache); then toy logbooks and `<toy>-N` beads whose run dir is gone, and bs start files (`~/.cache/bees/bs/<session>-prompt-*`) whose session's logbook shows it ended. It touches only names matching a toy's pattern, never a project with a config file, and stops (exit 1) when it can't ask herdr which toys still run. Run it bare first and read the list.

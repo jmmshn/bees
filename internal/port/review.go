@@ -117,3 +117,11 @@ type VCS interface {
 	// Descends reports whether commit is ancestor or descends from it.
 	Descends(ctx context.Context, dir, ancestor, commit string) (bool, error)
 }
+
+// Merges is a VCS that can tell a clean merge from other work: how a goal check sees a
+// review host's merge of a change's base into its head (GitHub's "Update branch").
+type Merges interface {
+	// CleanMerge is commit's two parents when it is a merge holding only what a clean merge
+	// of them gives (its tree is that merge's tree); ok false for any other commit.
+	CleanMerge(ctx context.Context, dir, commit string) (ours, theirs string, ok bool, err error)
+}

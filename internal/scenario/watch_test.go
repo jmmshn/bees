@@ -116,4 +116,13 @@ func TestAgyStopHook(t *testing.T) {
 	if r := hook(st.PID, "PreInvocation", `{"invocationNum":0}`); r.code != 0 || r.out != "" {
 		t.Fatalf("PreInvocation: %s", r)
 	}
+	// the hook holds a queen's turn too, once her hooks.json runs it: that file is
+	// TestPrepareTheQueen's (bees-13.13.21); this checks bs hook's side
+	q := x.startQueen()
+	must(t, x.queenRuns(1, "inbox"), 0)
+	if r := hook(q.PID, "Stop", stop); r.code != 0 || r.out != "" {
+		t.Fatalf("the queen with no unread mail: %s", r)
+	}
+	must(t, x.worker("toy-1", 2, "send", "queen-toy", "done"), 0)
+	must(t, hook(q.PID, "Stop", stop), 0, `{"decision":"continue","reason":"[bs] 1 unread (toy-1)`)
 }

@@ -18,7 +18,7 @@ bs reads `~/.config/bees/config.toml` and `projects/<project>.toml` beside it ([
 bs config                          # every value and where it came from
 bs doctor                          # config, project, logbook dir, harness and ring-socket modes, herdr server vs client,
                                    # herdr socket, bd store, gh and a GitHub remote, cmd argv, stray BS_*
-bs status                          # one line per spawn (LABEL GOAL STATE HANDOFF COMPLETE RUNNING UNREAD), then stuck/kept/waived/discarded/late
+bs status                          # one line per spawn (LABEL GOAL STATE HANDOFF COMPLETE RUNNING UNREAD), then stuck/kept/waived/discarded/late; --all adds ended workers whose workspace is gone and that leave nothing to do
 bs send --project <other> queen-<other> "..."   # cross-project mail; the reply hint carries --project back
 ```
 
@@ -76,7 +76,7 @@ bs starts agy with `--mode accept-edits`: file edits in the workspace go through
 bs never writes agy's allow list. To let workers run their usual commands unasked, add them yourself under `permissions.allow` in `~/.gemini/antigravity-cli/settings.json`:
 
 ```json
-{"permissions": {"allow": ["command(bd)", "command(go)", "command(git)", "command(gh pr create)", "command(./bin/bs)"]}}
+{"permissions": {"allow": ["command(bd)", "command(go)", "command(git)", "command(gh pr create)", "command(bs)", "command(./bin/bs)"]}}
 ```
 
 bs's guard hook runs before each command all the same, and its deny wins over an allow: `git push` to the default branch and `gh pr merge` stay denied.

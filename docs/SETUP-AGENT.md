@@ -105,6 +105,6 @@ bs prune                # removes its worktree and branch; a branch with unmerge
 bd close <project>-N.1 <project>-N
 ```
 
-Leave the queen running: she is the keeper's, in the `<project> · queen` workspace. **Check:** `bs status` shows the worker `ended`, its workspace `(removed)`, with nothing `stuck:`, and both beads are closed.
+Leave the queen running: she is the keeper's, in the `<project> · queen` workspace. **Check:** `bs status` lists nothing `stuck:` and counts the worker under `hidden:`; `bs status --all` shows it `ended`, its workspace `(removed)`; and both beads are closed.
 
 Tell the keeper setup is done, and point them at [`SETUP.md`](SETUP.md).

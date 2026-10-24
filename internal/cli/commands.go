@@ -345,6 +345,9 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 		}
 		body = strings.TrimRight(string(b), "\n")
 	}
+	if strings.TrimSpace(body) == "" {
+		return &core.Exit{Code: core.ExitRefused, Msg: "empty message; nothing stored", Next: bsname.Cmd + " send " + to + ` "<message>"`}
+	}
 	// A send crossing projects records the sender's project, so the reply needs no project
 	// read back out of a name (T11, motif 3): a session's own, else the keeper's repo's.
 	c, from := r.c, r.s.Project

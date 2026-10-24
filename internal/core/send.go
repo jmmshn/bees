@@ -53,6 +53,9 @@ var ErrStarting = errors.New("a queen start is in progress")
 // stored), and when she isn't running the send starts her before it rings (ensureQueen).
 // Send never makes a logbook: P has one (R48).
 func (c *Core) Send(ctx context.Context, in SendIn) (Sent, error) {
+	if strings.TrimSpace(in.Body) == "" {
+		return Sent{}, exit(ExitRefused, bsname.Cmd+" send "+in.To+` "<message>"`, nil, "empty message; nothing stored")
+	}
 	queen := Queen(c.Project)
 	if in.FromProject != "" && in.From.Recorded() && in.To != queen {
 		return Sent{}, exit(ExitRefused, bsname.Cmd+" send --project "+c.Project+" "+queen+` "..."`, nil,

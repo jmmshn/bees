@@ -117,12 +117,24 @@ func TestQueenAndWorkerMailBothWays(t *testing.T) {
 	must(t, x.worker("toy-1", 3, "inbox"), 0, "from queen-toy", "main")
 }
 
-// bs send - reads the message from stdin.
+// bs send - reads the message from stdin; an empty or whitespace-only body is refused
+// with nothing stored or rung (bees-13.78.14, motif 11).
 func TestSendReadsAMessageFromStdin(t *testing.T) {
 	x := newToy(t)
 	x.spawn("toy-1", "verdict")
+	must(t, x.worker("toy-1", 1, "inbox"), 0, "You own toy-1")
+	for _, body := range []string{"", "   \n\t  "} {
+		must(t, x.queen("send", "toy-1", body), 2, "empty message; nothing stored")
+		must(t, x.shellRun(x.repo, x.env, body, "send", "--as", "queen-toy", "toy-1", "-"), 2, "empty message; nothing stored")
+	}
+	if ms, _ := x.open().Unread(context.Background(), "toy-1"); len(ms) != 0 {
+		t.Fatalf("empty send stored: %+v", ms)
+	}
+	if rings := x.harness.Rings("toy-1"); len(rings) != 0 {
+		t.Fatalf("empty send rung toy-1: %q", rings)
+	}
 	must(t, x.shellRun(x.repo, x.env, "line one\nline two\n", "send", "--as", "queen-toy", "toy-1", "-"), 0, "rung toy-1")
-	must(t, x.worker("toy-1", 1, "inbox"), 0, "line one\nline two\n")
+	must(t, x.worker("toy-1", 2, "inbox"), 0, "line one\nline two\n")
 }
 
 // bees-13.14, bees-13.49: a keeper's herdr shell is a pane no entry recorded, in no

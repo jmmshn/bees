@@ -89,6 +89,40 @@ func TestBeadStaysInTheProject(t *testing.T) {
 	}
 }
 
+// bs bead search matches title, description, notes and design, ignoring case, inside the
+// project, and says so when nothing matches.
+func TestBeadSearchReadsEveryTextField(t *testing.T) {
+	r := newRig(t)
+	bd := &bdStub{out: map[string]string{
+		"query": `[{"id":"mytoy-1"},{"id":"mytoy-1.2"},{"id":"mytoy-1.3"}]`,
+		"show": `[{"id":"mytoy-1","status":"open","title":"Epic","design":"keep an ALLOW list"},
+			{"id":"mytoy-1.2","status":"closed","title":"Other","notes":"line one\nthe allow\nlist"},
+			{"id":"mytoy-1.3","status":"open","title":"Nothing here"}]`,
+	}}
+	code, out, stderr := r.runWith(Ports{Run: bd}, nil, "bead", "search", "--all", "allow")
+	want := "mytoy-1 [open] Epic\n    design: keep an ALLOW list\n" +
+		"mytoy-1.2 [closed] Other\n    notes: line one the allow list\n"
+	if code != 0 || out != want {
+		t.Fatalf("exit %d %q %q", code, out, stderr)
+	}
+	if got := strings.Join(bd.calls[0], " "); got != `query --json --limit 0 id="mytoy-*"` {
+		t.Fatalf("bd %s", got)
+	}
+	if got := strings.Join(bd.calls[1], " "); got != "show --json mytoy-1 mytoy-1.2 mytoy-1.3" {
+		t.Fatalf("bd %s", got)
+	}
+	code, out, stderr = r.runWith(Ports{Run: bd}, nil, "bead", "search", "no", "such")
+	if code != 0 || out != "" || !strings.Contains(stderr, `no open mytoy bead mentions "no such"; --all`) {
+		t.Fatalf("no match: exit %d %q %q", code, out, stderr)
+	}
+	if got := bd.calls[2][4]; got != `id="mytoy-*" AND status!=closed` {
+		t.Fatalf("query %q", got)
+	}
+	if code, _, stderr := r.runWith(Ports{Run: bd}, nil, "bead", "search"); code != core.ExitRefused || !strings.Contains(stderr, "usage") {
+		t.Fatalf("no text: exit %d %q", code, stderr)
+	}
+}
+
 // fakeSourceRepo makes a checkout declaring bs's module, main two commits long.
 func fakeSourceRepo(t *testing.T) (string, []string) {
 	t.Helper()

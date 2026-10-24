@@ -22,7 +22,7 @@ bs end --as queen-t3c --force [--incomplete] <worker>  # end it (--incomplete wh
 ```
 
 - **A one-off live check is not a card.** To exercise a bs change by hand, use the `live-test` skill (`.claude/skills/live-test/SKILL.md`): its own toy project, a scripted teardown and a leak check.
-- **Location of runs.** Runs live in `$BAKEOFF_RUNS`, which defaults to `~/.cache/bees-bakeoff/runs`. That directory is outside any repo on purpose: Claude walks up parent directories for `CLAUDE.md`, so a toy repo placed inside bees would load bees' dogfood rules into every lead.
+- **Location of runs.** Runs live in `$BAKEOFF_RUNS`, which defaults to `~/.cache/bees-bakeoff/runs`. That directory is outside any repo on purpose: Claude walks up parent directories for `CLAUDE.md`, so a toy repo placed inside bees would load bees' dogfood rules into every lead. Runs, their logbooks and beads stay until swept: `python3 -I .claude/skills/live-test/sweep.py` lists those older than a week, `--apply` removes them.
 - **Which bs.** Arm c runs the `bs` on PATH. To replay a branch's prompts without installing it (only the queen installs bs), build it and pass its path: `go build -o bin/bs ./cmd/bs && BAKEOFF_BS=bin/bs bakeoff/mkrun.sh c 1`. The queen inherits that PATH, and `mkrun.sh` gives the run a config home of its own (`<run>/xdg`) whose project file sets `worker.path` to the build's directory, so her workers run it too.
 - **Project names.** A toy repo's directory is `t<script><arm>`, and that is its bs project name, so bees runs never touch the real `bees` logbook. Logbooks outlive their runs, so a replay passes `BAKEOFF_TAG=<letters>` (`t1cp`): an older round's `t1c.db` would hand the new queen its recorded workers.
 - **Toy repo setup.**

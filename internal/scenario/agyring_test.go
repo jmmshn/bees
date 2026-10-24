@@ -90,3 +90,44 @@ func TestAHeldRingLeftIdleIsStuckUntilBsRing(t *testing.T) {
 	}
 	must(t, x.queen("ring", "toy-1"), 2, "toy-1 has no unread mail: nothing to ring")
 }
+
+// The same for an agy queen (bees-13.99): a worker's ring held while she works, whose
+// turn a cancel or a usage limit then ends with no Stop hook, leaves her idle with mail
+// unread. bs status calls her stuck and names bs ring, which rings her.
+func TestAHeldRingLeftTheQueenIdleIsStuck(t *testing.T) {
+	x, _ := agyToy(t)
+	q := x.startQueen()
+	must(t, x.queenRuns(1, "inbox"), 0)
+	must(t, x.worker("toy-1", 1, "inbox"), 0) // the brief, read: toy-1 isn't stuck
+	x.herdr.SetScreen(x.session, q.Pane, fake.Screen{Status: herdr.Working})
+	must(t, x.worker("toy-1", 2, "send", "queen-toy", "done"), 0, "stored, not rung: queen-toy is working")
+	if r := x.keeper("status"); strings.Contains(r.out, "stuck: queen-toy") {
+		t.Fatalf("a working queen called stuck:\n%s", r)
+	}
+	x.herdr.SetScreen(x.session, q.Pane, fake.Screen{Status: herdr.Idle}) // her turn cut by a limit
+	must(t, x.keeper("status"), 0, "stuck: queen-toy: idle with 1 unread, not rung → bs ring queen-toy")
+	must(t, x.stuck("queen-toy"), 0, "rung queen-toy (1 unread)")
+	if p := x.herdr.Prompts(x.session, q.Pane); len(p) != 1 || !strings.HasPrefix(p[0], "[bs] 1 unread (toy-1)") {
+		t.Fatalf("typed %q", p)
+	}
+	must(t, x.queenRuns(2, "inbox"), 0, "done")
+	if r := x.keeper("status"); strings.Contains(r.out, "stuck: queen-toy") {
+		t.Fatalf("stuck with her mail read:\n%s", r)
+	}
+}
+
+// A claude_code queen's ring is pushed, never held: idle with mail unread is just mail
+// she hasn't read yet, never stuck (bees-13.99).
+func TestAClaudeQueenWithUnreadIsNeverStuck(t *testing.T) {
+	x := newToy(t)
+	q := x.startQueen()
+	must(t, x.queenRuns(1, "inbox"), 0)
+	x.spawn("toy-1", "verdict")
+	must(t, x.worker("toy-1", 1, "send", "queen-toy", "done"), 0)
+	x.herdr.SetScreen(x.session, q.Pane, fake.Screen{Status: herdr.Idle})
+	r := x.keeper("status")
+	must(t, r, 0)
+	if cell(r.out, "queen-toy", "UNREAD") != "1" || strings.Contains(r.out, "stuck: queen-toy") {
+		t.Fatalf("a claude queen called stuck, or her mail not counted:\n%s", r)
+	}
+}

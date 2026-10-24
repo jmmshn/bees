@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -128,7 +129,15 @@ func TestStatusPointsAnUnhandedGoalAtDiscard(t *testing.T) {
 	must(t, x.queen("end", "--incomplete", "toy-1"), 0)
 	x.herdr.Programs["claude"] = fake.Beesfake(t)
 	must(t, x.queen("prune"), 0)
-	must(t, x.keeper("status"), 0, "stuck: toy-1: ended with nothing handed off, so its goal can't complete → the keeper discards it (bs goal toy-1 discard, bees-13.6)")
+	// Its workspace gone too, the stuck line alone keeps its row (bees-13.78.17).
+	if err := os.RemoveAll(filepath.Join(filepath.Dir(x.repo), "toy-WT", "toy-1")); err != nil {
+		t.Fatal(err)
+	}
+	r := x.keeper("status")
+	must(t, r, 0, "stuck: toy-1: ended with nothing handed off, so its goal can't complete → the keeper discards it (bs goal toy-1 discard, bees-13.6)")
+	if cell(r.out, "toy-1", "WORKSPACE") != "toy-1 (removed)" || strings.Contains(r.out, "hidden:") { // stuck is never hidden (bees-13.78.17)
+		t.Fatalf("the stuck row:\n%s", r)
+	}
 }
 
 // An origin that isn't on github.com (an ssh alias, GitHub Enterprise) is never asked for

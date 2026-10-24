@@ -87,7 +87,7 @@ commands:
   send    [--project P] [--now] <to> <message|->           store a message, then ring
   ring    <to>                                             ring again for unread mail a held ring left (agy idle after a cancelled turn)
   inbox   [--all | --wait [--timeout D]]                   print unread mail (--all: read mail too, marking nothing read; --wait: exit when new mail comes)
-  status                                                   list workers and their goals
+  status  [--all]                                          list workers and their goals (--all: ended ones left with nothing to do too)
   config                                                   every setting and where it came from
   config  init [--project] [--harness H] [--logbook-dir D] [--repos D] [--worktrees D] [--workspace K] [--repo D]   write a commented config file
   doctor                                                   check what {cmd} needs

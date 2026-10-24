@@ -44,3 +44,40 @@ func TestPushedReadsAPushOntoAnotherBranchsName(t *testing.T) {
 		t.Fatalf("Pushed(feature) = %q, %v, %v; want %s", got, ok, err, tip)
 	}
 }
+
+// CleanMerge passes a merge whose tree is its parents' clean merge, and no other commit:
+// a merge that slips in a change of its own, or a plain commit (bees-13.102).
+func TestCleanMergeIsOnlyAMergeHoldingNothingElse(t *testing.T) {
+	wt := t.TempDir()
+	run(t, wt, "init", "-q", "-b", "main")
+	run(t, wt, "commit", "-q", "--allow-empty", "-m", "init")
+	run(t, wt, "switch", "-q", "-c", "toy-1")
+	if err := os.WriteFile(filepath.Join(wt, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(t, wt, "add", "a.txt")
+	run(t, wt, "commit", "-q", "-m", "a")
+	ours := run(t, wt, "rev-parse", "HEAD")
+	run(t, wt, "switch", "-q", "main")
+	run(t, wt, "commit", "-q", "--allow-empty", "-m", "b")
+	theirs := run(t, wt, "rev-parse", "HEAD")
+	run(t, wt, "switch", "-q", "toy-1")
+	run(t, wt, "merge", "-q", "--no-edit", "main")
+	clean := run(t, wt, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(wt, "extra.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(t, wt, "add", "extra.txt")
+	run(t, wt, "commit", "-q", "--amend", "--no-edit")
+	dirty := run(t, wt, "rev-parse", "HEAD")
+
+	v, ctx := git.VCS{Run: port.Exec{}}, context.Background()
+	if o, th, ok, err := v.CleanMerge(ctx, wt, clean); err != nil || !ok || o != ours || th != theirs {
+		t.Fatalf("CleanMerge(clean) = %s, %s, %v, %v; want %s, %s, true", o, th, ok, err, ours, theirs)
+	}
+	for name, c := range map[string]string{"dirty merge": dirty, "plain commit": ours} {
+		if _, _, ok, err := v.CleanMerge(ctx, wt, c); err != nil || ok {
+			t.Errorf("CleanMerge(%s) = %v, %v; want false", name, ok, err)
+		}
+	}
+}

@@ -551,6 +551,54 @@ func TestAPushTheHostHasntSeenYetIsPending(t *testing.T) {
 	must(t, x.worker("toy-1", 5, "done", "--wait", "--timeout", "1s"), 7, "has commits toy-1 lacks", "pull them, then push")
 }
 
+// The queen brings a change behind its base current on the host (gh pr update-branch:
+// GitHub merges the base into its head) without a round trip to the worker: a head that
+// is the worker's tip plus clean merges of the base passes pr_head, even with the merge
+// only on the host (bs fetches it); a merge carrying anything else, or merging a branch
+// other than the base, still says pull (bees-13.102).
+func TestAHostMergeOfTheBasePasses(t *testing.T) {
+	x := newToy(t)
+	b := ghBackend{}
+	b.setup(x, true)
+	sp := x.spawn("toy-1", "pr")
+	dir := sp.Workspace.Dir
+	b.commit(x, dir)
+	b.open(x, 1, dir, "toy-1", false)
+	b.behind(x)
+	must(t, x.worker("toy-1", 1, "done"), 7, "pr_current", "behind main")
+
+	host := filepath.Join(filepath.Dir(x.repo), "host") // GitHub's own copy, never the worker's objects
+	x.git(filepath.Dir(x.repo), "clone", "-q", x.gh.Git, host)
+	update := func() {
+		x.git(host, "fetch", "-q", "origin")
+		x.git(host, "checkout", "-q", "--detach", "origin/toy-1")
+		x.git(host, "merge", "-q", "--no-edit", "origin/main")
+	}
+	update()
+	x.push(host, "toy-1")
+	must(t, x.worker("toy-1", 2, "done"), 0)
+	b.behind(x) // a second merge on top of the first
+	update()
+	x.push(host, "toy-1")
+	must(t, x.worker("toy-1", 3, "done"), 0)
+	tip := x.git(host, "rev-parse", "HEAD")
+
+	b.behind(x) // a merge that slips in a file of its own
+	update()
+	x.commit(host, "extra.txt")
+	x.git(host, "reset", "-q", "--soft", "HEAD~1")
+	x.git(host, "commit", "-q", "--amend", "--no-edit")
+	x.push(host, "toy-1")
+	must(t, x.worker("toy-1", 4, "done"), 7, "has commits toy-1 lacks", "pull them, then push")
+
+	x.git(host, "checkout", "-q", "-b", "side", "origin/main") // a merge of another branch
+	b.commit(x, host)
+	x.git(host, "checkout", "-q", "--detach", tip)
+	x.git(host, "merge", "-q", "--no-edit", "side")
+	x.git(host, "push", "-q", "-f", "origin", "HEAD:refs/heads/toy-1")
+	must(t, x.worker("toy-1", 5, "done"), 7, "has commits toy-1 lacks", "pull them, then push")
+}
+
 // While the host still shows the old head of a pushed branch, what it says of that head
 // (CI red, behind) is about a commit the worker has moved past: pr_current and ci_green are
 // pending too, so a fix pushed after red CI waits (exit 10), never fails at once on the

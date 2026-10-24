@@ -305,8 +305,8 @@ func (k *look) lag(ctx context.Context, v port.Change) (string, error) {
 }
 
 // unpushed says why a change's head isn't the local branch's tip. The host's head holding
-// commits the branch lacks (someone pushed onto it, or "Update branch") is a fail that says
-// to pull them, never pending: waiting would never end (motif 5). The branch ahead of the
+// commits the branch lacks (someone pushed onto it) is a fail that says to pull them, never
+// pending: waiting would never end (motif 5); only merges of its base (baseMerged) pass. The branch ahead of the
 // host's head is pending when it was pushed already (lag), else "push it": onto a push
 // goal's target, by the command that names its head.
 func (k *look) unpushed(ctx context.Context, v port.Change, tip string) (outcome, string, error) {
@@ -322,6 +322,9 @@ func (k *look) unpushed(ctx context.Context, v port.Change, tip string) (outcome
 		}
 	}
 	if !ahead {
+		if ok, err := k.baseMerged(ctx, v, tip); err != nil || ok {
+			return of(ok), fmt.Sprintf("its head %s on %s is %s at %s with %s merged in", oid(v.HeadCommit), host, v.Head, oid(tip), v.Base), err
+		}
 		return failed, fmt.Sprintf("its head %s on %s has commits %s lacks (at %s): pull them, then push", oid(v.HeadCommit), host, v.Head, oid(tip)), nil
 	}
 	if up, err := k.lag(ctx, v); err != nil {
@@ -333,6 +336,42 @@ func (k *look) unpushed(ctx context.Context, v port.Change, tip string) (outcome
 		return failed, fmt.Sprintf("%s is at %s here, and %s at %s on %s: %s", b, oid(tip), v.Head, oid(v.HeadCommit), host, c.Review.PushHint(ctx, dir, v)), nil
 	}
 	return failed, fmt.Sprintf("%s is at %s here and at %s on %s: push it", v.Head, oid(tip), oid(v.HeadCommit), host), nil
+}
+
+// baseMerged is the host's head being the branch tip with nothing on top but clean merges
+// of v's base: what "Update branch" (gh pr update-branch) makes of a change behind its base,
+// so the queen brings it current without a round trip to the worker (bees-13.102). Each
+// merge is a commit v would land, and its other parent one v wouldn't, so the base's; the
+// change found from the branch lists no commits, so they are read from its own view. A
+// VCS that can't tell a clean merge says no.
+func (k *look) baseMerged(ctx context.Context, v port.Change, tip string) (bool, error) {
+	vcs, dir := k.c.vcs(k.sp.Workspace), k.sp.Workspace.Dir
+	m, ok := vcs.(port.Merges)
+	if !ok {
+		return false, nil
+	}
+	full, err := k.view(ctx, port.Ref{URL: v.URL, Repo: v.Repo})
+	if err != nil {
+		return false, err
+	}
+	if has, err := vcs.Has(ctx, dir, v.HeadCommit); err != nil {
+		return false, err
+	} else if !has {
+		if err := k.c.Review.Fetch(ctx, dir, v); err != nil {
+			return false, err
+		}
+	}
+	for at := v.HeadCommit; at != tip; {
+		if !slices.Contains(full.Commits, at) {
+			return false, nil
+		}
+		ours, theirs, ok, err := m.CleanMerge(ctx, dir, at)
+		if err != nil || !ok || slices.Contains(full.Commits, theirs) {
+			return false, err
+		}
+		at = ours
+	}
+	return true, nil
 }
 
 // targetOpen is a stacked change's target still open, so there is something to land on;

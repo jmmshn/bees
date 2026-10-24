@@ -593,8 +593,9 @@ func (r *run) inbox(fs *flag.FlagSet, args []string) error {
 // discarded, late (a start healed after confirmation missed it), and earlier (a
 // completion an incomplete respawn's row would hide). It reads the
 // record, the process table and the disk, never a check, and asks herdr only to heal an
-// unconfirmed start (core.StartOf), so with herdr down that start reads unknown and the
-// rest still prints: a goal complete but not yet landed shows "no" until bs end or bs
+// unconfirmed start (core.StartOf) and whether an agy session (worker or queen) with
+// mail unread sits idle (stuckIdle), so with herdr down that start reads unknown, that
+// idle check is an error, and the rest still prints: a goal complete but not yet landed shows "no" until bs end or bs
 // prune finds it. A spawn from before goals reads --goal legacy. Rows sort by name, its
 // numbers as numbers, and a workspace under paths.worktrees shows relative to it. An ended
 // worker whose workspace is gone and that leaves nothing to do (no line below the table,

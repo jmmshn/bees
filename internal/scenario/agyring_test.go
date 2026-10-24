@@ -115,3 +115,19 @@ func TestAHeldRingLeftTheQueenIdleIsStuck(t *testing.T) {
 		t.Fatalf("stuck with her mail read:\n%s", r)
 	}
 }
+
+// A claude_code queen's ring is pushed, never held: idle with mail unread is just mail
+// she hasn't read yet, never stuck (bees-13.99).
+func TestAClaudeQueenWithUnreadIsNeverStuck(t *testing.T) {
+	x := newToy(t)
+	q := x.startQueen()
+	must(t, x.queenRuns(1, "inbox"), 0)
+	x.spawn("toy-1", "verdict")
+	must(t, x.worker("toy-1", 1, "send", "queen-toy", "done"), 0)
+	x.herdr.SetScreen(x.session, q.Pane, fake.Screen{Status: herdr.Idle})
+	r := x.keeper("status")
+	must(t, r, 0)
+	if cell(r.out, "queen-toy", "UNREAD") != "1" || strings.Contains(r.out, "stuck: queen-toy") {
+		t.Fatalf("a claude queen called stuck, or her mail not counted:\n%s", r)
+	}
+}

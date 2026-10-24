@@ -41,6 +41,8 @@ type Ports struct {
 	Review   port.Review
 	VCS      port.VCS
 	CacheDir string
+	// StartDir holds per-start dirs, which agy lists beside the workspace ("" is CacheDir).
+	StartDir string
 	Timing   core.Timing
 	// Exec replaces bs with argv (argv[0] a path), run in dir with env: bs queen's last
 	// step. It returns only on failure.
@@ -209,7 +211,7 @@ func Run(ctx context.Context, env Env, ports Ports, args []string, stdout, stder
 			Logbook: lb, Project: s.Project, Run: ports.Run, Harness: h, HarnessOf: other, HarnessName: s.Harness,
 			Proc: ports.Proc, Beads: ports.Beads, Repo: s.Repo, Worktrees: s.Worktrees, Kind: kind, KindWhy: why,
 			Command: s.command(), Goals: s.goals(), Checks: s.Checks, Getenv: func(k string) string { return core.Getenv(env.Vars, k) },
-			ConfigDir: s.Dir, ConfigHome: s.Home, CacheDir: ports.CacheDir, Timing: ports.Timing, WorkerPath: s.workerPath(), Guards: s.Guards, PruneIgnore: s.Prune.Ignore, Review: review, VCS: vcs, HostPrompt: s.hostPrompt(),
+			ConfigDir: s.Dir, ConfigHome: s.Home, CacheDir: ports.CacheDir, StartDir: ports.StartDir, Timing: ports.Timing, WorkerPath: s.workerPath(), Guards: s.Guards, PruneIgnore: s.Prune.Ignore, Review: review, VCS: vcs, HostPrompt: s.hostPrompt(),
 			Warn: func(msg string) { fmt.Fprintf(stderr, bsname.Cmd+" %s: warning: %s\n", args[0], msg) },
 		}
 		if err := r.authorize(as); err != nil {

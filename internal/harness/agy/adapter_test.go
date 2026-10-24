@@ -18,15 +18,18 @@ import (
 	"github.com/jmmshn/bees/internal/port"
 )
 
+// startDir sorts after every workspace these tests start in (Order).
+const startDir = "/zz/bees/bs"
+
 func worker() port.Start {
-	return port.Start{Role: port.Worker, Name: "bees-8", Dir: "/wt/bees-8", PromptFile: "{{prompt.md}}", Prompt: "You are a worker.\n",
+	return port.Start{Role: port.Worker, Name: "bees-8", Dir: "/wt/bees-8", StartDir: startDir, PromptFile: "{{prompt.md}}", Prompt: "You are a worker.\n",
 		Doorbell: "run: bs inbox", Deny: []string{"git push *main*", "it's *"}}
 }
 
 // A worker's launch adds its per-start dir, picks its custom agent, runs in accept-edits mode and
 // gets the doorbell as its first prompt; the agent file lists the worker's tools and holds
-// the prompt as its body (probe 1), after the line naming its workspace as run_command's
-// Cwd (bees-13.13.18).
+// the prompt as its body (probe 1), and no line asking the model to pass run_command a
+// Cwd: it never does (bees-13.13.27).
 func TestPrepareAWorker(t *testing.T) {
 	l, err := agy.Adapter{Model: "gemini-3.8-flash", Bs: "/bin/bs"}.Prepare(worker())
 	if err != nil {
@@ -45,8 +48,7 @@ func TestPrepareAWorker(t *testing.T) {
 	}
 	agent := l.Dir[".agents/agents/bs-worker.md"]
 	front := "---\nname: bs-worker\ndescription: a bees worker, started by bs\ntools: [" + strings.Join(agy.Tools, ", ") + "]\n---\n"
-	cwd := "Your workspace is /wt/bees-8. Pass it as run_command's Cwd; ignore the \"Command Working Directory\" agy lists.\n\n"
-	if agent != front+cwd+"You are a worker.\n" {
+	if agent != front+"You are a worker.\n" {
 		t.Errorf("agent file = %q", agent)
 	}
 	for _, tool := range []string{"run_command", "view_file", "list_dir", "grep_search", "find_by_name", "write_to_file", "replace_file_content", "multi_replace_file_content"} {
@@ -60,14 +62,14 @@ func TestPrepareAWorker(t *testing.T) {
 // wakes her when it ends (bees-13.13.21), and no guard: guards are a worker's. Her
 // workspace is her repo.
 func TestPrepareTheQueen(t *testing.T) {
-	l, err := agy.Adapter{Bs: "/bin/bs"}.Prepare(port.Start{Role: port.Queen, Name: "queen-bees", Dir: "/repo", Prompt: "You are the queen.\n"})
+	l, err := agy.Adapter{Bs: "/bin/bs"}.Prepare(port.Start{Role: port.Queen, Name: "queen-bees", Dir: "/repo", StartDir: startDir, Prompt: "You are the queen.\n"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := []string{"--add-dir", "{{dir}}", "--agent", "bs-queen", "--mode", "accept-edits"}; !reflect.DeepEqual(l.Args, want) {
 		t.Errorf("args = %q, want %q", l.Args, want)
 	}
-	if !strings.HasSuffix(l.Dir[".agents/agents/bs-queen.md"], "---\nYour workspace is /repo. Pass it as run_command's Cwd; ignore the \"Command Working Directory\" agy lists.\n\nYou are the queen.\n") {
+	if !strings.HasSuffix(l.Dir[".agents/agents/bs-queen.md"], "---\nYou are the queen.\n") {
 		t.Errorf("dir = %v", l.Dir)
 	}
 	var h map[string]map[string][]struct{ Type, Command string }
@@ -144,6 +146,46 @@ func TestPrepareRefuses(t *testing.T) {
 		if _, err := (agy.Adapter{Bs: bs}).Prepare(worker()); err == nil {
 			t.Errorf("bs %q: started", bs)
 		}
+	}
+}
+
+// agy runs every command in the first of its workspace dirs, sorted by cleaned path in
+// byte order, symlinks kept as spelled (bees-13.13.18's probes), so a start is refused
+// unless its workspace sorts before every <name>-dir-<digits> the core could make: no
+// fallback (bees-13.13.28).
+func TestOrder(t *testing.T) {
+	run := "/run/user/1000/bees/bs"
+	for _, c := range []struct {
+		ws, startDir string
+		ok           bool
+	}{
+		{"/home/k/repos/bees-WT/bees-8", run, true},
+		{"/home/k/repos/bees-WT/bees-8", "/home/k/.cache/bees/bs", false}, // bees-13.13.18: ~/.cache sorts first
+		{"/Users/k/repos/bees", "/var/folders/xy/T/bees/bs", true},
+		{"/tmp/bees-8", run, false},
+		{"/srv/bees-8", run, false},
+		{"/tmp/bees-8", "/tmp/zz/bees/bs", true},
+		{"/run/user/1000/bees/bs/../../../../../home/k/bees-8", run, true}, // cleaned, as agy does
+		{"/home/k/bees-8/", run, true},
+		{run + "/bees-8-dir-", run, false}, // not strictly before
+		{run + "/bees-8-dir-123", run, false},
+		{"/home/k/bees-8", "", false},
+	} {
+		err := agy.Order(c.ws, c.startDir, "bees-8")
+		if (err == nil) != c.ok {
+			t.Errorf("Order(%q, %q) = %v, want ok %v", c.ws, c.startDir, err, c.ok)
+		}
+	}
+	err := agy.Order("/tmp/bees-8", run, "bees-8")
+	for _, want := range []string{"/tmp/bees-8", run + "/bees-8-dir-<digits>", "/run/user/<uid>"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %v doesn't name %s", err, want)
+		}
+	}
+	st := worker()
+	st.Dir, st.StartDir = "/tmp/bees-8", run
+	if _, err := (agy.Adapter{Bs: "/bin/bs"}).Prepare(st); err == nil {
+		t.Error("Prepare started a workspace that sorts after its start dir")
 	}
 }
 

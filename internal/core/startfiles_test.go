@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/jmmshn/bees/internal/port"
@@ -70,5 +71,66 @@ func TestStartDirRefusesAPathOutsideIt(t *testing.T) {
 	}
 	if _, err := os.Stat(keep); err != nil {
 		t.Fatalf("a refused write removed the earlier start's files: %v", err)
+	}
+}
+
+// With a start dir set, the per-start dir goes there and the files stay in the cache dir
+// (bees-13.13.28); removeFiles takes it, and a start dir an older bs left in the cache dir.
+func TestStartDirGoesInTheStartDir(t *testing.T) {
+	root := t.TempDir()
+	c := &Core{CacheDir: filepath.Join(root, "cache"), StartDir: filepath.Join(root, "run", "bees", "bs")}
+	legacy := filepath.Join(c.CacheDir, "bees-12-dir-7", ".agents")
+	if err := os.MkdirAll(legacy, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	l := port.Launch{Args: []string{"--add-dir", "{{dir}}", "--settings", "{{s.json}}"}, Files: map[string]string{"s.json": "{}"},
+		Dir: map[string]string{".agents/hooks.json": "{}"}}
+	args, err := c.writeFiles("bees-12", l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(args[1]) != c.StartDir || filepath.Dir(args[3]) != c.CacheDir {
+		t.Fatalf("args %q: want the dir in %s, the file in %s", args, c.StartDir, c.CacheDir)
+	}
+	if fi, err := os.Stat(c.StartDir); err != nil || fi.Mode().Perm() != 0o700 {
+		t.Fatalf("start dir %v, %v", fi, err)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Errorf("the cache dir's old start dir is still there: %v", err)
+	}
+	worst, err := c.worstArgs("bees-12", l)
+	if err != nil || filepath.Dir(worst[1]) != c.StartDir {
+		t.Errorf("worst args %q, %v", worst, err)
+	}
+	if err := c.removeFiles("bees-12"); err != nil {
+		t.Fatal(err)
+	}
+	for _, in := range []string{c.CacheDir, c.StartDir} {
+		if left, _ := filepath.Glob(filepath.Join(in, "*")); len(left) != 0 {
+			t.Errorf("left %q", left)
+		}
+	}
+}
+
+// A start dir others can write, or one inside such a dir, is refused before a start dir
+// is made in it: it holds the hooks agy runs (bees-13.13.28).
+func TestStartDirRefusesADirOthersCanWrite(t *testing.T) {
+	root := t.TempDir()
+	shared := filepath.Join(root, "tmp")
+	if err := os.Mkdir(shared, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(shared, 0o1777); err != nil {
+		t.Fatal(err)
+	}
+	l := port.Launch{Args: []string{"--add-dir", "{{dir}}"}, Dir: map[string]string{".agents/hooks.json": "{}"}}
+	for _, start := range []string{shared, filepath.Join(shared, "bs")} {
+		c := &Core{CacheDir: filepath.Join(root, "cache"), StartDir: start}
+		if _, err := c.writeFiles("bees-12", l); err == nil || !strings.Contains(err.Error(), shared) {
+			t.Errorf("start dir %s: %v", start, err)
+		}
+		if dirs, _ := filepath.Glob(filepath.Join(start, "bees-12-dir-*")); len(dirs) != 0 {
+			t.Errorf("made %q", dirs)
+		}
 	}
 }

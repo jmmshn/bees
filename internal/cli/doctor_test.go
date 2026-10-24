@@ -26,6 +26,7 @@ type doctorRig struct {
 	herdr   *fake.Herdr
 	socket  string
 	cantRun string // a subcommand (auth, where) whose run fails before it starts
+	start   string // the start dir, after the repo and its worktrees: agy lists them first
 }
 
 func newDoctorRig(t *testing.T) *doctorRig {
@@ -52,6 +53,7 @@ func newDoctorRig(t *testing.T) *doctorRig {
 		t.Fatal(err)
 	}
 	r.env = append(r.env, "PATH="+r.bin)
+	r.start = filepath.Join(filepath.Dir(r.repo), "zz-start")
 	return r
 }
 
@@ -85,7 +87,7 @@ func (c cantStart) Run(ctx context.Context, dir string, argv ...string) ([]byte,
 func (r *doctorRig) doctorIn(dir string, extra ...string) (int, string) {
 	r.t.Helper()
 	var out, errb bytes.Buffer
-	ports := Ports{Run: cantStart{fake.Commands{Herdr: r.herdr, Real: port.Exec{}}, r.cantRun}, CacheDir: filepath.Join(r.home, "cache"),
+	ports := Ports{Run: cantStart{fake.Commands{Herdr: r.herdr, Real: port.Exec{}}, r.cantRun}, CacheDir: filepath.Join(r.home, "cache"), StartDir: r.start,
 		NewHarness: func(string, HarnessOpts) port.Harness { return claude.Adapter{} }}
 	code := Run(context.Background(), Env{Vars: append(append([]string{}, r.env...), extra...), Dir: dir, Self: os.Getpid()}, ports, []string{"doctor"}, &out, &errb)
 	return code, out.String() + errb.String()
@@ -379,6 +381,30 @@ func TestDoctorAgySignIn(t *testing.T) {
 	wantIn(t, out, "WARN agy sign-in: "+agyAt+" isn't signed in as workers run it (without SSH_CONNECTION, SSH_CLIENT, SSH_TTY), so an agy worker can't start: run agy once to sign in")
 	if code != 0 {
 		t.Errorf("a warning failed doctor: exit %d\n%s", code, out)
+	}
+}
+
+// bees-13.13.28: doctor fails when agy would list the start dir ahead of the queen's repo
+// or a worker's worktree, as every agy start is then refused; under another harness, where
+// only --harness agy would be, it warns, and says nothing when the order is right.
+func TestDoctorAgyWorkspaceOrder(t *testing.T) {
+	r := newDoctorRig(t)
+	r.write("config.toml", "harness = \"agy\"\n[paths]\nlogbook_dir = \""+r.logbook+"\"\n")
+	r.stub("agy", `case $1 in --version) echo 1.4.6;; models) echo gemini;; esac`)
+	_, out := r.doctor()
+	wantIn(t, out, "ok   agy workspace order: "+r.repo+" and "+filepath.Join(r.repo+"-WT", "mytoy-1")+" sort before the start dirs in "+r.start)
+	r.start = filepath.Join(r.home, "cache")
+	code, out := r.doctor()
+	wantIn(t, out, "FAIL agy workspace order: every agy start would be refused: "+filepath.Join(r.repo+"-WT", "mytoy-1")+" and "+r.repo+" sort after the start dirs in "+r.start, "/run/user/<uid>")
+	if code == 0 {
+		t.Errorf("exit 0:\n%s", out)
+	}
+	r.write("config.toml", "[paths]\nlogbook_dir = \""+r.logbook+"\"\n")
+	_, out = r.doctor()
+	wantIn(t, out, "WARN agy workspace order: a spawn with --harness agy would be refused")
+	r.start = filepath.Join(filepath.Dir(r.repo), "zz-start")
+	if _, out = r.doctor(); strings.Contains(out, "agy workspace order") {
+		t.Errorf("claude_code with the order right says it:\n%s", out)
 	}
 }
 

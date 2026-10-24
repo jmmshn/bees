@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/jmmshn/bees/internal/bsname"
 	"github.com/jmmshn/bees/internal/config"
@@ -387,7 +388,7 @@ func goalFlags(g goal.Goal) string {
 // spawn's and a resume's alike: one place for its workspace, prompt, PATH, guards and
 // shell timeout.
 func (c *Core) workerStart(name string, ws logbook.Workspace, bell string, deny []string, text string) port.Start {
-	return port.Start{Role: port.Worker, Name: name, Dir: ws.Dir, Branch: ws.Branch, PushTo: ws.Push, Repo: ws.Repo, PromptFile: "{{prompt.md}}", Prompt: text, Doorbell: bell,
+	return port.Start{Role: port.Worker, Name: name, Dir: ws.Dir, StartDir: c.startDir(), Branch: ws.Branch, PushTo: ws.Push, Repo: ws.Repo, PromptFile: "{{prompt.md}}", Prompt: text, Doorbell: bell,
 		Path: c.WorkerPath, Deny: deny, ShellTimeout: ShellTimeout}
 }
 
@@ -610,7 +611,7 @@ func pushTo(t *target) string {
 }
 
 // writeFiles writes l.Files to the cache dir as <name>-<key>-* (0600) and l.Dir as one
-// <name>-dir-* tree (0700 dirs, 0600 files), replacing each {{key}} and {{dir}} in l.Args
+// <name>-dir-* tree in the start dir (0700 dirs, 0600 files), replacing each {{key}} and {{dir}} in l.Args
 // with its path, after removing this session's earlier files.
 func (c *Core) writeFiles(name string, l port.Launch) ([]string, error) {
 	args := slices.Clone(l.Args)
@@ -643,7 +644,13 @@ func (c *Core) writeFiles(name string, l port.Launch) ([]string, error) {
 	if len(l.Dir) == 0 {
 		return args, nil
 	}
-	dir, err := os.MkdirTemp(c.CacheDir, filePattern(name, "dir"))
+	if err := os.MkdirAll(c.startDir(), 0o700); err != nil {
+		return nil, err
+	}
+	if err := ownDir(c.startDir()); err != nil {
+		return nil, err
+	}
+	dir, err := os.MkdirTemp(c.startDir(), filePattern(name, "dir"))
 	if err != nil {
 		return nil, err
 	}
@@ -658,6 +665,22 @@ func (c *Core) writeFiles(name string, l port.Launch) ([]string, error) {
 	}
 	fill(args, "dir", dir)
 	return args, nil
+}
+
+// ownDir refuses dir, or the dir holding it, unless it is a dir this user alone can write:
+// a start dir holds the hooks agy runs, and lives in /tmp when there is no /run/user/<uid>,
+// where another user could make it first or swap it.
+func ownDir(dir string) error {
+	for _, d := range []string{dir, filepath.Dir(dir)} {
+		fi, err := os.Lstat(d)
+		if err != nil {
+			return err
+		}
+		if st, ok := fi.Sys().(*syscall.Stat_t); !fi.IsDir() || !ok || int(st.Uid) != os.Getuid() || fi.Mode().Perm()&0o022 != 0 {
+			return fmt.Errorf("%s (%v) isn't a dir only this user can write, so another user could swap the start files under it: remove it", d, fi.Mode())
+		}
+	}
+	return nil
 }
 
 // checkDir refuses a Launch.Dir path that would land outside its directory.
@@ -678,7 +701,7 @@ func (c *Core) worstArgs(name string, l port.Launch) ([]string, error) {
 		fill(args, key, filepath.Join(c.CacheDir, strings.Replace(filePattern(name, key), "*", "4294967295", 1)))
 	}
 	if len(l.Dir) > 0 {
-		fill(args, "dir", filepath.Join(c.CacheDir, strings.Replace(filePattern(name, "dir"), "*", "4294967295", 1)))
+		fill(args, "dir", filepath.Join(c.startDir(), strings.Replace(filePattern(name, "dir"), "*", "4294967295", 1)))
 	}
 	return args, checkDir(l.Dir)
 }

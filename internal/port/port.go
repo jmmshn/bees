@@ -94,6 +94,7 @@ type Start struct {
 	Role       Role
 	Name       string            // session name (ADR-0006)
 	Dir        string            // the workspace directory
+	StartDir   string            // where the core makes the per-start dir: <StartDir>/<Name>-dir-<digits>
 	Branch     string            // the worker's own branch; "" for a workspace with none
 	PushTo     string            // a push goal's target head branch, which Branch is pushed onto; "" for none
 	Repo       string            // the project dir the workspace was made from
@@ -112,8 +113,8 @@ type Start struct {
 // Launch is what Prepare returns. The core writes each of Files (0600, in the cache dir,
 // named <name>-<key>-*), fills the {{key}} it stands for in Args with that file's path,
 // and removes <name>-[a-z]*-* on bs end, at prune and before each start. Dir is a tree the
-// same way: one per-start directory, <name>-dir-* (0700), holding each file at its
-// relative path (0600), its path filling {{dir}}.
+// same way: one per-start directory, <name>-dir-* (0700) in Start.StartDir, holding each
+// file at its relative path (0600), its path filling {{dir}}.
 type Launch struct {
 	Args   []string          // after `herdr agent start … --`
 	Files  map[string]string // key → content

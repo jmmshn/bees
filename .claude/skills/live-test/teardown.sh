@@ -25,6 +25,11 @@ recorded=$(jq -r '.config // empty' "$run/live.json" 2>/dev/null)
 [ -z "$recorded" ] || [ "$recorded" = "$config" ] || { echo "setup wrote $toy's config to $recorded, but this shell's XDG_CONFIG_HOME names $config: run teardown with setup's environment" >&2; exit 1; }
 store=$HOME/.local/share/bees
 if [ "$(uname)" = Darwin ]; then cache=$HOME/Library/Caches/bees; else cache=${XDG_CACHE_HOME:-$HOME/.cache}/bees; fi
+# per-start dirs, as cmd/bs's startDir (bees-13.13.28)
+if [ -d "/run/user/$(id -u)" ] && [ ! -L "/run/user/$(id -u)" ]; then start=/run/user/$(id -u)/bees/bs; else start=${TMPDIR:-/tmp}; start=${start%/}/bees-$(id -u)/bs; fi
+# ...and bs config names it: a different one would leak-check a dir the toy never used.
+said=$(bs config 2>/dev/null | sed -n 's/^# start dirs: //p')
+[ -z "$said" ] || [ "$said" = "$start" ] || fail "bs config names the start dirs $said, but teardown computed $start"
 projects=$HOME/.claude/projects enc=$(sed 's/[^A-Za-z0-9]/-/g' <<<"$run") # Claude's name for a project dir
 fail() { echo "teardown: $*; fix it and run teardown.sh $run again" >&2; exit 1; }
 # agy's settings and data dir, checked against setup's like the config dir. agy keeps the
@@ -146,8 +151,9 @@ if [ -n "$agy_data" ]; then
 	fi
 fi
 # bs's per-start files (prompt, settings) are <session>-<key>-* in $cache/bs (bees-13.4);
-# $cache/bsx held them before the swap (bees-13.9).
-del "$store/$toy.db" "$store/$toy.db-wal" "$store/$toy.db-shm" "$run/logbooks" "$cache/$toy"-* "$cache/bs/$toy"-* "$cache/bs/queen-$toy"-* "$cache/bsx/$toy"-* "$cache/bsx/queen-$toy"-* "$config" || fail "couldn't remove $toy's logbooks, cache files or config dir"
+# $cache/bsx held them before the swap (bees-13.9), and its per-start dirs are
+# <session>-dir-* in $start (bees-13.13.28).
+del "$store/$toy.db" "$store/$toy.db-wal" "$store/$toy.db-shm" "$run/logbooks" "$cache/$toy"-* "$cache/bs/$toy"-* "$cache/bs/queen-$toy"-* "$cache/bsx/$toy"-* "$cache/bsx/queen-$toy"-* "$start/$toy"-* "$start/queen-$toy"-* "$config" || fail "couldn't remove $toy's logbooks, cache files or config dir"
 echo "removed the toy repo, its worktrees, logbooks, cache files and config dir; kept $run/keeper (with the transcripts)"
 
 # 4. Leaks: what the toy owns and teardown should have removed. Exit 2.
@@ -182,7 +188,7 @@ else
 	unchecked="stray processes (no /proc to look in)" # couldn't look is not "none" (Rule G)
 	echo "can't check for processes left in $run: no /proc"
 fi
-left=$(ls -d "$store/$toy".db* "$cache/$toy"-* "$cache/bs/$toy"-* "$cache/bs/queen-$toy"-* "$cache/bsx/$toy"-* "$cache/bsx/queen-$toy"-* "$repo" "$repo-WT" "$repo-cl" "$repo-clients" "$config" "$projects/$enc"-* 2>/dev/null | tr '\n' ' ')
+left=$(ls -d "$store/$toy".db* "$cache/$toy"-* "$cache/bs/$toy"-* "$cache/bs/queen-$toy"-* "$cache/bsx/$toy"-* "$cache/bsx/queen-$toy"-* "$start/$toy"-* "$start/queen-$toy"-* "$repo" "$repo-WT" "$repo-cl" "$repo-clients" "$config" "$projects/$enc"-* 2>/dev/null | tr '\n' ' ')
 [ -z "$left" ] || leak "files left: $left"
 left=$(untrust --check) && [ -z "$left" ] || leak "agy trust entries left in $agy_settings: ${left:-unreadable}"
 # shellcheck disable=SC2046

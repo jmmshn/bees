@@ -38,6 +38,7 @@ type Core struct {
 	ConfigDir   string                     // the config dir the spawn ran under, recorded
 	ConfigHome  string                     // the config home it ran under (config.Base), recorded and set in the worker's pane
 	CacheDir    string                     // per-start files
+	StartDir    string                     // per-start dirs (Launch.Dir), which agy lists beside the workspace; "" is CacheDir
 	WorkerPath  []string                   // worker.path: dirs first on a worker's PATH
 	Guards      config.Guards
 	PruneIgnore []string    // prune.ignore, which spawn freezes: ignored files prune removes with a worktree
@@ -47,6 +48,9 @@ type Core struct {
 	Timing      Timing
 	Warn        func(msg string) // prints a fallback bs took (Rule G); nil drops it
 }
+
+// startDir is where per-start dirs go.
+func (c *Core) startDir() string { return cmp.Or(c.StartDir, c.CacheDir) }
 
 // harnessOf is the adapter of harness name, as an entry recorded it: ringing, start
 // lookups and teardown use the recorded harness, not the configured one (ADR-0010). nil

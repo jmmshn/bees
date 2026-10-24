@@ -227,6 +227,7 @@ func (d *doctor) harness() {
 	}
 	d.agyVersion(at, raw, err == nil)
 	d.agyMode(s.Harness != agy.Name)
+	d.agyOrder(s.Harness != agy.Name)
 	h := d.r.ports.Harness
 	if h == nil && d.r.ports.NewHarness != nil {
 		h = d.r.ports.NewHarness(s.Harness, s.opts(s.Harness, false))
@@ -313,6 +314,47 @@ func (d *doctor) agyMode(quiet bool) {
 	default:
 		d.line("ok", "agy mode", "the newest agy %s started took --mode %s (its log %s)", bsname.Cmd, agy.Mode, t.Log)
 	}
+}
+
+// agyOrder checks agy would list the queen's repo and a worker's worktree ahead of their
+// per-start dirs, as Prepare refuses to start one otherwise: agy runs every command in the
+// first (bees-13.13.28). Under another harness only a spawn's --harness agy would hit it,
+// so it says only a refusal, as a WARN.
+func (d *doctor) agyOrder(quiet bool) {
+	s := d.r.s
+	if s.Project == "" || s.Repo == "" {
+		return
+	}
+	start := cmp.Or(d.r.ports.StartDir, d.r.ports.CacheDir)
+	ws := map[string]string{core.Queen(s.Project): s.Repo}
+	if s.Worktrees != "" {
+		w := s.Project + "-1"
+		ws[w] = filepath.Join(s.Worktrees, w)
+	}
+	var after []string
+	for _, name := range slices.Sorted(maps.Keys(ws)) {
+		if !agy.Before(ws[name], start, name) {
+			after = append(after, ws[name])
+		}
+	}
+	level, what := "FAIL", "every agy start"
+	if quiet {
+		level, what = "WARN", "a spawn with --harness agy"
+	}
+	switch {
+	case len(after) > 0:
+		d.line(level, "agy workspace order", "%s would be refused: %s %s after the start dirs in %s, and agy runs every command in the first of its workspace dirs, sorted by path; %s", what, strings.Join(after, " and "), sorts(len(after)), start, agy.OrderFix)
+	case !quiet:
+		d.line("ok", "agy workspace order", "%s %s before the start dirs in %s, so agy runs commands in the workspace", strings.Join(slices.Sorted(maps.Values(ws)), " and "), sorts(len(ws)), start)
+	}
+}
+
+// sorts is "sorts" for one path, else "sort".
+func sorts(n int) string {
+	if n == 1 {
+		return "sorts"
+	}
+	return "sort"
 }
 
 // agyLogs is an agy adapter that finds agy's logs beside agy.settings, by default under

@@ -909,7 +909,7 @@ func TestSpawnHarnessIsRecordedAndResumed(t *testing.T) {
 		"toy-1 is spawned and not ended, on harness agy, not claude_code; a resume keeps its harness, so leave --harness off")
 	stubAgy("1.4.7")
 	r = x.queen("spawn", "--goal", "branch", "toy-1")
-	must(t, r, 0, "resumed toy-1", "bs spawn: warning: "+agyBin+" is 1.4.7, not 1.4.6 (the version bs's agy contracts were probed on): re-probe the hook payloads (PreToolUse, PreInvocation, Stop), hook answers and non-zero exit, the --mode log line, Tools, Remote SSH_*, ANTIGRAVITY_CONVERSATION_ID, trustedWorkspaces, the launch flags and .agents/ files (.claude/skills/live-test/agy-probe.sh), and the watch list in docs/adr/0011-ring-by-push-where-the-harness-allows.md\n  next: bs doctor\n")
+	must(t, r, 0, "resumed toy-1", "bs spawn: warning: "+agyBin+" is 1.4.7, not 1.4.6 (the version bs's agy contracts were probed on): re-probe agy's prompt as drawn (the > box between the last two rules, the '? for shortcuts' idle footer, the grey placeholder, the 'Requesting permission for:' menu), the hook payloads (PreToolUse, Stop), hook answers and non-zero exit, the --mode log line, Tools, Remote SSH_*, ANTIGRAVITY_CONVERSATION_ID, trustedWorkspaces, the launch flags and .agents/ files (.claude/skills/live-test/agy-probe.sh), and the watch list in docs/adr/0011-ring-by-push-where-the-harness-allows.md\n  next: bs doctor\n")
 	if n := strings.Count(r.stderr, "bs spawn: warning:"); n != 1 {
 		t.Fatalf("expected 1 warning on stderr, got %d: %q", n, r.stderr)
 	}

@@ -21,6 +21,7 @@ import (
 	"github.com/jmmshn/bees/internal/core"
 	"github.com/jmmshn/bees/internal/goal"
 	"github.com/jmmshn/bees/internal/harness/agy"
+	"github.com/jmmshn/bees/internal/herdr"
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/port"
 )
@@ -431,7 +432,8 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 	switch q := sent.Started; {
 	case q.Pane != "":
 		fmt.Fprintf(r.out, "started %s in pane %s on herdr session %s (%s queen)\n", to, q.Pane, q.Session, sent.Bs)
-		if sent.Rung != nil && !errors.Is(sent.Rung, core.ErrEnded) && !errors.Is(sent.Rung, core.ErrAlreadyRead) && !errors.Is(sent.Rung, port.ErrArmed) {
+		var held *port.Held
+		if sent.Rung != nil && !errors.Is(sent.Rung, core.ErrEnded) && !errors.Is(sent.Rung, core.ErrAlreadyRead) && !errors.As(sent.Rung, &held) {
 			fmt.Fprintf(r.out, "stored, not rung: %s doesn't take a ring yet (%v); her pane may be at a prompt, such as folder trust: herdr --session %s pane read %s --source recent\n", to, sent.Rung, q.Session, q.Pane)
 			return nil
 		}
@@ -472,14 +474,16 @@ func (r *run) ring(c *core.Core, from, to string, p port.Priority) {
 
 // rang says how ringing to went. The message is already stored, so no outcome fails the
 // command: the logbook entry is the delivery, the ring only when it is read (motif 10).
+// A held ring is the caller's to ring again (bs ring, bees-13.97).
 func (r *run) rang(to string, err error) {
+	var held *port.Held
 	switch {
 	case err == nil:
 		fmt.Fprintf(r.out, "rung %s\n", to)
+	case errors.As(err, &held):
+		fmt.Fprintf(r.out, "stored, not rung: %s; if it's still unread once %s is idle, run: %s ring %s\n", held.Why, to, bsname.Cmd, to)
 	case errors.Is(err, core.ErrAlreadyRead):
 		fmt.Fprintf(r.out, "stored; %v\n", err)
-	case errors.Is(err, port.ErrArmed):
-		fmt.Fprintf(r.out, "stored; %s's %v to read it\n", to, err)
 	case errors.Is(err, port.ErrNotRunning), errors.Is(err, port.ErrNoRing):
 		fmt.Fprintf(r.out, "stored, not rung (%v): %s reads it at its next "+bsname.Cmd+" inbox\n", err, to)
 	case errors.Is(err, core.ErrEnded):
@@ -489,9 +493,45 @@ func (r *run) rang(to string, err error) {
 	}
 }
 
+// rering is bs ring <w> (bees-13.97): Ring again, as the caller, for a session a held
+// ring left idle with mail unread (a cancelled turn, one cut by agy's limits, a box
+// cleared unsent). Each outcome its own output and exit (motif 11): rung 0, held
+// ExitHeld, no unread mail or not ringable at all ExitRefused.
+func (r *run) rering(fs *flag.FlagSet, args []string) error {
+	if err := parse(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return fmt.Errorf("%w: "+bsname.Cmd+" ring <to>", errUsage)
+	}
+	to := core.Name(fs.Arg(0))
+	if err := r.may(to); err != nil {
+		return err
+	}
+	unread, err := r.c.Logbook.Unread(r.ctx, to)
+	if err != nil {
+		return err
+	}
+	if len(unread) == 0 {
+		return &core.Exit{Code: core.ExitRefused, Msg: to + " has no unread mail: nothing to ring"}
+	}
+	var held *port.Held
+	switch err := r.c.Ring(r.ctx, r.caller.Name, to, port.Next); {
+	case err == nil:
+		fmt.Fprintf(r.out, "rung %s (%d unread)\n", to, len(unread))
+		return nil
+	case errors.As(err, &held):
+		return &core.Exit{Code: core.ExitHeld, Msg: fmt.Sprintf("not rung: %s; run this again once %s is idle", held.Why, to), Next: bsname.Cmd + " ring " + to}
+	case errors.Is(err, port.ErrNotRunning), errors.Is(err, port.ErrNoRing), errors.Is(err, core.ErrEnded):
+		return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("not rung (%v): %s reads its mail at its next %s inbox", err, to, bsname.Cmd)}
+	default:
+		return err
+	}
+}
+
 func (r *run) inbox(fs *flag.FlagSet, args []string) error {
 	all := fs.Bool("all", false, "include read mail; marks nothing read")
-	wait := fs.Bool("wait", false, "wait for new mail, say who it's from and exit, marking nothing read: run it in the background, and its exit wakes an idle agy session")
+	wait := fs.Bool("wait", false, "wait for new mail, say who it's from and exit, marking nothing read: the waiter omp's bs extension runs (ADR-0011)")
 	timeout := fs.Duration("timeout", time.Hour, "how long --wait waits")
 	if err := parse(fs, args); err != nil {
 		return err
@@ -674,6 +714,13 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 				errs = append(errs, fmt.Errorf("%s: can't tell whether its workspace is still on disk: %w", sp.Name, serr))
 			}
 		}
+		if !sp.Ended && running == "yes" && counts[sp.Name] > 0 {
+			if idle, err := r.idleAgy(sp); err != nil {
+				errs = append(errs, fmt.Errorf("%s: can't tell whether its agy is idle: %w", sp.Name, err))
+			} else if idle {
+				note("stuck", sp.Name, "idle with %d unread, not rung → %s ring %s", counts[sp.Name], bsname.Cmd, sp.Name)
+			}
+		}
 		if gerr == nil && !landed {
 			if len(e.Waived) > 0 {
 				note("waived", sp.Name, "%s no longer checked → %s goal %s %s puts it back", strings.Join(e.Waived, ", "), bsname.Cmd, sp.Name, e.String())
@@ -737,6 +784,17 @@ func (r *run) as() string {
 // running is whether sp's recorded process runs: yes, no, unconfirmed, or why bs
 // couldn't look ("couldn't look" is never "no"). A start healed after confirmation
 // missed it reads "(late)". A failed heal probe is printed and writes nothing.
+// idleAgy reports whether sp runs on agy and herdr says it sits idle (or done): with mail
+// unread, a ring was held and nothing caught it (a cancelled turn, bees-13.97). Another
+// harness pushes its ring, so it is never stuck this way.
+func (r *run) idleAgy(sp logbook.Spawn) (bool, error) {
+	if h := r.ports.recorded(sp.Harness); h == nil || h.Kind() != agy.Name {
+		return false, nil
+	}
+	st, err := herdr.Client{Run: r.ports.Run, Session: sp.Herdr.Session}.AgentStatus(r.ctx, sp.Herdr.Pane)
+	return st == herdr.Idle || st == herdr.Done, err
+}
+
 func (r *run) running(sp logbook.Spawn) string {
 	st, ok, err := r.c.StartOf(r.ctx, sp)
 	switch {

@@ -426,7 +426,7 @@ func TestDoctorAgyVersion(t *testing.T) {
 	if code != 0 {
 		t.Errorf("a newer agy failed doctor: exit %d\n%s", code, out)
 	}
-	wantIn(t, out, "WARN agy version: "+agyAt+" is 1.4.7, not "+agy.Probed+" (the version bs's agy contracts were probed on): re-probe the hook payloads (PreToolUse, PreInvocation, Stop), hook answers and non-zero exit, the --mode log line, Tools, Remote SSH_*, ANTIGRAVITY_CONVERSATION_ID, trustedWorkspaces, the launch flags and .agents/ files (.claude/skills/live-test/agy-probe.sh), and the watch list in docs/adr/0011-ring-by-push-where-the-harness-allows.md")
+	wantIn(t, out, "WARN agy version: "+agyAt+" is 1.4.7, not "+agy.Probed+" (the version bs's agy contracts were probed on): re-probe agy's prompt as drawn (the > box between the last two rules, the '? for shortcuts' idle footer, the grey placeholder, the 'Requesting permission for:' menu), the hook payloads (PreToolUse, Stop), hook answers and non-zero exit, the --mode log line, Tools, Remote SSH_*, ANTIGRAVITY_CONVERSATION_ID, trustedWorkspaces, the launch flags and .agents/ files (.claude/skills/live-test/agy-probe.sh), and the watch list in docs/adr/0011-ring-by-push-where-the-harness-allows.md")
 
 	// A pre-release or multi-line --version whose first x.y.z is Probed is still a mismatch.
 	for cmd, want := range map[string]string{

@@ -587,7 +587,7 @@ func TestSendWithNoHarnessStoresAndSaysNotRung(t *testing.T) {
 	x := newToy(t)
 	x.spawn("toy-1", "verdict")
 	x.ports.Harness = nil
-	must(t, x.queen("send", "toy-1", "hi"), 0, "not rung", "has no ring")
+	must(t, x.queen("send", "toy-1", "hi"), 0, "not rung", "no adapter")
 }
 
 // A bad flag is a usage refusal (exit 2), never a failure.

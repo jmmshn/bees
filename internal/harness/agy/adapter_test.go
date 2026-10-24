@@ -1,18 +1,21 @@
 package agy_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/jmmshn/bees/internal/fake"
 	"github.com/jmmshn/bees/internal/harness/agy"
+	"github.com/jmmshn/bees/internal/herdr"
 	"github.com/jmmshn/bees/internal/port"
-	"github.com/jmmshn/bees/internal/watch"
 )
 
 func worker() port.Start {
@@ -174,30 +177,105 @@ func TestObserveRecordsOnlyTheConversation(t *testing.T) {
 	}
 }
 
-// agy's ring is the session's mail watcher (bees-13.13.10): with one armed, Ring says it
-// wakes the session and types nothing; with none, the message is held until its next turn.
-func TestRingIsTheArmedWatcher(t *testing.T) {
-	a := agy.Adapter{Cache: t.TempDir()}
-	tg := port.Target{Name: "bees-8", PID: 1}
-	if err := a.Ring(tg, "hi", port.Now); !errors.Is(err, port.ErrNoRing) || !strings.Contains(err.Error(), "next turn") {
-		t.Errorf("no watcher: %v", err)
-	}
-	release, _, err := watch.Arm(watch.Path(a.Cache, "bees-8"), 4242)
+// agy's ring types the doorbell only into an idle or done session with an empty input
+// box and no menu on screen (bees-13.97). A working or blocked one, one whose box holds
+// someone's text, and one showing a permission menu herdr doesn't report yet (the 0.1-0.2 s
+// lag that let a ring answer Yes in bees-13.95) get nothing typed: *port.Held, saying why.
+func TestRingTypesOnlyIntoAnIdleEmptyBox(t *testing.T) {
+	h := &fake.Herdr{Home: t.TempDir()}
+	ws, err := herdr.Client{Run: h, Session: "toy"}.CreateWorkspace(context.Background(), t.TempDir(), "bees-8")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer release()
-	if err := a.Ring(tg, "hi", port.Now); !errors.Is(err, port.ErrArmed) || !strings.Contains(err.Error(), "pid 4242") {
-		t.Errorf("an armed watcher: %v", err)
+	a := agy.Adapter{Run: h}
+	tg := port.Target{Name: "bees-8", Session: "toy", Pane: ws.Pane, PID: 1}
+	held := func(sc fake.Screen, why string) {
+		t.Helper()
+		h.SetScreen("toy", ws.Pane, sc)
+		var hd *port.Held
+		if err := a.Ring(tg, "[bs] 1 unread", port.Now); !errors.As(err, &hd) || !strings.Contains(hd.Why, why) {
+			t.Errorf("%+v: Ring = %v, want held: %q", sc, err, why)
+		}
+		if p := h.Prompts("toy", ws.Pane); len(p) != 0 {
+			t.Fatalf("%+v: typed %q", sc, p)
+		}
 	}
-	if err := a.Ring(port.Target{Name: "bees-9", PID: 1}, "hi", port.Now); !errors.Is(err, port.ErrNoRing) {
-		t.Errorf("another session's watcher rang bees-9: %v", err)
+	held(fake.Screen{Status: herdr.Working}, "bees-8 is working")
+	held(fake.Screen{Status: herdr.Blocked, Menu: true}, "bees-8 is blocked")
+	held(fake.Screen{Status: herdr.Idle, Menu: true}, "bees-8 is at a permission menu")
+	held(fake.Screen{Status: herdr.Working, Menu: true}, "bees-8 is working")
+	held(fake.Screen{Status: herdr.Idle, Box: "keeper half typed"}, "bees-8's input box has text (someone is typing)")
+	held(fake.Screen{Status: herdr.Idle, Box: "keeper half typed", Hint: "Accept-edits mode"}, "bees-8's input box has text")
+	held(fake.Screen{Status: "unknown"}, "bees-8 is unknown")
+	for i, st := range []string{herdr.Idle, herdr.Done} {
+		h.SetScreen("toy", ws.Pane, fake.Screen{Status: st, Hint: "Accept-edits mode: file edits auto-approved", Grey: []string{"", "38;2;128;128;128"}[i]})
+		if err := a.Ring(tg, "[bs] 1 unread", port.Now); err != nil {
+			t.Fatalf("%s: Ring = %v", st, err)
+		}
+		if p := h.Prompts("toy", ws.Pane); len(p) != i+1 || p[i] != "[bs] 1 unread" {
+			t.Fatalf("%s: typed %q", st, p)
+		}
+	}
+	if err := (agy.Adapter{}).Ring(tg, "hi", port.Now); !errors.Is(err, port.ErrNoRing) {
+		t.Errorf("no runner: %v", err)
+	}
+	if err := a.Ring(port.Target{Name: "bees-9", Session: "toy", Pane: "w9:p9"}, "hi", port.Now); !errors.Is(err, herdr.ErrPaneGone) {
+		t.Errorf("a pane herdr doesn't know: %v", err)
 	}
 }
 
-// hooks.json runs bs hook --harness agy before each model call and when a turn stops,
-// from the worker's workspace (agy runs it in the hooks.json dir, where bs would find no
-// project): flat handler lists, as PreInvocation and Stop take (probed on agy.Probed).
+// Box reads agy's input box off screens bees-13.95 recorded (probed on agy.Probed): empty,
+// holding text (on two lines), and none at all under a permission menu, whose answers sit
+// between the same rules. Menu tells the menu apart.
+func TestBoxAndMenuReadAgysScreen(t *testing.T) {
+	short, full := strings.Repeat("─", 60), strings.Repeat("─", 119)
+	footer := "? for shortcuts                                              accept-edits · bs-worker (Gemini 3.8 Flash · low)  /agents"
+	idle := []string{short, "> Run bs inbox once, then end your turn.", "", "● Ran (bs inbox) (ctrl+o to expand)", "", "  Inbox checked.", "", full, ">", full, footer}
+	typed := []string{short, "> hi", "", full, `> keeper half typed c6-01[bs] 1 unread (queen-lt) — run: bs inbox   (reply with: bs send`, `  queen-lt "...") #c6-01`, full, footer}
+	g, b, r := "\x1b[0m\x1b[38;5;8m", "\x1b[0m\x1b[38;5;12m", "\x1b[0m"
+	menu := []string{short, "> Run the shell command: sleep 1", "", "● Ran (sleep 1) (ctrl+o to expand)", "", "Command", full, "", "Requesting permission for:", "   sleep 1", "",
+		"Run this command?", "> 1. Yes, run command", "  4. No, cancel", "", "  ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command",
+		"esc to cancel                                                accept-edits · bs-worker (Gemini 3.8 Flash · low)  /agents"}
+	for _, c := range []struct {
+		name   string
+		screen []string
+		box    string
+		ok     bool
+		menu   bool
+	}{
+		{"idle", idle, "", true, false},
+		{"typed", typed, "keeper half typed c6-01[bs] 1 unread (queen-lt) — run: bs inbox   (reply with: bs send\n  queen-lt \"...\") #c6-01", true, false},
+		{"menu", menu, "", false, true},
+		{"a shell", []string{"$ ls", "$"}, "", false, false},
+		{"/tasks under the box", []string{short, full, ">", full, "Tasks", "  No background tasks.", "", "Keyboard: ↑/↓ Navigate  enter View output", "", "   accept-edits · bs-worker"}, "", false, false},
+		// agy 1.4.7 in herdr's ansi format (bees-13.97): its grey placeholder in an empty box, and typed text
+		{"hint", []string{short, g + full + r, b + ">" + r + " " + g + "Accept-edits mode: file edits auto-approved (shift+tab to cycle)" + r + "\r", g + full + r, g + footer + r}, "", true, false},
+		{"truecolor hint", []string{short, g + full + r, b + ">" + r + " \x1b[38;2;128;128;128mAccept-edits mode" + r, g + full + r, g + footer + r}, "", true, false},
+		{"blank rows under it", append(slices.Clone(idle), "", "\x1b[0m", "   "), "", true, false},
+		{"the agent's own 1. Yes", append([]string{short, "  Which way?", "  1. Yes, once CI passes", "  2. No"}, idle...), "", true, false},
+		{"typed ansi", []string{short, g + full + r, b + ">" + r + " half typed\r", g + full + r, g + footer + r}, "half typed", true, false},
+	} {
+		if box, ok := agy.Box(c.screen); box != c.box || ok != c.ok {
+			t.Errorf("%s: Box = %q, %v; want %q, %v", c.name, box, ok, c.box, c.ok)
+		}
+		if got := agy.Menu(c.screen); got != c.menu {
+			t.Errorf("%s: Menu = %v", c.name, got)
+		}
+	}
+	for _, c := range []struct {
+		footer string
+		want   bool
+	}{{footer, true}, {"\x1b[0m\x1b[38;5;8m" + footer, true}, {"      accept-edits · bs-worker", false}, {"esc to cancel      accept-edits · bs-worker", false}} {
+		if got := agy.Ready([]string{full, ">", full, c.footer, ""}); got != c.want {
+			t.Errorf("Ready with footer %q = %v", c.footer, got)
+		}
+	}
+}
+
+// hooks.json runs bs hook --harness agy when a turn stops, from the worker's workspace
+// (agy runs it in the hooks.json dir, where bs would find no project): a flat handler
+// list, as Stop takes (probed on agy.Probed). Nothing runs before a model call: the ring
+// no longer asks the model to arm a watcher (bees-13.97).
 func TestHooksRunBsHookForMail(t *testing.T) {
 	bin := t.TempDir()
 	bs := filepath.Join(bin, "my bs")
@@ -214,37 +292,18 @@ func TestHooksRunBsHookForMail(t *testing.T) {
 	if err := json.Unmarshal([]byte(l.Dir[".agents/hooks.json"]), &h); err != nil {
 		t.Fatal(err)
 	}
-	for _, ev := range []string{"PreInvocation", "Stop"} {
-		hs := h["bs-mail"][ev]
-		if len(hs) != 1 || hs[0].Type != "command" {
-			t.Fatalf("%s: hooks.json = %s", ev, l.Dir[".agents/hooks.json"])
-		}
-		c := exec.Command("sh", "-c", hs[0].Command)
-		c.Dir = bin
-		out, err := c.Output()
-		if want := st.Dir + "\nhook\n--harness\nagy\n" + ev + "\n"; err != nil || string(out) != want {
-			t.Errorf("%s: the hook ran with %q (%v), want %q", ev, out, err, want)
-		}
+	if len(h["bs-mail"]) != 1 {
+		t.Fatalf("bs-mail hooks: %s", l.Dir[".agents/hooks.json"])
 	}
-}
-
-// PreInvocation's payload as agy sends it (probed on agy.Probed): invocationNum 0 is a
-// turn's first model call, sent even though protojson may drop a zero.
-func TestFirstCall(t *testing.T) {
-	for _, c := range []struct {
-		in   string
-		want bool
-	}{
-		{`{"conversationId":"bc84","initialNumSteps":1,"invocationNum":0,"modelName":"gemini-3.8-flash-low","workspacePaths":["/k","/r"]}`, true},
-		{`{"conversationId":"bc84","initialNumSteps":3,"invocationNum":1}`, false},
-		{`{"conversationId":"bc84"}`, true},
-	} {
-		if got, err := agy.FirstCall(strings.NewReader(c.in)); err != nil || got != c.want {
-			t.Errorf("FirstCall(%s) = %v, %v; want %v", c.in, got, err, c.want)
-		}
+	hs := h["bs-mail"]["Stop"]
+	if len(hs) != 1 || hs[0].Type != "command" {
+		t.Fatalf("hooks.json = %s", l.Dir[".agents/hooks.json"])
 	}
-	if _, err := agy.FirstCall(strings.NewReader("nope")); err == nil {
-		t.Error("an unreadable payload read")
+	c := exec.Command("sh", "-c", hs[0].Command)
+	c.Dir = bin
+	out, err := c.Output()
+	if want := st.Dir + "\nhook\n--harness\nagy\nStop\n"; err != nil || string(out) != want {
+		t.Errorf("the hook ran with %q (%v), want %q", out, err, want)
 	}
 }
 
@@ -265,14 +324,9 @@ func TestStopped(t *testing.T) {
 	}
 }
 
-// The answers' shapes are agy's: PreInvocation's injectSteps with a plain-string
-// userMessage, Stop's decision continue with its reason.
+// Stop's answer is agy's shape: decision continue with its reason.
 func TestHookAnswers(t *testing.T) {
 	var b strings.Builder
-	if err := agy.Inject(&b, "arm it"); err != nil || strings.TrimSpace(b.String()) != `{"injectSteps":[{"userMessage":"arm it"}]}` {
-		t.Errorf("Inject = %q, %v", b.String(), err)
-	}
-	b.Reset()
 	if err := agy.Hold(&b, "1 unread"); err != nil || strings.TrimSpace(b.String()) != `{"decision":"continue","reason":"1 unread"}` {
 		t.Errorf("Hold = %q, %v", b.String(), err)
 	}

@@ -1,6 +1,6 @@
 # bees keeps the mechanics; prompts carry the policy
 
-> Amended by [ADR-0011](0011-ring-by-push-where-the-harness-allows.md): omp's ring is its extension running `bs inbox --wait` in-process, not a socket and token; agy's ring is a waiter armed by hooks until agy can push.
+> Amended by [ADR-0011](0011-ring-by-push-where-the-harness-allows.md): omp's ring is its extension running `bs inbox --wait` in-process, not a socket and token; agy's ring types into an idle pane with herdr until agy can push (its Amendment 1).
 >
 > Supersedes S4 (Claude Code only, behind `{Launch, Ring, Alive}`). Amends [ADR-0004](0004-liveness-is-derived-not-stored.md), [ADR-0006](0006-spawn-and-naming.md), [ADR-0007](0007-claudes-registry-confirms-a-launch.md) and [ADR-0008](0008-config-files-one-tagged-struct.md). Epic bees-12; security criteria from bees-12.2. Settled with the keeper over three plannotator rounds and chat, 2026-10-21.
 

@@ -209,7 +209,7 @@ func (d *doctor) project() {
 
 // harness checks the configured harness's program and version, and the modes of its ring
 // sockets (ADR-0009 T3) when it can tell them. A found agy points at ADR-0011's watch list:
-// its ring is a waiter until agy can be pushed one (bees-13.91).
+// its ring types into an idle pane until agy can be pushed one (bees-13.97).
 func (d *doctor) harness() {
 	s := d.r.s
 	name := "harness " + s.Harness
@@ -223,7 +223,7 @@ func (d *doctor) harness() {
 		d.agySignIn(at)
 	}
 	if s.Harness == agy.Name && err == nil {
-		d.line("ok", "agy ring", "agy %s can't be pushed a doorbell, so a waiter (bs inbox --wait) rings it; re-probe a new agy against the watch list in docs/adr/0011-ring-by-push-where-the-harness-allows.md", v)
+		d.line("ok", "agy ring", "agy %s can't be pushed a doorbell, so bs types it into an idle agy's empty input box (herdr agent prompt); re-probe a new agy against the watch list in docs/adr/0011-ring-by-push-where-the-harness-allows.md", v)
 	}
 	d.agyVersion(at, raw, err == nil)
 	d.agyMode(s.Harness != agy.Name)
@@ -245,7 +245,7 @@ func (d *doctor) harness() {
 }
 
 // agyReprobe names what to re-probe when agy's version drifts from agy.Probed.
-const agyReprobe = "re-probe the hook payloads (PreToolUse, PreInvocation, Stop), hook answers and non-zero exit, the --mode log line, Tools, Remote SSH_*, ANTIGRAVITY_CONVERSATION_ID, trustedWorkspaces, the launch flags and .agents/ files (.claude/skills/live-test/agy-probe.sh), and the watch list in docs/adr/0011-ring-by-push-where-the-harness-allows.md"
+const agyReprobe = "re-probe agy's prompt as drawn (the > box between the last two rules, the '? for shortcuts' idle footer, the grey placeholder, the 'Requesting permission for:' menu), the hook payloads (PreToolUse, Stop), hook answers and non-zero exit, the --mode log line, Tools, Remote SSH_*, ANTIGRAVITY_CONVERSATION_ID, trustedWorkspaces, the launch flags and .agents/ files (.claude/skills/live-test/agy-probe.sh), and the watch list in docs/adr/0011-ring-by-push-where-the-harness-allows.md"
 
 // agyVersion checks the installed agy's --version output against agy.Probed: agy
 // auto-updates, and a release can silently change the contracts bs depends on

@@ -146,8 +146,8 @@ func (c *Core) background(ctx context.Context, sp logbook.Spawn, self int) ([]pr
 }
 
 // watcher is session name's armed mail watcher, bs inbox --wait, and its ancestors (a
-// shell its harness wrapped it in): waiting for mail is how an agy worker is woken, not
-// background work it left (bees-13.13.10). The watcher is the process holding its lock,
+// shell its harness wrapped it in): waiting for mail is how omp's bs extension wakes its
+// session (ADR-0011), not background work it left (bees-13.13.10). The watcher is the process holding its lock,
 // never one guessed from a command line.
 func (c *Core) watcher(name string) ([]int, error) {
 	pid, armed, err := watch.Armed(watch.Path(c.CacheDir, name))

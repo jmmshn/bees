@@ -76,6 +76,8 @@ type pane struct {
 	id, cwd string
 	agent   *agent
 	shell   []string // the env a pane run line left the pane's shell with; nil: as it started
+	screen  *Screen  // what its agent shows; nil: an idle agent with an empty box
+	prompts []string // what agent prompt submitted, oldest first
 }
 
 // The kinds herdr agent start supports (herdr 0.9.5 --help); any other exits 2.
@@ -136,6 +138,9 @@ func (h *Herdr) Run(ctx context.Context, dir string, argv ...string) ([]byte, er
 		"pane close":                h.paneClose,
 		"pane run":                  h.paneRun,
 		"pane move":                 h.paneMove,
+		"pane read":                 h.paneRead,
+		"agent get":                 h.agentGet,
+		"agent prompt":              h.agentPrompt,
 	}[args[0]+" "+args[1]]
 	if f == nil {
 		return nil, usage("fake herdr: no command %q", args[0]+" "+args[1])

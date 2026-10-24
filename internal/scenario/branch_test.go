@@ -111,16 +111,38 @@ func TestPruneKeepsABranchInUseElsewhere(t *testing.T) {
 // left.
 func TestPruneLeavesTheRemoteBranchAndSaysSo(t *testing.T) {
 	x := newToy(t)
-	x.git(x.repo, "remote", "add", "origin", filepath.Join(filepath.Dir(x.repo), "origin.git"))
+	origin := filepath.Join(filepath.Dir(x.repo), "origin.git")
+	x.git(filepath.Dir(x.repo), "init", "-q", "--bare", origin)
+	x.git(x.repo, "remote", "add", "origin", origin)
 	sp := x.spawn("toy-1", "branch")
 	x.commit(sp.Workspace.Dir, "work.txt")
-	x.git(x.repo, "update-ref", "refs/remotes/origin/toy-1", "toy-1")
+	x.git(x.repo, "push", "-q", "origin", "toy-1")
 	must(t, x.worker("toy-1", 1, "done"), 0)
 	x.git(x.repo, "merge", "-q", "toy-1")
 	must(t, x.queen("end", "toy-1"), 0)
 	must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir+" and branch toy-1", "left origin/toy-1: bs never touches a remote branch")
 	if x.git(x.repo, "rev-parse", "--verify", "refs/remotes/origin/toy-1") == "" {
 		t.Fatal("prune touched origin/toy-1")
+	}
+}
+
+// A remote-tracking ref left stale by a host that deleted the merged branch names no
+// branch left: origin is asked (bees-13.78.11, motif 2).
+func TestPruneAsksOriginBeforeNamingARemoteBranchLeft(t *testing.T) {
+	x := newToy(t)
+	origin := filepath.Join(filepath.Dir(x.repo), "origin.git")
+	x.git(filepath.Dir(x.repo), "init", "-q", "--bare", origin)
+	x.git(x.repo, "remote", "add", "origin", origin)
+	sp := x.spawn("toy-1", "branch")
+	x.commit(sp.Workspace.Dir, "work.txt")
+	x.git(x.repo, "push", "-q", "origin", "toy-1")
+	x.git(origin, "branch", "-D", "toy-1") // the host deleted it on merge
+	must(t, x.worker("toy-1", 1, "done"), 0)
+	x.git(x.repo, "merge", "-q", "toy-1")
+	must(t, x.queen("end", "toy-1"), 0)
+	r := x.queen("prune")
+	if must(t, r, 0, "removed "+sp.Workspace.Dir+" and branch toy-1"); strings.Contains(r.String(), "left origin") {
+		t.Fatalf("named a stale tracking ref as left:\n%s", r)
 	}
 }
 
@@ -253,6 +275,65 @@ func TestPruneDeletesADiscardedBranch(t *testing.T) {
 	}
 	lb.Close()
 	must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir+" and branch toy-1")
+}
+
+// An ended worker's unmerged branch names the keeper's discard as the way out, even once
+// its bead is closed (bees-6.6).
+func TestPruneNamesTheDiscardForAnUnmergedBranch(t *testing.T) {
+	x := newToy(t)
+	sp := x.spawn("toy-1", "verdict")
+	x.commit(sp.Workspace.Dir, "work.txt")
+	must(t, x.worker("toy-1", 1, "done", "--answer", "yes", "--report", "fine"), 0)
+	must(t, x.queen("end", "toy-1"), 0)
+	must(t, x.queen("prune"), 3, "kept branch toy-1 (toy-1): branch toy-1: toy-1 has work not on main; once that work is wanted nowhere, the keeper discards it (bs goal toy-1 discard) and bs prune deletes it")
+	must(t, x.keeper("goal", "toy-1", "discard"), 0)
+	must(t, x.queen("prune"), 0, "removed branch toy-1")
+}
+
+// A discard releases commits on a detached HEAD too: the keeper said the work is wanted
+// nowhere (bees-13.78.5).
+func TestPruneRemovesADiscardedDetachedHead(t *testing.T) {
+	x := newToy(t)
+	sp := x.spawn("toy-1", "verdict")
+	x.git(sp.Workspace.Dir, "checkout", "-q", "--detach")
+	x.commit(sp.Workspace.Dir, "work.txt")
+	must(t, x.worker("toy-1", 1, "done", "--answer", "yes", "--report", "fine"), 0)
+	must(t, x.queen("end", "toy-1"), 0)
+	must(t, x.queen("prune"), 3, "its HEAD has commits on no branch", "or the keeper discards them (bs goal toy-1 discard)")
+	must(t, x.keeper("goal", "toy-1", "discard"), 0)
+	must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir+" and branch toy-1")
+}
+
+// A branch renamed inside its worktree is measured by the worktree's HEAD, never kept
+// forever as "no longer exists" (bees-13.18): unmerged it is kept, saying so; merged it
+// is removed, and the renamed branch, which bs never recorded, stays.
+func TestPruneMeasuresARenamedBranchByItsWorktreeHead(t *testing.T) {
+	x := newToy(t)
+	sp := x.spawn("toy-1", "branch")
+	x.commit(sp.Workspace.Dir, "work.txt")
+	must(t, x.worker("toy-1", 1, "done"), 0)
+	x.git(sp.Workspace.Dir, "branch", "-m", "renamed")
+	must(t, x.queen("end", "--incomplete", "toy-1"), 0)
+	must(t, x.queen("prune"), 3, "kept "+sp.Workspace.Dir+" (toy-1): the HEAD of "+sp.Workspace.Dir+" has work not on main")
+	x.git(x.repo, "merge", "-q", "renamed")
+	must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir+" (toy-1)")
+	if x.git(x.repo, "branch", "--list", "renamed") == "" {
+		t.Fatal("prune deleted a branch it never recorded")
+	}
+}
+
+// A branch deleted after its worktree checked out the base is no proof: the work lives
+// only in that worktree's HEAD reflog, so prune keeps it and end doesn't complete it.
+func TestADeletedBranchWithHeadOnTheBaseIsNotMerged(t *testing.T) {
+	x := newToy(t)
+	sp := x.spawn("toy-1", "branch")
+	x.commit(sp.Workspace.Dir, "work.txt")
+	must(t, x.worker("toy-1", 1, "done"), 0)
+	x.git(sp.Workspace.Dir, "checkout", "-q", "--detach", "main")
+	x.git(x.repo, "branch", "-D", "toy-1")
+	must(t, x.queen("end", "toy-1"), 9, "its worktree's HEAD held commits on no branch")
+	must(t, x.queen("end", "--incomplete", "toy-1"), 0)
+	must(t, x.queen("prune"), 3, "kept "+sp.Workspace.Dir+" (toy-1): branch toy-1 no longer exists", "held commits on no branch", "bs goal toy-1 discard")
 }
 
 // A spawn from before goals recorded the repo's path as its base (the pilot's v1): its

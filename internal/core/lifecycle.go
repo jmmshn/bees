@@ -574,8 +574,8 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 			return keep(true, "%s couldn't run: %s", cant.Name, cant.Err)
 		}
 		for _, r := range rs {
-			if !r.Pass {
-				return keep(false, "%s", r.Detail)
+			if !r.Pass { // it may never pass (a change closed unmerged): the discard is the way out (motif 5)
+				return keep(false, "%s; if it never will, the keeper discards it (%s goal %s discard) and %s prune removes it", r.Detail, bsname.Cmd, sp.Name, bsname.Cmd)
 			}
 		}
 	}
@@ -594,17 +594,7 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 	if err := c.removeFiles(sp.Name); err != nil {
 		c.warn("couldn't remove %s's start files: %v", sp.Name, err)
 	}
-	// The remote branch is named whatever happens to the local one (bees-1.34); a command
-	// workspace's branch is no git one.
-	if ws.Branch != "" && ws.Kind != config.CommandKind {
-		switch _, err := c.git(ctx, ws.Repo, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+ws.Branch); {
-		case err == nil:
-			p.Remote = "origin/" + ws.Branch
-		case !isExit(err, 1):
-			c.warn("can't tell whether origin/%s exists: %v", ws.Branch, err)
-		}
-	}
-	free := c.freeDir
+	free := func(ctx context.Context, sp logbook.Spawn) (string, bool) { return c.freeDir(ctx, sp, e.Discarded) }
 	if ws.Kind == config.CommandKind {
 		free = c.freeCommandDir
 	}
@@ -620,8 +610,16 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 	} else if err := untrust(h, ws.Dir); err != nil {
 		c.warn("%s couldn't untrust %s: %v", sp.Harness, ws.Dir, err)
 	}
-	if !branch {
+	// The remote branch is named once prune has done something there (bees-1.34): asking
+	// origin costs a round trip, and a kept workspace's line says why it was kept.
+	left := func(p Pruned) Pruned {
+		if ws.Branch != "" && ws.Kind != config.CommandKind {
+			p.Remote = c.remoteBranch(ctx, ws)
+		}
 		return p
+	}
+	if !branch {
+		return left(p)
 	}
 	// The prune rule's branch_merged, when it ran and passed, is the proof: one gh call,
 	// not two. A merged (or closed draft) handed-off change holding the tip is another.
@@ -640,14 +638,42 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 		}
 		release = p.Held != ""
 	}
-	if why, err := c.pruneBranch(ctx, ws, release); err != nil {
+	if why, err := c.pruneBranch(ctx, sp.Name, ws, release); err != nil {
 		return keep(true, "%v", err)
 	} else if why != "" {
 		return keep(false, "%s", why)
 	}
 	p.Deleted = true
-	return p
+	return left(p)
 }
+
+// remoteBranch is origin's branch named like ws's, as origin itself says (ls-remote), or "".
+// A remote-tracking ref alone is no proof: a host that deletes a merged branch leaves it
+// stale until a fetch --prune (bees-13.78.11, motif 2). Only a tracking ref is asked
+// about, and when origin can't be asked the branch is said to be maybe left.
+func (c *Core) remoteBranch(ctx context.Context, ws logbook.Workspace) string {
+	switch _, err := c.git(ctx, ws.Repo, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/"+ws.Branch); {
+	case isExit(err, 1):
+		return ""
+	case err != nil:
+		c.warn("can't tell whether origin/%s exists: %v", ws.Branch, err)
+		return ""
+	}
+	// Bounded and never prompting: a credential or passphrase prompt would hang prune.
+	ctx, cancel := context.WithTimeout(ctx, remoteWait)
+	defer cancel()
+	switch out, err := c.git(ctx, ws.Repo, "-c", "core.askPass=false", "-c", "core.sshCommand=ssh -o BatchMode=yes", "ls-remote", "--heads", "origin", "refs/heads/"+ws.Branch); {
+	case err != nil:
+		c.warn("can't ask origin whether it has branch %s: %v", ws.Branch, err)
+		return "origin/" + ws.Branch + " (maybe: origin couldn't be asked)"
+	case out == "":
+		return ""
+	}
+	return "origin/" + ws.Branch
+}
+
+// remoteWait bounds remoteBranch's ask of origin.
+const remoteWait = 20 * time.Second
 
 // ignored names the ignored files in dir that none of let (the spawn's prune.ignore)
 // covers, or "". -uall lists each file, never a wholly ignored directory, and -z leaves
@@ -781,8 +807,9 @@ func (c *Core) heldByChange(ctx context.Context, sp logbook.Spawn, prs []string,
 // freeDir removes ended spawn sp's worktree, or says why it kept it (unknown: it couldn't
 // check): it is no longer a worktree of its repo, herdr has a workspace open on it or a
 // pane working in it, it has uncommitted or untracked files, its HEAD has commits on no
-// branch, or git refused the removal. Never --force (the pilot's freeWorktree).
-func (c *Core) freeDir(ctx context.Context, sp logbook.Spawn) (why string, unknown bool) {
+// branch (unless discarded: the keeper's word that the work is wanted nowhere), or git
+// refused the removal. Never --force (the pilot's freeWorktree).
+func (c *Core) freeDir(ctx context.Context, sp logbook.Spawn, discarded bool) (why string, unknown bool) {
 	ws := sp.Workspace
 	// Only a directory that is still a worktree of its repo: one taken over or remade by
 	// hand is not this spawn's to remove (the pilot's samePath guard, bees-8.4).
@@ -805,10 +832,11 @@ func (c *Core) freeDir(ctx context.Context, sp logbook.Spawn) (why string, unkno
 	}
 	// Commits made on a detached HEAD are on no branch: removing the worktree loses them.
 	switch out, err := c.git(ctx, ws.Dir, "rev-list", "-n1", "HEAD", "--not", "--branches", "--tags", "--remotes"); {
+	case discarded:
 	case err != nil:
 		return "can't tell whether its HEAD is on a branch: " + err.Error(), true
 	case out != "":
-		return fmt.Sprintf("its HEAD has commits on no branch (%s): git -C %s switch -c <branch> keeps them", out, ws.Dir), false
+		return fmt.Sprintf("its HEAD has commits on no branch (%s): git -C %s switch -c <branch> keeps them, or the keeper discards them (%s goal %s discard)", out, ws.Dir, bsname.Cmd, sp.Name), false
 	}
 	// git status hides ignored files, and a report in an ignored scratch/ is how five
 	// pilot reports were lost (bees-13.7): never remove what nobody has looked at.
@@ -870,13 +898,13 @@ func under(path, dir string) bool {
 // or released: discarded (the keeper's recorded word that the work is wanted nowhere),
 // proven by the prune rule's branch_merged, or held by a merged (or closed draft) change.
 // It returns why it kept the branch, or err when it couldn't check.
-func (c *Core) pruneBranch(ctx context.Context, ws logbook.Workspace, released bool) (string, error) {
+func (c *Core) pruneBranch(ctx context.Context, name string, ws logbook.Workspace, released bool) (string, error) {
 	if !released {
 		switch ok, why, err := c.merged(ctx, ws); {
 		case err != nil:
 			return "", fmt.Errorf("can't tell whether branch %s is merged: %w", ws.Branch, err)
-		case !ok:
-			return fmt.Sprintf("branch %s: %s; delete it by hand once that work is wanted nowhere", ws.Branch, why), nil
+		case !ok: // a bs path out, once its bead is closed too (bees-6.6)
+			return fmt.Sprintf("branch %s: %s; once that work is wanted nowhere, the keeper discards it (%s goal %s discard) and %s prune deletes it", ws.Branch, why, bsname.Cmd, name, bsname.Cmd), nil
 		}
 	}
 	switch at, prunable, err := c.checkedOut(ctx, ws.Repo, ws.Branch); {

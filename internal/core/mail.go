@@ -20,12 +20,16 @@ func Queen(project string) string { return "queen-" + project }
 // ErrEnded is a ring for a worker whose spawn has ended: nobody reads its inbox.
 var ErrEnded = errors.New("has ended")
 
+// ErrAlreadyRead is a ring when the recipient has no unread mail (it read the message
+// between store and ring): nothing to wake it for (motif 10, 11).
+var ErrAlreadyRead = errors.New("has already read it")
+
 // Ring rings session to of this logbook with its unread count, at the process its entry
 // recorded and through the harness it recorded: the queen's newest queen entry, else an
 // open spawn's start (healed if missed). bs never looks a session up by name in herdr or
 // the harness. A session whose process is gone is port.ErrNotRunning, one whose harness
 // can't ring port.ErrNoRing: either way the message waits for its next bs inbox (motif
-// 10). An ended worker is ErrEnded.
+// 10). An ended worker is ErrEnded; a recipient with nothing unread is ErrAlreadyRead.
 func (c *Core) Ring(ctx context.Context, from, to string, p port.Priority) error {
 	t := port.Target{Name: to}
 	var harness string
@@ -65,6 +69,9 @@ func (c *Core) Ring(ctx context.Context, from, to string, p port.Priority) error
 	unread, err := c.Logbook.Unread(ctx, to)
 	if err != nil {
 		return err
+	}
+	if len(unread) == 0 {
+		return fmt.Errorf("%s %w", to, ErrAlreadyRead)
 	}
 	return h.Ring(t, Doorbell(unread, from, c.Project), p)
 }

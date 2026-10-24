@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -135,6 +136,41 @@ func TestSendReadsAMessageFromStdin(t *testing.T) {
 	}
 	must(t, x.shellRun(x.repo, x.env, "line one\nline two\n", "send", "--as", "queen-toy", "toy-1", "-"), 0, "rung toy-1")
 	must(t, x.worker("toy-1", 2, "inbox"), 0, "line one\nline two\n")
+}
+
+// bees-13.74: when the recipient reads its inbox between SendFrom and Ring, Unread is
+// empty by the time Ring counts it: Ring skips the harness rather than ringing
+// "[bs] 0 unread ()", and send says the recipient already read it (motif 10, 11).
+func TestSendDoesNotRingWhenTheRecipientAlreadyReadIt(t *testing.T) {
+	x := newToy(t)
+	sp := x.spawn("toy-1", "verdict")
+	must(t, x.worker("toy-1", 1, "inbox"), 0, "You own toy-1")
+	st, _, _ := x.open().LatestStart(context.Background(), sp.ID)
+	x.ports.Proc = &onAlive{Proc: x.herdr, pid: st.PID, fn: func() {
+		must(t, x.worker("toy-1", 2, "inbox"), 0, "from queen-toy", "already read")
+	}}
+	r := x.queen("send", "toy-1", "already read")
+	must(t, r, 0, "to toy-1\nstored; toy-1 has already read it\n")
+	if strings.Contains(r.String(), "rung toy-1") {
+		t.Fatalf("send said rung after the recipient read it:\n%s", r)
+	}
+	if rings := x.harness.Rings("toy-1"); len(rings) != 0 {
+		t.Fatalf("toy-1 was rung after reading its inbox: %q", rings)
+	}
+}
+
+type onAlive struct {
+	port.Proc
+	done atomic.Bool
+	pid  int
+	fn   func()
+}
+
+func (p *onAlive) Alive(pr proc.Process) (bool, error) {
+	if pr.PID == p.pid && p.done.CompareAndSwap(false, true) {
+		p.fn()
+	}
+	return p.Proc.Alive(pr)
 }
 
 // bees-13.14, bees-13.49: a keeper's herdr shell is a pane no entry recorded, in no

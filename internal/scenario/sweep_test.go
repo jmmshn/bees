@@ -636,5 +636,6 @@ func TestStatusKeepsAnEarlierSpawnsCompletion(t *testing.T) {
 	must(t, x.worker("toy-1", 1, "done", "--answer", "yes", "--report", "r"), 0)
 	must(t, x.queen("end", "toy-1"), 0)
 	must(t, x.queen("spawn", "--goal", "verdict", "toy-1"), 0)
+	time.Sleep(40 * time.Millisecond) // past beesfake's 20ms script poll (bees-13.85)
 	must(t, x.keeper("status"), 0, "earlier: toy-1: its spawn of ", "(--goal verdict) is complete; this row is a later spawn's")
 }

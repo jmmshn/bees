@@ -145,9 +145,11 @@ func harness(state string) error {
 	go rings(ln, filepath.Join(state, "rings.log"))
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGHUP, syscall.SIGTERM, syscall.SIGINT)
-	fmt.Println("ready") // the fake herdr's "agent at its prompt"
 	script := filepath.Join(state, "script")
 	results := filepath.Join(state, "results.log")
+	os.Remove(script) // each start begins with an empty script (bees-13.85, motif 13)
+	os.Remove(results)
+	fmt.Println("ready") // the fake herdr's "agent at its prompt"
 	kids := map[string]int{}
 	done := 0
 	for {

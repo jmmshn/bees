@@ -637,7 +637,11 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 	if q, ok, err := r.c.Logbook.LatestQueen(r.ctx, queen); err != nil {
 		errs = append(errs, err)
 	} else if ok {
-		fmt.Fprintf(tw, "%s\t-\t-\tqueen\t-\t-\t%s\t%s\tpane %s on herdr session %s\n", queen, alive(r.c.Proc.Alive(q.Process)), unread(queen), q.Pane, q.Session)
+		running := alive(r.c.Proc.Alive(q.Process))
+		fmt.Fprintf(tw, "%s\t-\t-\tqueen\t-\t-\t%s\t%s\tpane %s on herdr session %s\n", queen, running, unread(queen), q.Pane, q.Session)
+		if running == "yes" && counts[queen] > 0 { // her held ring, left by a cut turn (bees-13.99)
+			r.stuckIdle(note, &errs, queen, q.Harness, logbook.Pane{Session: q.Session, Pane: q.Pane}, counts[queen])
+		}
 	}
 	for _, sp := range sps {
 		before, errsBefore, under := len(notes), len(errs), false
@@ -729,11 +733,7 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 			}
 		}
 		if !sp.Ended && running == "yes" && counts[sp.Name] > 0 {
-			if idle, err := r.idleAgy(sp); err != nil {
-				errs = append(errs, fmt.Errorf("%s: can't tell whether its agy is idle: %w", sp.Name, err))
-			} else if idle {
-				note("stuck", sp.Name, "idle with %d unread, not rung → %s ring %s", counts[sp.Name], bsname.Cmd, sp.Name)
-			}
+			r.stuckIdle(note, &errs, sp.Name, sp.Harness, sp.Herdr, counts[sp.Name])
 		}
 		if gerr == nil && !landed {
 			if len(e.Waived) > 0 {
@@ -840,20 +840,25 @@ func (r *run) as() string {
 	return fmt.Sprintf("as %s (%s) · logbook %s", w.Name, what, r.s.Logbook)
 }
 
+// stuckIdle notes name stuck when it runs on agy and herdr says its pane sits idle (or
+// done) with n unread: a ring was held and nothing caught it (a cancelled or limit-cut
+// turn, bees-13.97, bees-13.99). Another harness pushes its ring, so it is never stuck
+// this way. Couldn't look is an error, never "not stuck" (Rule G).
+func (r *run) stuckIdle(note func(kind, name, format string, a ...any), errs *[]error, name, harness string, at logbook.Pane, n int) {
+	if h := r.ports.recorded(harness); h == nil || h.Kind() != agy.Name {
+		return
+	}
+	switch st, err := (herdr.Client{Run: r.ports.Run, Session: at.Session}).AgentStatus(r.ctx, at.Pane); {
+	case err != nil:
+		*errs = append(*errs, fmt.Errorf("%s: can't tell whether its agy is idle: %w", name, err))
+	case st == herdr.Idle || st == herdr.Done:
+		note("stuck", name, "idle with %d unread, not rung → %s ring %s", n, bsname.Cmd, name)
+	}
+}
+
 // running is whether sp's recorded process runs: yes, no, unconfirmed, or why bs
 // couldn't look ("couldn't look" is never "no"). A start healed after confirmation
 // missed it reads "(late)". A failed heal probe is printed and writes nothing.
-// idleAgy reports whether sp runs on agy and herdr says it sits idle (or done): with mail
-// unread, a ring was held and nothing caught it (a cancelled turn, bees-13.97). Another
-// harness pushes its ring, so it is never stuck this way.
-func (r *run) idleAgy(sp logbook.Spawn) (bool, error) {
-	if h := r.ports.recorded(sp.Harness); h == nil || h.Kind() != agy.Name {
-		return false, nil
-	}
-	st, err := herdr.Client{Run: r.ports.Run, Session: sp.Herdr.Session}.AgentStatus(r.ctx, sp.Herdr.Pane)
-	return st == herdr.Idle || st == herdr.Done, err
-}
-
 func (r *run) running(sp logbook.Spawn) string {
 	st, ok, err := r.c.StartOf(r.ctx, sp)
 	switch {

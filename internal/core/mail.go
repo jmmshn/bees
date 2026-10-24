@@ -66,7 +66,7 @@ func (c *Core) Ring(ctx context.Context, from, to string, p port.Priority) error
 	if err != nil {
 		return err
 	}
-	return h.Ring(t, Doorbell(unread, from), p)
+	return h.Ring(t, Doorbell(unread, from, c.Project), p)
 }
 
 // running is nil while p runs, else port.ErrNotRunning; a failed lookup is an error.
@@ -85,8 +85,11 @@ func (c *Core) running(p logbook.Process) error {
 // reply to the newest from `from`:
 //
 //	[bs] 3 unread (queen-bees ×2, bees-1-2) — run: bs inbox   (reply with: bs send queen-bees "...")
-func Doorbell(unread []logbook.Message, from string) string {
+func Doorbell(unread []logbook.Message, from, project string) string {
 	reply := from
+	if from == Keeper { // the keeper reads no inbox: a reply goes to the project's queen (bees-13.78.7)
+		reply = Queen(project)
+	}
 	projects := map[string]bool{}
 	for _, m := range unread {
 		projects[m.FromProject] = true
@@ -145,12 +148,16 @@ func BeadOwner(bead string) string {
 }
 
 // Addressed checks that to may be written into this logbook, whose dir holds every
-// project's: a session another project owns, whose logbook is there, would never read it
-// here, so it is refused with nothing stored (bees-12.38, motifs 4 and 11), as is a
-// worker whose spawn has ended (motif 11: "stored" would promise a reader). stranger
-// reports a name that is neither this project's queen nor one of its spawns: stored, but
-// never rung (a ring is a user turn, bs rings only sessions it recorded).
+// project's: the keeper reads no inbox (bees-13.78.7), a session another project owns,
+// whose logbook is there, would never read it here, so it is refused with nothing stored
+// (bees-12.38, motifs 4 and 11), as is a worker whose spawn has ended (motif 11: "stored"
+// would promise a reader). stranger reports a name that is neither this project's queen
+// nor one of its spawns: stored, but never rung (a ring is a user turn, bs rings only
+// sessions it recorded).
 func (c *Core) Addressed(ctx context.Context, to, logbookDir string) (stranger bool, err error) {
+	if to == Keeper {
+		return false, exit(ExitRefused, bsname.Cmd+" send "+Queen(c.Project)+" \"...\"", nil, "the keeper reads no inbox; message %s; nothing stored", Queen(c.Project))
+	}
 	if owner := Owner(to); owner != "" && owner != c.Project {
 		if _, err := os.Stat(filepath.Join(logbookDir, owner+".db")); err == nil {
 			return false, exit(ExitRefused, bsname.Cmd+" send --project "+owner+" "+to+" \"...\"", nil, "%s is a session of project %s, not %s; nothing stored", to, owner, c.Project)

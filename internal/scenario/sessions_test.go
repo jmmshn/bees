@@ -311,6 +311,18 @@ func TestAMisaddressedSendIsRefused(t *testing.T) {
 		t.Fatalf("other's inbox: %+v %v", ms, err)
 	}
 	must(t, x.worker("toy-1", 3, "send", "stranger", "hi"), 0, "stored, not rung")
+	// bees-13.78.7 (motif 11): keeper mail rings with reply queen-<project>, and bs send
+	// keeper is refused with that next:.
+	must(t, x.worker("toy-1", 4, "inbox"), 0, "You own toy-1")
+	must(t, x.keeper("send", "toy-1", "from the keeper"), 0, "rung toy-1")
+	must(t, x.worker("toy-1", 5, "inbox"), 0, "from keeper", "from the keeper")
+	if rings := x.harness.Rings("toy-1"); len(rings) == 0 || !strings.Contains(rings[len(rings)-1], `1 unread (keeper) — run: bs inbox   (reply with: bs send queen-toy "...")`) {
+		t.Fatalf("toy-1's rings: %q", rings)
+	}
+	must(t, x.worker("toy-1", 6, "send", "keeper", "reply test"), 2, "the keeper reads no inbox; message queen-toy; nothing stored", `next: bs send queen-toy "..."`)
+	if ms, _ := x.open().Unread(context.Background(), "keeper"); len(ms) != 0 {
+		t.Fatalf("stored for keeper: %+v", ms)
+	}
 }
 
 // T11 (round 11's cross-project send and reply): a worker's send --project lands in the

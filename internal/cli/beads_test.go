@@ -189,3 +189,15 @@ func TestAStaleBsTellsAWorkerToAskTheQueen(t *testing.T) {
 		}
 	}
 }
+
+func TestUsageMatchesDoneFlags(t *testing.T) {
+	r := newRig(t)
+	code, out, stderr := r.runWith(Ports{}, nil, "--help")
+	if code != 0 || stderr != "" {
+		t.Fatalf("exit %d %q %q", code, out, stderr)
+	}
+	want := "done    [--answer yes|no|approve|changes --report TEXT|-] [--wait [--timeout D]] [--force]   hand off"
+	if !strings.Contains(out, want) {
+		t.Fatalf("usage missing %q:\n%s", want, out)
+	}
+}

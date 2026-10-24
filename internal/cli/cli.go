@@ -78,14 +78,14 @@ var usage = strings.ReplaceAll(`usage: {cmd} <command> [flags] [arguments]   (fl
 commands:
   queen                                                    record this pane's queen, then exec the harness
   spawn   --goal <goal>... [--label L] [--harness H] <bead>  start a worker
-  done    [--pr URL]... [--replaces URL]... [--answer yes|no --report TEXT|-] [--wait [--timeout D]] [--force]   hand off
+  done    [--answer yes|no|approve|changes --report TEXT|-] [--wait [--timeout D]] [--force]   hand off
   handoff                                                  done --wait
   check   <worker>                                         run its handoff checks now; writes nothing
   goal    <worker> <goal>... | discard | --waive <check>   amend, waive or (keeper) discard
   end     [--force] [--incomplete] <worker>               complete and end a worker
   prune                                                    remove completed workspaces
   send    [--project P] [--now] <to> <message|->           store a message, then ring
-  inbox   [--wait [--timeout D]]                           print unread mail; --wait: exit when new mail comes
+  inbox   [--all | --wait [--timeout D]]                   print unread mail (--all: read mail too, marking nothing read; --wait: exit when new mail comes)
   status                                                   list workers and their goals
   config                                                   every setting and where it came from
   config  init [--project] [--harness H] [--logbook-dir D] [--repos D] [--worktrees D] [--workspace K] [--repo D]   write a commented config file

@@ -20,6 +20,7 @@ import (
 	"github.com/jmmshn/bees/internal/config"
 	"github.com/jmmshn/bees/internal/core"
 	"github.com/jmmshn/bees/internal/goal"
+	"github.com/jmmshn/bees/internal/harness/agy"
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/port"
 )
@@ -143,10 +144,22 @@ func (r *run) spawn(_ *flag.FlagSet, _ []string) error {
 	}
 	if resumed {
 		fmt.Fprintf(r.out, "resumed %s in pane %s on herdr session %s, in %s\n", sp.Name, sp.Herdr.Pane, sp.Herdr.Session, sp.Workspace.Dir)
-		return nil
+	} else {
+		fmt.Fprintf(r.out, "spawned %s (--goal %s) in %s, pane %s on herdr session %s\n", sp.Name, sp.Goal, sp.Workspace.Dir, sp.Herdr.Pane, sp.Herdr.Session)
 	}
-	fmt.Fprintf(r.out, "spawned %s (--goal %s) in %s, pane %s on herdr session %s\n", sp.Name, sp.Goal, sp.Workspace.Dir, sp.Herdr.Pane, sp.Herdr.Session)
+	if sp.Harness == agy.Name {
+		r.agyTook(sp.Name)
+	}
 	return nil
+}
+
+// agyTook warns when the agy just started for session name says in its log it didn't
+// take the mode bs asked for (bees-13.13.14). agy logs it at once, before herdr's start
+// returns; a log not found yet says nothing, and bs doctor checks again.
+func (r *run) agyTook(name string) {
+	if t, ok, err := r.s.agyLogs().Took(name); err == nil && ok && t.Fallback != "" {
+		fmt.Fprintf(r.err, "%s spawn: warning: %s's agy didn't take --mode %s, so it asks about every edit and command; its log %s says: %s\n  next: %s doctor\n", bsname.Cmd, name, cmp.Or(t.Asked, "?"), t.Log, t.Fallback, bsname.Cmd)
+	}
 }
 
 func (r *run) done(fs *flag.FlagSet, args []string) error {
@@ -345,6 +358,9 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 		}
 		body = strings.TrimRight(string(b), "\n")
 	}
+	if strings.TrimSpace(body) == "" {
+		return &core.Exit{Code: core.ExitRefused, Msg: "empty message; nothing stored", Next: bsname.Cmd + " send " + to + ` "<message>"`}
+	}
 	// A send crossing projects records the sender's project, so the reply needs no project
 	// read back out of a name (T11, motif 3): a session's own, else the keeper's repo's.
 	c, from := r.c, r.s.Project
@@ -452,10 +468,14 @@ func (r *run) rang(to string, err error) {
 }
 
 func (r *run) inbox(fs *flag.FlagSet, args []string) error {
+	all := fs.Bool("all", false, "include read mail; marks nothing read")
 	wait := fs.Bool("wait", false, "wait for new mail, say who it's from and exit, marking nothing read: run it in the background, and its exit wakes an idle agy session")
 	timeout := fs.Duration("timeout", time.Hour, "how long --wait waits")
 	if err := parse(fs, args); err != nil {
 		return err
+	}
+	if fs.NArg() != 0 || *all && *wait {
+		return fmt.Errorf("%w: "+bsname.Cmd+" inbox [--all | --wait [--timeout D]]", errUsage)
 	}
 	w := r.caller
 	if *wait {
@@ -466,12 +486,22 @@ func (r *run) inbox(fs *flag.FlagSet, args []string) error {
 		fmt.Fprintln(r.out, core.Doorbell(ms, ms[len(ms)-1].From))
 		return nil
 	}
-	ms, err := r.c.Logbook.Unread(r.ctx, w.Name)
+	var ms []logbook.Message
+	var err error
+	if *all {
+		ms, err = r.c.Logbook.Inbox(r.ctx, w.Name)
+	} else {
+		ms, err = r.c.Logbook.Unread(r.ctx, w.Name)
+	}
 	if err != nil {
 		return err
 	}
 	if len(ms) == 0 {
-		fmt.Fprintln(r.out, "no unread messages")
+		if *all {
+			fmt.Fprintln(r.out, "no messages")
+		} else {
+			fmt.Fprintln(r.out, "no unread messages")
+		}
 		return nil
 	}
 	var ids []logbook.ID
@@ -481,6 +511,9 @@ func (r *run) inbox(fs *flag.FlagSet, args []string) error {
 			fmt.Fprintf(r.out, "   (reply with: "+bsname.Cmd+" send --project %s %s \"...\")\n\n", m.FromProject, core.Queen(m.FromProject))
 		}
 		ids = append(ids, m.ID)
+	}
+	if *all {
+		return nil
 	}
 	if w.Peek { // a debug peek: only the session itself marks its mail read
 		fmt.Fprintf(r.out, "(peeked as %s with --as: nothing marked read)\n", w.Name)

@@ -364,3 +364,38 @@ func TestDoctorAgySignIn(t *testing.T) {
 		t.Errorf("a warning failed doctor: exit %d\n%s", code, out)
 	}
 }
+
+// bees-13.13.14: doctor reads the newest bs-started agy's log for whether it took the
+// mode bs asked for: agy says it fell back only there.
+func TestDoctorAgyMode(t *testing.T) {
+	r := newDoctorRig(t)
+	r.write("config.toml", "harness = \"agy\"\n[paths]\nlogbook_dir = \""+r.logbook+"\"\n")
+	r.stub("agy", `case $1 in --version) echo 1.4.6;; models) echo gemini;; esac`)
+	_, out := r.doctor()
+	wantIn(t, out, "ok   agy mode: no agy log of a bs session yet; workers start with --mode accept-edits")
+	logs := filepath.Join(r.home, ".gemini", "antigravity-cli", "log")
+	if err := os.MkdirAll(logs, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	started := "I1023 server.go:299] Creating CLI server backend: product=antigravity workspaceDirs=[/wt /cache/w-1-dir-123] appDataDir=/x\n"
+	fell := "I1023 manager.go:1534] auto mode is unavailable because the terminal sandbox is unavailable, falling back to default"
+	old := filepath.Join(logs, "cli-20261023_132553.log")
+	if err := os.WriteFile(old, []byte(started+"I1023 overrides.go:82] --mode: overriding agent mode to auto\n"+fell+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, out := r.doctor()
+	wantIn(t, out, "WARN agy mode: the newest agy bs started didn't take --mode auto, so it asks about every edit and command; its log "+old+" says: "+fell)
+	if code != 0 {
+		t.Errorf("a warning failed doctor: exit %d\n%s", code, out)
+	}
+	now := filepath.Join(logs, "cli-20261023_145044.log")
+	if err := os.WriteFile(now, []byte(started+"I1023 overrides.go:82] --mode: overriding agent mode to accept-edits\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, out = r.doctor()
+	wantIn(t, out, "ok   agy mode: the newest agy bs started took --mode accept-edits (its log "+now+")")
+	// Under claude_code, a spawn's --harness agy still starts agy: its log is read too.
+	r.write("config.toml", "[paths]\nlogbook_dir = \""+r.logbook+"\"\n")
+	_, out = r.doctor()
+	wantIn(t, out, "ok   agy mode: the newest agy bs started took --mode accept-edits (its log "+now+")")
+}

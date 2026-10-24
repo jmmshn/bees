@@ -163,7 +163,7 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 	}
 	pre, err := prep(launch.Unset, c.ConfigHome)
 	if err == nil {
-		_, err = typed(h.Kind(), h.Program(), worst, pre)
+		_, _, err = typed(h.Kind(), h.Program(), worst, pre, script(c.CacheDir, name))
 	}
 	if err != nil {
 		return logbook.Spawn{}, false, exit(ExitRefused, "", err, "%s: the launch can't be typed into a pane; nothing was made", name)

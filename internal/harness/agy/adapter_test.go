@@ -20,7 +20,7 @@ func worker() port.Start {
 		Doorbell: "run: bs inbox", Deny: []string{"git push *main*", "it's *"}}
 }
 
-// A worker's launch adds its per-start dir, picks its custom agent, runs in auto mode and
+// A worker's launch adds its per-start dir, picks its custom agent, runs in accept-edits mode and
 // gets the doorbell as its first prompt; the agent file lists the worker's tools and holds
 // the prompt as its body (probe 1).
 func TestPrepareAWorker(t *testing.T) {
@@ -28,7 +28,7 @@ func TestPrepareAWorker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"--add-dir", "{{dir}}", "--agent", "bs-worker", "--mode", "auto", "--model=gemini-3.8-flash", "-i", "run: bs inbox"}
+	want := []string{"--add-dir", "{{dir}}", "--agent", "bs-worker", "--mode", "accept-edits", "--model=gemini-3.8-flash", "-i", "run: bs inbox"}
 	if !reflect.DeepEqual(l.Args, want) {
 		t.Errorf("args = %q, want %q", l.Args, want)
 	}
@@ -57,7 +57,7 @@ func TestPrepareTheQueen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"--add-dir", "{{dir}}", "--agent", "bs-queen", "--mode", "auto"}; !reflect.DeepEqual(l.Args, want) {
+	if want := []string{"--add-dir", "{{dir}}", "--agent", "bs-queen", "--mode", "accept-edits"}; !reflect.DeepEqual(l.Args, want) {
 		t.Errorf("args = %q, want %q", l.Args, want)
 	}
 	if _, ok := l.Dir[".agents/hooks.json"]; ok || !strings.HasSuffix(l.Dir[".agents/agents/bs-queen.md"], "---\nYou are the queen.\n") {

@@ -214,6 +214,7 @@ func (d *doctor) harness() {
 	if s.Harness == agy.Name && at != "" {
 		d.agySignIn(at)
 	}
+	d.agyMode(s.Harness != agy.Name)
 	h := d.r.ports.Harness
 	if h == nil && d.r.ports.NewHarness != nil {
 		h = d.r.ports.NewHarness(s.Harness, s.opts(s.Harness, false))
@@ -250,6 +251,32 @@ func (d *doctor) agySignIn(at string) {
 	default:
 		d.line("ok", "agy sign-in", "%s models answers without %s", at, strings.Join(agy.Remote, ", "))
 	}
+}
+
+// agyMode checks the newest agy start bs launched took the mode bs asked for: agy says it
+// didn't only in its log, and runs on in default mode, asking about every edit and command
+// (bees-13.13.14). Under another harness a spawn's --harness agy still starts agy, so it
+// says only what a bs-started agy's log shows (quiet).
+func (d *doctor) agyMode(quiet bool) {
+	switch t, ok, err := d.r.s.agyLogs().Took(""); {
+	case quiet && (err != nil || !ok):
+	case err != nil:
+		d.line("WARN", "agy mode", "can't tell whether agy took --mode %s: %v", agy.Mode, err)
+	case !ok:
+		d.line("ok", "agy mode", "no agy log of a %s session yet; workers start with --mode %s", bsname.Cmd, agy.Mode)
+	case t.Fallback != "":
+		d.line("WARN", "agy mode", "the newest agy %s started didn't take --mode %s, so it asks about every edit and command; its log %s says: %s", bsname.Cmd, cmp.Or(t.Asked, "?"), t.Log, t.Fallback)
+	case t.Asked != agy.Mode:
+		d.line("WARN", "agy mode", "the newest agy %s started asked for --mode %q, not %s (its log %s): started by an older %s?", bsname.Cmd, t.Asked, agy.Mode, t.Log, bsname.Cmd)
+	default:
+		d.line("ok", "agy mode", "the newest agy %s started took --mode %s (its log %s)", bsname.Cmd, agy.Mode, t.Log)
+	}
+}
+
+// agyLogs is an agy adapter that finds agy's logs beside agy.settings, by default under
+// this config's HOME.
+func (s *settings) agyLogs() agy.Adapter {
+	return agy.Adapter{Settings: cmp.Or(s.Expand(s.Agy.Settings), s.Expand("~/.gemini/antigravity-cli/settings.json"))}
 }
 
 // herdr checks the session's herdr server: running, its endpoint and private protocol

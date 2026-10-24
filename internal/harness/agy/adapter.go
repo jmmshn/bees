@@ -113,7 +113,7 @@ func (a Adapter) Prepare(st port.Start) (port.Launch, error) {
 	if st.Role == port.Worker {
 		l.Dir[".agents/hooks.json"] = hooks(a.Bs, st.Dir, st.Deny)
 	}
-	l.Args = []string{"--add-dir", "{{dir}}", "--agent", agent, "--mode", "auto"}
+	l.Args = []string{"--add-dir", "{{dir}}", "--agent", agent, "--mode", Mode}
 	l.Unset = Remote
 	if a.Model != "" {
 		l.Args = append(l.Args, "--model="+a.Model) // one argument, so a value starting with - stays a value

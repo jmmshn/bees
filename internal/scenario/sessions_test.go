@@ -117,12 +117,24 @@ func TestQueenAndWorkerMailBothWays(t *testing.T) {
 	must(t, x.worker("toy-1", 3, "inbox"), 0, "from queen-toy", "main")
 }
 
-// bs send - reads the message from stdin.
+// bs send - reads the message from stdin; an empty or whitespace-only body is refused
+// with nothing stored or rung (bees-13.78.14, motif 11).
 func TestSendReadsAMessageFromStdin(t *testing.T) {
 	x := newToy(t)
 	x.spawn("toy-1", "verdict")
+	must(t, x.worker("toy-1", 1, "inbox"), 0, "You own toy-1")
+	for _, body := range []string{"", "   \n\t  "} {
+		must(t, x.queen("send", "toy-1", body), 2, "empty message; nothing stored")
+		must(t, x.shellRun(x.repo, x.env, body, "send", "--as", "queen-toy", "toy-1", "-"), 2, "empty message; nothing stored")
+	}
+	if ms, _ := x.open().Unread(context.Background(), "toy-1"); len(ms) != 0 {
+		t.Fatalf("empty send stored: %+v", ms)
+	}
+	if rings := x.harness.Rings("toy-1"); len(rings) != 0 {
+		t.Fatalf("empty send rung toy-1: %q", rings)
+	}
 	must(t, x.shellRun(x.repo, x.env, "line one\nline two\n", "send", "--as", "queen-toy", "toy-1", "-"), 0, "rung toy-1")
-	must(t, x.worker("toy-1", 1, "inbox"), 0, "line one\nline two\n")
+	must(t, x.worker("toy-1", 2, "inbox"), 0, "line one\nline two\n")
 }
 
 // bees-13.14, bees-13.49: a keeper's herdr shell is a pane no entry recorded, in no
@@ -859,10 +871,15 @@ func TestAWorkerDoesNotInheritWhatItsHarnessUnsets(t *testing.T) {
 // otherwise) can't be started by herdr's --kind, which types only the kind's program:
 // bs types its launch into the pane, after what it must not inherit is unset, records the
 // program on the spawn, and knows the process as the worker's by that record, though its
-// name is past the 15 bytes the kernel keeps.
+// name is past the 15 bytes the kernel keeps. A program under a long dir (macOS's temp
+// dir, a deep home) still starts: the typed line only sources the launch (bees-13.89).
 func TestAWorkerRunsAProgramNotNamedAfterItsKind(t *testing.T) {
 	x := newToy(t)
-	jet := filepath.Join(t.TempDir(), "jetski-agy-compatible")
+	deep := filepath.Join(t.TempDir(), strings.Repeat(strings.Repeat("d", 99)+"/", 5))
+	if err := os.MkdirAll(deep, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	jet := filepath.Join(deep, "jetski-agy-compatible")
 	if err := os.Symlink(fake.Beesfake(t), jet); err != nil {
 		t.Fatal(err)
 	}

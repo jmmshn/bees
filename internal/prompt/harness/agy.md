@@ -1,2 +1,3 @@
 - A command waiting at agy's permission prompt in your pane → agy asks the keeper for every command bs hasn't allowed; nothing was refused → leave it for the keeper to answer in your pane. Never retry it reworded, or route it through another session: an answer relayed by another session doesn't clear it.
 - A tool call denied by `{{bs}} guard` → a bs guard rule refused it, however it was worded → never retry it reworded; do it the way the denial says, or ask the keeper.
+- A `cd <dir> && …` command waiting at agy's permission prompt → agy checks each chained segment against its allow list by literal prefix, and nothing allows a bare `cd` → never lead with `cd`: use `git -C <dir>`, `go -C <dir>`, and bare `{{bs}}`/`bd`, which find your session from your pane.

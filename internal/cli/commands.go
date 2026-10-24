@@ -483,7 +483,7 @@ func (r *run) inbox(fs *flag.FlagSet, args []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Fprintln(r.out, core.Doorbell(ms, ms[len(ms)-1].From))
+		fmt.Fprintln(r.out, core.Doorbell(ms, ms[len(ms)-1].From, r.c.Project))
 		return nil
 	}
 	var ms []logbook.Message

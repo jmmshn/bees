@@ -8,13 +8,17 @@ Dry run by default. In order:
   2. the toy queens of those runs and of runs already gone are stopped: a keeper herdr
      workspace labelled "<toy> · …" whose every pane's cwd is under a test cache, and a
      live-test toy's own herdr server;
-  3. toy logbooks (<store>/<toy>.db and its -wal/-shm/.pre-*/.queen.lock) whose run dir is gone;
-  4. toy beads (<toy>-N) whose run dir is gone, unless linked to a bead outside the toy;
+  3. toy logbooks (<store>/<toy>.db and its -wal/-shm/.pre-*/.queen.lock) whose run dir is gone,
+     proven a toy's: every repo its spawns recorded is the toy's, under a test cache;
+  4. toy beads (<toy>-N) whose run dir is gone, each created by a toy (bakeoff, or the toy id),
+     unless linked to a bead outside the toy;
   5. bs start files (<session>-<key>-<digits>) whose session has no open record: a worker
      whose last spawned/ended entry is ended (or never spawned), a queen whose toy's logbook
      is gone. Files younger than an hour stay (a spawn in flight writes them first).
 
-Only names matching a toy's pattern are touched, never a configured project's (motif 12).
+A name matching a toy's pattern is not proof: a real project may be named t2cache. Each step
+needs its own proof, never touches a configured project, and leaves a toy alone whose queen
+or server it couldn't stop (motif 12).
 Exit 0: done (or listed). 1: a step failed or couldn't tell; nothing it couldn't prove went.
 """
 import argparse, json, os, re, shutil, subprocess, sys, time
@@ -36,6 +40,7 @@ HOUR = 3600
 
 failed = False
 REAL = set()  # configured projects, read in main
+HELD = set()  # run dirs of toys still running: nothing of theirs goes
 
 
 def warn(msg):
@@ -46,8 +51,8 @@ def warn(msg):
 
 def configured():
     """Projects with a config file are real, whatever their name."""
-    d = f"{CONFIG}/projects"
-    return {f[:-5] for f in os.listdir(d) if f.endswith(".toml")} if os.path.isdir(d) else set()
+    dirs = [f"{CONFIG}/projects"] + [f"{CONFIG}/sessions/{s}/projects" for s in (os.listdir(f"{CONFIG}/sessions") if os.path.isdir(f"{CONFIG}/sessions") else [])]
+    return {f[:-5] for d in dirs if os.path.isdir(d) for f in os.listdir(d) if f.endswith(".toml")}
 
 
 def toy_run(project):
@@ -137,16 +142,21 @@ def stale_runs(days, live_toys):
             path, clean = os.path.join(root, name), ANSI.sub("", name)
             if not pattern.fullmatch(clean) or not os.path.isdir(path) or os.path.islink(path):
                 continue
-            stray = clean != name  # an ls-coloured name fed back as a path (bees-13.76): no toy's, whatever its age
-            if not stray:
-                if newest(path) > cutoff:
-                    continue
-                if root == LIVE and (os.path.exists(f"{path}/{name}") or os.path.isdir(f"{CONFIG}/sessions/{name}")):
-                    print(f"keep {path}: not torn down; run teardown.sh {path}")
-                    continue
-                if name in live_toys:
-                    print(f"keep {path}: its herdr server {name} still runs; run teardown.sh {path}")
-                    continue
+            stray = clean != name  # an ls-coloured name fed back as a path (bees-13.76)
+            if newest(path) > cutoff:
+                continue
+            if stray:  # teardown.sh refuses its name: it goes only without a toy repo in it
+                if os.path.exists(f"{path}/{clean}"):
+                    print(f"keep {path!r}: a toy repo in a dir teardown.sh refuses; tear it down by hand")
+                else:
+                    out.append((path, root, pattern, stray))
+                continue
+            if root == LIVE and (os.path.exists(f"{path}/{name}") or os.path.isdir(f"{CONFIG}/sessions/{name}")):
+                print(f"keep {path}: not torn down; run teardown.sh {path}")
+                continue
+            if name in live_toys:
+                print(f"keep {path}: its herdr server {name} still runs; run teardown.sh {path}")
+                continue
             out.append((path, root, pattern, stray))
     return out
 
@@ -175,7 +185,11 @@ def remove_runs(apply, stale, stopped):
 
 def gone_run(project, swept):
     r = toy_run(project)
-    return r is not None and (r in swept or not os.path.exists(r))
+    return r is not None and r not in HELD and (r in swept or not os.path.exists(r))
+
+
+def under(path, root):
+    return bool(path) and os.path.realpath(path).startswith(root + "/")
 
 
 def sweep_queens(apply, stale):
@@ -186,24 +200,25 @@ def sweep_queens(apply, stale):
         wss = herdr_json("workspace", "list")["result"]["workspaces"]
         panes = herdr_json("pane", "list")["result"]["panes"]
     except (RuntimeError, ValueError, KeyError, OSError) as e:
-        warn(f"can't list the keeper's herdr workspaces, so no toy queen is stopped: {e}")
-        return stopped
-    under = lambda p: any(p and os.path.realpath(p).startswith(r + "/") for r in (LIVE, RUNS))
+        warn(f"can't list the keeper's herdr workspaces, so nothing is swept: {e}")
+        return None
     for ws in wss:
         toy = (ws.get("label") or "").split(" · ")[0]
-        if " · " not in (ws.get("label") or "") or not (TOY.fullmatch(toy) or BAKE_RUN.fullmatch(toy)):
+        if " · " not in (ws.get("label") or "") or toy in REAL:
             continue
-        r = f"{RUNS}/{toy}" if BAKE_RUN.fullmatch(toy) else toy_run(toy)
+        r = toy_run(toy) or (f"{RUNS}/{toy}" if BAKE_RUN.fullmatch(toy) else None)  # arm a/b leads have no project
         if r is None or not (r in stale or not os.path.exists(r)):
             continue
         mine = [p for p in panes if p.get("workspace_id") == ws["workspace_id"]]
-        if not mine or not all(under(p.get("cwd")) and under(p.get("foreground_cwd") or p.get("cwd")) for p in mine):
-            print(f"keep workspace {ws['workspace_id']} ({ws['label']}): a pane's cwd is outside the test caches")
+        if not mine or not all(under(p.get("cwd"), r) and under(p.get("foreground_cwd") or p.get("cwd"), r) for p in mine):
+            print(f"keep workspace {ws['workspace_id']} ({ws['label']}) and {toy}'s leftovers: a pane's cwd is outside {r}")
+            HELD.add(r)
             continue
         if apply:
             res = run("herdr", "workspace", "close", ws["workspace_id"])
             if res.returncode:
                 warn(f"herdr workspace close {ws['workspace_id']}: {res.stderr.strip()}")
+                HELD.add(r)
                 continue
         print(f"{'stopped' if apply else 'would stop'} toy queen: workspace {ws['workspace_id']} ({ws['label']})")
         stopped.add(r)
@@ -221,15 +236,28 @@ def toy_servers():
 
 
 def sweep_servers(apply, servers):
-    """Step 2b: a live-test toy's own herdr server whose run dir is gone."""
+    """Step 2b: a live-test toy's own herdr server whose run dir is gone, every pane of it in that
+    run dir (a live test under another $BEES_LIVE has its panes elsewhere)."""
     for name in sorted(servers):
-        if os.path.exists(f"{LIVE}/{name}"):
+        r = f"{LIVE}/{name}"
+        if os.path.exists(r):
+            continue
+        try:
+            panes = herdr_json("--session", name, "pane", "list")["result"]["panes"]
+        except (RuntimeError, ValueError, KeyError, OSError) as e:
+            print(f"keep herdr server {name} and its leftovers: can't list its panes ({e})")
+            HELD.add(r)
+            continue
+        if not all(under(p.get("cwd"), r) for p in panes):
+            print(f"keep herdr server {name} and its leftovers: a pane's cwd is outside {r}")
+            HELD.add(r)
             continue
         if apply:
             stop = run("herdr", "--session", name, "server", "stop")
             delete = run("herdr", "session", "delete", name)
             if delete.returncode:
                 warn(f"herdr session delete {name}: {delete.stderr.strip() or stop.stderr.strip()}")
+                HELD.add(r)
                 continue
         print(f"{'stopped' if apply else 'would stop'} toy herdr server {name}")
 
@@ -246,10 +274,22 @@ def sweep_logbooks(apply, swept):
         if m and gone_run(m[1], swept):
             by.setdefault(m[1], []).append(f)
     for project, files in by.items():
+        if f"{project}.db" in files and not proven(f"{STORE}/{project}.db", project):
+            print(f"keep logbook {project}: named like a toy, but its spawns don't prove it one")
+            continue
         if all(remove(f"{STORE}/{f}", STORE, re.compile(re.escape(project) + r"\..+"), apply) for f in files):
             print(f"{'removed' if apply else 'would remove'} logbook {project}: {' '.join(files)}")
             gone.add(project)
     return gone
+
+
+def proven(db, project):
+    """Whether db is a toy's logbook: it recorded a spawn, and every spawn's repo is <project>
+    in a bake-off or live-test cache (rounds used other $BAKEOFF_RUNS, so any such cache)."""
+    r = run("python3", "-I", f"{HERE}/logbook.py", db, "SELECT coalesce(json_extract(data, '$.workspace.repo'), json_extract(data, '$.repo'), '') FROM entries WHERE kind = 'spawned'")
+    repos = r.stdout.split("\n")[:-1] if r.returncode == 0 else []
+    cache = re.compile(r"/(bees-bakeoff|bees-live)[^/]*/(.+/)?" + re.escape(project) + "/" + re.escape(project))
+    return bool(repos) and all(cache.search(p) and p.endswith("/" + project) for p in repos)
 
 
 def sweep_beads(apply, swept):
@@ -258,11 +298,16 @@ def sweep_beads(apply, swept):
     if r.returncode:
         warn(f"bd list: {r.stderr.strip()}")
         return
-    by = {}
+    by, foreign = {}, {}
     for b in json.loads(r.stdout or "[]"):
         project = b["id"].split("-")[0]
         if gone_run(project, swept):
-            by.setdefault(project, []).append(b["id"])
+            # mkrun.sh sets the toy repo's git user to bakeoff, setup.sh to the toy id
+            ok = b.get("created_by") in ("bakeoff", TOY.fullmatch(project)[1])
+            (by if ok else foreign).setdefault(project, []).append(b["id"])
+    for project in sorted(foreign):
+        print(f"keep beads {project}-*: {len(foreign[project])} not created by a toy ({' '.join(foreign[project][:3])}…)")
+        by.pop(project, None)
     for project, ids in sorted(by.items()):
         show = run("bd", "show", *ids, "--json")
         if show.returncode:
@@ -337,8 +382,10 @@ def main():
         return 1  # can't tell which toys still run: fail closed
     stale = stale_runs(a.days, servers)
     stopped = sweep_queens(a.apply, {p for p, _, _, stray in stale if not stray})
-    swept = remove_runs(a.apply, stale, stopped)
+    if stopped is None:
+        return 1
     sweep_servers(a.apply, servers)
+    swept = remove_runs(a.apply, [s for s in stale if s[0] not in HELD], stopped)
     logbooks = sweep_logbooks(a.apply, swept)
     sweep_beads(a.apply, swept)
     sweep_start_files(a.apply, swept, logbooks)

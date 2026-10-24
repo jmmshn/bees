@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/jmmshn/bees/internal/bsname"
 	"github.com/jmmshn/bees/internal/core"
@@ -19,6 +20,7 @@ import (
 // bead store is shared by every project, and bd list and bd create see and write them all.
 
 var beadUsage = strings.ReplaceAll(`{cmd} bead ls [--all] [<bd query expression>]
+       {cmd} bead search [--all] <text>
        {cmd} bead new --parent <project>-N [--description <text>] [--type <type>] [--priority <0-4>] <title>`, "{cmd}", bsname.Cmd)
 
 // beadNumber is what follows the project in one of its bead ids: -N[.M…].
@@ -126,19 +128,26 @@ func (r *run) bead(fs *flag.FlagSet, args []string) error {
 		if !balanced(query) {
 			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bead ls: %q: its parentheses don't balance, so it could reach outside %s", strings.Join(query, " "), p)}
 		}
-		expr := fmt.Sprintf("id=%q", p+"-*")
-		if !*all {
-			expr += " AND status!=closed"
-		}
+		expr := scope(p, *all)
 		if len(query) > 0 {
 			expr += " AND (" + strings.Join(query, " ") + ")"
 		}
-		out, err := r.bd("query", "--limit", "0", expr)
+		out, err := r.bd(queryArgs(*all, expr)...)
 		if err != nil {
 			return err
 		}
 		_, err = r.out.Write(out)
 		return err
+	case "search":
+		all := fs.Bool("all", false, "include closed beads")
+		words, err := interleaved(fs, args[1:])
+		if err != nil {
+			return err
+		}
+		if len(words) == 0 {
+			return fmt.Errorf("%w: %s", errUsage, beadUsage)
+		}
+		return r.search(p, strings.Join(words, " "), *all)
 	case "new":
 		parent := fs.String("parent", "", "the project bead to file under, <project>-N[.M…] (required)")
 		desc := fs.String("description", "", "description")
@@ -173,6 +182,125 @@ func (r *run) bead(fs *flag.FlagSet, args []string) error {
 		return nil
 	}
 	return fmt.Errorf("%w: %s", errUsage, beadUsage)
+}
+
+// search prints each of project p's beads whose title, description, notes or design holds
+// text, ignoring case, with a snippet of each field that does. bd query has no design field
+// and bd search reads titles only, so bs reads the beads whole (bd show) and matches itself.
+func (r *run) search(p, text string, all bool) error {
+	out, err := r.bd(queryArgs(all, "--json", scope(p, all))...)
+	if err != nil {
+		return err
+	}
+	var listed []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(out, &listed); err != nil {
+		return fmt.Errorf("bd query: %w", err)
+	}
+	var beads []struct {
+		ID, Status, Title, Description, Notes, Design string
+	}
+	if len(listed) > 0 {
+		ids := []string{"show", "--json"}
+		for _, b := range listed {
+			ids = append(ids, b.ID)
+		}
+		if out, err = r.bd(ids...); err != nil {
+			return err
+		}
+		if err := json.Unmarshal(out, &beads); err != nil {
+			return fmt.Errorf("bd show: %w", err)
+		}
+	}
+	which := "open " + p + " bead"
+	if all {
+		which = p + " bead"
+	}
+	found := 0
+	for _, b := range beads {
+		var hits []string
+		for _, f := range [][2]string{{"title", b.Title}, {"description", b.Description}, {"notes", b.Notes}, {"design", b.Design}} {
+			if s, ok := snippet(f[1], text); ok {
+				hits = append(hits, fmt.Sprintf("    %s: %s", f[0], s))
+			}
+		}
+		if len(hits) == 0 {
+			continue
+		}
+		found++
+		fmt.Fprintf(r.out, "%s [%s] %s\n%s\n", b.ID, b.Status, b.Title, strings.Join(hits, "\n"))
+	}
+	if found == 0 {
+		msg := fmt.Sprintf("no %s mentions %q", which, text)
+		if !all {
+			msg += "; --all searches closed ones too"
+		}
+		fmt.Fprintln(r.err, msg)
+	}
+	return nil
+}
+
+// snippet finds text in s, ignoring case, and returns the line around its first match,
+// whitespace collapsed and trimmed to about 60 characters either side.
+func snippet(s, text string) (string, bool) {
+	i, j := indexFold(s, text)
+	if i < 0 {
+		return "", false
+	}
+	const pad = 60
+	lo, hi := max(i-pad, 0), min(j+pad, len(s))
+	for lo > 0 && !utf8.RuneStart(s[lo]) {
+		lo--
+	}
+	for hi < len(s) && !utf8.RuneStart(s[hi]) {
+		hi++
+	}
+	out := strings.Join(strings.Fields(s[lo:hi]), " ")
+	if lo > 0 {
+		out = "…" + out
+	}
+	if hi < len(s) {
+		out += "…"
+	}
+	return out, true
+}
+
+// indexFold finds text in s under Unicode case folding and returns the match's byte span
+// in s itself: lowercasing can change a rune's byte length, so an index into
+// strings.ToLower(s) needn't fall inside s.
+func indexFold(s, text string) (int, int) {
+	n := utf8.RuneCountInString(text)
+	for i := range s {
+		j, k := i, 0
+		for ; k < n && j < len(s); k++ {
+			_, w := utf8.DecodeRuneInString(s[j:])
+			j += w
+		}
+		if k == n && strings.EqualFold(s[i:j], text) {
+			return i, j
+		}
+	}
+	return -1, -1
+}
+
+// scope is the bd query expression for project p's beads, closed ones too when all.
+func scope(p string, all bool) string {
+	expr := fmt.Sprintf("id=%q", p+"-*")
+	if !all {
+		expr += " AND status!=closed"
+	}
+	return expr
+}
+
+// queryArgs is bd query's argv for args: bd query leaves closed beads out unless it is
+// given --all, whatever the expression says.
+func queryArgs(all bool, args ...string) []string {
+	argv := []string{"query", "--limit", "0"}
+	if all {
+		argv = append(argv, "--all")
+	}
+	return append(argv, args...)
 }
 
 // balanced reports whether the parentheses in args, outside quotes, never close more than

@@ -595,15 +595,23 @@ func (r *run) inbox(fs *flag.FlagSet, args []string) error {
 // record, the process table and the disk, never a check, and asks herdr only to heal an
 // unconfirmed start (core.StartOf), so with herdr down that start reads unknown and the
 // rest still prints: a goal complete but not yet landed shows "no" until bs end or bs
-// prune finds it. A spawn from before goals reads --goal legacy.
+// prune finds it. A spawn from before goals reads --goal legacy. Rows sort by name, its
+// numbers as numbers, and a workspace under paths.worktrees shows relative to it. An ended
+// worker whose workspace is gone and that leaves nothing to do (no line below the table,
+// no unread mail) is history: only --all lists it (bees-13.78.17).
 func (r *run) status(fs *flag.FlagSet, args []string) error {
+	all := fs.Bool("all", false, "also list ended workers whose workspace is gone and that leave nothing to do")
 	if err := parse(fs, args); err != nil {
 		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("%w: "+bsname.Cmd+" status [--all]", errUsage)
 	}
 	sps, err := r.c.Logbook.LatestSpawns(r.ctx)
 	if err != nil {
 		return err
 	}
+	slices.SortStableFunc(sps, func(a, b logbook.Spawn) int { return naturalCmp(a.Name, b.Name) })
 	fmt.Fprintln(r.out, r.as())
 	tw := tabwriter.NewWriter(r.out, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "WORKER\tLABEL\tGOAL\tSTATE\tHANDOFF\tCOMPLETE\tRUNNING\tUNREAD\tWORKSPACE")
@@ -624,6 +632,7 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 	note := func(kind, name, format string, a ...any) {
 		notes = append(notes, kind+": "+name+": "+fmt.Sprintf(format, a...))
 	}
+	hidden, relative := 0, false
 	queen := core.Queen(r.s.Project)
 	if q, ok, err := r.c.Logbook.LatestQueen(r.ctx, queen); err != nil {
 		errs = append(errs, err)
@@ -631,6 +640,7 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 		fmt.Fprintf(tw, "%s\t-\t-\tqueen\t-\t-\t%s\t%s\tpane %s on herdr session %s\n", queen, alive(r.c.Proc.Alive(q.Process)), unread(queen), q.Pane, q.Session)
 	}
 	for _, sp := range sps {
+		before, errsBefore, under := len(notes), len(errs), false
 		state := "live"
 		if sp.Ended {
 			state = "ended"
@@ -677,11 +687,15 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 		var serr error // the workspace on disk: nil, gone, or couldn't look
 		if dir != "" {
 			_, serr = os.Stat(dir)
+			if rel, err := filepath.Rel(r.c.Worktrees, dir); r.c.Worktrees != "" && err == nil && filepath.IsLocal(rel) {
+				dir, under = rel, true
+			}
 		}
-		if sp.Ended && dir != "" && errors.Is(serr, os.ErrNotExist) {
+		gone := dir == "" || errors.Is(serr, os.ErrNotExist)
+		if sp.Ended && dir != "" && gone {
 			dir += " (removed)"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t--goal %s\t%s\t%s\t%s\t%s\t%s\t%s\n", sp.Name, cmp.Or(sp.Label, "-"), g, state, handoff, complete, running, mail, dir)
+		row := fmt.Sprintf("%s\t%s\t--goal %s\t%s\t%s\t%s\t%s\t%s\t%s\n", sp.Name, cmp.Or(sp.Label, "-"), g, state, handoff, complete, running, mail, dir)
 		switch {
 		case running == "no start recorded (legacy)":
 			note("stuck", sp.Name, "started by the old bs, which recorded no process → %s end %s", bsname.Cmd, sp.Name)
@@ -742,10 +756,19 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 		} else if ok && st.Late && !sp.Ended {
 			note("late", sp.Name, "its start was recorded late, after confirmation missed it (pid %d) → nothing to do; %s end %s if it misbehaves", st.PID, bsname.Cmd, sp.Name)
 		}
+		// History: ended, its workspace gone, no line below, no mail waiting and nothing bs
+		// couldn't read (couldn't look is never nothing to do, Rule G). A row that needs
+		// the queen is never hidden.
+		if !*all && sp.Ended && gone && len(notes) == before && len(errs) == errsBefore && cerr == nil && counts[sp.Name] == 0 {
+			hidden++
+			continue
+		}
+		relative = relative || under
+		fmt.Fprint(tw, row)
 	}
 	// Mail waits for sessions no row above names: a queen never recorded starting, a
 	// stranger. Mail the table hides is mail nobody reads.
-	for _, name := range slices.Sorted(maps.Keys(counts)) {
+	for _, name := range slices.SortedFunc(maps.Keys(counts), naturalCmp) {
 		if counts[name] > 0 && !shown[name] {
 			fmt.Fprintf(tw, "%s\t-\t-\tno spawn\t-\t-\t-\t%d\t-\n", name, counts[name])
 		}
@@ -753,10 +776,46 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 	if err := tw.Flush(); err != nil {
 		return err
 	}
+	if relative {
+		fmt.Fprintf(r.out, "workspaces are under %s\n", r.c.Worktrees)
+	}
+	if hidden > 0 {
+		fmt.Fprintf(r.out, "hidden: %d ended with their workspace gone and nothing to do → %s status --all lists them\n", hidden, bsname.Cmd)
+	}
 	for _, n := range notes {
 		fmt.Fprintln(r.out, n)
 	}
 	return errors.Join(errs...)
+}
+
+// naturalCmp orders names with each run of digits read as a number: bees-1-2 before
+// bees-1-10.
+func naturalCmp(a, b string) int {
+	for a != "" && b != "" {
+		da, db := digits(a), digits(b)
+		if da > 0 && db > 0 {
+			na, nb := strings.TrimLeft(a[:da], "0"), strings.TrimLeft(b[:db], "0")
+			if c := cmp.Or(cmp.Compare(len(na), len(nb)), strings.Compare(na, nb)); c != 0 {
+				return c
+			}
+			a, b = a[da:], b[db:]
+			continue
+		}
+		if a[0] != b[0] {
+			return cmp.Compare(a[0], b[0])
+		}
+		a, b = a[1:], b[1:]
+	}
+	return cmp.Compare(len(a), len(b))
+}
+
+// digits is the length of s's leading run of ASCII digits.
+func digits(s string) int {
+	n := 0
+	for n < len(s) && s[n] >= '0' && s[n] <= '9' {
+		n++
+	}
+	return n
 }
 
 // as is status's first line: who bs takes the caller for, and where it read that.

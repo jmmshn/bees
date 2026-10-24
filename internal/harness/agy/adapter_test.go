@@ -54,17 +54,26 @@ func TestPrepareAWorker(t *testing.T) {
 	}
 }
 
-// The queen's launch has her agent and no hooks: guards are a worker's.
+// The queen's launch has her agent and the Stop mail hook, so mail stored mid-turn
+// wakes her when it ends (bees-13.13.21), and no guard: guards are a worker's.
 func TestPrepareTheQueen(t *testing.T) {
-	l, err := agy.Adapter{}.Prepare(port.Start{Role: port.Queen, Name: "queen-bees", Prompt: "You are the queen.\n"})
+	l, err := agy.Adapter{Bs: "/bin/bs"}.Prepare(port.Start{Role: port.Queen, Name: "queen-bees", Dir: "/repo", Prompt: "You are the queen.\n"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := []string{"--add-dir", "{{dir}}", "--agent", "bs-queen", "--mode", "accept-edits"}; !reflect.DeepEqual(l.Args, want) {
 		t.Errorf("args = %q, want %q", l.Args, want)
 	}
-	if _, ok := l.Dir[".agents/hooks.json"]; ok || !strings.HasSuffix(l.Dir[".agents/agents/bs-queen.md"], "---\nYou are the queen.\n") {
+	if !strings.HasSuffix(l.Dir[".agents/agents/bs-queen.md"], "---\nYou are the queen.\n") {
 		t.Errorf("dir = %v", l.Dir)
+	}
+	var h map[string]map[string][]struct{ Type, Command string }
+	if err := json.Unmarshal([]byte(l.Dir[".agents/hooks.json"]), &h); err != nil {
+		t.Fatal(err)
+	}
+	stop := h["bs-mail"]["Stop"]
+	if _, ok := h["bs-guards"]; ok || len(h) != 1 || len(stop) != 1 || stop[0].Command != "cd '/repo' && '/bin/bs' hook --harness agy Stop" {
+		t.Errorf("hooks.json = %s", l.Dir[".agents/hooks.json"])
 	}
 }
 

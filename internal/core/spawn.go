@@ -698,14 +698,20 @@ func fill(args []string, key, path string) {
 
 func brief(b port.Bead, g goal.Goal, ws logbook.Workspace, t *target, hint string, mergeInto []string) string {
 	s := fmt.Sprintf("You own %s: %s\n\nYour goal: --goal %s. Hand it off with "+bsname.Cmd+" done when it holds.\n", b.ID, b.Title, g)
+	// a harness whose cwd isn't the worktree (agy) learns where to work only from here
+	if ws.Branch != "" {
+		s += fmt.Sprintf("Your worktree: %s, branch %s.\n", ws.Dir, ws.Branch)
+	} else {
+		s += fmt.Sprintf("Your workspace: %s.\n", ws.Dir)
+	}
 	if len(mergeInto) > 0 { // the guard can't see a PR's base: the brief says which (guards.allow_merge_into)
 		s += fmt.Sprintf("The keeper lets you merge your own change when its base matches %s; check its base first, and never merge into the default branch.\n", strings.Join(mergeInto, " or "))
 	}
 	switch {
 	case t != nil && t.stacks:
-		s += fmt.Sprintf("Your branch %s starts at %s's head (%s) and stacks on it: open your change onto %s: %s\n", ws.Branch, g.Target, oid(t.c.HeadCommit), t.c.Head, hint)
+		s += fmt.Sprintf("Your branch starts at %s's head (%s) and stacks on it: open your change onto %s: %s\n", g.Target, oid(t.c.HeadCommit), t.c.Head, hint)
 	case t != nil:
-		s += fmt.Sprintf("Your branch %s starts at %s's head (%s). Push your commits onto that change: %s\n", ws.Branch, g.Target, oid(t.c.HeadCommit), hint)
+		s += fmt.Sprintf("Your branch starts at %s's head (%s). Push your commits onto that change: %s\n", g.Target, oid(t.c.HeadCommit), hint)
 	}
 	return s + "\n" + b.Description
 }

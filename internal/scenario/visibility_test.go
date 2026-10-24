@@ -45,6 +45,9 @@ func TestStatusNamesWaivedDiscardedAndKept(t *testing.T) {
 	x.write(filepath.Join(sp.Workspace.Dir, "scratch.txt"), "unsaved")
 	must(t, x.queen("prune"), 3, "kept "+sp.Workspace.Dir+" (toy-3)")
 	r := x.keeper("status")
+	if cell(r.out, "toy-3", "WORKSPACE") != "toy-3" { // ended, but its workspace is on disk (bees-13.78.17)
+		t.Fatalf("an ended worker's workspace on disk:\n%s", r)
+	}
 	must(t, r, 0,
 		"waived: toy-1: branch_ahead no longer checked → bs goal toy-1 branch puts it back",
 		"discarded: toy-2: the keeper discarded its goal: the work is wanted nowhere → bs end toy-2",
@@ -57,7 +60,7 @@ func TestStatusNamesWaivedDiscardedAndKept(t *testing.T) {
 	}
 	must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir)
 	// Ended, removed, nothing to do: history, which only --all lists (bees-13.78.17).
-	if r := x.keeper("status"); lineOf(r.out, "toy-3 ") != "" || !strings.Contains(r.out, "1 ended workers with their workspace gone and nothing to do are hidden → bs status --all lists them") {
+	if r := x.keeper("status"); lineOf(r.out, "toy-3 ") != "" || !strings.Contains(r.out, "hidden: 1 ended with their workspace gone and nothing to do → bs status --all lists them") {
 		t.Fatalf("after prune:\n%s", r)
 	}
 	if r := x.keeper("status", "--all"); cell(r.out, "toy-3", "WORKSPACE") != "toy-3 (removed)" || strings.Contains(r.out, "kept: toy-3") || strings.Contains(r.out, "hidden") {
@@ -81,6 +84,14 @@ func TestStatusSortsNaturallyWithRelativeWorkspaces(t *testing.T) {
 	i1, i2, i10 := strings.Index(r.out, "\ntoy-1 "), strings.Index(r.out, "\ntoy-2 "), strings.Index(r.out, "\ntoy-10 ")
 	if i1 < 0 || i1 > i2 || i2 > i10 || cell(r.out, "toy-10", "WORKSPACE") != "toy-10" {
 		t.Fatalf("not toy-1, toy-2, toy-10 with relative workspaces:\n%s", r)
+	}
+	// A live worker is never hidden, even with its workspace gone and its mail read.
+	must(t, x.worker("toy-2", 1, "inbox"), 0)
+	if err := os.RemoveAll(filepath.Join(filepath.Dir(x.repo), "toy-WT", "toy-2")); err != nil {
+		t.Fatal(err)
+	}
+	if r := x.keeper("status"); cell(r.out, "toy-2", "STATE") != "live" || strings.Contains(r.out, "hidden:") {
+		t.Fatalf("a live worker with its workspace gone:\n%s", r)
 	}
 }
 

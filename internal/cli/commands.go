@@ -640,7 +640,7 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 		fmt.Fprintf(tw, "%s\t-\t-\tqueen\t-\t-\t%s\t%s\tpane %s on herdr session %s\n", queen, alive(r.c.Proc.Alive(q.Process)), unread(queen), q.Pane, q.Session)
 	}
 	for _, sp := range sps {
-		before := len(notes)
+		before, errsBefore, under := len(notes), len(errs), false
 		state := "live"
 		if sp.Ended {
 			state = "ended"
@@ -688,7 +688,7 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 		if dir != "" {
 			_, serr = os.Stat(dir)
 			if rel, err := filepath.Rel(r.c.Worktrees, dir); r.c.Worktrees != "" && err == nil && filepath.IsLocal(rel) {
-				dir, relative = rel, true
+				dir, under = rel, true
 			}
 		}
 		gone := dir == "" || errors.Is(serr, os.ErrNotExist)
@@ -756,12 +756,14 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 		} else if ok && st.Late && !sp.Ended {
 			note("late", sp.Name, "its start was recorded late, after confirmation missed it (pid %d) → nothing to do; %s end %s if it misbehaves", st.PID, bsname.Cmd, sp.Name)
 		}
-		// History: ended, its workspace gone, no line below and no mail waiting. A row
-		// that needs the queen is never hidden.
-		if !*all && sp.Ended && gone && len(notes) == before && (cerr == nil && counts[sp.Name] == 0) {
+		// History: ended, its workspace gone, no line below, no mail waiting and nothing bs
+		// couldn't read (couldn't look is never nothing to do, Rule G). A row that needs
+		// the queen is never hidden.
+		if !*all && sp.Ended && gone && len(notes) == before && len(errs) == errsBefore && cerr == nil && counts[sp.Name] == 0 {
 			hidden++
 			continue
 		}
+		relative = relative || under
 		fmt.Fprint(tw, row)
 	}
 	// Mail waits for sessions no row above names: a queen never recorded starting, a
@@ -778,7 +780,7 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 		fmt.Fprintf(r.out, "workspaces are under %s\n", r.c.Worktrees)
 	}
 	if hidden > 0 {
-		fmt.Fprintf(r.out, "%d ended workers with their workspace gone and nothing to do are hidden → %s status --all lists them\n", hidden, bsname.Cmd)
+		fmt.Fprintf(r.out, "hidden: %d ended with their workspace gone and nothing to do → %s status --all lists them\n", hidden, bsname.Cmd)
 	}
 	for _, n := range notes {
 		fmt.Fprintln(r.out, n)

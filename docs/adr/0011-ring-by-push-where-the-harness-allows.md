@@ -110,7 +110,7 @@ The remaining races each need a coincidence inside the ~0.3 s between `agent get
 - the keeper submits a prompt at the same instant, so the doorbell lands mid-turn, queued or in the box behind their text;
 - an idle agy's own background task or schedule timer starts a turn whose first tool call asks permission inside the typing window, and the doorbell's Enter answers that menu.
 
-The message is in the logbook first, so no race loses mail. The worst case is one command approved without a prompt, in a worktree still behind `bs guard` (and GitHub branch protection where enabled; recommended in [SETUP.md](../SETUP.md#worker-permissions), not set on this repo today). The keeper judged it low risk (2026-10-23).
+The message is in the logbook first, so no race loses mail. The worst case is one command approved without a prompt, in a worktree still behind `bs guard` and branch protection. The keeper judged it low risk (2026-10-23).
 
 ### Revisit agy's typed ring when
 

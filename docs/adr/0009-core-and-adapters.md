@@ -162,7 +162,7 @@ What `claude_code` does, and the code that moves behind it (bees-12.6):
 - **`manual`**: the worker reports `done: <bead>`, the keeper closes the bead. `bs prune` uses only its git proofs (ancestry, identical paths), never GitHub.
 - **`fragment`** names a file of the user's own wording, for a CL flow or anything else; the queen judges when such work has landed.
 
-**Guards** stay in config (keeper, round 3). `[guards] deny` holds harness-neutral shell-glob patterns over a command line. Empty means the delivery kind's default: for `github_pr`, today's push and merge matrix against the repo's real default branch (bees-11.7); for `manual`, no push to the default branch. Each harness renders them in `Prepare`: Claude's `permissions.deny` and autoMode allow prose, omp's `bash.patterns` in a per-start `--config` overlay, agy's PreToolUse hook. They are a speed bump; branch protection, or the VCS's own review gate, is the real guard (recommended in [SETUP](../SETUP.md#worker-permissions); bees' own `main` isn't protected as of 2026-10-23).
+**Guards** stay in config (keeper, round 3). `[guards] deny` holds harness-neutral shell-glob patterns over a command line. Empty means the delivery kind's default: for `github_pr`, today's push and merge matrix against the repo's real default branch (bees-11.7); for `manual`, no push to the default branch. Each harness renders them in `Prepare`: Claude's `permissions.deny` and autoMode allow prose, omp's `bash.patterns` in a per-start `--config` overlay, agy's PreToolUse hook. They are a speed bump; branch protection, or the VCS's own review gate, is the real guard.
 
 ## Naming (amends ADR-0006)
 

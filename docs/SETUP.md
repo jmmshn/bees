@@ -1,6 +1,6 @@
 # Setting up bs
 
-Linux or macOS. Needs Go, [Claude Code](https://code.claude.com) with cross-session messaging (2.1.296 or later) or [`agy`](#agy-workers) (1.4.6 or later), [herdr](https://herdr.dev) for spawning workers, and `bd` 1.1.0 or later for beads, with one local store shared by every repo (`BEADS_DIR`; the skill below sets it up).
+Linux or macOS. Needs Go, [Claude Code](https://code.claude.com) with cross-session messaging (2.1.296 or later) or optionally [`agy`](#agy-workers) 1.4.6 or later for agy workers, [herdr](https://herdr.dev) for spawning workers, and `bd` 1.1.0 or later for beads, with one local store shared by every repo (`BEADS_DIR`; the skill below sets it up).
 
 For a guided setup, run the [`setup-bees`](../.claude/skills/setup-bees/SKILL.md) skill in Claude Code from this repo (`/setup-bees`): it checks and installs each piece, then runs a queen → worker round trip.
 
@@ -66,26 +66,26 @@ Claude asks whether to trust a repo the first time it opens one, and its worktre
 
 `bs spawn` starts each worker with its own `--settings` JSON, the only per-session place Claude's auto mode classifier reads `autoMode` from (it ignores the project's `.claude/settings*.json`). Each `autoMode` list keeps `"$defaults"`, so the built-in rules (force push, exfiltration) stay. `permissions.deny` blocks, before the classifier, what `[guards]` resolves for the workspace: under `git_worktree`, pushes to the default branch, force-push, and the review host's merge and approve; `[guards] deny` adds globs, and `allow_merge_into` lifts the merge deny only while the host protects the default branch. Bash rules match commands as written, not every spelling.
 
-**Protecting `main` on GitHub is recommended** (Settings → Branches: require a pull request). The deny rules are a speed bump that a shell can spell around; this repo's `main` isn't protected today, so they are the only guard until it is.
+**Protect `main` on GitHub** (Settings → Branches: require a pull request). The deny rules are a speed bump that a shell can spell around; branch protection is the guard that keeps a worker's push off `main`.
 
 No sandbox: the keeper chose not to run workers in Claude's bubblewrap sandbox (bees-1.51).
 
 ### agy workers
 
-The agy decisions of 2026-10-23 live in [DECISIONS.md R60](DECISIONS.md#configuration) (layer rule, mode, config, version drift) and [ADR-0011 Amendment 1](adr/0011-ring-by-push-where-the-harness-allows.md#amendment-1-agy-push-by-typing-idle-only-bees-1397) (the ring). In short: bs owns per-worker policy (`bs guard`, agy's `PreToolUse` hook, enforcing `[guards] deny`), the keeper owns machine-wide policy (agy's `settings.json` allow and deny lists), and bs never writes agy's `permissions`. bs starts agy with `--mode accept-edits`: workspace file edits go through unasked, commands ask unless the keeper's allow list covers them. Not `--mode auto`: it needs agy's terminal sandbox, which Ubuntu 23.10+ blocks, and agy then silently asks about every edit and command (bees-13.13.14).
+What bs decided for agy, and why, is [DECISIONS.md R60](DECISIONS.md#configuration) (layer rule, mode, config, version drift) and [ADR-0011 Amendment 1](adr/0011-ring-by-push-where-the-harness-allows.md#amendment-1-agy-push-by-typing-idle-only-bees-1397) (the ring). This section is how to set it up.
 
 #### Setup now
 
 | # | Step | Check |
 |---|---|---|
-| 1 | Install `agy` 1.4.6 or later and run it once in a shell to sign in. A herdr server started over ssh hands `SSH_CONNECTION`, `SSH_CLIENT` and `SSH_TTY` to every pane, and agy reads them as a remote session that is "not signed in"; bs unsets them when it starts agy (bees-13.13.13). | `bs doctor`: `ok agy sign-in` |
+| 1 | Install `agy` 1.4.6 or later and run it once in a shell to sign in. A herdr server started over ssh hands `SSH_CONNECTION`, `SSH_CLIENT` and `SSH_TTY` to every pane, and agy reads them as a remote session that is "not signed in"; bs unsets them when it starts agy (bees-13.13.13). | `agy models` answers in a pane |
 | 2 | Pick where agy runs. One worker: `bs spawn --harness agy …` (bees-13.13.12), the way bees runs it today. Every session: `harness = "agy"` in the global `~/.config/bees/config.toml`; it is machine-wide and moves `bs queen` too, and a queen on agy is untested (bees-13.13.11). | `bs config` |
 | 3 | Model, per project or global: `[worker.agy] model` (and `[queen.agy] model`) must be a name `agy models` prints; bs passes it unchecked, and agy warns "not recognized" and picks its own for any other (`argon-high` is one, bees-13.13.22). agy can run Claude models too (`claude-sonnet-5-5-low`), but only on API billing, not a Claude subscription. | no "not recognized" warning when the worker starts |
-| 4 | Approve commands one by one at agy's prompt in the worker's herdr pane, and choose agy's "always" answer only for the ones you trust (`bs`, `bd`, `go`, `git`, `gh pr create` are the usual ones). bs suggests no allow list: what lands in `permissions.allow` in `~/.gemini/antigravity-cli/settings.json` is yours. | the next worker runs it unasked |
+| 4 | Approve commands one by one at agy's prompt in the worker's herdr pane, and choose agy's "always" answer only for the ones you trust (`bs`, `bd`, `go`, `git`, `gh pr create` are the usual ones). bs suggests no allow list: an "always" lands in `permissions.allow` in `~/.gemini/antigravity-cli/settings.json` (on agy 1.4.6), and that list is yours. The one entry bs's own tooling checks for is `command(bs)` (the live-test skill warns without it). | the next worker runs it unasked |
 | 5 | Know what stays a prompt. agy matches an allow rule as a literal prefix and checks each segment of a chained command (`&&`, `;`, `\|`) on its own, so `cd <dir> && git status` asks about `cd`. Keep `rm`, `python3`, `sqlite3` and bare `gh` (`gh api`, repo admin) as prompts. `bs guard` runs before every command and its deny wins over any allow: a push to `main`, force-push, `gh pr merge` and `gh pr review --approve` stay denied with `command(git)` allowed. | — |
-| 6 | Answer prompts in the worker's pane yourself; a queen can't (her relay doesn't clear agy's prompt). Denying one cancels the worker's turn. Never send raw keys such as `Escape` into an agy pane: it can cancel a prompt behind an overlay. | — |
-| 7 | Protect `main` on GitHub (Settings → Branches: require a pull request). It isn't protected on this repo today, so `bs guard` is the only guard; protection is recommended so GitHub refuses a push a shell spells around. | a direct push to `main` is refused |
-| 8 | Run `bs doctor` and expect the lines below. | — |
+| 6 | Answer prompts in the worker's pane: the keeper, or a queen following the prompt policy in bees-13.13 (approve routine commands once or per conversation, never persist; deny `--as`). Denying one cancels the worker's turn. Never send raw keys such as `Escape` into an agy pane: it can cancel a prompt behind an overlay. | — |
+| 7 | Check `main` is protected on GitHub (a ruleset or branch protection requiring a pull request, no force-push). bees' is, by its `main` ruleset; `bs guard` is the speed bump, protection the guard. | a direct push to `main` is refused |
+| 8 | Run `bs doctor` and expect the lines below. With the global harness still `claude_code` (agy per spawn), only `agy version` and `agy mode` print; `harness agy`, `agy sign-in` and `agy ring` need `harness = "agy"`. | — |
 
 | `bs doctor` line | Means |
 |---|---|
@@ -94,7 +94,7 @@ The agy decisions of 2026-10-23 live in [DECISIONS.md R60](DECISIONS.md#configur
 | `ok agy ring` | agy can't be pushed a doorbell, so bs types it into an idle agy's empty input box; points at ADR-0011's watch list. |
 | `ok` / `WARN agy version` | `agy --version` against `agy.Probed` (1.4.6). agy updates itself (1.4.4 → 1.4.7 in one day), so a `WARN` naming what to re-probe (`.claude/skills/live-test/agy-probe.sh`) is expected after an update; `bs spawn` prints it too (bees-13.13.15). |
 | `ok` / `WARN agy mode` | the newest bs-started agy's log (`~/.gemini/antigravity-cli/log/`) shows `--mode accept-edits` took, not a fallback to asking about everything. |
-| `ok` / `WARN herdr session <s>` | the herdr server runs the client's version; after a herdr upgrade, `herdr server stop` and start it again when no session you need runs. |
+| `ok` / `WARN` / `FAIL herdr session <s>` | the herdr server runs and speaks the client's protocol (`FAIL` if not); `WARN` when the server is older than the client or herdr says it needs a restart: `herdr server stop` and start it again when no session you need runs. |
 
 A ring held because the worker was busy, at a menu or being typed into says why on `bs send`, and `bs status` then flags it `stuck:`; the queen runs `bs ring <worker>` once it is idle.
 
@@ -102,13 +102,13 @@ A ring held because the worker was busy, at a menu or being typed into says why 
 
 | Change | When | What it takes first |
 |---|---|---|
-| `--mode auto` with agy's terminal sandbox, so workers run unattended with agy's reviewer judging each command that leaves the sandbox | The keeper chose to stay on `accept-edits` (2026-10-23); revisit in bees-13.13.26 when agy quota returns (~2026-10-28) or Google answers [antigravity-cli#1204](https://github.com/google-antigravity/antigravity-cli/issues/1204) | The keeper installs a per-binary AppArmor profile for agy (`/etc/apparmor.d/agy`, `flags=(unconfined) { userns, }`, drafted in bees-13.13.25), never `kernel.apparmor_restrict_unprivileged_userns = 0` machine-wide. Then probe that agy's sandbox lets `git push` and `gh pr create` out (it has no network, so they must leave it and be approved), since a sandbox that blocks them breaks the PR handoff. On macOS the sandbox is Seatbelt and needs no host change. |
-| `--dangerously-skip-permissions` (agy 1.4.6+) | Off; bs never passes it | (a) a probe shows `PreToolUse` hooks, so `bs guard`, still run and deny under it (the evidence in bees-13.13.25 says they do, unprobed here), and `bs guard` becomes deny-by-default on every tool, since the flag removes the only gate that judges a command; (b) `main` is protected; (c) workers get a fine-grained GitHub token scoped to the repo (today's has `repo` and `admin:public_key`); (d) the beads store is backed up. |
+| `--mode auto` with agy's terminal sandbox, so workers run unattended with agy's reviewer judging each command that leaves the sandbox | Not yet (R60); revisit in bees-13.13.26 when agy quota returns (~2026-10-28) or Google answers [antigravity-cli#1204](https://github.com/google-antigravity/antigravity-cli/issues/1204) | The keeper installs a per-binary AppArmor profile for agy (`/etc/apparmor.d/agy`, `flags=(unconfined) { userns, }`, drafted in bees-13.13.25), never `kernel.apparmor_restrict_unprivileged_userns = 0` machine-wide. Then probe that agy's sandbox lets `git push` and `gh pr create` out (it has no network, so they must leave it and be approved), since a sandbox that blocks them breaks the PR handoff. On macOS the sandbox is Seatbelt and needs no host change. |
+| `--dangerously-skip-permissions` | Off; bs never passes it | (a) a probe shows `PreToolUse` hooks, so `bs guard`, still run and deny under it (the evidence in bees-13.13.25 says they do, unprobed here), and `bs guard` becomes deny-by-default on every tool, since the flag removes the only gate that judges a command; (b) `main` is protected (bees' is); (c) workers get a fine-grained GitHub token scoped to the repo (today's has `repo` and `admin:public_key`); (d) the beads store is backed up. |
 | A queen on agy | bees-13.13.11 | A queen's held ring has no `Stop` hook to show it yet: it waits for `bs ring` or her next `bs inbox`. |
 
 #### Future agy work that would simplify bs
 
-Each is on [ADR-0011's watch list](adr/0011-ring-by-push-where-the-harness-allows.md#revisit-when); re-probe when one ships.
+The first two rows and the last are [ADR-0011's watch list](adr/0011-ring-by-push-where-the-harness-allows.md#revisit-when); the sandbox row is bees-13.13.26's, and the `Stop` row is bs's own wish. Re-probe when one ships.
 
 | Upstream change | What bs deletes or unifies |
 |---|---|

@@ -25,7 +25,7 @@ type Took struct {
 	Fallback string // agy's line saying the mode didn't take, "" when nothing says so
 }
 
-// agy 1.4.6's log lines (probed, bees-13.13.14): an interactive start says
+// agy's log lines (probed on Probed, bees-13.13.14): an interactive start says
 // "--mode: overriding agent mode to auto" and, when auto can't run, "auto mode is
 // unavailable because the terminal sandbox is unavailable, falling back to default"; print
 // mode says "applying agent mode accept-edits", or "--mode auto is unavailable (terminal

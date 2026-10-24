@@ -38,7 +38,7 @@ func TestPrepareAWorker(t *testing.T) {
 	if len(l.Files) != 0 || len(l.Dir) != 2 {
 		t.Errorf("files %v, dir %v: want only the agent file and hooks.json in the dir", l.Files, l.Dir)
 	}
-	// bees-13.13.13: agy says "not signed in" with any of these set (probed on 1.4.6).
+	// bees-13.13.13: agy says "not signed in" with any of these set (probed on agy.Probed).
 	if want := []string{"SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"}; !reflect.DeepEqual(l.Unset, want) {
 		t.Errorf("unset = %q, want %q", l.Unset, want)
 	}
@@ -224,9 +224,9 @@ func TestRingTypesOnlyIntoAnIdleEmptyBox(t *testing.T) {
 	}
 }
 
-// Box reads agy 1.4.6's input box off screens bees-13.95 recorded: empty, holding text
-// (on two lines), and none at all under a permission menu, whose answers sit between the
-// same rules. Menu tells the menu apart.
+// Box reads agy's input box off screens bees-13.95 recorded (probed on agy.Probed): empty,
+// holding text (on two lines), and none at all under a permission menu, whose answers sit
+// between the same rules. Menu tells the menu apart.
 func TestBoxAndMenuReadAgysScreen(t *testing.T) {
 	short, full := strings.Repeat("─", 60), strings.Repeat("─", 119)
 	footer := "? for shortcuts                                              accept-edits · bs-worker (Gemini 3.8 Flash · low)  /agents"
@@ -274,8 +274,8 @@ func TestBoxAndMenuReadAgysScreen(t *testing.T) {
 
 // hooks.json runs bs hook --harness agy when a turn stops, from the worker's workspace
 // (agy runs it in the hooks.json dir, where bs would find no project): a flat handler
-// list, as Stop takes (agy 1.4.6 docs). Nothing runs before a model call: the ring no
-// longer asks the model to arm a watcher (bees-13.97).
+// list, as Stop takes (probed on agy.Probed). Nothing runs before a model call: the ring
+// no longer asks the model to arm a watcher (bees-13.97).
 func TestHooksRunBsHookForMail(t *testing.T) {
 	bin := t.TempDir()
 	bs := filepath.Join(bin, "my bs")

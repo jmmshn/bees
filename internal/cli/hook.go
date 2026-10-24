@@ -14,10 +14,10 @@ import (
 // (mail that came mid-turn, which agy's ring doesn't type into a working session:
 // bees-13.97), it holds the turn with the doorbell. Anything else, and any caller not a
 // queen or worker (the keeper's own agy), prints nothing: agy's no-op. An error prints
-// nothing to stdout either, and agy 1.4.6 lets a turn go on past a hook that exits
-// non-zero with no stdout (probed): the mail stays in the logbook, read at the next bs
-// inbox. PreInvocation, which armed the retired waiter, is a silent no-op for one release:
-// a worker spawned before keeps calling it (bees-13.97).
+// nothing to stdout either, and agy lets a turn go on past a hook that exits non-zero
+// with no stdout (probed on agy.Probed): the mail stays in the logbook, read at the next
+// bs inbox. PreInvocation, which armed the retired waiter, is a silent no-op for one
+// release: a worker spawned before keeps calling it (bees-13.97).
 func (r *run) hook(fs *flag.FlagSet, args []string) error {
 	harness := fs.String("harness", "", "the harness whose hook this is: agy")
 	if err := parse(fs, args); err != nil {

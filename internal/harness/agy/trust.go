@@ -17,7 +17,8 @@ import (
 )
 
 // Trusted is the key of agy's settings that lists the folders it starts in without its
-// trust prompt, each an exact path: a parent doesn't cover its children (bees-13.80 probe 2).
+// trust prompt, each an exact path: a parent doesn't cover its children (bees-13.80 probe 2,
+// probed on Probed).
 const Trusted = "trustedWorkspaces"
 
 // lockWait bounds the wait for another bs's edit of the settings (motif 15).

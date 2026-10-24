@@ -34,23 +34,23 @@ const Name = "agy"
 const Shell = "run_command"
 
 // Tools are the agent's tools. A custom agent without tools: frontmatter has none, and an
-// unknown name fails the start (probe 1), so this is the list a worker needs and agy 1.4.6
-// registers (command_status and send_command_input are in the binary but not the CLI's
-// registry).
+// unknown name fails the start (probe 1), so this is the list a worker needs and agy
+// registers (probed on Probed; command_status and send_command_input are in the binary
+// but not the CLI's registry).
 var Tools = []string{Shell, "view_file", "list_dir", "grep_search", "find_by_name", "write_to_file", "replace_file_content", "multi_replace_file_content"}
 
 // Conversation is the Record key of the conversation a resume continues: agy names it
 // only after the start, so the worker's first bs call observes it (bees-13.13.6).
 const Conversation = "conversation"
 
-// envConversation is the conversation id agy hands its run_command shells (bees-13.80).
-// Its language server's address and CSRF token beside it are left alone until a ring
-// needs them (bees-13.13.10): a token bs doesn't use, bs doesn't keep.
+// envConversation is the conversation id agy hands its run_command shells (bees-13.80,
+// probed on Probed). Its language server's address and CSRF token beside it are left
+// alone until a ring needs them (bees-13.13.10): a token bs doesn't use, bs doesn't keep.
 const envConversation = "ANTIGRAVITY_CONVERSATION_ID"
 
-// Remote are the vars agy 1.4.6 reads as a remote session, saying "not signed in" when
-// any is set and not empty (probed, bees-13.13.13): a herdr server started over ssh hands
-// them to every pane. SSH_AUTH_SOCK doesn't count.
+// Remote are the vars agy reads as a remote session, saying "not signed in" when any is
+// set and not empty (probed on Probed, bees-13.13.13): a herdr server started over ssh
+// hands them to every pane. SSH_AUTH_SOCK doesn't count.
 var Remote = []string{"SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"}
 
 // Adapter is the agy harness for one role: its [<role>.agy] model, the agy binary (""
@@ -181,7 +181,7 @@ func (a Adapter) Ring(t port.Target, text string, _ port.Priority) error {
 }
 
 // Box is the text typed in agy's input box on screen, its visible lines in herdr's ansi
-// format (agy 1.4.6-1.4.7, read in bees-13.95 and 13.97): a line starting with > between
+// format (probed on Probed and 1.4.7 in bees-13.95 and 13.97): a line starting with > between
 // the screen's last two rules (lines of ─), and at most one footer line under them. Grey
 // text is agy's placeholder hint (1.4.7: "Accept-edits mode: …" in an empty box), not
 // typed, so it doesn't count. ok is false when the screen has no such box: a permission
@@ -212,14 +212,14 @@ func Box(screen []string) (text string, ok bool) {
 
 // Ready reports whether agy shows its idle footer, "? for shortcuts", on the screen's
 // last line: it says "esc to cancel" mid-turn and at a menu, and nothing there while
-// someone types (agy 1.4.6-1.4.7).
+// someone types (probed on Probed and 1.4.7).
 func Ready(screen []string) bool {
 	screen = trim(screen)
 	return len(screen) > 0 && strings.HasPrefix(plain(screen[len(screen)-1], true), "? for shortcuts")
 }
 
 // Menu reports whether screen shows agy's permission menu where agy draws it, under the
-// screen's last rule (agy 1.4.6-1.4.7: "Requesting permission for:" over numbered answers,
+// screen's last rule (probed on Probed and 1.4.7: "Requesting permission for:" over numbered answers,
 // the first "1. Yes, run command"): a "1. Yes" in the conversation above is the agent's
 // own text.
 func Menu(screen []string) bool {
@@ -365,6 +365,28 @@ func mailHook(bs, dir, event string) string {
 
 // quote is s as one sh word.
 func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// Probed is the agy release bs's agy contracts were last probed on (bees-13.13.15;
+// .claude/skills/live-test/agy-probe.sh):
+//   - launch flags (--add-dir, --agent, --mode, --model, --conversation, -i) and the
+//     .agents/agents/<name>.md and .agents/hooks.json file shapes in the --add-dir;
+//   - Tools: the registered tool names (an unknown name fails the start);
+//   - Remote: the SSH_* vars agy reads as a remote session ("not signed in") and
+//     `agy models` as doctor's sign-in probe;
+//   - envConversation (ANTIGRAVITY_CONVERSATION_ID) handed to run_command shells, which
+//     Observe records for --conversation resume;
+//   - Trusted (trustedWorkspaces in settings.json), exact-path folder trust;
+//   - hook payloads: PreToolUse toolCall.name and toolCall.args.CommandLine read by Call;
+//     Stop terminationReason == NO_TOOL_CALL read by Stopped;
+//   - hook answers and exit: Answer's decision deny and empty stdout for no decision
+//     (never {}, which reads as deny); Hold's decision continue; a non-zero hook exit
+//     with empty stdout letting the turn continue;
+//   - ring and screen reading: agy's prompt as drawn in herdr's ansi screen (the > box
+//     between the last two rules read by Box, the "? for shortcuts" idle footer read by
+//     Ready, the grey placeholder hint in an empty box, the "Requesting permission for:" /
+//     "1. Yes" menu under the last rule read by Menu), and ADR-0011's watch list;
+//   - mode: the --mode log lines Mode / Adapter.Took parses.
+const Probed = "1.4.6"
 
 // Call reads agy's PreToolUse payload: {"toolCall": {"name": ..., "args": {...}}}. A
 // payload with no tool name, or a shell call with no command line, is an error: agy's

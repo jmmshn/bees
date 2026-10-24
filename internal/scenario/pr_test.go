@@ -328,6 +328,23 @@ func TestPRReadyAndDraft(t *testing.T) {
 	})
 }
 
+// A complete pr:ready whose PR closed unmerged never passes its prune rule: prune names
+// the keeper's discard as the way out, and then removes it, branch and all (bees-13.78.5,
+// motif 5).
+func TestPruneNamesTheDiscardForAClosedPR(t *testing.T) {
+	both(t, func(t *testing.T, x *toy, b backend) {
+		sp := x.spawn("toy-1", "pr:ready")
+		b.commit(x, sp.Workspace.Dir)
+		url := b.open(x, 1, sp.Workspace.Dir, "toy-1", false)
+		must(t, x.worker("toy-1", 1, "done"), 0)
+		must(t, x.queen("end", "toy-1"), 0)
+		b.close(x, 1)
+		must(t, x.queen("prune"), 3, url+": closed; if it never will, the keeper discards it (bs goal toy-1 discard) and bs prune removes it")
+		must(t, x.keeper("goal", "toy-1", "discard"), 0)
+		must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir+" and branch toy-1")
+	})
+}
+
 // --goal push=<url> (Amendment 4, narrow): the worker's own branch, cut at the target's
 // head; the handoff needs the target's head to be that branch's tip, ahead of where it
 // started, and names the push onto the target; bs end waits for its merge; prune removes

@@ -166,9 +166,11 @@ func (a Adapter) Ring(t port.Target, text string, _ port.Priority) error {
 	case Menu(screen):
 		return busy("at a permission menu")
 	case !ok:
-		return &port.Held{Why: fmt.Sprintf("no agy input box on %s's screen; it sees the mail at its next %s inbox", t.Name, bsname.Cmd)}
+		return &port.Held{Why: fmt.Sprintf("no agy input box on %s's screen (a view such as /tasks over it?); it sees the mail at its next %s inbox", t.Name, bsname.Cmd)}
 	case in != "":
 		return &port.Held{Why: fmt.Sprintf("%s's input box has text (someone is typing); it sees the mail when that turn ends (its Stop hook) or at its next %s inbox", t.Name, bsname.Cmd)}
+	case !Ready(screen):
+		return &port.Held{Why: fmt.Sprintf("%s's screen isn't at agy's prompt (no \"? for shortcuts\" under its input box); it sees the mail at its next %s inbox", t.Name, bsname.Cmd)}
 	}
 	if err := h.Prompt(ctx, t.Pane, text); errors.Is(err, herdr.ErrBlocked) {
 		return busy(herdr.Blocked)
@@ -178,14 +180,16 @@ func (a Adapter) Ring(t port.Target, text string, _ port.Priority) error {
 	return nil
 }
 
-// Box is the text in agy's input box on screen, its visible lines (agy 1.4.6, read in
-// bees-13.95): a line starting with > between the screen's last two rules (lines of ─),
-// and at most one footer line under them. ok is false when the screen has no such box: a
-// permission menu stands in its place, or the screen isn't agy's.
+// Box is the text typed in agy's input box on screen, its visible lines in herdr's ansi
+// format (agy 1.4.6-1.4.7, read in bees-13.95 and 13.97): a line starting with > between
+// the screen's last two rules (lines of ─), and at most one footer line under them. Grey
+// text is agy's placeholder hint (1.4.7: "Accept-edits mode: …" in an empty box), not
+// typed, so it doesn't count. ok is false when the screen has no such box: a permission
+// menu stands in its place, or the screen isn't agy's.
 func Box(screen []string) (text string, ok bool) {
 	var rules []int
 	for i, l := range screen {
-		if rule(l) {
+		if rule(plain(l, true)) {
 			rules = append(rules, i)
 		}
 	}
@@ -194,21 +198,85 @@ func Box(screen []string) (text string, ok bool) {
 	}
 	top, bottom := rules[len(rules)-2], rules[len(rules)-1]
 	in := screen[top+1 : bottom]
-	if len(in) == 0 || !strings.HasPrefix(in[0], ">") || len(screen)-bottom-1 > 1 {
+	if len(in) == 0 || !strings.HasPrefix(plain(in[0], true), ">") || len(screen)-bottom-1 != 1 {
 		return "", false
 	}
-	in = slices.Clone(in)
-	in[0] = in[0][1:]
-	return strings.TrimSpace(strings.Join(in, "\n")), true
+	typed := make([]string, len(in))
+	for i, l := range in {
+		typed[i] = plain(l, false)
+	}
+	typed[0] = strings.TrimPrefix(typed[0], ">")
+	return strings.TrimSpace(strings.Join(typed, "\n")), true
+}
+
+// Ready reports whether agy shows its idle footer, "? for shortcuts", on the screen's
+// last line: it says "esc to cancel" mid-turn and at a menu, and nothing there while
+// someone types (agy 1.4.6-1.4.7).
+func Ready(screen []string) bool {
+	return len(screen) > 0 && strings.HasPrefix(plain(screen[len(screen)-1], true), "? for shortcuts")
 }
 
 // Menu reports whether screen shows agy's permission menu (agy 1.4.6: "Requesting
 // permission for:" over numbered answers, the first "1. Yes, run command").
 func Menu(screen []string) bool {
 	return slices.ContainsFunc(screen, func(l string) bool {
-		l = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(l), ">"))
+		l = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(plain(l, true)), ">"))
 		return strings.HasPrefix(l, "Requesting permission") || strings.HasPrefix(l, "1. Yes")
 	})
+}
+
+// plain is l with its escape sequences dropped and, unless grey, the text drawn grey or
+// dim (SGR 2, 90, 38;5;8) dropped too.
+func plain(l string, grey bool) string {
+	var b strings.Builder
+	dim := false
+	for i := 0; i < len(l); i++ {
+		if l[i] != 0x1b {
+			if grey || !dim {
+				b.WriteByte(l[i])
+			}
+			continue
+		}
+		if i+1 >= len(l) || l[i+1] != '[' {
+			i++ // a two-byte escape
+			continue
+		}
+		j := i + 2
+		for j < len(l) && (l[j] < 0x40 || l[j] > 0x7e) {
+			j++
+		}
+		if j < len(l) && l[j] == 'm' {
+			dim = sgrDim(l[i+2:j], dim)
+		}
+		i = j
+	}
+	return strings.TrimRight(b.String(), " \r")
+}
+
+// sgrDim is whether text is grey or dim after the SGR parameters params, from dim before.
+func sgrDim(params string, dim bool) bool {
+	ps := strings.Split(params, ";")
+	for k := 0; k < len(ps); k++ {
+		switch p := ps[k]; {
+		case p == "" || p == "0" || p == "22" || p == "39":
+			dim = false
+		case p == "2" || p == "90":
+			dim = true
+		case (p == "38" || p == "48") && k+1 < len(ps) && ps[k+1] == "5" && k+2 < len(ps):
+			if p == "38" {
+				dim = ps[k+2] == "8"
+			}
+			k += 2
+		case (p == "38" || p == "48") && k+1 < len(ps) && ps[k+1] == "2":
+			if p == "38" {
+				dim = false
+			}
+			k += 4
+		case p >= "30" && p <= "37" && len(p) == 2, p >= "91" && p <= "97" && len(p) == 2:
+			dim = false
+		}
+	}
+	return dim
 }
 
 // rule reports whether l is one of agy's horizontal rules: 20 or more ─ and nothing else.

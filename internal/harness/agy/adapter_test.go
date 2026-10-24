@@ -204,9 +204,10 @@ func TestRingTypesOnlyIntoAnIdleEmptyBox(t *testing.T) {
 	held(fake.Screen{Status: herdr.Idle, Menu: true}, "bees-8 is at a permission menu")
 	held(fake.Screen{Status: herdr.Working, Menu: true}, "bees-8 is working")
 	held(fake.Screen{Status: herdr.Idle, Box: "keeper half typed"}, "bees-8's input box has text (someone is typing)")
+	held(fake.Screen{Status: herdr.Idle, Box: "keeper half typed", Hint: "Accept-edits mode"}, "bees-8's input box has text")
 	held(fake.Screen{Status: "unknown"}, "bees-8 is unknown")
 	for i, st := range []string{herdr.Idle, herdr.Done} {
-		h.SetScreen("toy", ws.Pane, fake.Screen{Status: st})
+		h.SetScreen("toy", ws.Pane, fake.Screen{Status: st, Hint: "Accept-edits mode: file edits auto-approved"})
 		if err := a.Ring(tg, "[bs] 1 unread", port.Now); err != nil {
 			t.Fatalf("%s: Ring = %v", st, err)
 		}
@@ -230,6 +231,7 @@ func TestBoxAndMenuReadAgysScreen(t *testing.T) {
 	footer := "? for shortcuts                                              accept-edits · bs-worker (Gemini 3.8 Flash · low)  /agents"
 	idle := []string{short, "> Run bs inbox once, then end your turn.", "", "● Ran (bs inbox) (ctrl+o to expand)", "", "  Inbox checked.", "", full, ">", full, footer}
 	typed := []string{short, "> hi", "", full, `> keeper half typed c6-01[bs] 1 unread (queen-lt) — run: bs inbox   (reply with: bs send`, `  queen-lt "...") #c6-01`, full, footer}
+	g, b, r := "\x1b[0m\x1b[38;5;8m", "\x1b[0m\x1b[38;5;12m", "\x1b[0m"
 	menu := []string{short, "> Run the shell command: sleep 1", "", "● Ran (sleep 1) (ctrl+o to expand)", "", "Command", full, "", "Requesting permission for:", "   sleep 1", "",
 		"Run this command?", "> 1. Yes, run command", "  4. No, cancel", "", "  ↑/↓ Navigate · tab Amend · ctrl+g edit/expand command",
 		"esc to cancel                                                accept-edits · bs-worker (Gemini 3.8 Flash · low)  /agents"}
@@ -244,12 +246,24 @@ func TestBoxAndMenuReadAgysScreen(t *testing.T) {
 		{"typed", typed, "keeper half typed c6-01[bs] 1 unread (queen-lt) — run: bs inbox   (reply with: bs send\n  queen-lt \"...\") #c6-01", true, false},
 		{"menu", menu, "", false, true},
 		{"a shell", []string{"$ ls", "$"}, "", false, false},
+		{"/tasks under the box", []string{short, full, ">", full, "Tasks", "  No background tasks.", "", "Keyboard: ↑/↓ Navigate  enter View output", "", "   accept-edits · bs-worker"}, "", false, false},
+		// agy 1.4.7 in herdr's ansi format (bees-13.97): its grey placeholder in an empty box, and typed text
+		{"hint", []string{short, g + full + r, b + ">" + r + " " + g + "Accept-edits mode: file edits auto-approved (shift+tab to cycle)" + r + "\r", g + full + r, g + footer + r}, "", true, false},
+		{"typed ansi", []string{short, g + full + r, b + ">" + r + " half typed\r", g + full + r, g + footer + r}, "half typed", true, false},
 	} {
 		if box, ok := agy.Box(c.screen); box != c.box || ok != c.ok {
 			t.Errorf("%s: Box = %q, %v; want %q, %v", c.name, box, ok, c.box, c.ok)
 		}
 		if got := agy.Menu(c.screen); got != c.menu {
 			t.Errorf("%s: Menu = %v", c.name, got)
+		}
+	}
+	for _, c := range []struct {
+		footer string
+		want   bool
+	}{{footer, true}, {"\x1b[0m\x1b[38;5;8m" + footer, true}, {"      accept-edits · bs-worker", false}, {"esc to cancel      accept-edits · bs-worker", false}} {
+		if got := agy.Ready([]string{full, ">", full, c.footer}); got != c.want {
+			t.Errorf("Ready with footer %q = %v", c.footer, got)
 		}
 	}
 }

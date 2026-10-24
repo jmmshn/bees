@@ -34,16 +34,16 @@ func (c Client) AgentStatus(ctx context.Context, pane string) (string, error) {
 	return r.Result.Agent.Status, nil
 }
 
-// Screen is pane's visible screen as text, each line's trailing spaces cut (pane read
-// prints plain text, not JSON: probed, 0.9.5).
+// Screen is pane's visible screen in herdr's ansi format, its colours kept (pane read
+// prints text, not JSON: probed, 0.9.5), each line's trailing spaces and \r cut.
 func (c Client) Screen(ctx context.Context, pane string) ([]string, error) {
-	b, err := c.output(ctx, "pane", "read", pane, "--source", "visible")
+	b, err := c.output(ctx, "pane", "read", pane, "--source", "visible", "--format", "ansi")
 	if err != nil {
 		return nil, err
 	}
 	ls := strings.Split(strings.TrimRight(string(b), "\n"), "\n")
 	for i, l := range ls {
-		ls[i] = strings.TrimRight(l, " ")
+		ls[i] = strings.TrimRight(l, " \r")
 	}
 	return ls, nil
 }

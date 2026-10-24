@@ -365,7 +365,11 @@ func TestDoctorAgySignIn(t *testing.T) {
 	_, out := r.doctor()
 	wantIn(t, out, "ok   agy sign-in: "+agyAt+" models answers without SSH_CONNECTION, SSH_CLIENT, SSH_TTY")
 	// bees-13.13.18: never in doctor's cwd, which can be an agy session's start dir.
-	if got, err := os.ReadFile(wd); err != nil || strings.TrimSpace(string(got)) != os.TempDir() {
+	// Resolved: macOS's TMPDIR ends in / under the /var symlink to /private/var.
+	got, err := os.ReadFile(wd)
+	ran, _ := filepath.EvalSymlinks(strings.TrimSpace(string(got)))
+	tmp, _ := filepath.EvalSymlinks(os.TempDir())
+	if err != nil || ran != tmp {
 		t.Errorf("agy models ran in %q (%v), not %s", got, err, os.TempDir())
 	}
 	if err := os.WriteFile(signedOut, nil, 0o600); err != nil {

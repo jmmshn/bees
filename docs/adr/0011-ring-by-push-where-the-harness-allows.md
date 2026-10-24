@@ -54,7 +54,7 @@ The waiter's one virtue is uniformity: every harness can run it. That isn't wort
 
 ## Revisit when
 
-`bs doctor` prints the installed agy version and points here. Re-probe on a new agy release when either holds:
+`bs doctor` prints the installed agy version (checked against `agy.Probed`, bees-13.13.15) and points here. Re-probe on a new agy release when either holds:
 
 - [#1022](https://github.com/google-antigravity/antigravity-cli/issues/1022) is fixed: `send_message` wakes an idle session;
 - agy documents a local API to prompt a live session (remote control or `agentapi`), one that reports failure.
@@ -114,4 +114,4 @@ The message is in the logbook first, so no race loses mail. The worst case is on
 
 ### Revisit agy's typed ring when
 
-The [watch list above](#revisit-when) stands, with herdr refusing `agent prompt` while a permission menu is on screen added: that closes the menu race whatever agy does.
+The [watch list above](#revisit-when) stands, with herdr refusing `agent prompt` while a permission menu is on screen added: that closes the menu race whatever agy does. See [SETUP.md](../SETUP.md#future-agy-work-that-would-simplify-bs) for what each upstream change lets `bs` delete.

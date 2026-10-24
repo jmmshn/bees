@@ -25,7 +25,7 @@ Settle these with the keeper, one batch of questions:
 
 | Question | Values | Notes |
 |---|---|---|
-| Harness (machine-wide) | `claude_code` \| `agy` | The program every queen and worker starts (omp: bees-12.8). `agy` is staged (bees-13.13): no ring, no resume until bees-13.13.6, and each new worktree must be trusted until bees-13.13.5. |
+| Harness (machine-wide) | `claude_code` \| `agy` | The program every queen and worker starts (omp: bees-12.8). Keep `claude_code` and run agy per spawn (`bs spawn --harness agy`); a global `agy` moves the queen too, untested (bees-13.13.11). agy setup: [SETUP.md](SETUP.md#agy-workers). |
 | Projects | a name and a git checkout each | Its name is the checkout's directory name, lowercased with `-` and `_` dropped; bs finds it from the directory it runs in. |
 | Workspace | `git_worktree` \| `command` | `git_worktree`: each worker gets its own worktree and branch under `<repo>-WT/`. `command`: another VCS (jj, hg, a cloud client with CLs) through the keeper's own argv and a custom goal ([SETUP.md](SETUP.md#other-vcs-a-command-workspace-and-a-custom-goal)). A directory that isn't a git checkout's top level (`none`, bees-13.10) has no working path yet: `bs doctor` and `bs spawn` refuse it. |
 | Goals | `pr`, `branch`, `verdict`, `note`, `beads`, … | The queen names one per spawn (`bs spawn --goal`). `pr`, `push=` and `review=` need the repo's GitHub remote; the others need no network. |

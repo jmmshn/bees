@@ -554,8 +554,8 @@ func TestAPushTheHostHasntSeenYetIsPending(t *testing.T) {
 // The queen brings a change behind its base current on the host (gh pr update-branch:
 // GitHub merges the base into its head) without a round trip to the worker: a head that
 // is the worker's tip plus clean merges of the base passes pr_head, even with the merge
-// only on the host (bs fetches it); a merge carrying anything else, or merging a branch
-// other than the base, still says pull (bees-13.102).
+// only on the host (bs fetches it); a merge carrying anything else, merging a branch other
+// than the base, or one bs can't fetch, still says pull (bees-13.102).
 func TestAHostMergeOfTheBasePasses(t *testing.T) {
 	x := newToy(t)
 	b := ghBackend{}
@@ -597,6 +597,14 @@ func TestAHostMergeOfTheBasePasses(t *testing.T) {
 	x.git(host, "merge", "-q", "--no-edit", "side")
 	x.git(host, "push", "-q", "-f", "origin", "HEAD:refs/heads/toy-1")
 	must(t, x.worker("toy-1", 5, "done"), 7, "has commits toy-1 lacks", "pull them, then push")
+
+	// A fetch that can't run is still "pull them", never "couldn't check": a retry would
+	// never fix it.
+	b.commit(x, host)
+	x.push(host, "toy-1")
+	x.git(x.repo, "config", "--unset", "url."+x.gh.Git+".insteadOf")
+	x.git(x.repo, "config", "url."+filepath.Join(filepath.Dir(x.repo), "gone.git")+".insteadOf", toyRepo+".git")
+	must(t, x.worker("toy-1", 6, "done"), 7, "has commits toy-1 lacks", "pull them, then push")
 }
 
 // While the host still shows the old head of a pushed branch, what it says of that head

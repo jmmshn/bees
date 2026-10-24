@@ -322,8 +322,8 @@ func (k *look) unpushed(ctx context.Context, v port.Change, tip string) (outcome
 		}
 	}
 	if !ahead {
-		if ok, err := k.baseMerged(ctx, v, tip); err != nil || ok {
-			return of(ok), fmt.Sprintf("its head %s on %s is %s at %s with %s merged in", oid(v.HeadCommit), host, v.Head, oid(tip), v.Base), err
+		if k.baseMerged(ctx, v, tip, has) {
+			return passed, fmt.Sprintf("its head %s on %s is %s at %s with %s merged in", oid(v.HeadCommit), host, v.Head, oid(tip), v.Base), nil
 		}
 		return failed, fmt.Sprintf("its head %s on %s has commits %s lacks (at %s): pull them, then push", oid(v.HeadCommit), host, v.Head, oid(tip)), nil
 	}
@@ -342,36 +342,35 @@ func (k *look) unpushed(ctx context.Context, v port.Change, tip string) (outcome
 // of v's base: what "Update branch" (gh pr update-branch) makes of a change behind its base,
 // so the queen brings it current without a round trip to the worker (bees-13.102). Each
 // merge is a commit v would land, and its other parent one v wouldn't, so the base's; the
-// change found from the branch lists no commits, so they are read from its own view. A
-// VCS that can't tell a clean merge says no.
-func (k *look) baseMerged(ctx context.Context, v port.Change, tip string) (bool, error) {
+// change found from the branch lists no commits, so they are read from its own view, which
+// must show the same head. has is whether the workspace has the head; bs fetches it if not.
+// Any doubt (a VCS that can't tell a clean merge, a failed read or fetch) is no, never
+// "couldn't check": pulling is right either way, and a fetch that always fails would
+// otherwise leave the worker retrying forever (motif 5).
+func (k *look) baseMerged(ctx context.Context, v port.Change, tip string, has bool) bool {
 	vcs, dir := k.c.vcs(k.sp.Workspace), k.sp.Workspace.Dir
 	m, ok := vcs.(port.Merges)
 	if !ok {
-		return false, nil
+		return false
 	}
 	full, err := k.view(ctx, port.Ref{URL: v.URL, Repo: v.Repo})
-	if err != nil {
-		return false, err
+	if err != nil || full.HeadCommit != v.HeadCommit {
+		return false
 	}
-	if has, err := vcs.Has(ctx, dir, v.HeadCommit); err != nil {
-		return false, err
-	} else if !has {
-		if err := k.c.Review.Fetch(ctx, dir, v); err != nil {
-			return false, err
-		}
+	if !has && k.c.Review.Fetch(ctx, dir, v) != nil {
+		return false
 	}
 	for at := v.HeadCommit; at != tip; {
 		if !slices.Contains(full.Commits, at) {
-			return false, nil
+			return false
 		}
 		ours, theirs, ok, err := m.CleanMerge(ctx, dir, at)
 		if err != nil || !ok || slices.Contains(full.Commits, theirs) {
-			return false, err
+			return false
 		}
 		at = ours
 	}
-	return true, nil
+	return true
 }
 
 // targetOpen is a stacked change's target still open, so there is something to land on;

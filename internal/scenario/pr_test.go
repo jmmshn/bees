@@ -328,6 +328,23 @@ func TestPRReadyAndDraft(t *testing.T) {
 	})
 }
 
+// A complete pr:ready whose PR closed unmerged never passes its prune rule: prune names
+// the keeper's discard as the way out, and then removes it, branch and all (bees-13.78.5,
+// motif 5).
+func TestPruneNamesTheDiscardForAClosedPR(t *testing.T) {
+	both(t, func(t *testing.T, x *toy, b backend) {
+		sp := x.spawn("toy-1", "pr:ready")
+		b.commit(x, sp.Workspace.Dir)
+		url := b.open(x, 1, sp.Workspace.Dir, "toy-1", false)
+		must(t, x.worker("toy-1", 1, "done"), 0)
+		must(t, x.queen("end", "toy-1"), 0)
+		b.close(x, 1)
+		must(t, x.queen("prune"), 3, url+": closed; if it never will, the keeper discards it (bs goal toy-1 discard) and bs prune removes it")
+		must(t, x.keeper("goal", "toy-1", "discard"), 0)
+		must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir+" and branch toy-1")
+	})
+}
+
 // --goal push=<url> (Amendment 4, narrow): the worker's own branch, cut at the target's
 // head; the handoff needs the target's head to be that branch's tip, ahead of where it
 // started, and names the push onto the target; bs end waits for its merge; prune removes
@@ -549,6 +566,62 @@ func TestAPushTheHostHasntSeenYetIsPending(t *testing.T) {
 	b.commit(x, other)
 	x.push(other, "toy-1")
 	must(t, x.worker("toy-1", 5, "done", "--wait", "--timeout", "1s"), 7, "has commits toy-1 lacks", "pull them, then push")
+}
+
+// The queen brings a change behind its base current on the host (gh pr update-branch:
+// GitHub merges the base into its head) without a round trip to the worker: a head that
+// is the worker's tip plus clean merges of the base passes pr_head, even with the merge
+// only on the host (bs fetches it); a merge carrying anything else, merging a branch other
+// than the base, or one bs can't fetch, still says pull (bees-13.102).
+func TestAHostMergeOfTheBasePasses(t *testing.T) {
+	x := newToy(t)
+	b := ghBackend{}
+	b.setup(x, true)
+	sp := x.spawn("toy-1", "pr")
+	dir := sp.Workspace.Dir
+	b.commit(x, dir)
+	b.open(x, 1, dir, "toy-1", false)
+	b.behind(x)
+	must(t, x.worker("toy-1", 1, "done"), 7, "pr_current", "behind main")
+
+	host := filepath.Join(filepath.Dir(x.repo), "host") // GitHub's own copy, never the worker's objects
+	x.git(filepath.Dir(x.repo), "clone", "-q", x.gh.Git, host)
+	update := func() {
+		x.git(host, "fetch", "-q", "origin")
+		x.git(host, "checkout", "-q", "--detach", "origin/toy-1")
+		x.git(host, "merge", "-q", "--no-edit", "origin/main")
+	}
+	update()
+	x.push(host, "toy-1")
+	must(t, x.worker("toy-1", 2, "done"), 0)
+	b.behind(x) // a second merge on top of the first
+	update()
+	x.push(host, "toy-1")
+	must(t, x.worker("toy-1", 3, "done"), 0)
+	tip := x.git(host, "rev-parse", "HEAD")
+
+	b.behind(x) // a merge that slips in a file of its own
+	update()
+	x.commit(host, "extra.txt")
+	x.git(host, "reset", "-q", "--soft", "HEAD~1")
+	x.git(host, "commit", "-q", "--amend", "--no-edit")
+	x.push(host, "toy-1")
+	must(t, x.worker("toy-1", 4, "done"), 7, "has commits toy-1 lacks", "pull them, then push")
+
+	x.git(host, "checkout", "-q", "-b", "side", "origin/main") // a merge of another branch
+	b.commit(x, host)
+	x.git(host, "checkout", "-q", "--detach", tip)
+	x.git(host, "merge", "-q", "--no-edit", "side")
+	x.git(host, "push", "-q", "-f", "origin", "HEAD:refs/heads/toy-1")
+	must(t, x.worker("toy-1", 5, "done"), 7, "has commits toy-1 lacks", "pull them, then push")
+
+	// A fetch that can't run is still "pull them", never "couldn't check": a retry would
+	// never fix it.
+	b.commit(x, host)
+	x.push(host, "toy-1")
+	x.git(x.repo, "config", "--unset", "url."+x.gh.Git+".insteadOf")
+	x.git(x.repo, "config", "url."+filepath.Join(filepath.Dir(x.repo), "gone.git")+".insteadOf", toyRepo+".git")
+	must(t, x.worker("toy-1", 6, "done"), 7, "has commits toy-1 lacks", "pull them, then push")
 }
 
 // While the host still shows the old head of a pushed branch, what it says of that head

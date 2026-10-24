@@ -20,27 +20,30 @@ import (
 // branch changed being identical on the base; then a merged change on the review host
 // whose head is the branch tip. The local proofs run first, so the host is asked only
 // when they fail.
+// The proofs measure a commit, never a ref name (bees-13.18): the branch's tip, else, once
+// the branch is renamed or deleted, its worktree's HEAD. With neither, nothing proves the
+// work landed: not merged, and the keeper's discard is the way out (motif 5).
 // err is a proof that couldn't run: never "not merged" (Rule G).
 func (c *Core) merged(ctx context.Context, ws logbook.Workspace) (bool, string, error) {
-	tip, err := c.git(ctx, ws.Repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+ws.Branch)
+	tip, why, err := c.tip(ctx, ws)
 	switch {
-	case isExit(err, 1):
-		return false, fmt.Sprintf("branch %s no longer exists in %s", ws.Branch, ws.Repo), nil
 	case err != nil:
 		return false, "", err
+	case tip == "":
+		return false, why, nil
 	}
 	bases, err := c.bases(ctx, ws)
 	if err != nil {
 		return false, "", err
 	}
 	for _, b := range bases {
-		switch in, err := c.ancestor(ctx, ws.Repo, "refs/heads/"+ws.Branch, b); {
+		switch in, err := c.ancestor(ctx, ws.Repo, tip, b); {
 		case err != nil:
 			return false, "", err
 		case in:
 			return true, "its commits are on " + short(b), nil
 		}
-		switch same, err := c.sameContent(ctx, ws.Repo, b, "refs/heads/"+ws.Branch); {
+		switch same, err := c.sameContent(ctx, ws.Repo, b, tip); {
 		case err != nil:
 			return false, "", fmt.Errorf("comparing with %s: %w", short(b), err)
 		case same:
@@ -58,11 +61,57 @@ func (c *Core) merged(ctx context.Context, ws logbook.Workspace) (bool, string, 
 	for i, b := range bases {
 		names[i] = short(b)
 	}
-	why := fmt.Sprintf("%s has work not on %s", ws.Branch, strings.Join(names, " or "))
+	why = fmt.Sprintf("%s has work not on %s", why, strings.Join(names, " or "))
 	if skipped != "" {
 		why += " (" + skipped + ")"
 	}
 	return false, why, nil
+}
+
+// tip is the commit merged measures for ws, and what to call it: its branch's tip, else
+// the HEAD of its directory while that is still a worktree of its repo (the branch renamed
+// or deleted there) and every commit its HEAD ever held is on a branch, tag or remote
+// (a checkout of the base after deleting the branch must not read as merged), else ""
+// with why nothing can be measured.
+func (c *Core) tip(ctx context.Context, ws logbook.Workspace) (tip, name string, err error) {
+	switch tip, err := c.git(ctx, ws.Repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+ws.Branch); {
+	case err == nil:
+		return tip, ws.Branch, nil
+	case !isExit(err, 1):
+		return "", "", err
+	}
+	gone := fmt.Sprintf("branch %s no longer exists in %s", ws.Branch, ws.Repo)
+	switch _, err := os.Stat(ws.Dir); {
+	case ws.Dir == "" || os.IsNotExist(err):
+		return "", gone + " and its worktree is gone", nil
+	case err != nil:
+		return "", "", err
+	}
+	switch mine, err := c.isWorktree(ctx, ws); {
+	case err != nil:
+		return "", "", err
+	case !mine:
+		return "", gone + " and " + ws.Dir + " is no longer its worktree", nil
+	}
+	tip, err = c.git(ctx, ws.Dir, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+	switch {
+	case isExit(err, 1):
+		return "", gone + " and its worktree has no commit checked out", nil
+	case err != nil:
+		return "", "", err
+	}
+	held, err := c.git(ctx, ws.Dir, "log", "-g", "--format=%H", "HEAD")
+	if err != nil {
+		return "", "", err
+	}
+	lost, err := c.git(ctx, ws.Dir, append(append([]string{"rev-list", "-n1"}, strings.Fields(held)...), "--not", "--branches", "--tags", "--remotes")...)
+	switch {
+	case err != nil:
+		return "", "", err
+	case lost != "":
+		return "", fmt.Sprintf("%s and its worktree's HEAD held commits on no branch (%s)", gone, lost), nil
+	}
+	return tip, "the HEAD of " + ws.Dir, nil
 }
 
 // landedHeads is the head commit of each merged change from ws's branch, of any age:

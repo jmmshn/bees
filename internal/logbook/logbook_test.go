@@ -238,6 +238,18 @@ func TestMailIsScopedToTheOpenSpawn(t *testing.T) {
 	want("ended")
 	spawn(t, lb, "toy-1", "toy", "w2:p1", "branch")
 	want("respawned", "brief for toy-1")
+	// RecordReceipts marks unread messages read, while Inbox still returns them all (bees-13.83).
+	ms, err := lb.Unread(ctx, "toy-1")
+	if err != nil || len(ms) != 1 {
+		t.Fatalf("unread before receipt: %+v, %v", ms, err)
+	}
+	if err := lb.RecordReceipts(ctx, "toy-1", []logbook.ID{ms[0].ID}); err != nil {
+		t.Fatal(err)
+	}
+	want("after receipt")
+	if all, err := lb.Inbox(ctx, "toy-1"); err != nil || len(all) != 1 || all[0].Body != "brief for toy-1" {
+		t.Fatalf("Inbox after receipt = %+v, %v", all, err)
+	}
 	if _, err := lb.Send(ctx, "toy-1", "queen-toy", "hi"); err != nil {
 		t.Fatal(err)
 	}

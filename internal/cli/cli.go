@@ -85,7 +85,7 @@ commands:
   end     [--force] [--incomplete] <worker>               complete and end a worker
   prune                                                    remove completed workspaces
   send    [--project P] [--now] <to> <message|->           store a message, then ring
-  inbox                                                    print unread mail
+  inbox   [--all]                                          print unread mail (--all: read mail too, marking nothing read)
   status                                                   list workers and their goals
   config                                                   every setting and where it came from
   config  init [--project] [--harness H] [--logbook-dir D] [--repos D] [--worktrees D] [--workspace K] [--repo D]   write a commented config file

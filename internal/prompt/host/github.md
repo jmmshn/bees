@@ -6,4 +6,5 @@ Review host: GitHub (`review.host = "github"`). A change is a pull request, its 
 <!-- queen -->
 
 - Merge a PR with `gh pr merge <url>` (run `{{bs}} check <worker>` first), once the keeper says to land it.
+- A PR behind its base (`{{bs}} check` fails `pr_current`): bring it current yourself with `gh pr update-branch <url>`, then `{{bs}} check <worker>` again once CI reruns; bs accepts GitHub's merge of the base on top of the worker's branch, so the worker need not pull.
 - Deleting a stacked PR's base branch closes the PR above it: retarget that one first (`gh pr edit <n> --base <default branch>`).

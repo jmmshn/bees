@@ -20,6 +20,7 @@ import (
 	"github.com/jmmshn/bees/internal/config"
 	"github.com/jmmshn/bees/internal/core"
 	"github.com/jmmshn/bees/internal/goal"
+	"github.com/jmmshn/bees/internal/harness/agy"
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/port"
 )
@@ -143,10 +144,22 @@ func (r *run) spawn(_ *flag.FlagSet, _ []string) error {
 	}
 	if resumed {
 		fmt.Fprintf(r.out, "resumed %s in pane %s on herdr session %s, in %s\n", sp.Name, sp.Herdr.Pane, sp.Herdr.Session, sp.Workspace.Dir)
-		return nil
+	} else {
+		fmt.Fprintf(r.out, "spawned %s (--goal %s) in %s, pane %s on herdr session %s\n", sp.Name, sp.Goal, sp.Workspace.Dir, sp.Herdr.Pane, sp.Herdr.Session)
 	}
-	fmt.Fprintf(r.out, "spawned %s (--goal %s) in %s, pane %s on herdr session %s\n", sp.Name, sp.Goal, sp.Workspace.Dir, sp.Herdr.Pane, sp.Herdr.Session)
+	if sp.Harness == agy.Name {
+		r.agyTook(sp.Name)
+	}
 	return nil
+}
+
+// agyTook warns when the agy just started for session name says in its log it didn't
+// take the mode bs asked for (bees-13.13.14). agy logs it at once, before herdr's start
+// returns; a log not found yet says nothing, and bs doctor checks again.
+func (r *run) agyTook(name string) {
+	if t, ok, err := r.s.agyLogs().Took(name); err == nil && ok && t.Fallback != "" {
+		fmt.Fprintf(r.err, "%s spawn: warning: %s's agy didn't take --mode %s, so it asks about every edit and command; its log %s says: %s\n  next: %s doctor\n", bsname.Cmd, name, cmp.Or(t.Asked, "?"), t.Log, t.Fallback, bsname.Cmd)
+	}
 }
 
 func (r *run) done(fs *flag.FlagSet, args []string) error {

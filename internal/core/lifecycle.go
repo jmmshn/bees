@@ -594,11 +594,6 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 	if err := c.removeFiles(sp.Name); err != nil {
 		c.warn("couldn't remove %s's start files: %v", sp.Name, err)
 	}
-	// The remote branch is named whatever happens to the local one (bees-1.34); a command
-	// workspace's branch is no git one.
-	if ws.Branch != "" && ws.Kind != config.CommandKind {
-		p.Remote = c.remoteBranch(ctx, ws)
-	}
 	free := func(ctx context.Context, sp logbook.Spawn) (string, bool) { return c.freeDir(ctx, sp, e.Discarded) }
 	if ws.Kind == config.CommandKind {
 		free = c.freeCommandDir
@@ -615,8 +610,16 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 	} else if err := untrust(h, ws.Dir); err != nil {
 		c.warn("%s couldn't untrust %s: %v", sp.Harness, ws.Dir, err)
 	}
-	if !branch {
+	// The remote branch is named once prune has done something there (bees-1.34): asking
+	// origin costs a round trip, and a kept workspace's line says why it was kept.
+	left := func(p Pruned) Pruned {
+		if ws.Branch != "" && ws.Kind != config.CommandKind {
+			p.Remote = c.remoteBranch(ctx, ws)
+		}
 		return p
+	}
+	if !branch {
+		return left(p)
 	}
 	// The prune rule's branch_merged, when it ran and passed, is the proof: one gh call,
 	// not two. A merged (or closed draft) handed-off change holding the tip is another.
@@ -641,7 +644,7 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 		return keep(false, "%s", why)
 	}
 	p.Deleted = true
-	return p
+	return left(p)
 }
 
 // remoteBranch is origin's branch named like ws's, as origin itself says (ls-remote), or "".
@@ -656,7 +659,10 @@ func (c *Core) remoteBranch(ctx context.Context, ws logbook.Workspace) string {
 		c.warn("can't tell whether origin/%s exists: %v", ws.Branch, err)
 		return ""
 	}
-	switch out, err := c.git(ctx, ws.Repo, "ls-remote", "--heads", "origin", "refs/heads/"+ws.Branch); {
+	// Bounded and never prompting: a credential or passphrase prompt would hang prune.
+	ctx, cancel := context.WithTimeout(ctx, remoteWait)
+	defer cancel()
+	switch out, err := c.git(ctx, ws.Repo, "-c", "core.askPass=false", "-c", "core.sshCommand=ssh -o BatchMode=yes", "ls-remote", "--heads", "origin", "refs/heads/"+ws.Branch); {
 	case err != nil:
 		c.warn("can't ask origin whether it has branch %s: %v", ws.Branch, err)
 		return "origin/" + ws.Branch + " (maybe: origin couldn't be asked)"
@@ -665,6 +671,9 @@ func (c *Core) remoteBranch(ctx context.Context, ws logbook.Workspace) string {
 	}
 	return "origin/" + ws.Branch
 }
+
+// remoteWait bounds remoteBranch's ask of origin.
+const remoteWait = 20 * time.Second
 
 // ignored names the ignored files in dir that none of let (the spawn's prune.ignore)
 // covers, or "". -uall lists each file, never a wholly ignored directory, and -z leaves

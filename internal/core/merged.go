@@ -21,8 +21,8 @@ import (
 // whose head is the branch tip. The local proofs run first, so the host is asked only
 // when they fail.
 // The proofs measure a commit, never a ref name (bees-13.18): the branch's tip, else, once
-// the branch is renamed or deleted, its worktree's HEAD; with neither there is nothing to
-// lose.
+// the branch is renamed or deleted, its worktree's HEAD. With neither, nothing proves the
+// work landed: not merged, and the keeper's discard is the way out (motif 5).
 // err is a proof that couldn't run: never "not merged" (Rule G).
 func (c *Core) merged(ctx context.Context, ws logbook.Workspace) (bool, string, error) {
 	tip, why, err := c.tip(ctx, ws)
@@ -30,7 +30,7 @@ func (c *Core) merged(ctx context.Context, ws logbook.Workspace) (bool, string, 
 	case err != nil:
 		return false, "", err
 	case tip == "":
-		return true, why, nil
+		return false, why, nil
 	}
 	bases, err := c.bases(ctx, ws)
 	if err != nil {
@@ -70,7 +70,9 @@ func (c *Core) merged(ctx context.Context, ws logbook.Workspace) (bool, string, 
 
 // tip is the commit merged measures for ws, and what to call it: its branch's tip, else
 // the HEAD of its directory while that is still a worktree of its repo (the branch renamed
-// or deleted there), else "" with why nothing is lost.
+// or deleted there) and every commit its HEAD ever held is on a branch, tag or remote
+// (a checkout of the base after deleting the branch must not read as merged), else ""
+// with why nothing can be measured.
 func (c *Core) tip(ctx context.Context, ws logbook.Workspace) (tip, name string, err error) {
 	switch tip, err := c.git(ctx, ws.Repo, "rev-parse", "--verify", "--quiet", "refs/heads/"+ws.Branch); {
 	case err == nil:
@@ -81,7 +83,7 @@ func (c *Core) tip(ctx context.Context, ws logbook.Workspace) (tip, name string,
 	gone := fmt.Sprintf("branch %s no longer exists in %s", ws.Branch, ws.Repo)
 	switch _, err := os.Stat(ws.Dir); {
 	case ws.Dir == "" || os.IsNotExist(err):
-		return "", gone + " and its worktree is gone: nothing to lose", nil
+		return "", gone + " and its worktree is gone", nil
 	case err != nil:
 		return "", "", err
 	}
@@ -89,15 +91,27 @@ func (c *Core) tip(ctx context.Context, ws logbook.Workspace) (tip, name string,
 	case err != nil:
 		return "", "", err
 	case !mine:
-		return "", gone + " and " + ws.Dir + " is no longer its worktree: nothing of its to lose", nil
+		return "", gone + " and " + ws.Dir + " is no longer its worktree", nil
 	}
-	switch tip, err := c.git(ctx, ws.Dir, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"); {
-	case err == nil:
-		return tip, "the HEAD of " + ws.Dir, nil
-	case !isExit(err, 1):
+	tip, err = c.git(ctx, ws.Dir, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+	switch {
+	case isExit(err, 1):
+		return "", gone + " and its worktree has no commit checked out", nil
+	case err != nil:
 		return "", "", err
 	}
-	return "", gone + " and its worktree has no commit checked out: nothing to lose", nil
+	held, err := c.git(ctx, ws.Dir, "log", "-g", "--format=%H", "HEAD")
+	if err != nil {
+		return "", "", err
+	}
+	lost, err := c.git(ctx, ws.Dir, append(append([]string{"rev-list", "-n1"}, strings.Fields(held)...), "--not", "--branches", "--tags", "--remotes")...)
+	switch {
+	case err != nil:
+		return "", "", err
+	case lost != "":
+		return "", fmt.Sprintf("%s and its worktree's HEAD held commits on no branch (%s)", gone, lost), nil
+	}
+	return tip, "the HEAD of " + ws.Dir, nil
 }
 
 // landedHeads is the head commit of each merged change from ws's branch, of any age:

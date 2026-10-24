@@ -322,6 +322,20 @@ func TestPruneMeasuresARenamedBranchByItsWorktreeHead(t *testing.T) {
 	}
 }
 
+// A branch deleted after its worktree checked out the base is no proof: the work lives
+// only in that worktree's HEAD reflog, so prune keeps it and end doesn't complete it.
+func TestADeletedBranchWithHeadOnTheBaseIsNotMerged(t *testing.T) {
+	x := newToy(t)
+	sp := x.spawn("toy-1", "branch")
+	x.commit(sp.Workspace.Dir, "work.txt")
+	must(t, x.worker("toy-1", 1, "done"), 0)
+	x.git(sp.Workspace.Dir, "checkout", "-q", "--detach", "main")
+	x.git(x.repo, "branch", "-D", "toy-1")
+	must(t, x.queen("end", "toy-1"), 9, "its worktree's HEAD held commits on no branch")
+	must(t, x.queen("end", "--incomplete", "toy-1"), 0)
+	must(t, x.queen("prune"), 3, "kept "+sp.Workspace.Dir+" (toy-1): branch toy-1 no longer exists", "held commits on no branch", "bs goal toy-1 discard")
+}
+
 // A spawn from before goals recorded the repo's path as its base (the pilot's v1): its
 // branch is proven merged against the default branch, so prune removes it rather than
 // keeping it as "couldn't check" forever (bees-12.41's class).

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -25,6 +26,13 @@ func (b *bdStub) Run(ctx context.Context, dir string, argv ...string) ([]byte, e
 		return port.Exec{}.Run(ctx, dir, argv...)
 	}
 	b.calls = append(b.calls, argv[1:])
+	// Real bd query leaves closed beads out unless given --all; out["query --all"] is what
+	// it returns then.
+	if argv[1] == "query" && slices.Contains(argv, "--all") {
+		if o, ok := b.out["query --all"]; ok {
+			return []byte(o), nil
+		}
+	}
 	return []byte(b.out[argv[1]]), nil
 }
 
@@ -58,9 +66,17 @@ func TestBeadStaysInTheProject(t *testing.T) {
 	if code, out, stderr := r.runWith(Ports{Run: bd}, nil, "bead", "ls", "priority<=1"); code != 0 || out != "mytoy-1 one\n" {
 		t.Fatalf("ls: exit %d %q %q", code, out, stderr)
 	}
-	if got := bd.calls[0]; got[3] != `id="mytoy-*" AND status!=closed AND (priority<=1)` {
-		t.Fatalf("ls query %q", got[3])
+	if got := strings.Join(bd.calls[0], " "); got != `query --limit 0 id="mytoy-*" AND status!=closed AND (priority<=1)` {
+		t.Fatalf("ls: bd %s", got)
 	}
+	// --all reaches bd too: an expression alone can't bring closed beads back.
+	if code, _, stderr := r.runWith(Ports{Run: bd}, nil, "bead", "ls", "--all"); code != 0 {
+		t.Fatalf("ls --all: exit %d %q", code, stderr)
+	}
+	if got := strings.Join(bd.calls[1], " "); got != `query --limit 0 --all id="mytoy-*"` {
+		t.Fatalf("ls --all: bd %s", got)
+	}
+	bd.calls = bd.calls[:1]
 	// Flags may follow the title, as the old bs took them (a live bakeoff queen typed them so).
 	if code, out, stderr := r.runWith(Ports{Run: bd}, nil, "bead", "new", "--parent", "mytoy-1", "Fix", "it", "--priority", "1"); code != 0 || out != "mytoy-1.3\n" {
 		t.Fatalf("new: exit %d %q %q", code, out, stderr)
@@ -94,7 +110,8 @@ func TestBeadStaysInTheProject(t *testing.T) {
 func TestBeadSearchReadsEveryTextField(t *testing.T) {
 	r := newRig(t)
 	bd := &bdStub{out: map[string]string{
-		"query": `[{"id":"mytoy-1"},{"id":"mytoy-1.2"},{"id":"mytoy-1.3"}]`,
+		"query":       `[{"id":"mytoy-1"},{"id":"mytoy-1.3"}]`,
+		"query --all": `[{"id":"mytoy-1"},{"id":"mytoy-1.2"},{"id":"mytoy-1.3"}]`,
 		"show": `[{"id":"mytoy-1","status":"open","title":"Epic","design":"keep an ALLOW list"},
 			{"id":"mytoy-1.2","status":"closed","title":"Other","notes":"line one\nthe allow\nlist"},
 			{"id":"mytoy-1.3","status":"open","title":"Nothing here"}]`,
@@ -105,7 +122,7 @@ func TestBeadSearchReadsEveryTextField(t *testing.T) {
 	if code != 0 || out != want {
 		t.Fatalf("exit %d %q %q", code, out, stderr)
 	}
-	if got := strings.Join(bd.calls[0], " "); got != `query --json --limit 0 id="mytoy-*"` {
+	if got := strings.Join(bd.calls[0], " "); got != `query --limit 0 --all --json id="mytoy-*"` {
 		t.Fatalf("bd %s", got)
 	}
 	if got := strings.Join(bd.calls[1], " "); got != "show --json mytoy-1 mytoy-1.2 mytoy-1.3" {
@@ -115,11 +132,29 @@ func TestBeadSearchReadsEveryTextField(t *testing.T) {
 	if code != 0 || out != "" || !strings.Contains(stderr, `no open mytoy bead mentions "no such"; --all`) {
 		t.Fatalf("no match: exit %d %q %q", code, out, stderr)
 	}
-	if got := bd.calls[2][4]; got != `id="mytoy-*" AND status!=closed` {
-		t.Fatalf("query %q", got)
+	if got := strings.Join(bd.calls[2], " "); got != `query --limit 0 --json id="mytoy-*" AND status!=closed` {
+		t.Fatalf("bd %s", got)
 	}
 	if code, _, stderr := r.runWith(Ports{Run: bd}, nil, "bead", "search"); code != core.ExitRefused || !strings.Contains(stderr, "usage") {
 		t.Fatalf("no text: exit %d %q", code, stderr)
+	}
+}
+
+// snippet finds a match whose case folding changes byte length, and quotes it from the
+// original text.
+func TestSnippetFoldsWithoutShiftingOffsets(t *testing.T) {
+	for _, c := range []struct{ s, text, want string }{
+		{strings.Repeat("Ⱥ", 200) + " allow list", "allow", "ⱥ"},
+		{strings.Repeat("İ", 200) + " allow list", "allow", "allow list"},
+		{"keep an ALLOW list", "allow", "keep an allow list"},
+	} {
+		got, ok := snippet(c.s, c.text)
+		if !ok || !strings.Contains(strings.ToLower(got), c.want) || !strings.Contains(strings.ToLower(got), "allow") {
+			t.Errorf("snippet(%.20q…, %q) = %q, %v", c.s, c.text, got, ok)
+		}
+	}
+	if _, ok := snippet("nothing", "allow"); ok {
+		t.Error("matched nothing")
 	}
 }
 

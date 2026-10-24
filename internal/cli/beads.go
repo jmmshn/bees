@@ -128,14 +128,11 @@ func (r *run) bead(fs *flag.FlagSet, args []string) error {
 		if !balanced(query) {
 			return &core.Exit{Code: core.ExitRefused, Msg: fmt.Sprintf("bead ls: %q: its parentheses don't balance, so it could reach outside %s", strings.Join(query, " "), p)}
 		}
-		expr := fmt.Sprintf("id=%q", p+"-*")
-		if !*all {
-			expr += " AND status!=closed"
-		}
+		expr := scope(p, *all)
 		if len(query) > 0 {
 			expr += " AND (" + strings.Join(query, " ") + ")"
 		}
-		out, err := r.bd("query", "--limit", "0", expr)
+		out, err := r.bd(queryArgs(*all, expr)...)
 		if err != nil {
 			return err
 		}
@@ -191,11 +188,7 @@ func (r *run) bead(fs *flag.FlagSet, args []string) error {
 // text, ignoring case, with a snippet of each field that does. bd query has no design field
 // and bd search reads titles only, so bs reads the beads whole (bd show) and matches itself.
 func (r *run) search(p, text string, all bool) error {
-	expr := fmt.Sprintf("id=%q", p+"-*")
-	if !all {
-		expr += " AND status!=closed"
-	}
-	out, err := r.bd("query", "--json", "--limit", "0", expr)
+	out, err := r.bd(queryArgs(all, "--json", scope(p, all))...)
 	if err != nil {
 		return err
 	}
@@ -220,9 +213,9 @@ func (r *run) search(p, text string, all bool) error {
 			return fmt.Errorf("bd show: %w", err)
 		}
 	}
-	scope := "open " + p + " bead"
+	which := "open " + p + " bead"
 	if all {
-		scope = p + " bead"
+		which = p + " bead"
 	}
 	found := 0
 	for _, b := range beads {
@@ -239,7 +232,7 @@ func (r *run) search(p, text string, all bool) error {
 		fmt.Fprintf(r.out, "%s [%s] %s\n%s\n", b.ID, b.Status, b.Title, strings.Join(hits, "\n"))
 	}
 	if found == 0 {
-		msg := fmt.Sprintf("no %s mentions %q", scope, text)
+		msg := fmt.Sprintf("no %s mentions %q", which, text)
 		if !all {
 			msg += "; --all searches closed ones too"
 		}
@@ -251,12 +244,12 @@ func (r *run) search(p, text string, all bool) error {
 // snippet finds text in s, ignoring case, and returns the line around its first match,
 // whitespace collapsed and trimmed to about 60 characters either side.
 func snippet(s, text string) (string, bool) {
-	i := strings.Index(strings.ToLower(s), strings.ToLower(text))
+	i, j := indexFold(s, text)
 	if i < 0 {
 		return "", false
 	}
 	const pad = 60
-	lo, hi := max(i-pad, 0), min(i+len(text)+pad, len(s))
+	lo, hi := max(i-pad, 0), min(j+pad, len(s))
 	for lo > 0 && !utf8.RuneStart(s[lo]) {
 		lo--
 	}
@@ -271,6 +264,43 @@ func snippet(s, text string) (string, bool) {
 		out += "…"
 	}
 	return out, true
+}
+
+// indexFold finds text in s under Unicode case folding and returns the match's byte span
+// in s itself: lowercasing can change a rune's byte length, so an index into
+// strings.ToLower(s) needn't fall inside s.
+func indexFold(s, text string) (int, int) {
+	n := utf8.RuneCountInString(text)
+	for i := range s {
+		j, k := i, 0
+		for ; k < n && j < len(s); k++ {
+			_, w := utf8.DecodeRuneInString(s[j:])
+			j += w
+		}
+		if k == n && strings.EqualFold(s[i:j], text) {
+			return i, j
+		}
+	}
+	return -1, -1
+}
+
+// scope is the bd query expression for project p's beads, closed ones too when all.
+func scope(p string, all bool) string {
+	expr := fmt.Sprintf("id=%q", p+"-*")
+	if !all {
+		expr += " AND status!=closed"
+	}
+	return expr
+}
+
+// queryArgs is bd query's argv for args: bd query leaves closed beads out unless it is
+// given --all, whatever the expression says.
+func queryArgs(all bool, args ...string) []string {
+	argv := []string{"query", "--limit", "0"}
+	if all {
+		argv = append(argv, "--all")
+	}
+	return append(argv, args...)
 }
 
 // balanced reports whether the parentheses in args, outside quotes, never close more than

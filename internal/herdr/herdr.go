@@ -62,6 +62,8 @@ var codes = map[string]error{
 	"agent_pane_busy":               ErrPaneBusy,
 	"timeout":                       ErrUnready,
 	"agent_not_ready":               ErrBlocked,
+	"agent_blocked":                 ErrBlocked, // agent prompt: typed nothing (herdr 0.9.5 --help)
+	"agent_not_found":               ErrPaneGone,
 	"dirty_worktree_requires_force": ErrDirty,
 	"invalid_agent_argument":        ErrUnsafeArg,
 	"invalid_agent_name":            ErrBadName,
@@ -81,21 +83,9 @@ func (c Client) Argv(args ...string) []string {
 
 // call runs herdr args on c's server and decodes its JSON result into out (if non-nil).
 func (c Client) call(ctx context.Context, out any, args ...string) error {
-	b, err := c.Run.Run(ctx, "", c.Argv(args...)...)
+	b, err := c.output(ctx, args...)
 	if err != nil {
-		var ee *port.ExitError
-		if !errors.As(err, &ee) {
-			return fmt.Errorf("%w: herdr %s: %w", ErrDown, args[0], err)
-		}
-		var env struct {
-			Error struct{ Code, Message string } `json:"error"`
-		}
-		for _, s := range [][]byte{ee.Stderr, ee.Stdout} {
-			if json.Unmarshal(bytes.TrimSpace(s), &env) == nil && env.Error.Code != "" {
-				return &Error{Command: strings.Join(args[:min(2, len(args))], " "), Code: env.Error.Code, Message: env.Error.Message}
-			}
-		}
-		return fmt.Errorf("herdr %s: %w", args[0], err)
+		return err
 	}
 	if out == nil {
 		return nil
@@ -104,6 +94,27 @@ func (c Client) call(ctx context.Context, out any, args ...string) error {
 		return fmt.Errorf("herdr %s: parse output: %w", args[0], err)
 	}
 	return nil
+}
+
+// output runs herdr args on c's server and returns its stdout as it is.
+func (c Client) output(ctx context.Context, args ...string) ([]byte, error) {
+	b, err := c.Run.Run(ctx, "", c.Argv(args...)...)
+	if err == nil {
+		return b, nil
+	}
+	var ee *port.ExitError
+	if !errors.As(err, &ee) {
+		return nil, fmt.Errorf("%w: herdr %s: %w", ErrDown, args[0], err)
+	}
+	var env struct {
+		Error struct{ Code, Message string } `json:"error"`
+	}
+	for _, s := range [][]byte{ee.Stderr, ee.Stdout} {
+		if json.Unmarshal(bytes.TrimSpace(s), &env) == nil && env.Error.Code != "" {
+			return nil, &Error{Command: strings.Join(args[:min(2, len(args))], " "), Code: env.Error.Code, Message: env.Error.Message}
+		}
+	}
+	return nil, fmt.Errorf("herdr %s: %w", args[0], err)
 }
 
 // Workspace is a herdr workspace bs opened, with its root pane.

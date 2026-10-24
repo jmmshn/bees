@@ -138,6 +138,7 @@ const (
 	ExitPending    = 10 // a handoff waits only on CI still running: re-run with --wait
 	ExitWaited     = 11 // bs done --wait ran out of time with CI still running
 	ExitNoMail     = 12 // bs inbox --wait ran out of time with no new mail
+	ExitHeld       = 13 // bs ring: the harness held the ring, typing nothing
 )
 
 // Exit is a refusal or failure with its exit code and the next command to run.

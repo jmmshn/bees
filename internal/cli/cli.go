@@ -85,6 +85,7 @@ commands:
   end     [--force] [--incomplete] <worker>               complete and end a worker
   prune                                                    remove completed workspaces
   send    [--project P] [--now] <to> <message|->           store a message, then ring
+  ring    <to>                                             ring again for unread mail a held ring left (agy idle after a cancelled turn)
   inbox   [--all | --wait [--timeout D]]                   print unread mail (--all: read mail too, marking nothing read; --wait: exit when new mail comes)
   status                                                   list workers and their goals
   config                                                   every setting and where it came from
@@ -94,7 +95,7 @@ commands:
   bead    ls [--all] [<bd query>] | new --parent <project>-N [--description D] [--type T] [--priority P] <title>
   version                                                  print the commit {cmd} was built from
   guard   --harness agy <glob>...                          a harness's PreToolUse hook: deny a tool call on stdin a glob matches
-  hook    --harness agy PreInvocation|Stop                 agy's turn hooks: arm the mail watcher, hold a turn with unread mail
+  hook    --harness agy Stop                               agy's Stop hook: hold a turn with unread mail (PreInvocation: a no-op)
 
 {cmd} acts in the repo it runs in, as its nearest recorded ancestor (a queen, a worker),
 else as the keeper. --as <session>, a debug override from a shell no session started,
@@ -437,6 +438,7 @@ var commands = map[string]command{
 	"send":    {(*run).send, true},
 	"inbox":   {(*run).inbox, true},
 	"hook":    {(*run).hook, true},
+	"ring":    {(*run).rering, true},
 	"status":  {(*run).status, true},
 	"config":  {(*run).config, false},
 	"doctor":  {(*run).doctor, false},

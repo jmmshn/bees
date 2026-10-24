@@ -5,22 +5,26 @@
 // under a .agents/ directory it discovers, which --add-dir adds (probe 1). So Prepare puts
 // both in the per-start directory the core writes: the role's custom agent, its prompt the
 // agent's body, and for a worker the hooks.json that runs bs guard before each command and
-// bs hook around each turn, which keeps a mail watcher armed: agy's ring (bees-13.13.10).
+// bs hook when a turn stops, which holds the turn while mail is unread. Its ring types the
+// doorbell into an idle session's empty input box (bees-13.97, ADR-0011).
 package agy
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jmmshn/bees/internal/bsname"
 	"github.com/jmmshn/bees/internal/guards"
+	"github.com/jmmshn/bees/internal/herdr"
 	"github.com/jmmshn/bees/internal/port"
-	"github.com/jmmshn/bees/internal/watch"
 )
 
 // Name is this harness's config name.
@@ -50,15 +54,15 @@ const envConversation = "ANTIGRAVITY_CONVERSATION_ID"
 var Remote = []string{"SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"}
 
 // Adapter is the agy harness for one role: its [<role>.agy] model, the agy binary (""
-// is agy on PATH), the bs its hook runs, an absolute path, and agy's settings.json, which
-// holds its trusted folders ("" is ~/.gemini/antigravity-cli/settings.json), and bs's
-// cache dir, which holds each session's mail watcher lock.
+// is agy on PATH), the bs its hooks run, an absolute path, agy's settings.json, which
+// holds its trusted folders ("" is ~/.gemini/antigravity-cli/settings.json), and the
+// runner its ring drives herdr with (nil: no ring).
 type Adapter struct {
 	Model    string
 	Bin      string
 	Bs       string
 	Settings string
-	Cache    string
+	Run      port.Runner
 }
 
 var _ port.Harness = Adapter{}
@@ -128,20 +132,183 @@ func (a Adapter) Prepare(st port.Start) (port.Launch, error) {
 	return l, nil
 }
 
-// Ring types nothing: agy wakes an idle session when a background command it ran exits
-// (probed on 1.4.6), so the session's ring is its own bs inbox --wait, which exits when
-// mail comes, and its hooks keep one armed. Ring only says whether one is: ErrArmed, or
-// ErrNoRing with the message held until the session's next turn, where its Stop hook
-// holds it until it reads its mail.
-func (a Adapter) Ring(t port.Target, _ string, _ port.Priority) error {
-	pid, armed, err := watch.Armed(watch.Path(a.Cache, t.Name))
-	switch {
-	case err != nil:
-		return fmt.Errorf("can't tell whether its watcher is armed: %w", err)
-	case !armed:
-		return fmt.Errorf("no %s inbox --wait armed, so it's held until its next turn: %w", bsname.Cmd, port.ErrNoRing)
+// ringTimeout bounds a ring's three herdr calls (motif 15).
+const ringTimeout = 10 * time.Second
+
+// Ring types text into session t's pane with herdr agent prompt, only while herdr reports
+// it idle or done and its screen shows an empty input box and no permission menu: agy
+// takes no push from outside yet (ADR-0011). It never types into a session that is
+// working or blocked: herdr sees agy's permission menu 0.1-0.2 s late, and a ring in that
+// gap answers the menu's default, Yes (bees-13.95). An idle agy shows no menu until a
+// turn starts. Anything else is *port.Held, typing nothing: the mail waits in the logbook,
+// a worker's Stop hook shows the doorbell if its turn ends on its own, and bs ring rings
+// again (bees-13.97).
+func (a Adapter) Ring(t port.Target, text string, _ port.Priority) error {
+	if a.Run == nil {
+		return fmt.Errorf("no herdr to type with: %w", port.ErrNoRing)
 	}
-	return fmt.Errorf("%w (%s inbox --wait, pid %d)", port.ErrArmed, bsname.Cmd, pid)
+	ctx, cancel := context.WithTimeout(context.Background(), ringTimeout)
+	defer cancel()
+	h := herdr.Client{Run: a.Run, Session: t.Session}
+	busy := func(status string) error { return &port.Held{Why: t.Name + " is " + status} }
+	switch st, err := h.AgentStatus(ctx, t.Pane); {
+	case err != nil:
+		return err
+	case st != herdr.Idle && st != herdr.Done:
+		return busy(st)
+	}
+	screen, err := h.Screen(ctx, t.Pane)
+	if err != nil {
+		return err
+	}
+	in, ok := Box(screen)
+	switch {
+	case Menu(screen):
+		return busy("at a permission menu")
+	case !ok:
+		return &port.Held{Why: "no agy input box on " + t.Name + "'s screen (a view such as /tasks over it?)"}
+	case !Ready(screen) && in == "":
+		return &port.Held{Why: t.Name + "'s screen isn't at agy's prompt (no \"? for shortcuts\" under its input box)"}
+	case in != "": // agy drops its footer while someone types; ready with text fails closed too
+		return &port.Held{Why: t.Name + "'s input box has text (someone is typing)"}
+	}
+	if err := h.Prompt(ctx, t.Pane, text); errors.Is(err, herdr.ErrBlocked) {
+		return busy(herdr.Blocked)
+	} else if err != nil {
+		return err
+	}
+	return nil
+}
+
+// Box is the text typed in agy's input box on screen, its visible lines in herdr's ansi
+// format (agy 1.4.6-1.4.7, read in bees-13.95 and 13.97): a line starting with > between
+// the screen's last two rules (lines of ─), and at most one footer line under them. Grey
+// text is agy's placeholder hint (1.4.7: "Accept-edits mode: …" in an empty box), not
+// typed, so it doesn't count. ok is false when the screen has no such box: a permission
+// menu stands in its place, or the screen isn't agy's.
+func Box(screen []string) (text string, ok bool) {
+	screen = trim(screen)
+	var rules []int
+	for i, l := range screen {
+		if rule(plain(l, true)) {
+			rules = append(rules, i)
+		}
+	}
+	if len(rules) < 2 {
+		return "", false
+	}
+	top, bottom := rules[len(rules)-2], rules[len(rules)-1]
+	in := screen[top+1 : bottom]
+	if len(in) == 0 || !strings.HasPrefix(plain(in[0], true), ">") || len(screen)-bottom-1 != 1 {
+		return "", false
+	}
+	typed := make([]string, len(in))
+	for i, l := range in {
+		typed[i] = plain(l, false)
+	}
+	typed[0] = strings.TrimPrefix(typed[0], ">")
+	return strings.TrimSpace(strings.Join(typed, "\n")), true
+}
+
+// Ready reports whether agy shows its idle footer, "? for shortcuts", on the screen's
+// last line: it says "esc to cancel" mid-turn and at a menu, and nothing there while
+// someone types (agy 1.4.6-1.4.7).
+func Ready(screen []string) bool {
+	screen = trim(screen)
+	return len(screen) > 0 && strings.HasPrefix(plain(screen[len(screen)-1], true), "? for shortcuts")
+}
+
+// Menu reports whether screen shows agy's permission menu where agy draws it, under the
+// screen's last rule (agy 1.4.6-1.4.7: "Requesting permission for:" over numbered answers,
+// the first "1. Yes, run command"): a "1. Yes" in the conversation above is the agent's
+// own text.
+func Menu(screen []string) bool {
+	screen = trim(screen)
+	last := -1
+	for i, l := range screen {
+		if rule(plain(l, true)) {
+			last = i
+		}
+	}
+	return slices.ContainsFunc(screen[last+1:], func(l string) bool {
+		l = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(plain(l, true)), ">"))
+		return strings.HasPrefix(l, "Requesting permission") || strings.HasPrefix(l, "1. Yes")
+	})
+}
+
+// trim is screen without its trailing blank lines (rows under an inline UI's last line,
+// reset-only escapes).
+func trim(screen []string) []string {
+	n := len(screen)
+	for n > 0 && strings.TrimSpace(plain(screen[n-1], true)) == "" {
+		n--
+	}
+	return screen[:n]
+}
+
+// plain is l with its escape sequences dropped and, unless grey, the text drawn grey or
+// dim dropped too (SGR 2, 90, 38;5;8, or a truecolor grey 38;2;v;v;v).
+func plain(l string, grey bool) string {
+	var b strings.Builder
+	dim := false
+	for i := 0; i < len(l); i++ {
+		if l[i] != 0x1b {
+			if grey || !dim {
+				b.WriteByte(l[i])
+			}
+			continue
+		}
+		if i+1 >= len(l) || l[i+1] != '[' {
+			i++ // a two-byte escape
+			continue
+		}
+		j := i + 2
+		for j < len(l) && (l[j] < 0x40 || l[j] > 0x7e) {
+			j++
+		}
+		if j < len(l) && l[j] == 'm' {
+			dim = sgrDim(l[i+2:j], dim)
+		}
+		i = j
+	}
+	return strings.TrimRight(b.String(), " \r")
+}
+
+// greyRGB reports whether r, g, b is a mid or dark grey: equal, under 200.
+func greyRGB(r, g, b string) bool {
+	v, err := strconv.Atoi(r)
+	return err == nil && r == g && g == b && v < 200
+}
+
+// sgrDim is whether text is grey or dim after the SGR parameters params, from dim before.
+func sgrDim(params string, dim bool) bool {
+	ps := strings.Split(params, ";")
+	for k := 0; k < len(ps); k++ {
+		switch p := ps[k]; {
+		case p == "" || p == "0" || p == "22" || p == "39":
+			dim = false
+		case p == "2" || p == "90":
+			dim = true
+		case (p == "38" || p == "48") && k+1 < len(ps) && ps[k+1] == "5" && k+2 < len(ps):
+			if p == "38" {
+				dim = ps[k+2] == "8"
+			}
+			k += 2
+		case (p == "38" || p == "48") && k+1 < len(ps) && ps[k+1] == "2":
+			if p == "38" {
+				dim = k+4 < len(ps) && greyRGB(ps[k+2], ps[k+3], ps[k+4])
+			}
+			k += 4
+		case p >= "30" && p <= "37" && len(p) == 2, p >= "91" && p <= "97" && len(p) == 2:
+			dim = false
+		}
+	}
+	return dim
+}
+
+// rule reports whether l is one of agy's horizontal rules: 20 or more ─ and nothing else.
+func rule(l string) bool {
+	return len(l) >= 20*len("─") && strings.Trim(l, "─") == ""
 }
 
 // Observe reads the conversation agy runs a bs in from that bs's env: a resume continues
@@ -169,8 +336,7 @@ func agentFile(name string, role port.Role, prompt string) string {
 }
 
 // hooks is agy's hooks.json: before each run_command, bs guard gets the tool call on
-// stdin and the deny globs as arguments; before each model call and when a turn stops,
-// bs hook gets agy's payload, from the workspace dir so bs finds its project and caller.
+// stdin and the deny globs as arguments; when a turn stops, bs hook gets agy's payload, from the workspace dir so bs finds its project and caller.
 // agy runs each command under sh -c in the hooks.json dir, so bs is an absolute path and
 // each word is single-quoted.
 func hooks(bs, dir string, deny []string) string {
@@ -186,8 +352,7 @@ func hooks(bs, dir string, deny []string) string {
 			}},
 		},
 		"bs-mail": map[string]any{
-			"PreInvocation": []any{map[string]any{"type": "command", "command": mailHook(bs, dir, "PreInvocation")}},
-			"Stop":          []any{map[string]any{"type": "command", "command": mailHook(bs, dir, "Stop")}},
+			"Stop": []any{map[string]any{"type": "command", "command": mailHook(bs, dir, "Stop")}},
 		},
 	})
 	return string(b)
@@ -245,18 +410,6 @@ func Answer(w io.Writer, d guards.Decision) error {
 	return json.NewEncoder(w).Encode(map[string]string{"decision": "deny", "reason": bsname.Cmd + " guard: " + d.Reason})
 }
 
-// FirstCall reads PreInvocation's payload: whether this model call is its turn's first
-// (invocationNum 0, which protojson may leave out).
-func FirstCall(stdin io.Reader) (bool, error) {
-	var in struct {
-		InvocationNum int `json:"invocationNum"`
-	}
-	if err := decode(stdin, &in); err != nil {
-		return false, err
-	}
-	return in.InvocationNum == 0, nil
-}
-
 // Stopped reads Stop's payload: whether the turn ended on its own (NO_TOOL_CALL), not
 // cancelled by the keeper or cut by one of agy's limits, which a hook doesn't fight.
 func Stopped(stdin io.Reader) (bool, error) {
@@ -267,11 +420,6 @@ func Stopped(stdin io.Reader) (bool, error) {
 		return false, err
 	}
 	return in.TerminationReason == "NO_TOOL_CALL", nil
-}
-
-// Inject writes PreInvocation's answer adding msg as a user message.
-func Inject(w io.Writer, msg string) error {
-	return json.NewEncoder(w).Encode(map[string]any{"injectSteps": []any{map[string]string{"userMessage": msg}}})
 }
 
 // Hold writes Stop's answer keeping the turn going, reason its next message.

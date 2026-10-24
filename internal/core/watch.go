@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"slices"
 	"time"
 
@@ -16,12 +15,12 @@ import (
 
 // Watch is bs inbox --wait (bees-13.13.10): it holds w's watcher lock and reads the
 // logbook every Timing.Mail until mail that wasn't unread when it began comes, and
-// returns w's unread mail then, marking nothing read. Its exit is the doorbell: agy wakes
-// an idle session when a background command it ran exits. Mail already unread at the
-// start is the turn's to read (a Stop hook holds the turn while it is). Every other end
-// is a distinct refusal (motif 11): a watcher already armed (pid self is never a second
-// one), w ended or its harness gone (it never outlives its session), or timeout passed
-// with no new mail (ExitNoMail: its next turn arms another).
+// returns w's unread mail then, marking nothing read. Its exit is the doorbell for the
+// code that runs it (omp's bs extension, ADR-0011). Mail already unread at the start is
+// the session's to read already. Every other end is a distinct refusal (motif 11): a
+// watcher already armed (pid self is never a second one), w ended or its harness gone (it
+// never outlives its session), or timeout passed with no new mail (ExitNoMail: its runner
+// starts another).
 func (c *Core) Watch(ctx context.Context, w Caller, self int, timeout time.Duration) ([]logbook.Message, error) {
 	if w.Role != WorkerR && w.Role != QueenR {
 		return nil, exit(ExitRefused, "", nil, "%s inbox --wait watches a queen's or worker's mail; %s is neither", bsname.Cmd, w.Name)
@@ -34,9 +33,6 @@ func (c *Core) Watch(ctx context.Context, w Caller, self int, timeout time.Durat
 		return nil, exit(ExitRefused, "", nil, "%s's watcher is already armed (pid %d): nothing to do, it wakes you when mail comes", w.Name, held)
 	}
 	defer release()
-	if err := os.Remove(watch.Asked(c.CacheDir, w.Name)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
 	seen, err := c.Logbook.Unread(ctx, w.Name)
 	if err != nil {
 		return nil, err
@@ -56,7 +52,7 @@ func (c *Core) Watch(ctx context.Context, w Caller, self int, timeout time.Durat
 			return ms, nil
 		}
 		if !time.Now().Before(deadline) {
-			return nil, exit(ExitNoMail, "", nil, "no new mail for %s in %s: nothing to do, your next turn arms another watcher", w.Name, timeout)
+			return nil, exit(ExitNoMail, "", nil, "no new mail for %s in %s: nothing to do; run it again to keep waiting", w.Name, timeout)
 		}
 		if err := sleep(ctx, min(c.timing().Mail, time.Until(deadline))); err != nil {
 			return nil, err

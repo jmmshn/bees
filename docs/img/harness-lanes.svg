@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="300" viewBox="0 0 760 300" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14">
+  <title>One message per harness: the queen's message stops in the logbook and a doorbell carries on to the worker. Claude Code rings over its built-in cross-session socket; oh-my-pi through a bs bridge extension; any other harness needs a way in.</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8b949e"/>
+    </marker>
+    <g id="msg">
+      <rect x="-9" y="-6" width="18" height="12" rx="2" fill="#e3b341"/>
+      <path d="M-9,-6 L0,1 L9,-6" fill="none" stroke="#0d1117" stroke-width="1.5"/>
+    </g>
+    <g id="bell">
+      <path d="M-7,5 Q-7,-8 0,-8 Q7,-8 7,5 Z" fill="#e3b341"/>
+      <circle cx="0" cy="7" r="2" fill="#e3b341"/>
+    </g>
+  </defs>
+  <rect width="760" height="300" rx="10" fill="#0d1117"/>
+  <text x="380" y="30" fill="#c9d1d9" text-anchor="middle" font-weight="bold" font-size="15">bs send: the logbook keeps the message, the harness delivers the doorbell</text>
+
+  <!-- lane 1: Claude Code -->
+  <g transform="translate(0,50)">
+    <text x="20" y="18" fill="#c9d1d9" font-weight="bold">Claude Code</text>
+    <rect x="20" y="30" width="100" height="36" rx="6" fill="none" stroke="#8b949e" stroke-width="1.5"/>
+    <text x="70" y="53" fill="#c9d1d9" text-anchor="middle">queen</text>
+    <line x1="122" y1="48" x2="186" y2="48" stroke="#8b949e" stroke-width="2" marker-end="url(#arrow)"/>
+    <path d="M190,34 V62 A60,7 0 0 0 310,62 V34" fill="none" stroke="#8b949e" stroke-width="1.5"/>
+    <ellipse cx="250" cy="34" rx="60" ry="7" fill="none" stroke="#8b949e" stroke-width="1.5"/>
+    <text x="250" y="57" fill="#c9d1d9" text-anchor="middle">logbook</text>
+    <line x1="312" y1="48" x2="376" y2="48" stroke="#8b949e" stroke-width="2" marker-end="url(#arrow)"/>
+    <rect x="380" y="30" width="230" height="36" rx="6" fill="none" stroke="#7ee787" stroke-width="1.5">
+      <animate attributeName="stroke-width" values="1.5;1.5;4;4;1.5;1.5" keyTimes="0;0.45;0.5;0.82;0.87;1" dur="4s" repeatCount="indefinite"/>
+    </rect>
+    <text x="495" y="53" fill="#7ee787" text-anchor="middle">built-in session socket</text>
+    <line x1="612" y1="48" x2="646" y2="48" stroke="#8b949e" stroke-width="2" marker-end="url(#arrow)"/>
+    <rect x="650" y="30" width="90" height="36" rx="6" fill="none" stroke="#8b949e" stroke-width="1.5">
+      <animate attributeName="stroke" values="#8b949e;#8b949e;#e3b341;#e3b341" keyTimes="0;0.9;0.93;1" dur="4s" repeatCount="indefinite"/>
+    </rect>
+    <text x="695" y="53" fill="#c9d1d9" text-anchor="middle">worker</text>
+    <use href="#msg" opacity="0">
+      <animateMotion path="M70,48 H250" keyPoints="0;1;1" keyTimes="0;0.25;1" calcMode="linear" dur="4s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="1;1;0;0" keyTimes="0;0.3;0.35;1" dur="4s" repeatCount="indefinite"/>
+    </use>
+    <use href="#bell" opacity="0">
+      <animateMotion path="M250,48 H695" keyPoints="0;0;1;1" keyTimes="0;0.35;0.88;1" calcMode="linear" dur="4s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.33;0.36;0.95;1" dur="4s" repeatCount="indefinite"/>
+    </use>
+  </g>
+
+  <!-- lane 2: oh-my-pi -->
+  <g transform="translate(0,135)">
+    <text x="20" y="18" fill="#c9d1d9" font-weight="bold">oh-my-pi</text>
+    <rect x="20" y="30" width="100" height="36" rx="6" fill="none" stroke="#8b949e" stroke-width="1.5"/>
+    <text x="70" y="53" fill="#c9d1d9" text-anchor="middle">queen</text>
+    <line x1="122" y1="48" x2="186" y2="48" stroke="#8b949e" stroke-width="2" marker-end="url(#arrow)"/>
+    <path d="M190,34 V62 A60,7 0 0 0 310,62 V34" fill="none" stroke="#8b949e" stroke-width="1.5"/>
+    <ellipse cx="250" cy="34" rx="60" ry="7" fill="none" stroke="#8b949e" stroke-width="1.5"/>
+    <text x="250" y="57" fill="#c9d1d9" text-anchor="middle">logbook</text>
+    <line x1="312" y1="48" x2="376" y2="48" stroke="#8b949e" stroke-width="2" marker-end="url(#arrow)"/>
+    <rect x="380" y="30" width="230" height="36" rx="6" fill="none" stroke="#79c0ff" stroke-width="1.5">
+      <animate attributeName="stroke-width" values="1.5;1.5;4;4;1.5;1.5" keyTimes="0;0.45;0.5;0.82;0.87;1" dur="4s" repeatCount="indefinite"/>
+    </rect>
+    <text x="495" y="53" fill="#79c0ff" text-anchor="middle">bs bridge extension</text>
+    <line x1="612" y1="48" x2="646" y2="48" stroke="#8b949e" stroke-width="2" marker-end="url(#arrow)"/>
+    <rect x="650" y="30" width="90" height="36" rx="6" fill="none" stroke="#8b949e" stroke-width="1.5">
+      <animate attributeName="stroke" values="#8b949e;#8b949e;#e3b341;#e3b341" keyTimes="0;0.9;0.93;1" dur="4s" repeatCount="indefinite"/>
+    </rect>
+    <text x="695" y="53" fill="#c9d1d9" text-anchor="middle">worker</text>
+    <use href="#msg" opacity="0">
+      <animateMotion path="M70,48 H250" keyPoints="0;1;1" keyTimes="0;0.25;1" calcMode="linear" dur="4s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="1;1;0;0" keyTimes="0;0.3;0.35;1" dur="4s" repeatCount="indefinite"/>
+    </use>
+    <use href="#bell" opacity="0">
+      <animateMotion path="M250,48 H695" keyPoints="0;0;1;1" keyTimes="0;0.35;0.88;1" calcMode="linear" dur="4s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.33;0.36;0.95;1" dur="4s" repeatCount="indefinite"/>
+    </use>
+  </g>
+
+  <!-- lane 3: any harness, faded -->
+  <g transform="translate(0,220)" opacity="0.45">
+    <text x="20" y="18" fill="#c9d1d9" font-weight="bold">any harness</text>
+    <rect x="20" y="30" width="100" height="36" rx="6" fill="none" stroke="#8b949e" stroke-width="1.5"/>
+    <text x="70" y="53" fill="#c9d1d9" text-anchor="middle">queen</text>
+    <line x1="122" y1="48" x2="186" y2="48" stroke="#8b949e" stroke-width="2" marker-end="url(#arrow)"/>
+    <path d="M190,34 V62 A60,7 0 0 0 310,62 V34" fill="none" stroke="#8b949e" stroke-width="1.5"/>
+    <ellipse cx="250" cy="34" rx="60" ry="7" fill="none" stroke="#8b949e" stroke-width="1.5"/>
+    <text x="250" y="57" fill="#c9d1d9" text-anchor="middle">logbook</text>
+    <line x1="312" y1="48" x2="376" y2="48" stroke="#8b949e" stroke-width="2" stroke-dasharray="4 4" marker-end="url(#arrow)"/>
+    <rect x="380" y="30" width="230" height="36" rx="6" fill="none" stroke="#8b949e" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <text x="495" y="53" fill="#8b949e" text-anchor="middle">needs a way in</text>
+    <line x1="612" y1="48" x2="646" y2="48" stroke="#8b949e" stroke-width="2" stroke-dasharray="4 4" marker-end="url(#arrow)"/>
+    <rect x="650" y="30" width="90" height="36" rx="6" fill="none" stroke="#8b949e" stroke-width="1.5" stroke-dasharray="6 4"/>
+    <text x="695" y="53" fill="#8b949e" text-anchor="middle">worker</text>
+    <use href="#msg" opacity="0">
+      <animateMotion path="M70,48 H250" keyPoints="0;1;1" keyTimes="0;0.25;1" calcMode="linear" dur="4s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="1;1;0;0" keyTimes="0;0.3;0.35;1" dur="4s" repeatCount="indefinite"/>
+    </use>
+    <use href="#bell" opacity="0">
+      <animateMotion path="M250,48 H370" keyPoints="0;0;1;1" keyTimes="0;0.35;0.5;1" calcMode="linear" dur="4s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.33;0.36;0.5;0.6;1" dur="4s" repeatCount="indefinite"/>
+    </use>
+  </g>
+</svg>

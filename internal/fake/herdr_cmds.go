@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/jmmshn/bees/internal/herdr"
 )
@@ -83,7 +84,20 @@ func (h *Herdr) worktreeCreate(s *server, _ string, f flags) ([]byte, error) {
 	if base, ok := f.get("--base"); ok {
 		args = append(args, base)
 	}
-	if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+	if sib, ok := h.adding[repo]; ok {
+		return nil, refusal("worktree:create", "worktree_create_failed", "Preparing worktree (new branch '%s')\nfatal: failed to read .git/worktrees/%s/commondir: Success", branch, filepath.Base(sib))
+	}
+	if h.adding == nil {
+		h.adding = map[string]string{}
+	}
+	h.adding[repo] = path
+	hold := h.WorktreeAdd
+	h.mu.Unlock() // git runs while other calls go on, as on herdr's server
+	out, err := exec.Command("git", args...).CombinedOutput()
+	time.Sleep(hold)
+	h.mu.Lock()
+	delete(h.adding, repo)
+	if err != nil {
 		return nil, refusal("worktree:create", "git_failed", "%s", strings.TrimSpace(string(out)))
 	}
 	w := s.open(label, path)

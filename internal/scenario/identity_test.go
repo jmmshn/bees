@@ -43,7 +43,7 @@ func TestAWorkerIsItselfWithOrWithoutItsPaneHint(t *testing.T) {
 		run(0, "as toy-1 (worker of toy, spawned ", "status")
 	}
 	// The queen in her pane is the queen, and the keeper alone discards.
-	must(t, x.queenRuns(1, "goal", "toy-2", "discard"), 2, "queen-toy runs this as the queen; only the keeper discards a goal")
+	must(t, x.queenRuns(1, "goal", "toy-2", "discard"), 2, "queen-toy runs this as the queen; only the keeper discards a goal", "next: the keeper runs it in a terminal outside the queen's pane")
 	must(t, x.queenRuns(2, "status"), 0, "as queen-toy (queen of toy) · logbook "+x.logbook)
 	must(t, x.keeper("goal", "toy-2", "discard"), 0, "(discarded)")
 	must(t, x.queenRuns(3, "end", "--incomplete", "toy-1"), 0, "ended toy-1")

@@ -313,10 +313,14 @@ func (r *run) end(fs *flag.FlagSet, args []string) error {
 }
 
 func (r *run) prune(fs *flag.FlagSet, args []string) error {
+	drop := fs.String("drop-ignored", "", "let every ignored file of this ended `worker`'s worktree go with it, not only prune.ignore's")
 	if err := parse(fs, args); err != nil {
 		return err
 	}
-	ps, err := r.c.Prune(r.ctx, r.caller.Name)
+	if fs.NArg() != 0 {
+		return fmt.Errorf("%w: "+bsname.Cmd+" prune [--drop-ignored <worker>]", errUsage)
+	}
+	ps, err := r.c.Prune(r.ctx, r.caller.Name, core.Name(*drop))
 	if err != nil {
 		return err
 	}
@@ -331,6 +335,9 @@ func (r *run) prune(fs *flag.FlagSet, args []string) error {
 		}
 		if len(did) > 0 {
 			fmt.Fprintf(r.out, "removed %s (%s)\n", strings.Join(did, " and "), p.Name)
+		}
+		if len(p.Dropped) > 0 {
+			fmt.Fprintf(r.out, "  with its ignored files: %s\n", dropped(p.Dropped))
 		}
 		if p.Deleted && p.Held != "" {
 			fmt.Fprintf(r.out, "  its work is on %s\n", p.Held)
@@ -356,6 +363,39 @@ func (r *run) prune(fs *flag.FlagSet, args []string) error {
 		return &core.Exit{Code: code, Msg: "kept some workspaces"}
 	}
 	return nil
+}
+
+// dropped says what ignored files went, per pattern: "8 files, 12.0 KB under bin/; 2 files,
+// 300 B under no pattern (--drop-ignored)".
+func dropped(ds []core.Drop) string {
+	var out []string
+	for _, d := range ds {
+		under := "under " + d.Pattern
+		if d.Pattern == "" {
+			under = "under no pattern (--drop-ignored)"
+		}
+		files := "files"
+		if d.Files == 1 {
+			files = "file"
+		}
+		out = append(out, fmt.Sprintf("%d %s, %s %s", d.Files, files, size(d.Bytes), under))
+	}
+	return strings.Join(out, "; ")
+}
+
+// size is n bytes for a person: 300 B, 12.0 KB, 412.3 MB.
+func size(n int64) string {
+	if n < 1024 {
+		return fmt.Sprintf("%d B", n)
+	}
+	f, u := float64(n)/1024, "KB"
+	for _, next := range []string{"MB", "GB", "TB"} {
+		if f < 1024 {
+			break
+		}
+		f, u = f/1024, next
+	}
+	return fmt.Sprintf("%.1f %s", f, u)
 }
 
 func (r *run) send(fs *flag.FlagSet, args []string) error {

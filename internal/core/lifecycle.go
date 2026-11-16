@@ -485,6 +485,7 @@ type Pruned struct {
 	Deleted   bool   // its local branch was deleted
 	Remote    string // the remote branch of the same name, left alone: remote branches are the keeper's (bees-1.34)
 	Held      string // the handed-off change that holds the branch's work, when that released it
+	Dropped   []Drop // the ignored files removed with its directory
 	Why       string // why it, or its branch, was kept
 	Unknown   bool   // it couldn't check
 }
@@ -495,11 +496,23 @@ type Pruned struct {
 // that is proven merged (or discarded), completing a goal ended --incomplete on the way. A
 // workspace whose directory is already gone still has its branch pruned, so nothing is
 // kept forever (bees-12.41). It never touches a remote branch, and names what it kept and
-// why.
-func (c *Core) Prune(ctx context.Context, by string) ([]Pruned, error) {
+// why. dropIgnored names an ended worker whose ignored files all go with its worktree,
+// those prune.ignore doesn't cover too, once nothing else keeps it.
+func (c *Core) Prune(ctx context.Context, by, dropIgnored string) ([]Pruned, error) {
 	sps, err := c.Logbook.LatestSpawns(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if dropIgnored != "" {
+		i := slices.IndexFunc(sps, func(sp logbook.Spawn) bool { return sp.Name == dropIgnored })
+		switch {
+		case i < 0:
+			return nil, &Exit{Code: ExitRefused, Msg: fmt.Sprintf("--drop-ignored %s: no such worker; nothing pruned", dropIgnored), Next: bsname.Cmd + " status"}
+		case !sps[i].Ended:
+			return nil, &Exit{Code: ExitRefused, Msg: fmt.Sprintf("--drop-ignored %s: it hasn't ended; nothing pruned", dropIgnored), Next: bsname.Cmd + " end " + dropIgnored}
+		case sps[i].Workspace.Kind != config.GitWorktree:
+			return nil, &Exit{Code: ExitRefused, Msg: fmt.Sprintf("--drop-ignored %s: its workspace is no git worktree; nothing pruned", dropIgnored)}
+		}
 	}
 	var out []Pruned
 	for _, sp := range sps {
@@ -517,7 +530,7 @@ func (c *Core) Prune(ctx context.Context, by string) ([]Pruned, error) {
 		switch {
 		case err != nil && dir:
 			// Its directory is still pruned; its branch waits for a lookup that works.
-			p := c.prune(ctx, by, sp, dir, false)
+			p := c.prune(ctx, by, sp, dir, false, sp.Name == dropIgnored)
 			if p.Why == "" {
 				p.Unknown, p.Why = true, "can't tell whether its branch exists: "+err.Error()
 			}
@@ -525,7 +538,7 @@ func (c *Core) Prune(ctx context.Context, by string) ([]Pruned, error) {
 		case err != nil:
 			out = append(out, Pruned{Name: sp.Name, Dir: ws.Dir, Branch: ws.Branch, Gone: true, Unknown: true, Why: "can't tell whether its branch exists: " + err.Error()})
 		case dir || branch:
-			out = append(out, c.prune(ctx, by, sp, dir, branch))
+			out = append(out, c.prune(ctx, by, sp, dir, branch, sp.Name == dropIgnored))
 		}
 	}
 	return out, nil
@@ -544,7 +557,7 @@ func (c *Core) hasBranch(ctx context.Context, ws logbook.Workspace) (bool, error
 	return err == nil, err
 }
 
-func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, branch bool) Pruned {
+func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, branch, dropAll bool) Pruned {
 	ws := sp.Workspace
 	p := Pruned{Name: sp.Name, Dir: ws.Dir, Branch: ws.Branch, Gone: !dir}
 	keep := func(unknown bool, format string, a ...any) Pruned {
@@ -601,15 +614,21 @@ func (c *Core) prune(ctx context.Context, by string, sp logbook.Spawn, dir, bran
 	if err := c.removeFiles(sp.Name); err != nil {
 		c.warn("couldn't remove %s's start files: %v", sp.Name, err)
 	}
-	free := func(ctx context.Context, sp logbook.Spawn) (string, bool) { return c.freeDir(ctx, sp, e.Discarded) }
+	free := func(ctx context.Context, sp logbook.Spawn) (string, bool, []Drop) {
+		return c.freeDir(ctx, sp, e.Discarded, dropAll)
+	}
 	if ws.Kind == config.CommandKind {
-		free = c.freeCommandDir
+		free = func(ctx context.Context, sp logbook.Spawn) (string, bool, []Drop) {
+			why, unknown := c.freeCommandDir(ctx, sp)
+			return why, unknown, nil
+		}
 	}
 	if dir {
-		if why, unknown := free(ctx, sp); why != "" {
+		why, unknown, dropped := free(ctx, sp)
+		if why != "" {
 			return keep(unknown, "%s", why)
 		}
-		p.Removed = true
+		p.Removed, p.Dropped = true, dropped
 	}
 	// Its folder is gone, so its harness's trust in it goes too (bees-13.13.5).
 	if h, err := c.recorded(sp); err != nil {
@@ -682,21 +701,49 @@ func (c *Core) remoteBranch(ctx context.Context, ws logbook.Workspace) string {
 // remoteWait bounds remoteBranch's ask of origin.
 const remoteWait = 20 * time.Second
 
+// Drop is ignored files prune removed with a worktree: those Pattern (a prune.ignore
+// item) covers, or, with Pattern "", those none does, let go by --drop-ignored.
+type Drop struct {
+	Pattern string
+	Files   int
+	Bytes   int64
+}
+
 // ignored names the ignored files in dir that none of let (the spawn's prune.ignore)
-// covers, or "". -uall lists each file, never a wholly ignored directory, and -z leaves
-// paths unquoted.
-func (c *Core) ignored(ctx context.Context, dir string, let []string) (string, error) {
+// covers, or "", and counts and sizes the ones each pattern covers; with all, it names
+// none and counts those under Pattern "". -uall lists each file, never a wholly ignored
+// directory, and -z leaves paths unquoted.
+func (c *Core) ignored(ctx context.Context, dir string, let []string, all bool) (string, []Drop, error) {
 	b, err := c.Run.Run(ctx, dir, "git", "-C", dir, "status", "--porcelain", "--ignored", "-uall", "-z")
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	var kept []string
+	at := map[string]int{} // a pattern's index in drops
+	var drops []Drop
 	for f := range strings.SplitSeq(string(b), "\x00") {
-		if p, ok := strings.CutPrefix(f, "!! "); ok && !slices.ContainsFunc(let, func(pat string) bool { return ignoredBy(pat, p) }) {
+		p, ok := strings.CutPrefix(f, "!! ")
+		if !ok {
+			continue
+		}
+		pat := ""
+		if i := slices.IndexFunc(let, func(pat string) bool { return ignoredBy(pat, p) }); i >= 0 {
+			pat = let[i]
+		} else if !all {
 			kept = append(kept, p)
+			continue
+		}
+		i, ok := at[pat]
+		if !ok {
+			i, at[pat] = len(drops), len(drops)
+			drops = append(drops, Drop{Pattern: pat})
+		}
+		drops[i].Files++
+		if fi, err := os.Lstat(filepath.Join(dir, p)); err == nil {
+			drops[i].Bytes += fi.Size()
 		}
 	}
-	return firstTen(kept), nil
+	return firstTen(kept), drops, nil
 }
 
 // ignoredBy reports whether pat covers file p, as .gitignore reads it: a pat ending in
@@ -815,50 +862,54 @@ func (c *Core) heldByChange(ctx context.Context, sp logbook.Spawn, prs []string,
 // check): it is no longer a worktree of its repo, herdr has a workspace open on it or a
 // pane working in it, it has uncommitted or untracked files, its HEAD has commits on no
 // branch (unless discarded: the keeper's word that the work is wanted nowhere), or git
-// refused the removal. Never --force (the pilot's freeWorktree).
-func (c *Core) freeDir(ctx context.Context, sp logbook.Spawn, discarded bool) (why string, unknown bool) {
+// refused the removal, or ignored files prune.ignore doesn't cover (unless dropAll). It
+// returns the ignored files it removed with it. Never --force (the pilot's freeWorktree).
+func (c *Core) freeDir(ctx context.Context, sp logbook.Spawn, discarded, dropAll bool) (why string, unknown bool, dropped []Drop) {
 	ws := sp.Workspace
 	// Only a directory that is still a worktree of its repo: one taken over or remade by
 	// hand is not this spawn's to remove (the pilot's samePath guard, bees-8.4).
 	if mine, err := c.isWorktree(ctx, ws); err != nil {
-		return fmt.Sprintf("can't list %s's worktrees: %v", ws.Repo, err), true
+		return fmt.Sprintf("can't list %s's worktrees: %v", ws.Repo, err), true, nil
 	} else if !mine {
-		return "it is no longer a worktree of " + ws.Repo, false
+		return "it is no longer a worktree of " + ws.Repo, false, nil
 	}
 	// Its own workspace is closed: anything herdr still has there is someone else's, or a
 	// process bs never recorded (a start never confirmed).
 	if why, err := c.inUse(ctx, sp); err != nil {
-		return "can't tell whether herdr uses it: " + err.Error(), true
+		return "can't tell whether herdr uses it: " + err.Error(), true, nil
 	} else if why != "" {
-		return why, false
+		return why, false, nil
 	}
 	if r := c.check(ctx, sp, goal.Clean, Handed{}); r.Err != "" {
-		return "can't check for uncommitted files: " + r.Err, true
+		return "can't check for uncommitted files: " + r.Err, true, nil
 	} else if !r.Pass {
-		return r.Detail, false
+		return r.Detail, false, nil
 	}
 	// Commits made on a detached HEAD are on no branch: removing the worktree loses them.
 	switch out, err := c.git(ctx, ws.Dir, "rev-list", "-n1", "HEAD", "--not", "--branches", "--tags", "--remotes"); {
 	case discarded:
 	case err != nil:
-		return "can't tell whether its HEAD is on a branch: " + err.Error(), true
+		return "can't tell whether its HEAD is on a branch: " + err.Error(), true, nil
 	case out != "":
-		return fmt.Sprintf("its HEAD has commits on no branch (%s): git -C %s switch -c <branch> keeps them, or the keeper discards them (%s goal %s discard)", out, ws.Dir, bsname.Cmd, sp.Name), false
+		return fmt.Sprintf("its HEAD has commits on no branch (%s): git -C %s switch -c <branch> keeps them, or the keeper discards them (%s goal %s discard)", out, ws.Dir, bsname.Cmd, sp.Name), false, nil
 	}
 	// git status hides ignored files, and a report in an ignored scratch/ is how five
 	// pilot reports were lost (bees-13.7): never remove what nobody has looked at.
-	if ign, err := c.ignored(ctx, ws.Dir, sp.PruneIgnore); err != nil {
-		return "can't list ignored files: " + err.Error(), true
+	// --drop-ignored is the keeper's word, once they have looked, that the rest goes too:
+	// a worktree full of a cache nobody listed has a way out (bees-13.105, motif 5).
+	ign, drops, err := c.ignored(ctx, ws.Dir, sp.PruneIgnore, dropAll)
+	if err != nil {
+		return "can't list ignored files: " + err.Error(), true, nil
 	} else if ign != "" {
-		return fmt.Sprintf("ignored files in %s: %s; look at them, remove what is wanted nowhere, then %s prune again", ws.Dir, ign, bsname.Cmd), false
+		return fmt.Sprintf("ignored files in %s: %s; look at them, remove what is wanted nowhere, then %s prune again (%s prune --drop-ignored %s lets them all go)", ws.Dir, ign, bsname.Cmd, bsname.Cmd, sp.Name), false, nil
 	}
 	if _, err := c.git(ctx, ws.Repo, "worktree", "remove", ws.Dir); isExit(err, 128) {
 		// git ran and refused: a locked worktree, or one with submodules.
-		return fmt.Sprintf("git refused to remove it (%v): git worktree unlock it, or remove it by hand with git worktree remove --force", err), false
+		return fmt.Sprintf("git refused to remove it (%v): git worktree unlock it, or remove it by hand with git worktree remove --force", err), false, nil
 	} else if err != nil {
-		return "git worktree remove: " + err.Error(), true
+		return "git worktree remove: " + err.Error(), true, nil
 	}
-	return "", false
+	return "", false, drops
 }
 
 // inUse names what herdr, in sp's session, has open on its directory: a workspace on it,

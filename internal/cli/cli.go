@@ -85,7 +85,7 @@ commands:
   check   <worker>                                         run its handoff checks now; writes nothing
   goal    <worker> <goal>... | discard | --waive <check>   amend, waive or (keeper) discard
   end     [--force] [--incomplete] <worker>               complete and end a worker
-  prune                                                    remove completed workspaces
+  prune   [--drop-ignored <worker>]                        remove completed workspaces (--drop-ignored: its ignored files outside prune.ignore too)
   send    [--project P] [--now] <to> <message|->           store a message, then ring
   ring    <to>                                             ring again for unread mail a held ring left (agy idle after a cancelled turn)
   inbox   [--all | --wait [--timeout D]]                   print unread mail (--all: read mail too, marking nothing read; --wait: exit when new mail comes)

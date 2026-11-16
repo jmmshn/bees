@@ -250,7 +250,7 @@ type Role struct {
 
 // Prune is what bs prune lets go.
 type Prune struct {
-	Ignore []string `toml:"ignore" scope:"both" default:"bin/" glob:"" doc:"ignored files in a worktree that prune removes with it (build output), as .gitignore spells them: a pattern ending in / is a directory and all under it, one with no other / matches at any depth, one with an inner / from the worktree's top; frozen at spawn. Every other ignored file keeps the worktree, named (a report in an ignored scratch/)"`
+	Ignore []string `toml:"ignore" scope:"both" default:"bin/ .venv/ __pycache__/ .pytest_cache/ .mypy_cache/ .ruff_cache/ node_modules/ target/" glob:"" doc:"ignored files in a worktree that prune removes with it (build output and caches that regenerate), as .gitignore spells them: a pattern ending in / is a directory and all under it, one with no other / matches at any depth, one with an inner / from the worktree's top; frozen at spawn. Every other ignored file keeps the worktree, named (a report in an ignored scratch/), until bs prune --drop-ignored <worker> lets them go"`
 }
 
 // Worker holds every worker's harness tables and bs spawn's own settings.

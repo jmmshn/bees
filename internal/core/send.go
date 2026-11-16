@@ -23,6 +23,7 @@ type SendIn struct {
 	// goes to its logbook. "" for a send within P.
 	FromProject string
 	To          string // a session name; a bead id names its worker
+	Bead        string // the bead id To came from, when the sender typed one (it has a "."); "" else
 	Body        string
 	Priority    port.Priority
 	LogbookDir  string // every project's logbook dir: Addressed's, and the twin lock's
@@ -64,6 +65,10 @@ func (c *Core) Send(ctx context.Context, in SendIn) (Sent, error) {
 	stranger, err := c.Addressed(ctx, in.To, in.LogbookDir)
 	if err != nil {
 		return Sent{}, err
+	}
+	if stranger && in.Bead != "" { // bees-6.1: nothing queues for a worker that was never spawned
+		return Sent{}, exit(ExitRefused, bsname.Cmd+" status", nil,
+			"bead %s has no worker: none was ever spawned in %s; nothing stored", in.Bead, c.Project)
 	}
 	out := Sent{Stranger: stranger}
 	if out.ID, err = c.Logbook.SendFrom(ctx, in.From.Name, in.FromProject, in.To, in.Body); err != nil || stranger {

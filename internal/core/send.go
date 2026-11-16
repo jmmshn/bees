@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jmmshn/bees/internal/bsname"
+	"github.com/jmmshn/bees/internal/herdr"
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/port"
 )
@@ -91,7 +92,7 @@ func (c *Core) Send(ctx context.Context, in SendIn) (Sent, error) {
 }
 
 // ensureQueen returns P's queen, running: her latest entry when it is alive, else one
-// this call started, in a new herdr workspace on P's repo whose shell runs `<in.Bs>
+// this call started, in a pane queenHome opens on P's repo whose shell runs `<in.Bs>
 // queen` on in.Session, confirmed by her entry appearing alive within Timing.Confirm. The
 // twin lock, flock(2) on <logbook dir>/<P>.queen.lock, is held across the check, the
 // start and the confirmation, so a second send waits, then finds her running (motif 7);
@@ -134,9 +135,9 @@ func (c *Core) ensureQueen(ctx context.Context, in SendIn) (q logbook.Queen, sta
 		return q, false, fmt.Errorf("her repo %s isn't a directory: %v", repo, err)
 	}
 	h := c.herdr(in.Session)
-	ws, err := h.CreateWorkspace(ctx, repo, "queen "+c.Project)
+	ws, err := c.queenHome(ctx, h, repo)
 	if err != nil {
-		return q, false, fmt.Errorf("herdr --session %s workspace create: %w", in.Session, err)
+		return q, false, fmt.Errorf("herdr --session %s: %w", in.Session, err)
 	}
 	if err := h.RunInPane(ctx, ws.Pane, shellQuote(in.Bs)+" queen"); err != nil {
 		return q, false, fmt.Errorf("herdr --session %s pane run %s: %w", in.Session, ws.Pane, err)
@@ -155,6 +156,43 @@ func (c *Core) ensureQueen(ctx context.Context, in SendIn) (q logbook.Queen, sta
 			return q, false, err
 		}
 	}
+}
+
+// queenHome opens a pane for P's queen on repo: a tab in repo's primary workspace when
+// herdr has one open (the keeper's, on the main checkout), so she sits under the repo in
+// herdr's sidebar beside the workers she spawns (bees-13.107); else a workspace of her
+// own, which herdr can't attach to the repo (workspace create never does: probed, 0.9.5).
+// A tab adds to that workspace and closes nothing in it (motif 12).
+func (c *Core) queenHome(ctx context.Context, h herdr.Client, repo string) (herdr.Workspace, error) {
+	label := "queen " + c.Project
+	wss, err := h.Workspaces(ctx)
+	if err != nil {
+		return herdr.Workspace{}, fmt.Errorf("workspace list: %w", err)
+	}
+	for _, w := range wss {
+		if !w.Linked && w.Path != "" && sameDir(w.Path, repo) {
+			tab, err := h.CreateTab(ctx, w.ID, repo, label)
+			if err != nil {
+				return herdr.Workspace{}, fmt.Errorf("tab create in %s's workspace %s: %w", repo, w.ID, err)
+			}
+			return tab, nil
+		}
+	}
+	ws, err := h.CreateWorkspace(ctx, repo, label)
+	if err != nil {
+		return herdr.Workspace{}, fmt.Errorf("workspace create: %w", err)
+	}
+	return ws, nil
+}
+
+// sameDir reports whether a and b name one directory, through symlinks.
+func sameDir(a, b string) bool {
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	return errA == nil && errB == nil && ra == rb
 }
 
 // lock takes an exclusive flock(2) on path, made if missing, polling every poll for up to

@@ -82,3 +82,14 @@ func (h *Herdr) Split(session, workspace string) string {
 	}
 	return w.add(w.panes[0].cwd).id
 }
+
+// OpenRepo opens repo's primary workspace on session, labelled label, as the keeper does
+// in herdr's UI: workspace create --cwd never attaches a repo (probed, 0.9.5), so only
+// this makes a workspace herdr nests the repo's worktrees under. It returns its id.
+func (h *Herdr) OpenRepo(session, repo, label string) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	w := h.server(session).open(label, repo)
+	w.worktree, w.repo = repo, repo
+	return w.id
+}

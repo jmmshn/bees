@@ -47,6 +47,7 @@ Status: **accepted**, **superseded** (replaced by a later decision), or **open**
 | R8d | The Claude adapter only talks to sessions with `peerProtocol == 1`, whose pid is alive with a matching start time. | accepted | SPEC |
 | R16 | Whether a session is alive is worked out each time (Claude's registry, herdr), never stored. No reaping. | accepted, amended by R18″ (`spawned`/`ended` entries record workspace ownership) | ADR-0004 |
 | M4 | A session finds its own name from `--as`, then `BS_SESSION`, then by walking up its parent processes to a Claude registry file. | accepted, amended by R55: the nearest ancestor process the project's logbook recorded; `--as` is a debug override from the keeper's shell only; `BS_SESSION` and the registry walk are gone | SPEC, ADR-0010 Amendment 4 |
+| R61 | A keeper-only command typed as a `!` line in a session's pane runs as that session: the shell is a child of the session, as its own tool calls are, and no signal tells them apart that the session can't fake (an env var, a file, an ancestor) without letting it launder a permission (motifs 7, 11). The refusal instead names the way out: a terminal outside the queen's pane. | accepted | bees-13.110 |
 
 ## Waking and reconciling
 

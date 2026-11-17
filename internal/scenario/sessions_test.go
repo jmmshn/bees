@@ -346,16 +346,26 @@ func TestAMisaddressedSendIsRefused(t *testing.T) {
 	if err != nil || len(ms) != 1 || ms[0].From != "toy-1" || ms[0].FromProject != "toy" {
 		t.Fatalf("other's inbox: %+v %v", ms, err)
 	}
-	must(t, x.worker("toy-1", 3, "send", "stranger", "hi"), 0, "stored, not rung")
+	must(t, x.worker("toy-1", 3, "send", "toy-9", "hi"), 0, "stored, not rung")
+	// bees-13.73.6 (motifs 4 and 11): a name no session can have, a typo'd project, and a
+	// bead whose worker was never spawned are refused with nothing stored.
+	must(t, x.worker("toy-1", 4, "send", "stranger", "hi"), 2, "stranger is no session name", "nothing stored")
+	must(t, x.worker("toy-1", 5, "send", "queen-tyo", "hi"), 2, "queen-tyo would be a session of project tyo, which has no logbook", "nothing stored")
+	must(t, x.worker("toy-1", 6, "send", "toy-1.999", "hi"), 2, "bead toy-1.999 has no worker: none was ever spawned in toy; nothing stored")
+	for _, n := range []string{"stranger", "queen-tyo", "toy-1-999"} {
+		if ms, _ := x.open().Unread(context.Background(), n); len(ms) != 0 {
+			t.Fatalf("stored for %s: %+v", n, ms)
+		}
+	}
 	// bees-13.78.7 (motif 11): keeper mail rings with reply queen-<project>, and bs send
 	// keeper is refused with that next:.
-	must(t, x.worker("toy-1", 4, "inbox"), 0, "You own toy-1")
+	must(t, x.worker("toy-1", 7, "inbox"), 0, "You own toy-1")
 	must(t, x.keeper("send", "toy-1", "from the keeper"), 0, "rung toy-1")
-	must(t, x.worker("toy-1", 5, "inbox"), 0, "from keeper", "from the keeper")
+	must(t, x.worker("toy-1", 8, "inbox"), 0, "from keeper", "from the keeper")
 	if rings := x.harness.Rings("toy-1"); len(rings) == 0 || !strings.Contains(rings[len(rings)-1], `1 unread (keeper) — run: bs inbox   (reply with: bs send queen-toy "...")`) {
 		t.Fatalf("toy-1's rings: %q", rings)
 	}
-	must(t, x.worker("toy-1", 6, "send", "keeper", "reply test"), 2, "the keeper reads no inbox; message queen-toy; nothing stored", `next: bs send queen-toy "..."`)
+	must(t, x.worker("toy-1", 9, "send", "keeper", "reply test"), 2, "the keeper reads no inbox; message queen-toy; nothing stored", `next: bs send queen-toy "..."`)
 	if ms, _ := x.open().Unread(context.Background(), "keeper"); len(ms) != 0 {
 		t.Fatalf("stored for keeper: %+v", ms)
 	}

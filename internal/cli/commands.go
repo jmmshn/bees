@@ -365,7 +365,7 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 		return err
 	}
 	if fs.NArg() != 2 {
-		return fmt.Errorf("%w: "+bsname.Cmd+" send [--project P] [--now] <to> <message | ->", errUsage)
+		return fmt.Errorf("%w: "+bsname.Cmd+" send [--project P] [--now] <to> <message | ->  (quote the message as one argument)", errUsage)
 	}
 	w := r.caller
 	to, body := core.Name(fs.Arg(0)), fs.Arg(1) // a bead id names its worker (ADR-0006)
@@ -418,7 +418,11 @@ func (r *run) send(fs *flag.FlagSet, args []string) error {
 	if *now {
 		priority = port.Now
 	}
-	sent, err := c.Send(r.ctx, core.SendIn{From: w, FromProject: from, To: to, Body: body, Priority: priority,
+	var bead string
+	if strings.Contains(fs.Arg(0), ".") {
+		bead = fs.Arg(0)
+	}
+	sent, err := c.Send(r.ctx, core.SendIn{From: w, FromProject: from, To: to, Bead: bead, Body: body, Priority: priority,
 		LogbookDir: filepath.Dir(r.s.Logbook), Bs: r.sharedBs(), Session: r.s.Session})
 	if err != nil {
 		return err

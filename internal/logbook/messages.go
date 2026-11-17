@@ -148,3 +148,16 @@ func (l *Logbook) RecordReceipts(ctx context.Context, session string, ids []ID) 
 		return nil
 	})
 }
+
+// QuietSinceRead reports whether sp's session has read mail since it last wrote any: its
+// newest receipt in this spawn is newer than its newest message or done. A worker that
+// read its mail and then went idle without a word asked, if anyone, in its pane
+// (bees-10.1). One that has read nothing in this spawn is not quiet.
+func (l *Logbook) QuietSinceRead(ctx context.Context, sp Spawn) (bool, error) {
+	var quiet bool
+	err := l.db.QueryRowContext(ctx, `
+SELECT coalesce(MAX(CASE WHEN kind = 'received' THEN rowid END), 0)
+     > coalesce(MAX(CASE WHEN kind IN ('message', 'done') THEN rowid END), 0)
+FROM entries WHERE actor = ?1 AND rowid > (SELECT rowid FROM entries WHERE id = ?2)`, sp.Name, string(sp.ID)).Scan(&quiet)
+	return quiet, err
+}

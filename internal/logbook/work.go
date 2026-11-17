@@ -95,7 +95,7 @@ type Done struct {
 	Queen  string    `json:"-"`
 	TS     time.Time `json:"-"`
 	Bead   string    `json:"bead"`
-	Change string    `json:"change,omitempty"` // the change bs found and judged
+	Change string    `json:"change,omitempty"` // the change bs found and judged: a pr goal's, a push or review goal's target
 	Review string    `json:"review,omitempty"` // the review bs posted for a review goal
 	// PRs is what a done recorded before ADR-0010 Amendment 4 handed off by --pr: bs reads
 	// them, never writes them, for one release (bees-13.60 Q11).

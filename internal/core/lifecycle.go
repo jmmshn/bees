@@ -108,6 +108,9 @@ func (c *Core) Done(ctx context.Context, who Caller, self int, h Handed, o DoneO
 	d.Checks = append(d.Checks, r)
 	var f *found // the change, found once before the first look; a --wait's later looks find it again
 	handoff := e.Handoff
+	if e.Type == "push" || e.Type == "review" {
+		d.Change = e.Target // the change the worker pushed onto or reviewed, named to the queen (bees-13.77)
+	}
 	if e.Type == "pr" {
 		ff := c.theChange(lookCtx, sp)
 		f = &ff

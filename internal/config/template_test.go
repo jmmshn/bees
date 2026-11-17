@@ -18,7 +18,7 @@ func TestTemplateLoads(t *testing.T) {
 		holds []string
 	}{
 		{"global", map[string]string{"paths.logbook_dir": "/tmp/lb", "harness": "claude_code"},
-			map[string]string{"paths.logbook_dir": "/tmp/lb", "harness": "claude_code"}, []string{"# repos = \"\"", "[guards]", "# [workspace.command]", "# [checks.cl_sent]", "logbook_dir = \"/tmp/lb\"", "# ignore = [\"bin/\"]"}},
+			map[string]string{"paths.logbook_dir": "/tmp/lb", "harness": "claude_code"}, []string{"# repos = \"\"", "[guards]", "# [workspace.command]", "# [checks.cl_sent]", "logbook_dir = \"/tmp/lb\"", "# ignore = [\"bin/\", \".venv/\", \"__pycache__/\", \".pytest_cache/\", \".mypy_cache/\", \".ruff_cache/\", \"node_modules/\", \"target/\"]"}},
 		{"project", map[string]string{"paths.repo": "/tmp/notes", "workspace.kind": "none"},
 			map[string]string{"paths.repo": "/tmp/notes", "workspace.kind": "none"}, []string{"# path = []", "[worker]"}},
 	} {

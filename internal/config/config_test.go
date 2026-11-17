@@ -332,14 +332,14 @@ func TestQuote(t *testing.T) {
 	}
 }
 
-// prune.ignore defaults to one item, a project file overrides the global one whole, an
+// prune.ignore defaults to build output and caches, a project file overrides the global one whole, an
 // empty list clears the default, and a pattern path.Match can't read, or one anchored
 // with a leading /, is refused naming its file.
 func TestPruneIgnore(t *testing.T) {
 	dir := t.TempDir()
 	global, proj := filepath.Join(dir, "config.toml"), filepath.Join(dir, "projects", "toy.toml")
 	l, err := Load(Input{Dir: dir, Project: "toy", Home: "/h"})
-	if err != nil || strings.Join(l.Prune.Ignore, ",") != "bin/" || l.Sources["prune.ignore"].String() != "default" {
+	if err != nil || strings.Join(l.Prune.Ignore, ",") != "bin/,.venv/,__pycache__/,.pytest_cache/,.mypy_cache/,.ruff_cache/,node_modules/,target/" || l.Sources["prune.ignore"].String() != "default" {
 		t.Fatalf("default: %q from %s, %v", l.Prune.Ignore, l.Sources["prune.ignore"], err)
 	}
 	write(t, global, "[prune]\nignore = [\"bin/\", \"*.o\"]\n")

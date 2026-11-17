@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/jmmshn/bees/internal/port"
@@ -47,12 +48,24 @@ func TestIgnoredNamesWhatPruneIgnoreDoesntCover(t *testing.T) {
 		{[]string{"x/build/", "x.o/", "bs/", "r.md/"}, "bin/bs, bin/sub/a, cmd/x/build/b, scratch/r.md, sp ace.out, sub/x.o, é.out"},
 		{[]string{"sp ace.out", "é.out", "bin", "scratch/*"}, "cmd/x/build/b, sub/x.o"},
 	} {
-		got, err := c.ignored(context.Background(), dir, tc.let)
+		got, _, err := c.ignored(context.Background(), dir, tc.let, false)
 		if err != nil || got != tc.want {
 			t.Errorf("ignored(%q) = %q, %v\n want %q", tc.let, got, err, tc.want)
 		}
 	}
-	if _, err := c.ignored(context.Background(), t.TempDir(), nil); err == nil {
+	// Each pattern's files are counted and sized; with all, the rest are too, under "".
+	if err := os.WriteFile(filepath.Join(dir, "bin", "bs"), []byte("12345"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	kept, drops, err := c.ignored(context.Background(), dir, []string{"bin/", "*.out"}, false)
+	if want := []Drop{{"bin/", 2, 5}, {"*.out", 2, 0}}; err != nil || kept == "" || !slices.Equal(drops, want) {
+		t.Errorf("ignored counts %v (kept %q, %v), want %v", drops, kept, err, want)
+	}
+	kept, drops, err = c.ignored(context.Background(), dir, []string{"bin/"}, true)
+	if want := []Drop{{"bin/", 2, 5}, {"", 5, 0}}; err != nil || kept != "" || !slices.Equal(drops, want) {
+		t.Errorf("ignored all: %v (kept %q, %v), want %v", drops, kept, err, want)
+	}
+	if _, _, err := c.ignored(context.Background(), t.TempDir(), nil, false); err == nil {
 		t.Error("ignored outside a git checkout: no error, want git's")
 	}
 }

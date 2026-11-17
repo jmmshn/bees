@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -110,36 +111,40 @@ func TestAGoalMessageStaysWithItsSpawn(t *testing.T) {
 
 // A report in an ignored scratch/ is hidden from git status: prune still keeps its
 // worktree and names it, so nobody loses it unseen (five pilot reports were, bees-13.7).
-// Ignored build output under prune.ignore (default bin/) goes with the worktree.
+// Ignored build output and caches under prune.ignore (default bin/, .venv/, ...) go with
+// the worktree, counted and sized; --drop-ignored lets the rest go too (bees-13.105).
 func TestPruneKeepsIgnoredFilesButBuildOutput(t *testing.T) {
 	x := newToy(t)
-	x.write(filepath.Join(x.repo, ".git", "info", "exclude"), "/scratch/\n/bin/\n")
+	x.write(filepath.Join(x.repo, ".git", "info", "exclude"), "/scratch/\n/bin/\n.venv/\n")
 	for _, n := range []string{"toy-1", "toy-2"} {
 		sp := x.spawn(n, "verdict")
-		if err := os.MkdirAll(filepath.Join(sp.Workspace.Dir, "bin"), 0o755); err != nil {
-			t.Fatal(err)
+		for _, d := range []string{"bin", "py/.venv/lib"} {
+			if err := os.MkdirAll(filepath.Join(sp.Workspace.Dir, d), 0o755); err != nil {
+				t.Fatal(err)
+			}
 		}
 		x.write(filepath.Join(sp.Workspace.Dir, "bin", "bs"), "a build")
+		x.write(filepath.Join(sp.Workspace.Dir, "py", ".venv", "lib", "m.py"), "x")
 		must(t, x.worker(n, 1, "done", "--answer", "yes", "--report", "see scratch/report.md"), 0)
 		must(t, x.queen("end", n), 0)
 	}
 	// prune reads prune.ignore as spawn froze it, never the config now.
 	x.write(filepath.Join(x.config, "config.toml"), readFile(t, filepath.Join(x.config, "config.toml"))+"\n[prune]\nignore = []\n")
 	kept, _, _ := x.open().LatestSpawn(context.Background(), "toy-2")
-	if strings.Join(kept.PruneIgnore, ",") != "bin/" {
-		t.Fatalf("spawned froze prune.ignore %q, want [bin/]", kept.PruneIgnore)
+	if !slices.Contains(kept.PruneIgnore, "bin/") || !slices.Contains(kept.PruneIgnore, ".venv/") {
+		t.Fatalf("spawned froze prune.ignore %q, want the default's bin/ and .venv/", kept.PruneIgnore)
 	}
 	if err := os.MkdirAll(filepath.Join(kept.Workspace.Dir, "scratch"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	x.write(filepath.Join(kept.Workspace.Dir, "scratch", "report.md"), "the findings")
 	r := x.queen("prune")
-	must(t, r, 3, "removed "+filepath.Join(x.repo+"-WT", "toy-1"), "kept", "ignored files", "scratch/")
-	if strings.Contains(r.String(), "bin/") {
+	must(t, r, 3, "removed "+filepath.Join(x.repo+"-WT", "toy-1"), "with its ignored files: 1 file, 7 B under bin/; 1 file, 1 B under .venv/",
+		"kept", "ignored files", "scratch/", "prune --drop-ignored toy-2 lets them all go")
+	if strings.Contains(r.String(), "bin/bs") {
 		t.Fatalf("prune named the build output prune.ignore lets go:\n%s", r)
 	}
-	if err := os.RemoveAll(filepath.Join(kept.Workspace.Dir, "scratch")); err != nil {
-		t.Fatal(err)
-	}
-	must(t, x.queen("prune"), 0, "removed "+kept.Workspace.Dir)
+	must(t, x.queen("prune", "--drop-ignored", "toy-9"), 2, "--drop-ignored toy-9: no such worker; nothing pruned")
+	must(t, x.queen("prune", "--drop-ignored", "toy-2"), 0, "removed "+kept.Workspace.Dir,
+		"with its ignored files: 1 file, 7 B under bin/; 1 file, 1 B under .venv/; 1 file, 12 B under no pattern (--drop-ignored)")
 }

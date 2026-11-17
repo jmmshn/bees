@@ -107,6 +107,7 @@ func (c *Core) Done(ctx context.Context, who Caller, self int, h Handed, o DoneO
 	}
 	d.Checks = append(d.Checks, r)
 	var f *found // the change, found once before the first look; a --wait's later looks find it again
+	handoff := e.Handoff
 	if e.Type == "pr" {
 		ff := c.theChange(lookCtx, sp)
 		f = &ff
@@ -118,6 +119,14 @@ func (c *Core) Done(ctx context.Context, who Caller, self int, h Handed, o DoneO
 		default:
 			d.Change = f.c.URL
 		}
+		// A change merged before its handoff (the keeper merged it first, or it was a
+		// follow-up to one) is landed work: open, not a draft, current and green are about
+		// a change still to merge, and a merged one behind its own squash never passes
+		// them (bees-13.108, motif 5). Its head being the branch's tip, and its merge, are
+		// the handoff; bs end still runs the goal's complete checks.
+		if f.c.State == port.Merged {
+			handoff = []string{goal.PRHead, goal.PRMerged}
+		}
 	}
 	var rs []logbook.CheckResult
 	var k *look
@@ -127,7 +136,7 @@ func (c *Core) Done(ctx context.Context, who Caller, self int, h Handed, o DoneO
 		if !waited {
 			k.found = f
 		}
-		rs, cant = k.stage(lookCtx, e, e.Handoff)
+		rs, cant = k.stage(lookCtx, e, handoff)
 		// Out of time after waiting is still pending; a first look that couldn't run is 6.
 		if cant != nil && waited && lookCtx.Err() != nil {
 			return d, exit(ExitWaited, bsname.Cmd+" done --wait, or ask the queen", nil, "still pending after %s (%s ran out of time)", o.Wait, cant.Name)

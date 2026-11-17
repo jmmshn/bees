@@ -606,6 +606,36 @@ func TestContractParallelFirstSpawns(t *testing.T) {
 	}
 }
 
+// Parallel spawns on one repo each make their worktree (bees-13.104): git worktree add
+// fails reading a sibling add's half-made commondir, so bs takes the repo's worktree
+// lock around herdr worktree create.
+func TestContractParallelSpawnsShareOneRepo(t *testing.T) {
+	x := newToy(t)
+	x.herdr.WorktreeAdd = 30 * time.Millisecond
+	const n = 6
+	for i := 1; i <= n; i++ {
+		x.bead(fmt.Sprintf("toy-%d", i), "parallel")
+	}
+	rs := make([]result, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var out, errb bytes.Buffer
+			code := cli.Run(context.Background(), cli.Env{Vars: x.env, Dir: x.repo, Self: os.Getpid(), Stdin: strings.NewReader("")}, x.ports,
+				[]string{"spawn", "--label", "x", "--as", "queen-toy", "--goal", "branch", fmt.Sprintf("toy-%d", i+1)}, &out, &errb)
+			rs[i] = result{code, out.String(), errb.String()}
+		}()
+	}
+	wg.Wait()
+	for i, r := range rs {
+		if r.code != 0 {
+			fatalf(t, "spawn toy-%d: exit %d:\n%s", i+1, r.code, r)
+		}
+	}
+}
+
 // Cross-project (Amendment 4): a session of toy acting in project other may only message
 // queen-other; the message is stored in other's logbook, and other's queen is started
 // when she isn't running, once however many sends race (motif 7).

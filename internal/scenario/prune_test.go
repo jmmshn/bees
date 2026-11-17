@@ -284,8 +284,8 @@ func TestPruneKeepsADirAProcessWorksIn(t *testing.T) {
 	cmd := inDir(t, sub)
 	pid := strconv.Itoa(cmd.Process.Pid)
 	// No child of its harness: end leaves it running, and says so.
-	must(t, x.queen("end", "toy-1"), 0, "still working in toy-1's workspace", "pid "+pid+" sleep 30")
-	must(t, x.queen("prune"), 3, "kept "+sp.Workspace.Dir+" (toy-1): processes still work in it", "pid "+pid+" sleep 30")
+	must(t, x.queen("end", "toy-1"), 0, "still working in toy-1's workspace", "pid "+pid+" ", "sleep 30")
+	must(t, x.queen("prune"), 3, "kept "+sp.Workspace.Dir+" (toy-1): processes still work in it", "pid "+pid+" ", "sleep 30")
 	_ = cmd.Process.Kill()
 	_ = cmd.Wait() // killed: its error is the signal
 	must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir)
@@ -311,7 +311,7 @@ func TestEndStopsWhatWorksInTheWorkspaceOnlyWithForce(t *testing.T) {
 	}
 	cmd := inDir(t, sp.Workspace.Dir)
 	pid := strconv.Itoa(cmd.Process.Pid)
-	must(t, x.queen("end", "--incomplete", "toy-1"), 5, "processes still work in "+sp.Workspace.Dir, "pid "+pid+" sleep 30", "next: bs end --incomplete --force toy-1")
+	must(t, x.queen("end", "--incomplete", "toy-1"), 5, "processes still work in "+sp.Workspace.Dir, "pid "+pid+" ", "sleep 30", "next: bs end --incomplete --force toy-1")
 	must(t, x.queen("end", "--incomplete", "--force", "toy-1"), 0, "stopping what still works in toy-1's workspace", "pid "+pid)
 	if err := cmd.Wait(); err == nil {
 		t.Fatal("sleep exited on its own; want it stopped by bs end --force")

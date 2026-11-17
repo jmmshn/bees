@@ -308,7 +308,7 @@ func (k *look) lag(ctx context.Context, v port.Change) (string, error) {
 // commits the branch lacks (someone pushed onto it) is a fail that says to pull them, never
 // pending: waiting would never end (motif 5); only merges of its base (baseMerged) pass. The branch ahead of the
 // host's head is pending when it was pushed already (lag), else "push it": onto a push
-// goal's target, by the command that names its head.
+// goal's target, by the command that names its head; past a merged change, "open a new one".
 func (k *look) unpushed(ctx context.Context, v port.Change, tip string) (outcome, string, error) {
 	c, dir, host := k.c, k.sp.Workspace.Dir, k.c.Review.Name()
 	has, err := c.vcs(k.sp.Workspace).Has(ctx, dir, v.HeadCommit)
@@ -331,6 +331,10 @@ func (k *look) unpushed(ctx context.Context, v port.Change, tip string) (outcome
 		return failed, "", err
 	} else if up == tip {
 		return pending, fmt.Sprintf("pending: %s was pushed at %s, and %s still shows %s", v.Head, oid(tip), host, oid(v.HeadCommit)), nil
+	}
+	if v.State == port.Merged { // pushing onto it lands nothing: those commits need a change of their own
+		return failed, fmt.Sprintf("it merged at %s, and %s has commits since (at %s): open a new change for them (%s), or drop them",
+			oid(v.HeadCommit), k.sp.Workspace.Branch, oid(tip), c.Review.Create(where(k.sp.Workspace))), nil
 	}
 	if b := k.sp.Workspace.Branch; v.Head != b {
 		return failed, fmt.Sprintf("%s is at %s here, and %s at %s on %s: %s", b, oid(tip), v.Head, oid(v.HeadCommit), host, c.Review.PushHint(ctx, dir, v)), nil

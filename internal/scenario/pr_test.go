@@ -767,3 +767,67 @@ func onePrompt(t *testing.T, x *toy, name string) string {
 	}
 	return fs[0]
 }
+
+// A queen's bs check that finds the PR head holding commits the worker's branch lacks
+// tells the worker itself, from its queen, so the fallback to "pull them" needs no relay:
+// once per head, however many checks see it; a new such head is told again (bees-13.106).
+// The worker's own done says so in its output and mails nothing.
+func TestACheckThatFindsUnpulledCommitsTellsTheWorker(t *testing.T) {
+	x := newToy(t)
+	b := ghBackend{}
+	b.setup(x, true)
+	sp := x.spawn("toy-1", "pr")
+	dir := sp.Workspace.Dir
+	b.commit(x, dir)
+	b.open(x, 1, dir, "toy-1", false)
+	must(t, x.worker("toy-1", 1, "done"), 0)
+	told := func() []string {
+		t.Helper()
+		ms, err := x.open().Inbox(context.Background(), "toy-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, m := range ms {
+			if strings.Contains(m.Body, "has commits toy-1 lacks") {
+				if m.From != "queen-toy" {
+					t.Fatalf("told by %s, want queen-toy", m.From)
+				}
+				out = append(out, m.Body)
+			}
+		}
+		return out
+	}
+
+	must(t, x.queen("check", "toy-1"), 0)
+	if got := told(); len(got) != 0 {
+		t.Fatalf("a passing check told the worker: %q", got)
+	}
+
+	other := filepath.Join(filepath.Dir(x.repo), "helper")
+	x.git(x.repo, "fetch", "-q", "origin")
+	x.git(x.repo, "worktree", "add", "-q", "--detach", other, "origin/toy-1")
+	b.commit(x, other)
+	x.push(other, "toy-1")
+	must(t, x.worker("toy-1", 2, "done"), 7, "has commits toy-1 lacks")
+	if got := told(); len(got) != 0 {
+		t.Fatalf("the worker's own done mailed it: %q", got)
+	}
+	must(t, x.queen("check", "toy-1"), 7, "has commits toy-1 lacks")
+	must(t, x.queen("check", "toy-1"), 7, "has commits toy-1 lacks")
+	head := x.git(other, "rev-parse", "HEAD")
+	if got := told(); len(got) != 1 || !strings.Contains(got[0], head) || !strings.Contains(got[0], "pull them, then push, then bs done") {
+		t.Fatalf("want one message naming head %s and the way out, got %q", head, got)
+	}
+	must(t, x.worker("toy-1", 3, "inbox"), 0, "has commits toy-1 lacks", "pull them, then push")
+
+	b.commit(x, other)
+	x.push(other, "toy-1")
+	must(t, x.queen("check", "toy-1"), 7, "has commits toy-1 lacks")
+	if got := told(); len(got) != 2 {
+		t.Fatalf("a new head wasn't told again: %q", got)
+	}
+
+	x.git(dir, "pull", "-q", "--ff-only", "origin", "toy-1")
+	must(t, x.worker("toy-1", 4, "done"), 0)
+}

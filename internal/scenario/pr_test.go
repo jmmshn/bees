@@ -402,6 +402,7 @@ func TestPushGoal(t *testing.T) {
 	must(t, x.worker("toy-1", 3, "done"), 7, "pr_head", "git push origin HEAD:feature")
 	b.update(x, 5, dir)
 	must(t, x.worker("toy-1", 4, "done"), 0, "handed off")
+	must(t, x.queen("inbox"), 0, "done: toy-1 PR "+target) // bees-13.77: names the change it pushed onto
 	must(t, x.queen("end", "toy-1"), 9, target+": open")
 	b.land(x, 5)
 	must(t, x.queen("end", "toy-1"), 0)
@@ -453,6 +454,7 @@ func TestReviewGoal(t *testing.T) {
 			t.Fatalf("a failed handoff posted %q", rs)
 		}
 		must(t, x.keeper("done", "--as", "toy-2", "--answer", "changes", "--report", "rename it"), 0, "answer changes review "+target+"#")
+		must(t, x.queen("inbox"), 0, "done: toy-2 PR "+target+" answer changes") // bees-13.77
 		if rs := b.reviews(x, 6); len(rs) != 1 || !strings.Contains(rs[0], "rename it") || !strings.Contains(rs[0], "bs:"+string(sp.ID)) {
 			t.Fatalf("reviews on %s: %q", target, rs)
 		}

@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/jmmshn/bees/internal/config"
+	"github.com/jmmshn/bees/internal/herdr"
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/proc"
 	"github.com/jmmshn/bees/internal/watch"
@@ -141,6 +143,65 @@ func (c *Core) background(ctx context.Context, sp logbook.Spawn, self int) ([]pr
 	}
 	for i := range out {
 		out[i].Ports = ports[out[i].PID]
+	}
+	return out, nil
+}
+
+// working is what works in sp's workspace directory: every process whose cwd is inside it,
+// whatever its parent, but self and its ancestors (a bs run from there) and skip. It sees what the
+// gate's walk can't once the harness has exited and its children were reparented away
+// (bees-13.31). Only a directory the spawn made has one: a git worktree or a command
+// workspace; any other kind's dir is shared (the repo the queen works in), never its own.
+func (c *Core) working(sp logbook.Spawn, self int, skip []int) ([]proc.Background, error) {
+	ws := sp.Workspace
+	if ws.Dir == "" || ws.Kind != config.GitWorktree && ws.Kind != config.CommandKind {
+		return nil, nil
+	}
+	ps, err := c.Proc.InDir(ws.Dir)
+	if err != nil {
+		return nil, err
+	}
+	up, err := c.ancestors(self)
+	if err != nil {
+		return nil, err
+	}
+	skip = append(up, skip...)
+	var out []proc.Background
+	for _, p := range ps {
+		if slices.Contains(skip, p.PID) {
+			continue
+		}
+		cmd, err := c.Proc.Command(p.PID)
+		if errors.Is(err, proc.ErrGone) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		out = append(out, proc.Background{Process: p, Command: cmd})
+	}
+	return out, nil
+}
+
+// panes is the shells and foreground processes of sp's own panes: closing its workspace
+// ends them, so they are no work left behind in it. A workspace that is gone has none.
+func (c *Core) panes(ctx context.Context, sp logbook.Spawn) ([]int, error) {
+	h := c.herdr(sp.Herdr.Session)
+	ps, err := h.Panes(ctx, sp.Herdr.Workspace)
+	if err != nil {
+		return nil, err
+	}
+	var out []int
+	for _, pane := range ps {
+		pi, err := h.ProcessInfo(ctx, pane)
+		if errors.Is(err, herdr.ErrPaneGone) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		out = append(out, pi.Shell)
+		for _, f := range pi.Foreground {
+			out = append(out, f.PID)
+		}
 	}
 	return out, nil
 }

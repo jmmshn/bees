@@ -255,3 +255,69 @@ func TestAgySettingsReachTheAdapter(t *testing.T) {
 		t.Fatalf("settings the adapter got: %v", got)
 	}
 }
+
+// inDir starts sleep working in dir, as a worker's background task left behind is: no
+// child of anything bs recorded (bees-13.31).
+func inDir(t *testing.T, dir string) *exec.Cmd {
+	t.Helper()
+	cmd := exec.Command("sleep", "30")
+	cmd.Dir = dir
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	return cmd
+}
+
+// A process working in an ended worker's directory, whatever its parent, keeps it: prune
+// names it, and removes the directory once it stops (bees-13.31).
+func TestPruneKeepsADirAProcessWorksIn(t *testing.T) {
+	x := newToy(t)
+	sp := x.spawn("toy-1", "branch")
+	x.commit(sp.Workspace.Dir, "work.txt")
+	must(t, x.worker("toy-1", 1, "done"), 0)
+	x.git(x.repo, "merge", "-q", "toy-1")
+	sub := filepath.Join(sp.Workspace.Dir, "sub") // below it counts too; empty, git sees nothing
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := inDir(t, sub)
+	pid := strconv.Itoa(cmd.Process.Pid)
+	// No child of its harness: end leaves it running, and says so.
+	must(t, x.queen("end", "toy-1"), 0, "still working in toy-1's workspace", "pid "+pid+" sleep 30")
+	must(t, x.queen("prune"), 3, "kept "+sp.Workspace.Dir+" (toy-1): processes still work in it", "pid "+pid+" sleep 30")
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait() // killed: its error is the signal
+	must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir)
+}
+
+// With no harness process to walk, the gate looks at what works in the workspace: bs end
+// refuses while a process does, and --force stops it and records it (bees-13.31, 13.16).
+func TestEndStopsWhatWorksInTheWorkspaceOnlyWithForce(t *testing.T) {
+	x := newToy(t)
+	ctx := context.Background()
+	x.herdr.Programs["claude"] = "/bin/true" // the start is never confirmed: nothing to walk
+	x.ports.Timing.Confirm = 300 * time.Millisecond
+	x.bead("toy-1", "x")
+	must(t, x.queen("spawn", "--label", "x", "--goal", "verdict", "toy-1"), 8)
+	lb, err := logbook.Open(ctx, x.logbook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lb.Close()
+	sp, _, err := lb.LatestSpawn(ctx, "toy-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := inDir(t, sp.Workspace.Dir)
+	pid := strconv.Itoa(cmd.Process.Pid)
+	must(t, x.queen("end", "--incomplete", "toy-1"), 5, "processes still work in "+sp.Workspace.Dir, "pid "+pid+" sleep 30", "next: bs end --incomplete --force toy-1")
+	must(t, x.queen("end", "--incomplete", "--force", "toy-1"), 0, "stopping what still works in toy-1's workspace", "pid "+pid)
+	if err := cmd.Wait(); err == nil {
+		t.Fatal("sleep exited on its own; want it stopped by bs end --force")
+	}
+	e, ok, err := lb.EndOf(ctx, sp.ID)
+	if err != nil || !ok || !slices.ContainsFunc(e.Stopped, func(p proc.Process) bool { return p.PID == cmd.Process.Pid }) {
+		t.Fatalf("ended = %+v, %v, %v; want pid %s in Stopped", e, ok, err, pid)
+	}
+}

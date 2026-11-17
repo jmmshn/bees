@@ -223,8 +223,9 @@ func (l *Logbook) LandedOf(ctx context.Context, spawn ID) (ld Landed, ok bool, e
 
 // Ended is an ended entry's data; one written before ADR-0010 has none.
 type Ended struct {
-	Force      bool `json:"force,omitempty"`
-	Incomplete bool `json:"incomplete,omitempty"` // bs end --incomplete: prune completes it later
+	Force      bool           `json:"force,omitempty"`
+	Incomplete bool           `json:"incomplete,omitempty"` // bs end --incomplete: prune completes it later
+	Stopped    []proc.Process `json:"stopped,omitempty"`    // what --force stopped working in its workspace (bees-13.31)
 }
 
 // RecordEnd records that by ended the given spawn. Ending it again is a no-op.

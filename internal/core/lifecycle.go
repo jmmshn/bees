@@ -292,8 +292,20 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 	// prune, which removes only landed or discarded work, is the guard.
 	if !o.Force {
 		switch bg, err := c.Background(ctx, sp, self); {
-		case errors.Is(err, ErrHarnessGone): // its children were reparented away: nothing to walk
-		case errors.Is(err, ErrNoStart): // nothing recorded to walk: an unconfirmed spawn
+		case errors.Is(err, ErrHarnessGone), errors.Is(err, ErrNoStart):
+			// Nothing to walk: its children were reparented away, or it never started. What
+			// still works in its workspace is the same work (bees-13.31).
+			own, err := c.panes(ctx, sp)
+			if err != nil {
+				return exit(ExitCantCheck, o.rerun(name, EndOpts{Force: true}), err, "%s: can't tell which processes its panes run", name)
+			}
+			switch in, err := c.working(sp, self, own); {
+			case err != nil:
+				return exit(ExitCantCheck, o.rerun(name, EndOpts{Force: true}), err, "%s: can't tell what works in its workspace", name)
+			case len(in) > 0:
+				return exit(ExitBackground, o.rerun(name, EndOpts{Force: true})+" (stops them)", nil,
+					"%s: its harness has exited, but processes still work in %s:\n  %s", name, sp.Workspace.Dir, lines(in))
+			}
 		case err != nil:
 			return exit(ExitCantCheck, o.rerun(name, EndOpts{Force: true}), err, "%s: can't check for background work", name)
 		case len(bg) > 0:
@@ -326,12 +338,28 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 		return exit(ExitRefused, "herdr --session "+sp.Herdr.Session+" pane move <pane> --new-workspace, then "+o.rerun(name, EndOpts{}), nil,
 			"%s: its workspace %s also holds %s, which closing it would end; nothing closed", name, sp.Herdr.Workspace, strings.Join(g, ", "))
 	}
+	// Its panes' own processes end with its workspace: only what outlives that is named.
+	own, err := c.panes(ctx, sp)
+	if err != nil {
+		c.warn("can't tell which processes %s's panes run (%v): what is named below may hold them too", name, err)
+	}
 	h := c.herdr(sp.Herdr.Session)
 	if err := h.CloseWorkspace(ctx, sp.Herdr.Workspace); err != nil {
 		return exit(ExitKept, o.rerun(name, EndOpts{}), err, "%s: herdr couldn't close its workspace; nothing was recorded", name)
 	}
 	if err := c.stop(ctx, sp); err != nil {
 		return exit(ExitFail, o.rerun(name, EndOpts{}), err, "%s: its workspace is closed but its process wouldn't stop; nothing was recorded", name)
+	}
+	// --force waived the gate: what still works in its workspace (background work the gate
+	// named, a child reparented away) is stopped too and recorded, never left to outlive it
+	// (bees-13.31). Without --force the gate found none; prune guards against a late one.
+	var stopped []proc.Process
+	if o.Force {
+		stopped = c.stopWorking(ctx, sp, self, own)
+	} else if in, err := c.working(sp, self, own); err == nil && len(in) > 0 {
+		// A process no harness started (detached, or a stray) isn't its to stop unasked.
+		c.warn("still working in %s's workspace %s, and no child of its harness, so left running; %s prune keeps it until they stop:\n  %s",
+			name, sp.Workspace.Dir, bsname.Cmd, lines(in))
 	}
 	if err := c.removeFiles(sp.Name); err != nil {
 		c.warn("couldn't remove %s's start files: %v", sp.Name, err)
@@ -342,7 +370,30 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 			return err
 		}
 	}
-	return c.Logbook.RecordEnd(ctx, by, sp.ID, logbook.Ended{Force: o.Force, Incomplete: !done})
+	return c.Logbook.RecordEnd(ctx, by, sp.ID, logbook.Ended{Force: o.Force, Incomplete: !done, Stopped: stopped})
+}
+
+// stopWorking stops what works in sp's workspace, saying what, and returns those it
+// stopped. A failure is a warning: --force is the way out (motif 5), and prune still
+// refuses a directory a process works in.
+func (c *Core) stopWorking(ctx context.Context, sp logbook.Spawn, self int, own []int) []proc.Process {
+	in, err := c.working(sp, self, own)
+	if err != nil {
+		c.warn("can't tell what still works in %s's workspace %s, so nothing more was stopped: %v", sp.Name, sp.Workspace.Dir, err)
+		return nil
+	}
+	if len(in) == 0 {
+		return nil
+	}
+	ps := make([]proc.Process, len(in))
+	for i, b := range in {
+		ps[i] = b.Process
+	}
+	c.warn("stopping what still works in %s's workspace %s:\n  %s", sp.Name, sp.Workspace.Dir, lines(in))
+	if err := c.stopAll(ctx, ps); err != nil {
+		c.warn("%v: %s prune keeps %s while it runs", err, bsname.Cmd, sp.Workspace.Dir)
+	}
+	return ps
 }
 
 // guests names the harness processes in sp's herdr workspace outside its own recorded
@@ -463,18 +514,34 @@ func (c *Core) stop(ctx context.Context, sp logbook.Spawn) error {
 	if err != nil || !ok {
 		return err
 	}
+	return c.stopAll(ctx, []proc.Process{st.Process})
+}
+
+// stopAll ends each of ps that still runs as recorded: SIGTERM, then SIGKILL to those left.
+func (c *Core) stopAll(ctx context.Context, ps []proc.Process) error {
+	left := func() ([]proc.Process, error) {
+		var out []proc.Process
+		for _, p := range ps {
+			if alive, err := c.Proc.Alive(p); err != nil {
+				return nil, err
+			} else if alive {
+				out = append(out, p)
+			}
+		}
+		return out, nil
+	}
 	for _, sig := range []syscall.Signal{syscall.SIGTERM, syscall.SIGKILL} {
-		alive, err := c.Proc.Alive(st.Process)
-		if err != nil || !alive {
+		run, err := left()
+		if err != nil || len(run) == 0 {
 			return err
 		}
-		if err := c.Proc.Signal(st.Process, sig); errors.Is(err, proc.ErrGone) {
-			return nil
-		} else if err != nil {
-			return err
+		for _, p := range run {
+			if err := c.Proc.Signal(p, sig); err != nil && !errors.Is(err, proc.ErrGone) {
+				return err
+			}
 		}
 		for deadline := time.Now().Add(c.timing().Stop); time.Now().Before(deadline); {
-			if alive, err := c.Proc.Alive(st.Process); err != nil || !alive {
+			if run, err := left(); err != nil || len(run) == 0 {
 				return err
 			}
 			if err := sleep(ctx, c.timing().Poll); err != nil {
@@ -482,7 +549,15 @@ func (c *Core) stop(ctx context.Context, sp logbook.Spawn) error {
 			}
 		}
 	}
-	return fmt.Errorf("pid %d outlived SIGKILL", st.PID)
+	run, err := left()
+	if err != nil || len(run) == 0 {
+		return err
+	}
+	var pids []string
+	for _, p := range run {
+		pids = append(pids, strconv.Itoa(p.PID))
+	}
+	return fmt.Errorf("pid %s outlived SIGKILL", strings.Join(pids, ", "))
 }
 
 // Pruned is what bs prune did with one ended spawn's workspace and branch.
@@ -945,10 +1020,16 @@ func (c *Core) inUse(ctx context.Context, sp logbook.Spawn) (string, error) {
 			in = append(in, p.ID)
 		}
 	}
-	if len(in) == 0 {
-		return "", nil
+	if len(in) > 0 {
+		return fmt.Sprintf("herdr pane %s works in it", strings.Join(in, ", ")), nil
 	}
-	return fmt.Sprintf("herdr pane %s works in it", strings.Join(in, ", ")), nil
+	// A process outside herdr works there too: a reparented child of its harness, a
+	// background task that outlived it (bees-13.31).
+	ps, err := c.working(sp, os.Getpid(), nil)
+	if err != nil || len(ps) == 0 {
+		return "", err
+	}
+	return fmt.Sprintf("processes still work in it: stop them, then %s prune again:\n  %s", bsname.Cmd, lines(ps)), nil
 }
 
 // under reports whether path is dir or inside it, symlinks resolved.

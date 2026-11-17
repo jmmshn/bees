@@ -427,6 +427,11 @@ func May(w Caller, cmd, p, subject string) error {
 	switch w.Role {
 	case QueenR:
 		next = "ask the keeper"
+		if slices.Contains(roles, KeeperR) {
+			// A '!' line in the queen's pane is a child of her session, as her own Bash
+			// is, and nothing it carries is one she can't fake: it runs as the queen (R61).
+			next = "the keeper runs it in a terminal outside the queen's pane; a '!' line there runs as the queen"
+		}
 	case KeeperR:
 		next = bsname.Cmd + " status"
 	}

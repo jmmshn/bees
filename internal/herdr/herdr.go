@@ -121,6 +121,10 @@ func (c Client) output(ctx context.Context, args ...string) ([]byte, error) {
 type Workspace struct {
 	ID, Label, Pane string
 	Path            string // the worktree's checkout path, or the dir it was opened on
+	// Linked is a workspace on a linked worktree; one on a repo's main checkout with
+	// Linked false is that repo's primary workspace, which herdr nests the repo's
+	// worktree workspaces under (workspace list, probed on 0.9.5).
+	Linked bool
 }
 
 // created is herdr's answer to workspace create and worktree create.
@@ -170,6 +174,26 @@ func (c Client) CreateWorkspace(ctx context.Context, dir, label string) (Workspa
 		return Workspace{}, err
 	}
 	return r.workspace(label, dir)
+}
+
+// CreateTab opens a tab on dir in workspace, returning workspace with the tab's root
+// pane. Unlike workspace create, a tab in a repo's primary workspace sits under that repo
+// in herdr's sidebar (bees-13.107). A workspace herdr doesn't know is refused as workspace_not_found (probed, 0.9.5).
+func (c Client) CreateTab(ctx context.Context, workspace, dir, label string) (Workspace, error) {
+	var r struct {
+		Result struct {
+			RootPane struct {
+				ID string `json:"pane_id"`
+			} `json:"root_pane"`
+		} `json:"result"`
+	}
+	if err := c.call(ctx, &r, "tab", "create", "--workspace", workspace, "--cwd", dir, "--label", label, "--no-focus"); err != nil {
+		return Workspace{}, err
+	}
+	if r.Result.RootPane.ID == "" {
+		return Workspace{}, errors.New("herdr: no pane id in tab create's output")
+	}
+	return Workspace{ID: workspace, Label: label, Pane: r.Result.RootPane.ID, Path: dir}, nil
 }
 
 // MaxToken is how much of a metadata token's value herdr keeps: it cuts the rest without a
@@ -325,7 +349,7 @@ func (c Client) Panes(ctx context.Context, workspace string) ([]string, error) {
 }
 
 // Workspaces lists every workspace, with Path the checkout it is open on ("" for one
-// opened on no worktree).
+// opened on no worktree: workspace create never attaches one, probed on 0.9.5).
 func (c Client) Workspaces(ctx context.Context) ([]Workspace, error) {
 	var r struct {
 		Result struct {
@@ -333,7 +357,8 @@ func (c Client) Workspaces(ctx context.Context) ([]Workspace, error) {
 				ID       string `json:"workspace_id"`
 				Label    string `json:"label"`
 				Worktree struct {
-					Path string `json:"checkout_path"`
+					Path   string `json:"checkout_path"`
+					Linked bool   `json:"is_linked_worktree"`
 				} `json:"worktree"`
 			} `json:"workspaces"`
 		} `json:"result"`
@@ -343,7 +368,7 @@ func (c Client) Workspaces(ctx context.Context) ([]Workspace, error) {
 	}
 	var out []Workspace
 	for _, w := range r.Result.Workspaces {
-		out = append(out, Workspace{ID: w.ID, Label: w.Label, Path: w.Worktree.Path})
+		out = append(out, Workspace{ID: w.ID, Label: w.Label, Path: w.Worktree.Path, Linked: w.Worktree.Linked})
 	}
 	return out, nil
 }

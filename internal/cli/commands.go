@@ -637,7 +637,8 @@ func (r *run) inbox(fs *flag.FlagSet, args []string) error {
 // discarded, late (a start healed after confirmation missed it), and earlier (a
 // completion an incomplete respawn's row would hide). It reads the
 // record, the process table and the disk, never a check, and asks herdr only to heal an
-// unconfirmed start (core.StartOf) and whether an agy session (worker or queen) with
+// unconfirmed start (core.StartOf), where a running queen is when her recorded pane is
+// gone (core.LiveQueen, which records her move), and whether an agy session (worker or queen) with
 // mail unread sits idle (stuckIdle), so with herdr down that start reads unknown, that
 // idle check is an error, and the rest still prints: a goal complete but not yet landed shows "no" until bs end or bs
 // prune finds it. A spawn from before goals reads --goal legacy. Rows sort by name, its
@@ -683,6 +684,15 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 		errs = append(errs, err)
 	} else if ok {
 		running := alive(r.c.Proc.Alive(q.Process))
+		if running == "yes" { // a moved pane has a new id: show, and look at, where she runs now (bees-13.109)
+			var err error
+			switch q, err = r.c.LiveQueen(r.ctx, q); {
+			case errors.Is(err, core.ErrPaneLost):
+				note("stuck", queen, "%v: a ring that needs her pane can't reach her → exit her, then %s queen in a herdr pane in %s", err, bsname.Cmd, q.Repo)
+			case err != nil:
+				errs = append(errs, fmt.Errorf("%s: can't tell which pane she is in: %w", queen, err))
+			}
+		}
 		fmt.Fprintf(tw, "%s\t-\t-\tqueen\t-\t-\t%s\t%s\tpane %s on herdr session %s\n", queen, running, unread(queen), q.Pane, q.Session)
 		if running == "yes" && counts[queen] > 0 { // her held ring, left by a cut turn (bees-13.99)
 			r.stuckIdle(note, &errs, queen, q.Harness, logbook.Pane{Session: q.Session, Pane: q.Pane}, counts[queen])

@@ -101,7 +101,7 @@ func (h *Herdr) worktreeCreate(s *server, _ string, f flags) ([]byte, error) {
 		return nil, refusal("worktree:create", "git_failed", "%s", strings.TrimSpace(string(out)))
 	}
 	w := s.open(label, path)
-	w.worktree, w.repo = path, repo
+	w.worktree, w.repo, w.linked = path, repo, true
 	return result("worktree:create", map[string]any{"type": "worktree_created", "workspace": w.json(), "root_pane": w.panes[0].json(w),
 		"worktree": map[string]string{"path": path, "branch": branch}})
 }
@@ -132,6 +132,20 @@ func (h *Herdr) worktreeRemove(s *server, _ string, f flags) ([]byte, error) {
 	w.panes = nil
 	s.drop(w)
 	return result("worktree:remove", map[string]any{"type": "ok"})
+}
+
+// tabCreate opens a tab with one pane on --cwd in --workspace (herdr 0.9.5's answer,
+// probed in bees-13.107).
+func (h *Herdr) tabCreate(s *server, _ string, f flags) ([]byte, error) {
+	id, _ := f.get("--workspace")
+	w := s.find(id)
+	if w == nil {
+		return nil, refusal("tab:create", "workspace_not_found", "workspace %s not found", id)
+	}
+	p := w.add(h.cwd(s, f))
+	label, _ := f.get("--label")
+	return result("tab:create", map[string]any{"type": "tab_created", "root_pane": p.json(w),
+		"tab": map[string]any{"workspace_id": w.id, "label": label}})
 }
 
 func (h *Herdr) paneList(s *server, _ string, f flags) ([]byte, error) {
@@ -166,7 +180,10 @@ func (h *Herdr) paneClose(s *server, _ string, f flags) ([]byte, error) {
 // paneMove moves a pane into another workspace (--new-tab --workspace W) or a new one
 // (--new-workspace), as herdr 0.9.5 does (probed, bees-13.2): the pane gets a new id
 // there, keeps its terminal and process, and the emptied workspace closes. The process's
-// own HERDR_PANE_ID still names the old pane.
+// own HERDR_PANE_ID still names the old pane. Its terminal moves with it: what its agent
+// shows and was prompted (terminal_id stays, probed in bees-13.109). Real herdr also still
+// answers pane get on the old id while the pane lives (probed, 0.9.5); this fake doesn't,
+// and bs never relies on it.
 func (h *Herdr) paneMove(s *server, _ string, f flags) ([]byte, error) {
 	from, p := s.pane(first(f.pos))
 	if p == nil {
@@ -189,7 +206,7 @@ func (h *Herdr) paneMove(s *server, _ string, f flags) ([]byte, error) {
 	prev := p.id
 	from.panes = slices.DeleteFunc(from.panes, func(x *pane) bool { return x == p })
 	moved := to.add(p.cwd)
-	moved.agent = p.agent
+	moved.agent, moved.shell, moved.screen, moved.prompts = p.agent, p.shell, p.screen, p.prompts
 	s.drop(from)
 	return result("pane:move", map[string]any{"type": "pane_move", "move_result": map[string]any{
 		"changed": true, "previous_pane_id": prev, "pane": moved.json(to)}})

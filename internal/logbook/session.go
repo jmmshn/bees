@@ -26,6 +26,9 @@ type Queen struct {
 	Process
 	Exe  string `json:"exe,omitempty"`
 	Repo string `json:"repo,omitempty"` // the repo she started in: her bs's repo, wherever she cds (bees-12.43)
+	// MovedFrom is the pane an earlier entry of this same process recorded, when herdr
+	// pane move gave her pane a new id and bs found her in it (bees-13.109).
+	MovedFrom string `json:"moved_from,omitempty"`
 }
 
 // RecordQueen records queen q, unless the newest queen entry of q.Name is one alive
@@ -55,6 +58,32 @@ func (l *Logbook) RecordQueen(ctx context.Context, q Queen, alive func(Queen) (b
 		return Queen{}, false, err
 	}
 	return running, ok, nil
+}
+
+// RecordQueenMoved records q, whose pane moved, again in pane: a new queen entry with q's
+// process and MovedFrom q.Pane. It records only while q is still the newest entry of
+// q.Name, checked in the same write transaction; else it records nothing and returns the
+// newest (another call recorded the move, or a new queen started).
+func (l *Logbook) RecordQueenMoved(ctx context.Context, q Queen, pane string) (Queen, error) {
+	var now Queen
+	err := l.write(ctx, func(tx *sql.Tx) error {
+		prev, found, err := latestQueen(ctx, tx, q.Name)
+		switch {
+		case err != nil:
+			return err
+		case !found || prev.ID != q.ID:
+			now = prev
+			return nil
+		}
+		now = q
+		now.Pane, now.MovedFrom = pane, q.Pane
+		now.ID, err = insertOn(ctx, tx, entry{kind: "queen", actor: q.Name, subject: q.Name, data: now})
+		return err
+	})
+	if err != nil {
+		return Queen{}, err
+	}
+	return now, nil
 }
 
 // LatestQueen returns the newest queen entry for name; ok is false when there is none.

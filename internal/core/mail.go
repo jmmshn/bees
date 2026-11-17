@@ -27,19 +27,24 @@ var ErrAlreadyRead = errors.New("has already read it")
 // Ring rings session to of this logbook with its unread count, at the process its entry
 // recorded and through the harness it recorded: the queen's newest queen entry, else an
 // open spawn's start (healed if missed). bs never looks a session up by name in herdr or
-// the harness. A session whose process is gone is port.ErrNotRunning, one whose harness
+// the harness; a queen whose pane moved is followed to her new one (LiveQueen). A session whose process is gone is port.ErrNotRunning, one whose harness
 // can't ring port.ErrNoRing: either way the message waits for its next bs inbox (motif
 // 10). An ended worker is ErrEnded; a recipient with nothing unread is ErrAlreadyRead.
 func (c *Core) Ring(ctx context.Context, from, to string, p port.Priority) error {
 	t := port.Target{Name: to}
 	var harness string
+	var followErr error // LiveQueen's
 	if q, ok, err := c.Logbook.LatestQueen(ctx, to); err != nil {
 		return err
 	} else if ok {
-		t.Session, t.Pane, t.PID, harness = q.Session, q.Pane, q.PID, q.Harness
 		if err := c.running(q.Process); err != nil {
 			return err
 		}
+		// A moved pane has a new id: ring her where she runs now. A claude_code ring goes to
+		// her pid, so a herdr that can't say where still rings her; the error is kept for a
+		// ring that then fails.
+		q, followErr = c.LiveQueen(ctx, q)
+		t.Session, t.Pane, t.PID, harness = q.Session, q.Pane, q.PID, q.Harness
 	} else {
 		sp, ok, err := c.Logbook.LatestSpawn(ctx, to)
 		switch {
@@ -73,7 +78,11 @@ func (c *Core) Ring(ctx context.Context, from, to string, p port.Priority) error
 	if len(unread) == 0 {
 		return fmt.Errorf("%s %w", to, ErrAlreadyRead)
 	}
-	return h.Ring(t, Doorbell(unread, from, c.Project), p)
+	err = h.Ring(t, Doorbell(unread, from, c.Project), p)
+	if err != nil && followErr != nil {
+		return fmt.Errorf("%w (and %v)", err, followErr)
+	}
+	return err
 }
 
 // running is nil while p runs, else port.ErrNotRunning; a failed lookup is an error.

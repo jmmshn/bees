@@ -73,8 +73,9 @@ type server struct {
 type workspace struct {
 	id, label string
 	tokens    map[string]string
-	worktree  string // worktree create's path; "" for workspace create
+	worktree  string // worktree create's path, or OpenRepo's checkout; "" for workspace create
 	repo      string
+	linked    bool // a linked worktree's (worktree create); false on a repo's main checkout
 	panes     []*pane
 	nextPane  int
 }
@@ -139,6 +140,7 @@ func (h *Herdr) Run(ctx context.Context, dir string, argv ...string) ([]byte, er
 		"workspace report-metadata": h.reportMetadata,
 		"worktree create":           h.worktreeCreate,
 		"worktree remove":           h.worktreeRemove,
+		"tab create":                h.tabCreate,
 		"agent start":               h.agentStart,
 		"pane list":                 h.paneList,
 		"pane process-info":         h.processInfo,
@@ -269,7 +271,7 @@ func (w *workspace) json() map[string]any {
 		m["tokens"] = w.tokens
 	}
 	if w.worktree != "" {
-		m["worktree"] = map[string]string{"checkout_path": w.worktree}
+		m["worktree"] = map[string]any{"checkout_path": w.worktree, "is_linked_worktree": w.linked}
 	}
 	return m
 }

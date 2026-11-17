@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/jmmshn/bees/internal/bsname"
 	"github.com/jmmshn/bees/internal/goal"
+	"github.com/jmmshn/bees/internal/herdr"
 	"github.com/jmmshn/bees/internal/logbook"
 	"github.com/jmmshn/bees/internal/port"
 	"github.com/jmmshn/bees/internal/prompt"
@@ -43,6 +45,7 @@ func (c *Core) Queen(ctx context.Context, req QueenReq) (argv, unset []string, e
 		return up, nil
 	}
 	twin := func(q logbook.Queen) error {
+		q, _ = c.LiveQueen(ctx, q) // name the pane she is in now, else the one recorded
 		return exit(ExitRefused, "use her (herdr --session "+q.Session+" pane read "+q.Pane+"), or exit her first", nil,
 			"%s already runs (pid %d, pane %s on herdr session %s); a second queen would race her spawns", name, q.PID, q.Pane, q.Session)
 	}
@@ -87,6 +90,38 @@ func (c *Core) Queen(ctx context.Context, req QueenReq) (argv, unset []string, e
 		return nil, nil, exit(ExitFail, bsname.Cmd+" queen", err, "couldn't write her start files (her entry names this pid, which exits: harmless)")
 	}
 	return append([]string{c.Harness.Program()}, args...), l.Unset, nil
+}
+
+// ErrPaneLost is a running queen in none of her herdr session's panes.
+var ErrPaneLost = errors.New("is in no pane herdr lists")
+
+// LiveQueen is running queen q with Pane where she runs now. herdr pane move gives a pane
+// a new id (bees-13.109), so when herdr no longer lists her recorded pane, bs looks for
+// her process (her recorded pid; the caller has checked it is hers and alive) among her
+// session's panes' foreground processes, never for a pane by name (motif 3), and records
+// her again in the pane it finds (RecordQueenMoved). Found nowhere is ErrPaneLost, and a
+// herdr that can't answer an error: either way q comes back as recorded.
+func (c *Core) LiveQueen(ctx context.Context, q logbook.Queen) (logbook.Queen, error) {
+	h := c.herdr(q.Session)
+	panes, err := h.PaneDirs(ctx)
+	if err != nil {
+		return q, err
+	}
+	if slices.ContainsFunc(panes, func(p herdr.PaneDir) bool { return p.ID == q.Pane }) {
+		return q, nil
+	}
+	for _, p := range panes {
+		pi, err := h.ProcessInfo(ctx, p.ID)
+		if errors.Is(err, herdr.ErrPaneGone) {
+			continue
+		} else if err != nil {
+			return q, err
+		}
+		if slices.ContainsFunc(pi.Foreground, func(f herdr.PaneProcess) bool { return f.PID == q.PID }) {
+			return c.Logbook.RecordQueenMoved(ctx, q, p.ID)
+		}
+	}
+	return q, fmt.Errorf("%s (pid %d) runs, but her pane %s is gone and she %w on herdr session %s", q.Name, q.PID, q.Pane, ErrPaneLost, q.Session)
 }
 
 // host is r's review host section of the prompt: review.fragment's file when the keeper

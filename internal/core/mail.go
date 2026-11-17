@@ -158,17 +158,24 @@ func BeadOwner(bead string) string {
 // project's: the keeper reads no inbox (bees-13.78.7), a session another project owns,
 // whose logbook is there, would never read it here, so it is refused with nothing stored
 // (bees-12.38, motifs 4 and 11), as is a worker whose spawn has ended (motif 11: "stored"
-// would promise a reader). stranger reports a name that is neither this project's queen
-// nor one of its spawns: stored, but never rung (a ring is a user turn, bs rings only
+// would promise a reader), as is a name no session can have: one that fails the naming
+// rule, or names a project with no logbook (bees-13.73.6). stranger reports a well-formed
+// name of this project that is neither its queen nor one of its spawns: stored, but never rung (a ring is a user turn, bs rings only
 // sessions it recorded).
 func (c *Core) Addressed(ctx context.Context, to, logbookDir string) (stranger bool, err error) {
 	if to == Keeper {
 		return false, exit(ExitRefused, bsname.Cmd+" send "+Queen(c.Project)+" \"...\"", nil, "the keeper reads no inbox; message %s; nothing stored", Queen(c.Project))
 	}
-	if owner := Owner(to); owner != "" && owner != c.Project {
+	owner := Owner(to)
+	if owner == "" { // no session ever has this name: only one bs records reads an inbox (bees-13.73.6)
+		return false, exit(ExitRefused, bsname.Cmd+" status", nil, "%s is no session name (%s or %s-<n>[-<m>…]): nobody would read it; nothing stored", to, Queen(c.Project), c.Project)
+	}
+	if owner != c.Project {
 		if _, err := os.Stat(filepath.Join(logbookDir, owner+".db")); err == nil {
 			return false, exit(ExitRefused, bsname.Cmd+" send --project "+owner+" "+to+" \"...\"", nil, "%s is a session of project %s, not %s; nothing stored", to, owner, c.Project)
-		} else if !errors.Is(err, os.ErrNotExist) {
+		} else if errors.Is(err, os.ErrNotExist) { // a typo such as queen-bes (bees-13.73.6)
+			return false, exit(ExitRefused, bsname.Cmd+" status", nil, "%s would be a session of project %s, which has no logbook: nobody would read it; nothing stored", to, owner)
+		} else {
 			return false, exit(ExitCantCheck, bsname.Cmd+" doctor", err, bsname.Cmd+" can't tell whether project %s has a logbook", owner)
 		}
 	}

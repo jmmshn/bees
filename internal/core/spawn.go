@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/jmmshn/bees/internal/bsname"
 	"github.com/jmmshn/bees/internal/config"
@@ -178,7 +179,13 @@ func (c *Core) Spawn(ctx context.Context, req SpawnReq) (sp logbook.Spawn, resum
 		}
 	} else if reused {
 		if _, err := os.Stat(ws.Dir); errors.Is(err, os.ErrNotExist) {
-			if _, err := c.git(ctx, ws.Repo, "worktree", "add", ws.Dir, ws.Branch); err != nil {
+			unlock, err := c.worktreeLock(ctx, ws.Repo, name)
+			if err != nil {
+				return logbook.Spawn{}, false, err
+			}
+			_, err = c.git(ctx, ws.Repo, "worktree", "add", ws.Dir, ws.Branch)
+			unlock()
+			if err != nil {
 				return logbook.Spawn{}, false, exit(ExitFail, "", err, "%s: couldn't check out branch %s again at %s; nothing was recorded", name, ws.Branch, ws.Dir)
 			}
 			remade = true
@@ -776,12 +783,42 @@ func (c *Core) makeWorkspace(ctx context.Context, session string, ws *logbook.Wo
 		}
 		from = t.c.HeadCommit
 	}
+	unlock, err := c.worktreeLock(ctx, ws.Repo, name)
+	if err != nil {
+		return herdr.Workspace{}, err
+	}
 	hw, err := c.herdr(session).CreateWorktree(ctx, ws.Repo, from, ws.Branch, ws.Dir, label)
+	unlock()
 	if err != nil {
 		return hw, exit(ExitFail, "", err, "%s: herdr couldn't make its worktree; nothing was recorded", name)
 	}
 	ws.Dir = hw.Path // herdr makes it where asked; its answer is the record
 	return hw, nil
+}
+
+// worktreeWait bounds the wait for a repo's worktree lock: a worktree add checks out a
+// whole tree, and a few parallel spawns queue behind each other (motif 15).
+const worktreeWait = 2 * time.Minute
+
+// worktreeLock holds repo's worktree lock across one git worktree add: git fails an add
+// that reads a sibling add's half-made .git/worktrees entry, so parallel spawns on one
+// repo take turns (bees-13.104). The lock is flock(2) on a file under the cache dir
+// named for the repo's path, which every project on the repo shares; the kernel drops it
+// when its holder dies (motif 5).
+func (c *Core) worktreeLock(ctx context.Context, repo, name string) (func(), error) {
+	dir := filepath.Join(c.CacheDir, "locks")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, exit(ExitFail, "", err, "%s: can't make its repo's worktree lock; nothing was made", name)
+	}
+	sum := sha256.Sum256([]byte(filepath.Clean(repo)))
+	unlock, err := lock(ctx, filepath.Join(dir, fmt.Sprintf("%x.worktree.lock", sum[:8])), worktreeWait, c.timing().Poll)
+	switch {
+	case errors.Is(err, ErrStarting):
+		return nil, exit(ExitFail, "", nil, "%s: other spawns held %s's worktree lock past %s; nothing was made", name, repo, worktreeWait)
+	case err != nil:
+		return nil, exit(ExitFail, "", err, "%s: its repo's worktree lock; nothing was made", name)
+	}
+	return unlock, nil
 }
 
 // track sets a push goal's branch's upstream to its target's head ref, on the remote the

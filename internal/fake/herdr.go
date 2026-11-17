@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/jmmshn/bees/internal/herdr"
 	"github.com/jmmshn/bees/internal/port"
@@ -54,6 +55,12 @@ type Herdr struct {
 	// RefuseNext makes the next call of this command ("workspace report-metadata") fail
 	// with herdr's error envelope, as a server-side failure would.
 	RefuseNext string
+	// WorktreeAdd is how long each worktree create's git worktree add takes (0: as long
+	// as git does). Like git 2.53, an add on a repo where another add is under way fails
+	// reading the sibling's half-made commondir (bees-13.104); a hold makes the overlap
+	// of parallel creates certain.
+	WorktreeAdd time.Duration
+	adding      map[string]string // repo → the worktree being added there
 
 	procFaults
 }

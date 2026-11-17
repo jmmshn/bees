@@ -281,6 +281,37 @@ func TestPRGoalHandoffChecks(t *testing.T) {
 	})
 }
 
+// A worker whose change merges before its handoff, then whose follow-up change from the
+// same branch merges too, hands off the landed work: bs done passes on the newest merged
+// change (pr_head, pr_merged; not pr_open or pr_current, which a merged change behind its
+// squash can never pass), and bs end completes the goal (bees-13.108: exit 7, then exit
+// 9, then the keeper's discard). A commit past the merged change says to open a new one.
+func TestPRGoalHandsOffChangesThatMerged(t *testing.T) {
+	both(t, func(t *testing.T, x *toy, b backend) {
+		ctx := context.Background()
+		sp := x.spawn("toy-1", "pr")
+		dir := sp.Workspace.Dir
+		b.commit(x, dir)
+		b.open(x, 1, dir, "toy-1", false)
+		b.ci(x, 1, "pass")
+		b.land(x, 1)
+		b.behind(x)
+		b.commit(x, dir)
+		two := b.open(x, 2, dir, "toy-1", false)
+		b.ci(x, 2, "pass")
+		b.land(x, 2)
+		b.behind(x)
+		b.commit(x, dir)
+		must(t, x.worker("toy-1", 1, "done"), 7, "pr_head", two+": ", "merged", "open a new change")
+		b.adopt(x, dir, 2)
+		must(t, x.worker("toy-1", 2, "done"), 0, "handed off to queen-toy", two)
+		must(t, x.queen("end", "toy-1"), 0, "ended toy-1")
+		if ld, ok, _ := x.open().LandedOf(ctx, sp.ID); !ok || ld.By != "end" || ld.Checks[0] != goal.PRMerged {
+			t.Fatalf("landed = %+v, %v", ld, ok)
+		}
+	})
+}
+
 // A draft PR fails --goal pr's handoff; two open changes from the workspace are refused,
 // naming both: bs judges one (ADR-0010 Amendment 4).
 func TestPRGoalRefusesDraftsAndTwoOpen(t *testing.T) {

@@ -148,3 +148,30 @@ func TestBackgroundListsOnOneLine(t *testing.T) {
 		t.Fatalf("String = %q", got)
 	}
 }
+
+// InDir finds a process by where it works, below dir too, and not one working elsewhere.
+func TestInDirFindsAProcessWorkingInsideDir(t *testing.T) {
+	dir, other := t.TempDir(), t.TempDir()
+	sub := dir + "/sub"
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sleep", "30")
+	cmd.Dir = sub
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	has := func(ps []proc.Process) bool {
+		return slices.ContainsFunc(ps, func(p proc.Process) bool { return p.PID == cmd.Process.Pid })
+	}
+	if ps, err := proc.InDir(dir); err != nil || !has(ps) {
+		t.Fatalf("InDir(dir) = %v, %v; want pid %d in it", ps, err, cmd.Process.Pid)
+	}
+	if ps, err := proc.InDir(other); err != nil || len(ps) != 0 {
+		t.Fatalf("InDir(other) = %v, %v; want none", ps, err)
+	}
+	if ps, err := proc.InDir(dir + "x"); err != nil || has(ps) { // a sibling sharing its prefix
+		t.Fatalf("InDir(dir+x) = %v, %v; want pid %d left out", ps, err, cmd.Process.Pid)
+	}
+}

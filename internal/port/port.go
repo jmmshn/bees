@@ -137,6 +137,7 @@ type Proc interface {
 	Parent(pid int) (int, error)
 	Group(pid int) (int, error)
 	Descendants(pid int) ([]proc.Process, error) // nearest first
+	InDir(dir string) ([]proc.Process, error)    // every process working in dir or below it
 	Command(pid int) (string, error)
 	Exe(pid int) (string, error)
 	Signal(p proc.Process, sig syscall.Signal) error                  // only while p is still the process recorded

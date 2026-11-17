@@ -11,7 +11,7 @@ import (
 // fail as a broken /proc or ps would, so the core must fail closed (motif 7).
 type procFaults struct {
 	AliveErr error // Alive and Start can't tell
-	WalkErr  error // Descendants can't walk
+	WalkErr  error // Descendants and InDir can't walk
 }
 
 // Alive is the real table's, unless AliveErr.
@@ -40,6 +40,14 @@ func (h *Herdr) Descendants(pid int) ([]proc.Process, error) {
 		return nil, err
 	}
 	return proc.Descendants(pid)
+}
+
+// InDir is the real table's, unless WalkErr.
+func (h *Herdr) InDir(dir string) ([]proc.Process, error) {
+	if err := h.fault(func(f *procFaults) error { return f.WalkErr }); err != nil {
+		return nil, err
+	}
+	return proc.InDir(dir)
 }
 
 // Signal is the real table's: only while p is still the process recorded.

@@ -6,6 +6,7 @@ package proc
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
@@ -59,6 +60,16 @@ func descendants(root int, all []Process, parent map[int]int) []Process {
 		level = next
 	}
 	return slices.Clip(out)
+}
+
+// inside reports whether cwd, a path the process table gives already resolved, is dir or
+// below it. dir is resolved here: a symlinked TMPDIR (macOS /tmp) must still match.
+func inside(cwd, dir string) bool {
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = r
+	}
+	rel, err := filepath.Rel(dir, cwd)
+	return err == nil && filepath.IsAbs(cwd) && rel != ".." && !strings.HasPrefix(rel, "../")
 }
 
 // ErrGone means the process doesn't exist or is a zombie: Claude counts neither as running.

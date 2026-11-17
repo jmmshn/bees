@@ -4,6 +4,7 @@ package proc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -130,6 +131,39 @@ func cut3(line string) ([]string, string) {
 		f, rest = append(f, rest[:i]), rest[i:]
 	}
 	return f, strings.TrimSpace(rest)
+}
+
+// InDir returns every live process whose working directory is dir or inside it, with its
+// start time, from lsof's field output of every process's cwd (p<pid>, then n<path>):
+// those working in a workspace, whatever their parent (bees-13.31). lsof exits 1 when
+// some process can't be read (another user's), so its output, not its status, is the
+// answer while it printed any.
+func InDir(dir string) ([]Process, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, lsofPath, "-nP", "-d", "cwd", "-F", "pn")
+	cmd.Env = append(os.Environ(), "LC_ALL=C")
+	b, err := cmd.Output()
+	if ee, ok := err.(*exec.ExitError); err != nil && !(ok && ee.ExitCode() == 1 && len(b) > 0 && ctx.Err() == nil) {
+		return nil, fmt.Errorf("lsof -d cwd: %w", err)
+	}
+	var out []Process
+	pid := 0
+	for _, line := range strings.Split(string(b), "\n") {
+		switch {
+		case strings.HasPrefix(line, "p"):
+			pid, _ = strconv.Atoi(line[1:])
+		case strings.HasPrefix(line, "n") && pid > 0 && inside(line[1:], dir):
+			s, err := Start(pid)
+			if errors.Is(err, ErrGone) {
+				continue
+			} else if err != nil {
+				return nil, err
+			}
+			out = append(out, Process{PID: pid, Start: s})
+		}
+	}
+	return out, nil
 }
 
 // Command is pid's command line as ps prints it.

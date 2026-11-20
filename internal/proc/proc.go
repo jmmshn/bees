@@ -6,7 +6,9 @@ package proc
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -61,7 +63,43 @@ func descendants(root int, all []Process, parent map[int]int) []Process {
 	return slices.Clip(out)
 }
 
-// ErrGone means the process doesn't exist or is a zombie: Claude counts neither as running.
+// resolve is dir with its symlinks resolved, as the process table gives a cwd: a
+// symlinked TMPDIR (macOS /tmp) must still match. Done once per lookup, not per process.
+func resolve(dir string) string {
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		return r
+	}
+	return dir
+}
+
+// inside reports whether cwd, an absolute path as the process table gives it, is dir (already
+// resolved) or below it.
+func inside(cwd, dir string) bool {
+	rel, err := filepath.Rel(dir, cwd)
+	return err == nil && filepath.IsAbs(cwd) && rel != ".." && !strings.HasPrefix(rel, "../")
+}
+
+// lsofCwds is the pids lsof's field output (-F pn: p<pid>, then n<path>) names with a cwd
+// inside dir (resolved), in order.
+func lsofCwds(out, dir string) []int {
+	var pids []int
+	pid := 0
+	for _, line := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(line, "p"):
+			pid, _ = strconv.Atoi(line[1:])
+		case strings.HasPrefix(line, "n") && pid > 0 && inside(line[1:], dir) && !slices.Contains(pids, pid):
+			pids = append(pids, pid)
+		}
+	}
+	return pids
+}
+
+// ErrNoEnviron is a process table bs can't read another process's environment from
+// (anything but Linux): nothing is tied to a worker by its environment there.
+var ErrNoEnviron = errors.New("can't read another process's environment on this system")
+
+// ErrGone means// ErrGone means the process doesn't exist or is a zombie: Claude counts neither as running.
 var ErrGone = errors.New("no such running process")
 
 // Alive reports whether pid is running with start time start (as Start reports it), so a

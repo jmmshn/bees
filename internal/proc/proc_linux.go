@@ -108,6 +108,52 @@ func Descendants(pid int) ([]Process, error) {
 	return descendants(pid, all, parent), nil
 }
 
+// InDir returns every live process whose working directory is dir or inside it, with its
+// start time: those working in a workspace, whatever their parent (bees-13.31). Another
+// user's process, whose cwd can't be read, is left out: bs couldn't signal it anyway.
+func InDir(dir string) ([]Process, error) {
+	dir = resolve(dir)
+	ents, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil, err
+	}
+	var out []Process
+	for _, e := range ents {
+		n, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue // not a process
+		}
+		cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", n))
+		if exited(err) || errors.Is(err, os.ErrPermission) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		if !inside(cwd, dir) {
+			continue
+		}
+		s, err := Start(n)
+		if errors.Is(err, ErrGone) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		out = append(out, Process{PID: n, Start: s})
+	}
+	return out, nil
+}
+
+// Environ is pid's environment as it started (/proc/<pid>/environ).
+func Environ(pid int) ([]string, error) {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
+	if exited(err) {
+		return nil, fmt.Errorf("pid %d: %w", pid, ErrGone)
+	} else if err != nil {
+		return nil, err
+	}
+	return strings.Split(strings.TrimRight(string(b), "\x00"), "\x00"), nil
+}
+
 // Command is pid's command line, its arguments joined by spaces; a kernel thread, which
 // has none, reads as its name.
 func Command(pid int) (string, error) {

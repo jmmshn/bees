@@ -61,6 +61,8 @@ type Herdr struct {
 	// of parallel creates certain.
 	WorktreeAdd time.Duration
 	adding      map[string]string // repo → the worktree being added there
+	// Asked counts each "<group> <command>" called, refused ones included.
+	Asked map[string]int
 
 	procFaults
 }
@@ -124,6 +126,10 @@ func (h *Herdr) Run(ctx context.Context, dir string, argv ...string) ([]byte, er
 	if len(args) < 2 {
 		return nil, usage("usage: herdr <group> <command>")
 	}
+	if h.Asked == nil {
+		h.Asked = map[string]int{}
+	}
+	h.Asked[args[0]+" "+args[1]]++
 	if h.Down {
 		return nil, refusal(strings.Join(args[:2], ":"), "server_not_running", "no herdr server is running for session %s", session)
 	}

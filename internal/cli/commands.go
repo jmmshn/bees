@@ -644,9 +644,20 @@ func (r *run) inbox(fs *flag.FlagSet, args []string) error {
 // gone (core.LiveQueen, which records her move), and what each running session's agent
 // is doing (AGENT, which also feeds stuckIdle for an agy session with mail unread), so
 // with herdr down that start and AGENT read unknown, that idle check is an error, and
-// the rest still prints: a goal complete but not yet landed shows "no" until bs end or bs
-// prune finds it. A spawn from before goals reads --goal legacy. Rows sort by name, its
-// numbers as numbers, and a workspace under paths.worktrees shows relative to it. An ended
+// the rest still prints. Once herdr is down or doesn't answer (ErrDown, a timeout
+// included), status asks it nothing more about agents: a wedged server would cost
+// port.ExecTimeout per session (motif 15); a refusal for one pane (no agent there) still
+// asks the next. A goal complete but not yet landed shows "no" until bs end or bs
+// prune finds it. A spawn from before goals reads --goal legacy. Waiting rows come first,
+// then the rest; each group sorts by name, its numbers as numbers, and a workspace under
+// paths.worktrees shows relative to it.
+//
+// Waiting is a heuristic, read from the logbook's order and herdr's status, and it
+// misses both ways: a worker that bs sends a progress note and then asks in plain text
+// in its pane isn't flagged (its last write is newer than its last read; only herdr's
+// blocked, which needs a menu, catches it); a worker idle by design after reading its
+// mail (told to hold, waiting on CI) is flagged, hence "it may be asking"; and in the
+// moment between a receipt and its turn starting, a worker shows idle (waiting). An ended
 // worker whose workspace is gone and that leaves nothing to do (no line below the table,
 // no unread mail) is history: only --all lists it (bees-13.78.17).
 func (r *run) status(fs *flag.FlagSet, args []string) error {
@@ -680,18 +691,19 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 	}
 	var notes, waiting []string // a waiting line goes first: it needs the keeper
 	note := func(kind, name, format string, a ...any) {
-		l := kind + ": " + name + ": " + fmt.Sprintf(format, a...)
-		if kind == "waiting" {
-			waiting = append(waiting, l)
-		} else {
-			notes = append(notes, l)
-		}
+		notes = append(notes, kind+": "+name+": "+fmt.Sprintf(format, a...))
 	}
-	var herdrErr error // the first time herdr couldn't say what an agent is doing
+	var herdrErr, herdrDown error // the first time herdr couldn't say; herdr down or not answering
 	agent := func(at logbook.Pane) (string, error) {
+		if herdrDown != nil { // never wait on a wedged server once per session (motif 15)
+			return "", herdrDown
+		}
 		st, err := (herdr.Client{Run: r.ports.Run, Session: at.Session}).AgentStatus(r.ctx, at.Pane)
 		if err != nil && herdrErr == nil {
 			herdrErr = err
+		}
+		if errors.Is(err, herdr.ErrDown) {
+			herdrDown = err
 		}
 		return st, err
 	}
@@ -717,7 +729,7 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 			agentCell = agentShown(st, aerr)
 			if st == herdr.Blocked {
 				agentCell += " (waiting)"
-				note("waiting", queen, "herdr says she is blocked on a menu or question in her pane → the keeper answers it in pane %s", q.Pane)
+				waiting = append(waiting, fmt.Sprintf("waiting: %s: herdr says she is blocked on a menu or question in her pane → the keeper answers it in pane %s", queen, q.Pane))
 			}
 		}
 		fmt.Fprintf(tw, "%s\t-\t-\tqueen\t-\t-\t%s\t%s\t%s\tpane %s on herdr session %s\n", queen, running, agentCell, unread(queen), q.Pane, q.Session)
@@ -766,11 +778,14 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 		if !sp.Ended && running == "yes" {
 			st, aerr = agent(sp.Herdr)
 			agentCell = agentShown(st, aerr)
-			where := cmp.Or(sp.Label, sp.Herdr.Pane)
+			where := fmt.Sprintf("herdr workspace %q", sp.Label)
+			if sp.Label == "" {
+				where = "pane " + sp.Herdr.Pane
+			}
 			switch {
 			case st == herdr.Blocked:
 				isWaiting = true
-				note("waiting", sp.Name, "herdr says it is blocked on a menu or question in its pane → the keeper answers it in herdr workspace %q", where)
+				waiting = append(waiting, fmt.Sprintf("waiting: %s: herdr says it is blocked on a menu or question in its pane → the keeper answers it in %s", sp.Name, where))
 			case (st == herdr.Idle || st == herdr.Done) && cerr == nil && counts[sp.Name] == 0:
 				// Idle having said nothing since it read its mail: it asked, if anyone, in its pane.
 				switch quiet, err := r.c.Logbook.QuietSinceRead(r.ctx, sp); {
@@ -778,7 +793,7 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 					errs = append(errs, err)
 				case quiet:
 					isWaiting = true
-					note("waiting", sp.Name, "idle with nothing sent since it last read its mail: it may be asking in its pane → look in herdr workspace %q, or %s send %s", where, bsname.Cmd, sp.Name)
+					waiting = append(waiting, fmt.Sprintf("waiting: %s: idle with nothing sent since it last read its mail: it may be asking in its pane → look in %s, or %s send %s", sp.Name, where, bsname.Cmd, sp.Name))
 				}
 			}
 			if isWaiting {

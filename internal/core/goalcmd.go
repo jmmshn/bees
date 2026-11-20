@@ -15,10 +15,11 @@ import (
 	"github.com/jmmshn/bees/internal/prompt"
 )
 
-// Check runs worker name's handoff checks now, over the PRs it handed off, and writes
-// nothing (bs check): the queen runs it before merging. It returns every result so far;
+// Check runs worker name's handoff checks now, over the PRs it handed off (bs check): the
+// queen runs it before merging. It writes nothing but tellPulls's mail, from by, to the
+// worker: once per PR head holding commits its branch lacks. It returns every result so far;
 // the error is exit 6 at the first check that couldn't run, else exit 7 when one failed.
-func (c *Core) Check(ctx context.Context, name string, self int) ([]logbook.CheckResult, error) {
+func (c *Core) Check(ctx context.Context, by, name string, self int) ([]logbook.CheckResult, error) {
 	sp, ok, err := c.Logbook.LatestSpawn(ctx, name)
 	switch {
 	case err != nil:
@@ -47,7 +48,7 @@ func (c *Core) Check(ctx context.Context, name string, self int) ([]logbook.Chec
 	k := c.look(sp, Handed{PRs: d.PRs, Answer: d.Answer, Report: d.Report})
 	rs, cant := k.stage(ctx, e, e.Handoff)
 	rs = append([]logbook.CheckResult{gate}, rs...)
-	c.tellPulls(ctx, sp, k.pulls)
+	c.tellPulls(ctx, by, sp, k.pulls)
 	if cant != nil {
 		return append(rs, *cant), exit(ExitCantCheck, "", errors.New(cant.Err), "%s: %s couldn't run", name, cant.Name)
 	}
@@ -60,13 +61,15 @@ func (c *Core) Check(ctx context.Context, name string, self int) ([]logbook.Chec
 	return rs, nil
 }
 
-// tellPulls mails worker sp, from its queen, each change head pulls names that holds
-// commits its branch lacks, so pulling them needs no relay (bees-13.106): the worker's own
-// done already says so, but a queen's check otherwise doesn't reach it. One message per
-// head, never per check: a head already named in its inbox is skipped. A send that fails
-// is warned about, never the check's outcome; the ring is only a doorbell (motif 10).
-func (c *Core) tellPulls(ctx context.Context, sp logbook.Spawn, pulls map[string]string) {
-	if len(pulls) == 0 || sp.Ended {
+// tellPulls mails worker sp, from by (who ran the check: the queen, or the keeper), each
+// change head pulls names that holds commits its branch lacks, so pulling them needs no
+// relay (bees-13.106). The worker's own done and check already print it, so a check by the
+// worker mails nothing (it would be mail to itself). One message per head, never per
+// check: a head the queen or the keeper already told it of is skipped; two checks at once
+// may both tell it (no lock: a duplicate is harmless). A send that fails is warned about,
+// never the check's outcome; the ring is only a doorbell (motif 10).
+func (c *Core) tellPulls(ctx context.Context, by string, sp logbook.Spawn, pulls map[string]string) {
+	if len(pulls) == 0 || sp.Ended || by == sp.Name {
 		return
 	}
 	inbox, err := c.Logbook.Inbox(ctx, sp.Name)
@@ -74,18 +77,20 @@ func (c *Core) tellPulls(ctx context.Context, sp logbook.Spawn, pulls map[string
 		c.warn("can't read %s's inbox to tell it to pull: %v", sp.Name, err)
 		return
 	}
-	queen := Queen(c.Project)
+	prefix, queen := bsname.Cmd+" check: ", Queen(c.Project)
 	for _, head := range slices.Sorted(maps.Keys(pulls)) {
 		mark := "(head " + head + ")"
-		if slices.ContainsFunc(inbox, func(m logbook.Message) bool { return strings.Contains(m.Body, mark) }) {
+		if slices.ContainsFunc(inbox, func(m logbook.Message) bool {
+			return (m.From == queen || m.From == Keeper) && strings.HasPrefix(m.Body, prefix) && strings.HasSuffix(m.Body, mark)
+		}) {
 			continue
 		}
-		body := fmt.Sprintf("%s check: %s, then %s done %s", bsname.Cmd, pulls[head], bsname.Cmd, mark)
-		if _, err := c.Logbook.Send(ctx, queen, sp.Name, body); err != nil {
+		body := fmt.Sprintf("%s%s, then %s done %s", prefix, pulls[head], bsname.Cmd, mark)
+		if _, err := c.Logbook.Send(ctx, by, sp.Name, body); err != nil {
 			c.warn("can't tell %s to pull: %v", sp.Name, err)
 			continue
 		}
-		_ = c.Ring(ctx, queen, sp.Name, port.Next)
+		_ = c.Ring(ctx, by, sp.Name, port.Next)
 	}
 }
 

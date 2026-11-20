@@ -82,7 +82,7 @@ commands:
   spawn   --goal <goal>... [--label L] [--harness H] <bead>  start a worker
   done    [--answer yes|no|approve|changes --report TEXT|-] [--wait [--timeout D]] [--force]   hand off
   handoff                                                  done --wait
-  check   <worker>                                         run its handoff checks now; writes nothing
+  check   <worker>                                         run its handoff checks now; writes nothing but, once per PR head, mail telling the worker to pull commits its branch lacks
   goal    <worker> <goal>... | discard | --waive <check>   amend, waive or (keeper) discard
   end     [--force] [--incomplete] <worker>               complete and end a worker
   prune   [--drop-ignored <worker>]                        remove completed workspaces (--drop-ignored: its ignored files outside prune.ignore too)

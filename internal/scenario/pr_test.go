@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	reviewcmd "github.com/jmmshn/bees/internal/review/command"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -766,4 +767,127 @@ func onePrompt(t *testing.T, x *toy, name string) string {
 		t.Fatalf("%s's prompt files: %v", name, fs)
 	}
 	return fs[0]
+}
+
+// A queen's bs check that finds the PR head holding commits the worker's branch lacks
+// tells the worker itself, from its queen, so the fallback to "pull them" needs no relay:
+// once per head, however many checks see it; a new such head is told again (bees-13.106).
+// The worker's own done says so in its output and mails nothing.
+func TestACheckThatFindsUnpulledCommitsTellsTheWorker(t *testing.T) {
+	x := newToy(t)
+	b := ghBackend{}
+	b.setup(x, true)
+	sp := x.spawn("toy-1", "pr")
+	dir := sp.Workspace.Dir
+	b.commit(x, dir)
+	b.open(x, 1, dir, "toy-1", false)
+	must(t, x.worker("toy-1", 1, "done"), 0)
+	told := func() []string {
+		t.Helper()
+		ms, err := x.open().Inbox(context.Background(), "toy-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, m := range ms {
+			if strings.Contains(m.Body, "has commits toy-1 lacks") {
+				if m.From != "queen-toy" && m.From != "keeper" {
+					t.Fatalf("told by %s, want who ran the check", m.From)
+				}
+				out = append(out, m.Body)
+			}
+		}
+		return out
+	}
+
+	must(t, x.queen("check", "toy-1"), 0)
+	if got := told(); len(got) != 0 {
+		t.Fatalf("a passing check told the worker: %q", got)
+	}
+
+	other := filepath.Join(filepath.Dir(x.repo), "helper")
+	x.git(x.repo, "fetch", "-q", "origin")
+	x.git(x.repo, "worktree", "add", "-q", "--detach", other, "origin/toy-1")
+	b.commit(x, other)
+	x.push(other, "toy-1")
+	must(t, x.worker("toy-1", 2, "done"), 7, "has commits toy-1 lacks")
+	must(t, x.worker("toy-1", 3, "check", "toy-1"), 7, "has commits toy-1 lacks")
+	if got := told(); len(got) != 0 {
+		t.Fatalf("the worker's own done or check mailed it: %q", got)
+	}
+	must(t, x.queen("check", "toy-1"), 7, "has commits toy-1 lacks")
+	must(t, x.queen("check", "toy-1"), 7, "has commits toy-1 lacks")
+	head := x.git(other, "rev-parse", "HEAD")
+	if got := told(); len(got) != 1 || !strings.Contains(got[0], head) || !strings.Contains(got[0], "pull them, then push, then bs done") {
+		t.Fatalf("want one message naming head %s and the way out, got %q", head, got)
+	}
+	must(t, x.worker("toy-1", 4, "inbox"), 0, "has commits toy-1 lacks", "pull them, then push")
+
+	// A new head is told again, from whoever ran the check; the queen's check after the
+	// keeper's tells nothing more.
+	b.commit(x, other)
+	x.push(other, "toy-1")
+	must(t, x.keeper("check", "toy-1"), 7, "has commits toy-1 lacks")
+	must(t, x.queen("check", "toy-1"), 7, "has commits toy-1 lacks")
+	if got := told(); len(got) != 2 {
+		t.Fatalf("a new head wasn't told once: %q", got)
+	}
+	ms, _ := x.open().Inbox(context.Background(), "toy-1")
+	if last := ms[len(ms)-1]; last.From != "keeper" {
+		t.Fatalf("told by %s, want keeper, who ran the check", last.From)
+	}
+
+	// Another session quoting the mark doesn't count as bs's telling.
+	b.commit(x, other)
+	x.push(other, "toy-1")
+	head = x.git(other, "rev-parse", "HEAD")
+	must(t, x.worker("toy-1", 5, "send", "queen-toy", "bs check: seen (head "+head+")"), 0)
+	must(t, x.queen("check", "toy-1"), 7, "has commits toy-1 lacks")
+	if got := told(); len(got) != 3 {
+		t.Fatalf("a quoted mark suppressed the telling: %q", got)
+	}
+
+	// A send that fails is a warning: the check's verdict stands.
+	b.commit(x, other)
+	x.push(other, "toy-1")
+	lb, _ := filepath.Glob(x.logbook + "*")
+	chmod := func(mode os.FileMode) {
+		for _, f := range lb {
+			if err := os.Chmod(f, mode); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	chmod(0o444)
+	r := x.queen("check", "toy-1")
+	chmod(0o644)
+	must(t, r, 7, "has commits toy-1 lacks", "can't tell toy-1 to pull")
+	if got := told(); len(got) != 3 {
+		t.Fatalf("a failed send stored mail: %q", got)
+	}
+
+	x.git(dir, "pull", "-q", "--ff-only", "origin", "toy-1")
+	must(t, x.worker("toy-1", 6, "done"), 0)
+}
+
+// An ended worker is told nothing: its mail is scoped to a spawn no longer open.
+func TestACheckOfAnEndedWorkerTellsNothing(t *testing.T) {
+	x := newToy(t)
+	b := ghBackend{}
+	b.setup(x, true)
+	sp := x.spawn("toy-1", "pr")
+	dir := sp.Workspace.Dir
+	b.commit(x, dir)
+	b.open(x, 1, dir, "toy-1", false)
+	must(t, x.worker("toy-1", 1, "done"), 0)
+	other := filepath.Join(filepath.Dir(x.repo), "helper")
+	x.git(x.repo, "fetch", "-q", "origin")
+	x.git(x.repo, "worktree", "add", "-q", "--detach", other, "origin/toy-1")
+	b.commit(x, other)
+	x.push(other, "toy-1")
+	must(t, x.queen("end", "--incomplete", "toy-1"), 0)
+	x.queen("check", "toy-1")
+	if n := x.sqlOne(`SELECT count(*) FROM entries WHERE kind = 'message' AND subject = 'toy-1' AND json_extract(data, '$.body') LIKE '%lacks%'`); n != "0" {
+		t.Fatalf("an ended worker was told %s times", n)
+	}
 }

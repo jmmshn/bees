@@ -25,6 +25,7 @@ type look struct {
 	errs  map[string]error
 	lags  map[string]string // change URL → lag's answer
 	found *found            // the worker's change, once looked for
+	pulls map[string]string // host head → why: heads holding commits the branch lacks
 }
 
 // found is the change a pr goal is judged by, or why there is none (and what to run).
@@ -104,7 +105,7 @@ const (
 )
 
 func (c *Core) look(sp logbook.Spawn, h Handed) *look {
-	return &look{c: c, sp: sp, h: h, views: map[string]port.Change{}, errs: map[string]error{}, lags: map[string]string{}}
+	return &look{c: c, sp: sp, h: h, views: map[string]port.Change{}, errs: map[string]error{}, lags: map[string]string{}, pulls: map[string]string{}}
 }
 
 // at is where the review host is asked: the project's checkout, which outlives a
@@ -325,7 +326,9 @@ func (k *look) unpushed(ctx context.Context, v port.Change, tip string) (outcome
 		if k.baseMerged(ctx, v, tip, has) {
 			return passed, fmt.Sprintf("its head %s on %s is %s at %s with %s merged in", oid(v.HeadCommit), host, v.Head, oid(tip), v.Base), nil
 		}
-		return failed, fmt.Sprintf("its head %s on %s has commits %s lacks (at %s): pull them, then push", oid(v.HeadCommit), host, v.Head, oid(tip)), nil
+		why := fmt.Sprintf("its head %s on %s has commits %s lacks (at %s): pull them, then push", oid(v.HeadCommit), host, v.Head, oid(tip))
+		k.pulls[v.HeadCommit] = v.URL + ": " + why
+		return failed, why, nil
 	}
 	if up, err := k.lag(ctx, v); err != nil {
 		return failed, "", err

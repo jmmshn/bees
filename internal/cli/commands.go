@@ -221,7 +221,8 @@ func (r *run) done(fs *flag.FlagSet, args []string) error {
 	return nil
 }
 
-// check runs a worker's handoff checks now and prints each result; it writes nothing.
+// check runs a worker's handoff checks now and prints each result; it writes nothing but
+// tellPulls's mail to the worker (core.Check).
 func (r *run) check(fs *flag.FlagSet, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -233,7 +234,7 @@ func (r *run) check(fs *flag.FlagSet, args []string) error {
 	if err := r.may(name); err != nil {
 		return err
 	}
-	rs, err := r.c.Check(r.ctx, name, r.env.Self)
+	rs, err := r.c.Check(r.ctx, r.caller.Name, name, r.env.Self)
 	for _, c := range rs {
 		mark := "ok  "
 		switch {

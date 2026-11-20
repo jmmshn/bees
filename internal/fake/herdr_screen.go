@@ -18,6 +18,7 @@ type Screen struct {
 	Hint   string // agy 1.4.7's grey placeholder, drawn in an empty box
 	Grey   string // the SGR it is drawn in: "" is 38;5;8 (seen on 1.4.7); a theme may differ
 	Menu   bool
+	None   bool // herdr detects no agent in the pane: agent get says agent_not_found
 }
 
 // SetScreen sets what the agent in pane on session shows; a pane with a screen set has an
@@ -46,6 +47,8 @@ func agentScreen(s *server, id string) *Screen {
 	_, p := s.pane(id)
 	switch {
 	case p == nil:
+		return nil
+	case p.screen != nil && p.screen.None:
 		return nil
 	case p.screen != nil:
 		return p.screen

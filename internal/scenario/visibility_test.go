@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jmmshn/bees/internal/fake"
 	"github.com/jmmshn/bees/internal/goal"
+	"github.com/jmmshn/bees/internal/herdr"
 	"github.com/jmmshn/bees/internal/logbook"
 )
 
@@ -166,4 +168,78 @@ func TestMailAcrossProjects(t *testing.T) {
 	must(t, x.queenRuns(5, "spawn", "--label", "x", "--goal", "verdict", "toy-1"), 0)
 	must(t, x.worker("toy-1", 1, "done", "--project", "other", "--answer", "yes", "--report", "ok"), 2, "flag provided but not defined: -project")
 	must(t, x.keeper("inbox", "--as", "queen-toy", "--project", "other"), 2, "flag provided but not defined: -project")
+}
+
+// A worker waiting on the keeper shows in status (bees-10.1): herdr's agent status in
+// the AGENT column, and a worker blocked on a menu, or idle with nothing sent since it
+// read its mail, flagged waiting, its row listed first and its line naming where to look.
+// Busy, unread, and having just asked the queen are not waiting; herdr down reads unknown.
+func TestStatusShowsAWorkerWaitingOnTheKeeper(t *testing.T) {
+	x := newToy(t)
+	x.spawn("toy-1", "verdict")
+	p2 := x.spawn("toy-2", "verdict").Herdr.Pane
+	r := x.keeper("status")
+	must(t, r, 0)
+	if cell(r.out, "toy-2", "AGENT") != "idle" || strings.Contains(r.out, "waiting") {
+		t.Fatalf("a brief unread is not waiting:\n%s", r)
+	}
+	must(t, x.worker("toy-2", 1, "inbox"), 0)
+	r = x.keeper("status")
+	must(t, r, 0, "waiting: toy-2: idle with nothing sent since it last read its mail: it may be asking in its pane → look in herdr workspace \"toy 2\", or bs send toy-2")
+	if cell(r.out, "toy-2", "AGENT") != "idle (waiting)" || strings.Index(r.out, "\ntoy-2 ") > strings.Index(r.out, "\ntoy-1 ") {
+		t.Fatalf("read its brief and went quiet, listed first:\n%s", r)
+	}
+	must(t, x.worker("toy-2", 2, "send", "queen-toy", "a question"), 0)
+	if r = x.keeper("status"); strings.Contains(r.out, "waiting") {
+		t.Fatalf("asked the queen is not waiting on the keeper:\n%s", r)
+	}
+	x.herdr.SetScreen(x.session, p2, fake.Screen{Status: herdr.Working})
+	if r = x.keeper("status"); cell(r.out, "toy-2", "AGENT") != "working" {
+		t.Fatalf("working:\n%s", r)
+	}
+	x.herdr.SetScreen(x.session, p2, fake.Screen{Status: herdr.Blocked, Menu: true})
+	r = x.keeper("status")
+	must(t, r, 0, "waiting: toy-2: herdr says it is blocked on a menu or question in its pane → the keeper answers it in herdr workspace \"toy 2\"")
+	if cell(r.out, "toy-2", "AGENT") != "blocked (waiting)" {
+		t.Fatalf("blocked:\n%s", r)
+	}
+	// herdr down: unknown, never waiting, never moved, and asked once, not per session.
+	x.herdr.Down = true
+	asked := x.herdr.Asked["agent get"]
+	r = x.keeper("status")
+	must(t, r, 0, "AGENT unknown: herdr couldn't say")
+	if cell(r.out, "toy-2", "AGENT") != "unknown" || cell(r.out, "toy-1", "AGENT") != "unknown" || strings.Contains(r.out, "(waiting)") || strings.Contains(r.out, "\nwaiting:") ||
+		strings.Index(r.out, "\ntoy-2 ") < strings.Index(r.out, "\ntoy-1 ") {
+		t.Fatalf("herdr down:\n%s", r)
+	}
+	if n := x.herdr.Asked["agent get"] - asked; n != 1 {
+		t.Fatalf("herdr down: asked agent get %d times, want 1", n)
+	}
+	// A pane with no agent herdr detects is unknown, and the next pane is still asked.
+	x.herdr.Down = false
+	x.herdr.SetScreen(x.session, p2, fake.Screen{None: true})
+	r = x.keeper("status")
+	must(t, r, 0, "AGENT unknown: herdr couldn't say", "agent_not_found")
+	if cell(r.out, "toy-1", "AGENT") != "idle" || cell(r.out, "toy-2", "AGENT") != "unknown" {
+		t.Fatalf("one pane with no agent:\n%s", r)
+	}
+	// done, as herdr reports a finished turn, is idle too.
+	x.herdr.SetScreen(x.session, p2, fake.Screen{Status: herdr.Done})
+	must(t, x.queen("send", "toy-2", "red"), 0)
+	must(t, x.worker("toy-2", 3, "inbox"), 0, "red")
+	if r = x.keeper("status"); cell(r.out, "toy-2", "AGENT") != "done (waiting)" {
+		t.Fatalf("done after reading its mail:\n%s", r)
+	}
+}
+
+// A queen blocked on a menu in her pane is waiting on the keeper too (bees-10.1).
+func TestStatusShowsABlockedQueenWaiting(t *testing.T) {
+	x := newToy(t)
+	q := x.startQueen()
+	x.herdr.SetScreen(x.session, q.Pane, fake.Screen{Status: herdr.Blocked, Menu: true})
+	r := x.keeper("status")
+	must(t, r, 0, "waiting: queen-toy: herdr says she is blocked on a menu or question in her pane → the keeper answers it in pane "+q.Pane)
+	if cell(r.out, "queen-toy", "AGENT") != "blocked (waiting)" {
+		t.Fatalf("a blocked queen:\n%s", r)
+	}
 }

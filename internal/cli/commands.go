@@ -630,19 +630,34 @@ func (r *run) inbox(fs *flag.FlagSet, args []string) error {
 
 // status lists each worker's latest spawn: its label (its herdr workspace's), its goal,
 // whether it ended, its handoff, whether its goal is complete (landed, and by what),
-// whether its recorded process runs, and its unread mail; then a row for each other
-// session with unread mail (a queen with no recorded start, a stranger). Then one line per worker the table alone would leave a question about, each with
-// the next command (Rule G): stuck (its process is gone, its start unconfirmed, or it
+// whether its recorded process runs, what herdr says its agent is doing (AGENT), and its
+// unread mail; then a row for each other session with unread mail (a queen with no
+// recorded start, a stranger). Then one line per worker the table alone would leave a question about, each with
+// the next command (Rule G): waiting (herdr says it is blocked, or it sits idle with
+// nothing sent since it last read its mail: it may be asking the keeper in its pane,
+// bees-10.1; its row and line go first), stuck (its process is gone, its start unconfirmed, or it
 // ended incomplete), kept (complete or discarded, its workspace still on disk), waived,
 // discarded, late (a start healed after confirmation missed it), and earlier (a
 // completion an incomplete respawn's row would hide). It reads the
 // record, the process table and the disk, never a check, and asks herdr only to heal an
 // unconfirmed start (core.StartOf), where a running queen is when her recorded pane is
-// gone (core.LiveQueen, which records her move), and whether an agy session (worker or queen) with
-// mail unread sits idle (stuckIdle), so with herdr down that start reads unknown, that
-// idle check is an error, and the rest still prints: a goal complete but not yet landed shows "no" until bs end or bs
-// prune finds it. A spawn from before goals reads --goal legacy. Rows sort by name, its
-// numbers as numbers, and a workspace under paths.worktrees shows relative to it. An ended
+// gone (core.LiveQueen, which records her move), and what each running session's agent
+// is doing (AGENT, which also feeds stuckIdle for an agy session with mail unread), so
+// with herdr down that start and AGENT read unknown, that idle check is an error, and
+// the rest still prints. Once herdr is down or doesn't answer (ErrDown, a timeout
+// included), status asks it nothing more about agents: a wedged server would cost
+// port.ExecTimeout per session (motif 15); a refusal for one pane (no agent there) still
+// asks the next. A goal complete but not yet landed shows "no" until bs end or bs
+// prune finds it. A spawn from before goals reads --goal legacy. Waiting rows come first,
+// then the rest; each group sorts by name, its numbers as numbers, and a workspace under
+// paths.worktrees shows relative to it.
+//
+// Waiting is a heuristic, read from the logbook's order and herdr's status, and it
+// misses both ways: a worker that bs sends a progress note and then asks in plain text
+// in its pane isn't flagged (its last write is newer than its last read; only herdr's
+// blocked, which needs a menu, catches it); a worker idle by design after reading its
+// mail (told to hold, waiting on CI) is flagged, hence "it may be asking"; and in the
+// moment between a receipt and its turn starting, a worker shows idle (waiting). An ended
 // worker whose workspace is gone and that leaves nothing to do (no line below the table,
 // no unread mail) is history: only --all lists it (bees-13.78.17).
 func (r *run) status(fs *flag.FlagSet, args []string) error {
@@ -660,7 +675,7 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 	slices.SortStableFunc(sps, func(a, b logbook.Spawn) int { return naturalCmp(a.Name, b.Name) })
 	fmt.Fprintln(r.out, r.as())
 	tw := tabwriter.NewWriter(r.out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "WORKER\tLABEL\tGOAL\tSTATE\tHANDOFF\tCOMPLETE\tRUNNING\tUNREAD\tWORKSPACE")
+	fmt.Fprintln(tw, "WORKER\tLABEL\tGOAL\tSTATE\tHANDOFF\tCOMPLETE\tRUNNING\tAGENT\tUNREAD\tWORKSPACE")
 	var errs []error
 	counts, cerr := r.c.Logbook.UnreadCounts(r.ctx)
 	if cerr != nil {
@@ -674,16 +689,30 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 		}
 		return strconv.Itoa(counts[name])
 	}
-	var notes []string
+	var notes, waiting []string // a waiting line goes first: it needs the keeper
 	note := func(kind, name, format string, a ...any) {
 		notes = append(notes, kind+": "+name+": "+fmt.Sprintf(format, a...))
+	}
+	var herdrErr, herdrDown error // the first time herdr couldn't say; herdr down or not answering
+	agent := func(at logbook.Pane) (string, error) {
+		if herdrDown != nil { // never wait on a wedged server once per session (motif 15)
+			return "", herdrDown
+		}
+		st, err := (herdr.Client{Run: r.ports.Run, Session: at.Session}).AgentStatus(r.ctx, at.Pane)
+		if err != nil && herdrErr == nil {
+			herdrErr = err
+		}
+		if errors.Is(err, herdr.ErrDown) {
+			herdrDown = err
+		}
+		return st, err
 	}
 	hidden, relative := 0, false
 	queen := core.Queen(r.s.Project)
 	if q, ok, err := r.c.Logbook.LatestQueen(r.ctx, queen); err != nil {
 		errs = append(errs, err)
 	} else if ok {
-		running := alive(r.c.Proc.Alive(q.Process))
+		running, agentCell := alive(r.c.Proc.Alive(q.Process)), "-"
 		if running == "yes" { // a moved pane has a new id: show, and look at, where she runs now (bees-13.109)
 			var err error
 			switch q, err = r.c.LiveQueen(r.ctx, q); {
@@ -693,13 +722,24 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 				errs = append(errs, fmt.Errorf("%s: can't tell which pane she is in: %w", queen, err))
 			}
 		}
-		fmt.Fprintf(tw, "%s\t-\t-\tqueen\t-\t-\t%s\t%s\tpane %s on herdr session %s\n", queen, running, unread(queen), q.Pane, q.Session)
+		var st string
+		var aerr error
+		if running == "yes" {
+			st, aerr = agent(logbook.Pane{Session: q.Session, Pane: q.Pane})
+			agentCell = agentShown(st, aerr)
+			if st == herdr.Blocked {
+				agentCell += " (waiting)"
+				waiting = append(waiting, fmt.Sprintf("waiting: %s: herdr says she is blocked on a menu or question in her pane → the keeper answers it in pane %s", queen, q.Pane))
+			}
+		}
+		fmt.Fprintf(tw, "%s\t-\t-\tqueen\t-\t-\t%s\t%s\t%s\tpane %s on herdr session %s\n", queen, running, agentCell, unread(queen), q.Pane, q.Session)
 		if running == "yes" && counts[queen] > 0 { // her held ring, left by a cut turn (bees-13.99)
-			r.stuckIdle(note, &errs, queen, q.Harness, logbook.Pane{Session: q.Session, Pane: q.Pane}, counts[queen])
+			r.stuckIdle(note, &errs, queen, q.Harness, st, aerr, counts[queen])
 		}
 	}
+	var rows, waitingRows []string // a waiting worker's row goes first
 	for _, sp := range sps {
-		before, errsBefore, under := len(notes), len(errs), false
+		before, errsBefore, under := len(notes)+len(waiting), len(errs), false
 		state := "live"
 		if sp.Ended {
 			state = "ended"
@@ -728,9 +768,37 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 		case sp.Legacy():
 			complete = "-"
 		}
-		running, mail := "-", "-" // an ended spawn reads no mail
+		running, mail, agentCell := "-", "-", "-" // an ended spawn reads no mail
+		var st string
+		var aerr error
+		isWaiting := false
 		if !sp.Ended {
 			running, mail = r.running(sp), unread(sp.Name)
+		}
+		if !sp.Ended && running == "yes" {
+			st, aerr = agent(sp.Herdr)
+			agentCell = agentShown(st, aerr)
+			where := fmt.Sprintf("herdr workspace %q", sp.Label)
+			if sp.Label == "" {
+				where = "pane " + sp.Herdr.Pane
+			}
+			switch {
+			case st == herdr.Blocked:
+				isWaiting = true
+				waiting = append(waiting, fmt.Sprintf("waiting: %s: herdr says it is blocked on a menu or question in its pane → the keeper answers it in %s", sp.Name, where))
+			case (st == herdr.Idle || st == herdr.Done) && cerr == nil && counts[sp.Name] == 0:
+				// Idle having said nothing since it read its mail: it asked, if anyone, in its pane.
+				switch quiet, err := r.c.Logbook.QuietSinceRead(r.ctx, sp); {
+				case err != nil:
+					errs = append(errs, err)
+				case quiet:
+					isWaiting = true
+					waiting = append(waiting, fmt.Sprintf("waiting: %s: idle with nothing sent since it last read its mail: it may be asking in its pane → look in %s, or %s send %s", sp.Name, where, bsname.Cmd, sp.Name))
+				}
+			}
+			if isWaiting {
+				agentCell += " (waiting)"
+			}
 		}
 		g, discarded := sp.Goal.String(), false
 		e, gerr := r.c.Logbook.Goal(r.ctx, sp) // the newest amend, not the spawn's goal
@@ -754,7 +822,7 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 		if sp.Ended && dir != "" && gone {
 			dir += " (removed)"
 		}
-		row := fmt.Sprintf("%s\t%s\t--goal %s\t%s\t%s\t%s\t%s\t%s\t%s\n", sp.Name, cmp.Or(sp.Label, "-"), g, state, handoff, complete, running, mail, dir)
+		row := fmt.Sprintf("%s\t%s\t--goal %s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", sp.Name, cmp.Or(sp.Label, "-"), g, state, handoff, complete, running, agentCell, mail, dir)
 		switch {
 		case running == "no start recorded (legacy)":
 			note("stuck", sp.Name, "started by the old bs, which recorded no process → %s end %s", bsname.Cmd, sp.Name)
@@ -788,7 +856,7 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 			}
 		}
 		if !sp.Ended && running == "yes" && counts[sp.Name] > 0 {
-			r.stuckIdle(note, &errs, sp.Name, sp.Harness, sp.Herdr, counts[sp.Name])
+			r.stuckIdle(note, &errs, sp.Name, sp.Harness, st, aerr, counts[sp.Name])
 		}
 		if gerr == nil && !landed {
 			if len(e.Waived) > 0 {
@@ -814,18 +882,25 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 		// History: ended, its workspace gone, no line below, no mail waiting and nothing bs
 		// couldn't read (couldn't look is never nothing to do, Rule G). A row that needs
 		// the queen is never hidden.
-		if !*all && sp.Ended && gone && len(notes) == before && len(errs) == errsBefore && cerr == nil && counts[sp.Name] == 0 {
+		if !*all && sp.Ended && gone && len(notes)+len(waiting) == before && len(errs) == errsBefore && cerr == nil && counts[sp.Name] == 0 {
 			hidden++
 			continue
 		}
 		relative = relative || under
+		if isWaiting {
+			waitingRows = append(waitingRows, row)
+		} else {
+			rows = append(rows, row)
+		}
+	}
+	for _, row := range append(waitingRows, rows...) {
 		fmt.Fprint(tw, row)
 	}
 	// Mail waits for sessions no row above names: a queen never recorded starting, a
 	// stranger. Mail the table hides is mail nobody reads.
 	for _, name := range slices.SortedFunc(maps.Keys(counts), naturalCmp) {
 		if counts[name] > 0 && !shown[name] {
-			fmt.Fprintf(tw, "%s\t-\t-\tno spawn\t-\t-\t-\t%d\t-\n", name, counts[name])
+			fmt.Fprintf(tw, "%s\t-\t-\tno spawn\t-\t-\t-\t-\t%d\t-\n", name, counts[name])
 		}
 	}
 	if err := tw.Flush(); err != nil {
@@ -837,7 +912,10 @@ func (r *run) status(fs *flag.FlagSet, args []string) error {
 	if hidden > 0 {
 		fmt.Fprintf(r.out, "hidden: %d ended with their workspace gone and nothing to do → %s status --all lists them\n", hidden, bsname.Cmd)
 	}
-	for _, n := range notes {
+	if herdrErr != nil { // couldn't ask is never "not waiting" (Rule G)
+		fmt.Fprintf(r.out, "AGENT unknown: herdr couldn't say what an agent is doing, so a worker waiting in its pane may not show: %v\n", herdrErr)
+	}
+	for _, n := range append(waiting, notes...) {
 		fmt.Fprintln(r.out, n)
 	}
 	return errors.Join(errs...)
@@ -895,15 +973,24 @@ func (r *run) as() string {
 	return fmt.Sprintf("as %s (%s) · logbook %s", w.Name, what, r.s.Logbook)
 }
 
-// stuckIdle notes name stuck when it runs on agy and herdr says its pane sits idle (or
-// done) with n unread: a ring was held and nothing caught it (a cancelled or limit-cut
-// turn, bees-13.97, bees-13.99). Another harness pushes its ring, so it is never stuck
-// this way. Couldn't look is an error, never "not stuck" (Rule G).
-func (r *run) stuckIdle(note func(kind, name, format string, a ...any), errs *[]error, name, harness string, at logbook.Pane, n int) {
+// agentShown is herdr's agent status as status's AGENT column shows it.
+func agentShown(st string, err error) string {
+	if err != nil {
+		return "unknown"
+	}
+	return st
+}
+
+// stuckIdle notes name stuck when it runs on agy and herdr says (st, or err when it
+// couldn't) its pane sits idle (or done) with n unread: a ring was held and nothing
+// caught it (a cancelled or limit-cut turn, bees-13.97, bees-13.99). Another harness
+// pushes its ring, so it is never stuck this way. Couldn't look is an error, never "not
+// stuck" (Rule G).
+func (r *run) stuckIdle(note func(kind, name, format string, a ...any), errs *[]error, name, harness, st string, err error, n int) {
 	if h := r.ports.recorded(harness); h == nil || h.Kind() != agy.Name {
 		return
 	}
-	switch st, err := (herdr.Client{Run: r.ports.Run, Session: at.Session}).AgentStatus(r.ctx, at.Pane); {
+	switch {
 	case err != nil:
 		*errs = append(*errs, fmt.Errorf("%s: can't tell whether its agy is idle: %w", name, err))
 	case st == herdr.Idle || st == herdr.Done:

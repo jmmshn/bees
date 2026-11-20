@@ -286,3 +286,50 @@ INSERT INTO entries VALUES ('m2','2026-10-01T00:00:03.000Z','message','queen-bee
 		t.Fatalf("the new spawn's unread after migration: %+v, %v", ms, err)
 	}
 }
+
+// QuietSinceRead holds from a receipt until the session next writes: a message or a
+// done ends it, the next receipt starts it again, and a receipt from an earlier spawn
+// never counts (bees-10.1).
+func TestQuietSinceRead(t *testing.T) {
+	ctx := context.Background()
+	lb := open(t, filepath.Join(t.TempDir(), "bees.db"))
+	want := func(step string, sp logbook.Spawn, quiet bool) {
+		t.Helper()
+		if got, err := lb.QuietSinceRead(ctx, sp); err != nil || got != quiet {
+			t.Fatalf("%s: quiet = %v, %v; want %v", step, got, err, quiet)
+		}
+	}
+	read := func() {
+		t.Helper()
+		ms, err := lb.Unread(ctx, "toy-1")
+		if err != nil || len(ms) == 0 {
+			t.Fatalf("nothing unread: %v", err)
+		}
+		if err := lb.RecordReceipts(ctx, "toy-1", []logbook.ID{ms[len(ms)-1].ID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := spawn(t, lb, "toy-1", "toy", "w1:p1", "verdict")
+	want("nothing read", s, false)
+	read()
+	want("brief read", s, true)
+	if _, err := lb.Send(ctx, "toy-1", "queen-toy", "a question"); err != nil {
+		t.Fatal(err)
+	}
+	want("asked the queen", s, false)
+	if _, err := lb.Send(ctx, "queen-toy", "toy-1", "an answer"); err != nil {
+		t.Fatal(err)
+	}
+	want("answer unread", s, false)
+	read()
+	want("answer read", s, true)
+	if _, err := lb.RecordDone(ctx, logbook.Done{Spawn: s.ID, Name: s.Name, Queen: "queen-toy", Bead: s.Bead}, nil); err != nil {
+		t.Fatal(err)
+	}
+	want("handed off", s, false)
+	if err := lb.RecordEnd(ctx, "queen-toy", s.ID, logbook.Ended{}); err != nil {
+		t.Fatal(err)
+	}
+	s2 := spawn(t, lb, "toy-1", "toy", "w2:p1", "verdict")
+	want("respawned, nothing read", s2, false)
+}

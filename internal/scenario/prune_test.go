@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -259,10 +260,10 @@ func TestAgySettingsReachTheAdapter(t *testing.T) {
 
 // inDir starts sleep working in dir, detached as a worker's leaked background task is:
 // reparented away from anything bs or the test started, with env added to a copy of the
-// test's own without any HERDR_* (bees-13.31). setsid gives it a session of its own.
+// test's own without any HERDR_* (bees-13.31).
 func inDir(t *testing.T, dir string, env ...string) int {
 	t.Helper()
-	cmd := exec.Command("sh", "-c", "setsid sleep 30 </dev/null >/dev/null 2>&1 & echo $!")
+	cmd := exec.Command("sh", "-c", "sleep 30 </dev/null >/dev/null 2>&1 & echo $!")
 	cmd.Dir = dir
 	for _, e := range os.Environ() {
 		if !strings.HasPrefix(e, "HERDR_") {
@@ -279,7 +280,7 @@ func inDir(t *testing.T, dir string, env ...string) int {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
-	for range 50 { // until setsid has exec'd sleep
+	for range 50 { // until sh's fork has exec'd sleep
 		if c, err := proc.Command(pid); err == nil && strings.HasPrefix(c, "sleep") {
 			return pid
 		}
@@ -348,9 +349,13 @@ func unconfirmed(t *testing.T, x *toy) logbook.Spawn {
 
 // With no harness process to walk, the gate looks at what works in the workspace: bs end
 // refuses while a process does, and --force stops only what was started from the worker's
-// pane, recording it; a process from elsewhere (a keeper's shell, a setsid'd sleep) is
-// named and left running (bees-13.31, 13.16, motif 12).
+// pane, recording it; a process from elsewhere (a keeper's shell, a stray) is named and
+// left running (bees-13.31, 13.16, motif 12). Which pane a process came from is read from
+// its environment, which bs can read only on Linux.
 func TestEndForceStopsOnlyWhatItsPaneStarted(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("ties by environment only where /proc has it")
+	}
 	x := newToy(t)
 	sp := unconfirmed(t, x)
 	mine := inDir(t, sp.Workspace.Dir, "HERDR_PANE_ID="+sp.Herdr.Pane)

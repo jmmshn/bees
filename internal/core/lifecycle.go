@@ -338,6 +338,14 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 		return exit(ExitRefused, "herdr --session "+sp.Herdr.Session+" pane move <pane> --new-workspace, then "+o.rerun(name, EndOpts{}), nil,
 			"%s: its workspace %s also holds %s, which closing it would end; nothing closed", name, sp.Herdr.Workspace, strings.Join(g, ", "))
 	}
+	// Its harness's tree, taken before the close reparents it: the worker's on any system,
+	// where its environment can't be read too (macOS).
+	var tree []proc.Process
+	if o.Force {
+		if tree, err = c.harnessTree(ctx, sp); err != nil {
+			c.warn("can't list %s's harness's processes (%v): --force stops only those its environment ties to its pane", name, err)
+		}
+	}
 	h := c.herdr(sp.Herdr.Session)
 	if err := h.CloseWorkspace(ctx, sp.Herdr.Workspace); err != nil {
 		return exit(ExitKept, o.rerun(name, EndOpts{}), err, "%s: herdr couldn't close its workspace; nothing was recorded", name)
@@ -345,7 +353,7 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 	if err := c.stop(ctx, sp); err != nil {
 		return exit(ExitFail, o.rerun(name, EndOpts{}), err, "%s: its workspace is closed but its process wouldn't stop; nothing was recorded", name)
 	}
-	stopped := c.leftWorking(ctx, sp, self, o.Force)
+	stopped := c.leftWorking(ctx, sp, self, o.Force, tree)
 	if err := c.removeFiles(sp.Name); err != nil {
 		c.warn("couldn't remove %s's start files: %v", sp.Name, err)
 	}
@@ -358,16 +366,32 @@ func (c *Core) End(ctx context.Context, by, name string, self int, o EndOpts) er
 	return c.Logbook.RecordEnd(ctx, by, sp.ID, logbook.Ended{Force: o.Force, Incomplete: !done, Stopped: stopped})
 }
 
+// harnessTree is sp's recorded harness process and every process below it, while it runs.
+func (c *Core) harnessTree(ctx context.Context, sp logbook.Spawn) ([]proc.Process, error) {
+	st, ok, err := c.StartOf(ctx, sp)
+	if err != nil || !ok {
+		return nil, err
+	}
+	if alive, err := c.Proc.Alive(st.Process); err != nil || !alive {
+		return nil, err
+	}
+	ds, err := c.Proc.Descendants(st.PID)
+	return append(ds, st.Process), err
+}
+
 // leftWorking is what still works in sp's workspace once it is closed and its harness
-// stopped (bees-13.31). With force it stops what was started from the worker's pane (the
-// gate was waived: background work it named, a child reparented away) and returns those
-// that stopped; anything else, or one that outlived SIGKILL, is named and left: prune keeps
+// stopped (bees-13.31). With force it stops what was started from the worker's pane, or
+// was in its harness's tree before the close (the gate was waived: background work it
+// named, a child reparented away), and returns those that stopped; anything else, or one that outlived SIGKILL, is named and left: prune keeps
 // the directory while it runs. A failure to look is a warning: force is the way out (motif 5).
-func (c *Core) leftWorking(ctx context.Context, sp logbook.Spawn, self int, force bool) []proc.Process {
+func (c *Core) leftWorking(ctx context.Context, sp logbook.Spawn, self int, force bool, tree []proc.Process) []proc.Process {
 	in, err := c.settled(ctx, sp, self, nil)
 	if err != nil {
 		c.warn("can't tell what still works in %s's workspace %s, so nothing more was stopped: %v", sp.Name, sp.Workspace.Dir, err)
 		return nil
+	}
+	for i := range in {
+		in[i].Mine = in[i].Mine || slices.Contains(tree, in[i].Process)
 	}
 	var mine []proc.Process
 	if force {

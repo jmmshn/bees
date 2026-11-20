@@ -14,6 +14,7 @@ func (System) Parent(pid int) (int, error)                { return Parent(pid) }
 func (System) Group(pid int) (int, error)                 { return Group(pid) }
 func (System) Descendants(pid int) ([]Process, error)     { return Descendants(pid) }
 func (System) InDir(dir string) ([]Process, error)        { return InDir(dir) }
+func (System) Environ(pid int) ([]string, error)          { return Environ(pid) }
 func (System) Command(pid int) (string, error)            { return Command(pid) }
 func (System) Exe(pid int) (string, error)                { return Exe(pid) }
 func (System) Signal(p Process, sig syscall.Signal) error { return Signal(p, sig) }

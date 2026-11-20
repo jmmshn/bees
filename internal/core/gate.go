@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 
@@ -147,12 +148,29 @@ func (c *Core) background(ctx context.Context, sp logbook.Spawn, self int) ([]pr
 	return out, nil
 }
 
+// worked is a process working in a worker's workspace. Mine when bs can tie it to the
+// worker: its environment names the worker's herdr pane, which herdr hands every process
+// in that pane's tree, a background task its harness setsid'd too (Claude Code runs each
+// tool call in a session of its own). A keeper's shell or editor there is not its own,
+// and only its own are --force's to stop (motif 12).
+type worked struct {
+	proc.Background
+	Mine bool
+}
+
+func (w worked) String() string {
+	if w.Mine {
+		return w.Background.String()
+	}
+	return w.Background.String() + "   (not started from its pane)"
+}
+
 // working is what works in sp's workspace directory: every process whose cwd is inside it,
-// whatever its parent, but self and its ancestors (a bs run from there) and skip. It sees what the
-// gate's walk can't once the harness has exited and its children were reparented away
-// (bees-13.31). Only a directory the spawn made has one: a git worktree or a command
+// whatever its parent, but self and its ancestors (a bs run from there) and skip. It sees
+// what the gate's walk can't once the harness has exited and its children were reparented
+// away (bees-13.31). Only a directory the spawn made has one: a git worktree or a command
 // workspace; any other kind's dir is shared (the repo the queen works in), never its own.
-func (c *Core) working(sp logbook.Spawn, self int, skip []int) ([]proc.Background, error) {
+func (c *Core) working(sp logbook.Spawn, self int, skip []int) ([]worked, error) {
 	ws := sp.Workspace
 	if ws.Dir == "" || ws.Kind != config.GitWorktree && ws.Kind != config.CommandKind {
 		return nil, nil
@@ -166,7 +184,7 @@ func (c *Core) working(sp logbook.Spawn, self int, skip []int) ([]proc.Backgroun
 		return nil, err
 	}
 	skip = append(up, skip...)
-	var out []proc.Background
+	var out []worked
 	for _, p := range ps {
 		if slices.Contains(skip, p.PID) {
 			continue
@@ -177,20 +195,66 @@ func (c *Core) working(sp logbook.Spawn, self int, skip []int) ([]proc.Backgroun
 		} else if err != nil {
 			return nil, err
 		}
-		out = append(out, proc.Background{Process: p, Command: cmd})
+		mine, err := c.fromPane(p.PID, sp.Herdr.Pane)
+		if errors.Is(err, proc.ErrGone) {
+			continue
+		} else if err != nil {
+			return nil, err
+		}
+		out = append(out, worked{Background: proc.Background{Process: p, Command: cmd}, Mine: mine})
 	}
 	return out, nil
 }
 
-// panes is the shells and foreground processes of sp's own panes: closing its workspace
-// ends them, so they are no work left behind in it. A workspace that is gone has none.
+// fromPane reports whether pid's environment names herdr pane: false, never an error, for
+// one bs can't read (another user's, or no way to on this system).
+func (c *Core) fromPane(pid int, pane string) (bool, error) {
+	if pane == "" {
+		return false, nil
+	}
+	env, err := c.Proc.Environ(pid)
+	switch {
+	case errors.Is(err, proc.ErrNoEnviron), errors.Is(err, os.ErrPermission):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	return slices.Contains(env, "HERDR_PANE_ID="+pane), nil
+}
+
+// settled is working, a second look later: what is still there, so a child still exiting
+// on its SIGHUP is neither named left running nor recorded stopped (motifs 9, 11).
+func (c *Core) settled(ctx context.Context, sp logbook.Spawn, self int, skip []int) ([]worked, error) {
+	first, err := c.working(sp, self, skip)
+	if err != nil || len(first) == 0 {
+		return nil, err
+	}
+	if err := sleep(ctx, c.timing().SecondLook); err != nil {
+		return nil, err
+	}
+	second, err := c.working(sp, self, skip)
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(first, func(w worked) bool {
+		return !slices.ContainsFunc(second, func(v worked) bool { return v.Process == w.Process })
+	}), nil
+}
+
+// panes is what sp's own panes run, and the session's armed mail watcher: closing its
+// workspace ends the first, and the gate never counts the second, so neither is work left
+// behind in it. That is each pane's shell, its foreground processes and theirs below them
+// (an unconfirmed harness's MCP servers and tool shells). A workspace that is gone has none.
 func (c *Core) panes(ctx context.Context, sp logbook.Spawn) ([]int, error) {
+	out, err := c.watcher(sp.Name)
+	if err != nil {
+		return nil, err
+	}
 	h := c.herdr(sp.Herdr.Session)
 	ps, err := h.Panes(ctx, sp.Herdr.Workspace)
 	if err != nil {
 		return nil, err
 	}
-	var out []int
 	for _, pane := range ps {
 		pi, err := h.ProcessInfo(ctx, pane)
 		if errors.Is(err, herdr.ErrPaneGone) {
@@ -200,7 +264,14 @@ func (c *Core) panes(ctx context.Context, sp logbook.Spawn) ([]int, error) {
 		}
 		out = append(out, pi.Shell)
 		for _, f := range pi.Foreground {
+			ds, err := c.Proc.Descendants(f.PID)
+			if err != nil {
+				return nil, err
+			}
 			out = append(out, f.PID)
+			for _, d := range ds {
+				out = append(out, d.PID)
+			}
 		}
 	}
 	return out, nil

@@ -148,23 +148,21 @@ func InDir(dir string) ([]Process, error) {
 		return nil, fmt.Errorf("lsof -d cwd: %w", err)
 	}
 	var out []Process
-	pid := 0
-	for _, line := range strings.Split(string(b), "\n") {
-		switch {
-		case strings.HasPrefix(line, "p"):
-			pid, _ = strconv.Atoi(line[1:])
-		case strings.HasPrefix(line, "n") && pid > 0 && inside(line[1:], dir):
-			s, err := Start(pid)
-			if errors.Is(err, ErrGone) {
-				continue
-			} else if err != nil {
-				return nil, err
-			}
-			out = append(out, Process{PID: pid, Start: s})
+	for _, pid := range lsofCwds(string(b), resolve(dir)) {
+		s, err := Start(pid)
+		if errors.Is(err, ErrGone) {
+			continue
+		} else if err != nil {
+			return nil, err
 		}
+		out = append(out, Process{PID: pid, Start: s})
 	}
 	return out, nil
 }
+
+// Environ is ErrNoEnviron: ps prints another process's environment only run together
+// with its arguments, which can't be split back apart.
+func Environ(int) ([]string, error) { return nil, ErrNoEnviron }
 
 // Command is pid's command line as ps prints it.
 func Command(pid int) (string, error) { return ps(pid, "command=") }

@@ -50,6 +50,9 @@ func (h *Herdr) InDir(dir string) ([]proc.Process, error) {
 	return proc.InDir(dir)
 }
 
+// Environ is the real table's.
+func (h *Herdr) Environ(pid int) ([]string, error) { return proc.Environ(pid) }
+
 // Signal is the real table's: only while p is still the process recorded.
 func (h *Herdr) Signal(p proc.Process, sig syscall.Signal) error { return proc.Signal(p, sig) }
 
@@ -70,6 +73,14 @@ func (h *Herdr) FailStarts(err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.AliveErr = err
+}
+
+// FailWalks makes every Descendants and InDir walk fail with err until it is called
+// with nil: a process table bs can't list.
+func (h *Herdr) FailWalks(err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.WalkErr = err
 }
 
 // FailInfo makes the next n pane process-info calls fail as an unreachable server would.

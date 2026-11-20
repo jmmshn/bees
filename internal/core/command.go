@@ -370,7 +370,7 @@ func (c *Core) freeCommandDir(ctx context.Context, sp logbook.Spawn) (why string
 		}
 	}
 	if why, err := c.inUse(ctx, sp); err != nil {
-		return "can't tell whether herdr uses it: " + err.Error(), true
+		return "can't tell what uses it: " + err.Error(), true
 	} else if why != "" {
 		return why, false
 	}

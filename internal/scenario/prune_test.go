@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -256,17 +257,46 @@ func TestAgySettingsReachTheAdapter(t *testing.T) {
 	}
 }
 
-// inDir starts sleep working in dir, as a worker's background task left behind is: no
-// child of anything bs recorded (bees-13.31).
-func inDir(t *testing.T, dir string) *exec.Cmd {
+// inDir starts sleep working in dir, detached as a worker's leaked background task is:
+// reparented away from anything bs or the test started, with env added to a copy of the
+// test's own without any HERDR_* (bees-13.31). setsid gives it a session of its own.
+func inDir(t *testing.T, dir string, env ...string) int {
 	t.Helper()
-	cmd := exec.Command("sleep", "30")
+	cmd := exec.Command("sh", "-c", "setsid sleep 30 </dev/null >/dev/null 2>&1 & echo $!")
 	cmd.Dir = dir
-	if err := cmd.Start(); err != nil {
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, "HERDR_") {
+			cmd.Env = append(cmd.Env, e)
+		}
+	}
+	cmd.Env = append(cmd.Env, env...)
+	out, err := cmd.Output()
+	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
-	return cmd
+	pid, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
+	for range 50 { // until setsid has exec'd sleep
+		if c, err := proc.Command(pid); err == nil && strings.HasPrefix(c, "sleep") {
+			return pid
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("pid %d never ran sleep", pid)
+	return 0
+}
+
+// running reports whether pid still runs (a zombie doesn't).
+func running(t *testing.T, pid int) bool {
+	t.Helper()
+	_, err := proc.Start(pid)
+	if err != nil && !errors.Is(err, proc.ErrGone) {
+		t.Fatal(err)
+	}
+	return err == nil
 }
 
 // A process working in an ended worker's directory, whatever its parent, keeps it: prune
@@ -281,25 +311,29 @@ func TestPruneKeepsADirAProcessWorksIn(t *testing.T) {
 	if err := os.Mkdir(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cmd := inDir(t, sub)
-	pid := strconv.Itoa(cmd.Process.Pid)
+	pid := inDir(t, sub)
+	p := strconv.Itoa(pid)
 	// No child of its harness: end leaves it running, and says so.
-	must(t, x.queen("end", "toy-1"), 0, "still working in toy-1's workspace", "pid "+pid+" ", "sleep 30")
-	must(t, x.queen("prune"), 3, "kept "+sp.Workspace.Dir+" (toy-1): processes still work in it", "pid "+pid+" ", "sleep 30")
-	_ = cmd.Process.Kill()
-	_ = cmd.Wait() // killed: its error is the signal
+	must(t, x.queen("end", "toy-1"), 0, "still working in toy-1's workspace", "so left running", "pid "+p+" ", "sleep 30")
+	must(t, x.queen("prune"), 3, "kept "+sp.Workspace.Dir+" (toy-1): processes still work in it", "pid "+p+" ", "sleep 30")
+	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	for running(t, pid) {
+		time.Sleep(10 * time.Millisecond)
+	}
 	must(t, x.queen("prune"), 0, "removed "+sp.Workspace.Dir)
 }
 
-// With no harness process to walk, the gate looks at what works in the workspace: bs end
-// refuses while a process does, and --force stops it and records it (bees-13.31, 13.16).
-func TestEndStopsWhatWorksInTheWorkspaceOnlyWithForce(t *testing.T) {
-	x := newToy(t)
-	ctx := context.Background()
-	x.herdr.Programs["claude"] = "/bin/true" // the start is never confirmed: nothing to walk
+// unconfirmed spawns toy-1 under a harness that exits at once: no start is ever
+// confirmed, so the gate has no process to walk.
+func unconfirmed(t *testing.T, x *toy) logbook.Spawn {
+	t.Helper()
+	x.herdr.Programs["claude"] = "/bin/true"
 	x.ports.Timing.Confirm = 300 * time.Millisecond
 	x.bead("toy-1", "x")
 	must(t, x.queen("spawn", "--label", "x", "--goal", "verdict", "toy-1"), 8)
+	ctx := context.Background()
 	lb, err := logbook.Open(ctx, x.logbook)
 	if err != nil {
 		t.Fatal(err)
@@ -309,15 +343,55 @@ func TestEndStopsWhatWorksInTheWorkspaceOnlyWithForce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := inDir(t, sp.Workspace.Dir)
-	pid := strconv.Itoa(cmd.Process.Pid)
-	must(t, x.queen("end", "--incomplete", "toy-1"), 5, "processes still work in "+sp.Workspace.Dir, "pid "+pid+" ", "sleep 30", "next: bs end --incomplete --force toy-1")
-	must(t, x.queen("end", "--incomplete", "--force", "toy-1"), 0, "stopping what still works in toy-1's workspace", "pid "+pid)
-	if err := cmd.Wait(); err == nil {
-		t.Fatal("sleep exited on its own; want it stopped by bs end --force")
+	return sp
+}
+
+// With no harness process to walk, the gate looks at what works in the workspace: bs end
+// refuses while a process does, and --force stops only what was started from the worker's
+// pane, recording it; a process from elsewhere (a keeper's shell, a setsid'd sleep) is
+// named and left running (bees-13.31, 13.16, motif 12).
+func TestEndForceStopsOnlyWhatItsPaneStarted(t *testing.T) {
+	x := newToy(t)
+	sp := unconfirmed(t, x)
+	mine := inDir(t, sp.Workspace.Dir, "HERDR_PANE_ID="+sp.Herdr.Pane)
+	other := inDir(t, sp.Workspace.Dir, "HERDR_PANE_ID=w9:p9")
+	m, o := strconv.Itoa(mine), strconv.Itoa(other)
+	must(t, x.queen("end", "--incomplete", "toy-1"), 5, "processes still work in "+sp.Workspace.Dir, "pid "+m+" ", "pid "+o+" ",
+		"sleep 30   (not started from its pane)", "next: bs end --incomplete --force toy-1")
+	r := x.queen("end", "--incomplete", "--force", "toy-1")
+	must(t, r, 0, "stopped what still worked in toy-1's workspace", "--force stops only what was started from its pane, so left running")
+	out := r.String()
+	at := func(sub string) int { return strings.Index(out, sub) }
+	if !slices.IsSorted([]int{at("stopped what"), at("pid " + m + " "), at("so left running"), at("pid " + o + " ")}) {
+		t.Fatalf("want pid %s stopped and pid %s left:\n%s", m, o, r)
 	}
+	for running(t, mine) {
+		time.Sleep(10 * time.Millisecond) // reaped by init
+	}
+	if !running(t, other) {
+		t.Fatalf("pid %s, not started from its pane, was stopped", o)
+	}
+	ctx := context.Background()
+	lb, err := logbook.Open(ctx, x.logbook)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lb.Close()
 	e, ok, err := lb.EndOf(ctx, sp.ID)
-	if err != nil || !ok || !slices.ContainsFunc(e.Stopped, func(p proc.Process) bool { return p.PID == cmd.Process.Pid }) {
-		t.Fatalf("ended = %+v, %v, %v; want pid %s in Stopped", e, ok, err, pid)
+	if err != nil || !ok || len(e.Stopped) != 1 || e.Stopped[0].PID != mine {
+		t.Fatalf("ended = %+v, %v, %v; want only pid %s in Stopped", e, ok, err, m)
 	}
+}
+
+// A process table bs can't list fails end and prune closed: never "nothing works there".
+func TestEndAndPruneFailClosedWhenTheyCantListWhatWorksThere(t *testing.T) {
+	x := newToy(t)
+	unconfirmed(t, x)
+	x.herdr.FailWalks(errors.New("proc unreadable"))
+	must(t, x.queen("end", "--incomplete", "toy-1"), 6, "toy-1: can't tell", "proc unreadable", "next: bs end --incomplete --force toy-1")
+	x.herdr.FailWalks(nil)
+	must(t, x.queen("end", "--incomplete", "toy-1"), 0)
+	must(t, x.keeper("goal", "toy-1", "discard"), 0)
+	x.herdr.FailWalks(errors.New("proc unreadable"))
+	must(t, x.queen("prune"), 4, "can't tell what uses it: proc unreadable")
 }
